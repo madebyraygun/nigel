@@ -25,11 +25,13 @@ export function agingBarHeights(buckets: AgingBucketView[]): number[] {
 /**
  * The A/R aging strip: five buckets, their bars, and the outstanding total.
  *
- * The bars are decoration over a real `<table>` — the same arrangement
- * `wc-bar-chart` uses, and for the same reason: a bar has no accessible value,
- * so the figures live in a table and the bars sit beside them with
- * `aria-hidden`. Every figure this component shows is a second view of the
- * aging report, which is why the parity walk skips it whole.
+ * The bars are decoration over a real `<table>`: a bar has no accessible value,
+ * so the figures live in the table and the bars ride along `aria-hidden`. They
+ * are a row of that same table rather than a grid beside it, so each bar shares
+ * a column with the bucket it measures — the table's own column widths are the
+ * only thing keeping the two aligned, and a 1fr grid cannot agree with them.
+ * Every figure this component shows is a second view of the aging report, which
+ * is why the parity walk skips it whole.
  */
 @customElement('wc-aging-bars')
 export class WcAgingBars extends LitElement {
@@ -116,17 +118,18 @@ export class WcAgingBars extends LitElement {
       font-weight: var(--wa-font-weight-bold, 700);
     }
 
-    .bars {
-      display: grid;
-      grid-auto-flow: column;
-      grid-auto-columns: 1fr;
-      align-items: end;
-      gap: var(--wa-space-xs, 6px);
+    td.bar-cell {
+      padding-top: var(--wa-space-s, 8px);
+    }
+
+    .bar-track {
+      display: flex;
+      align-items: flex-end;
       height: 44px;
-      margin-top: var(--wa-space-s, 8px);
     }
 
     .bar {
+      width: 100%;
       background: var(--wa-color-brand, #2f6feb);
       border-radius: var(--wa-radius-sm, 4px) var(--wa-radius-sm, 4px) 0 0;
       min-height: 2px;
@@ -207,20 +210,24 @@ export class WcAgingBars extends LitElement {
                   <wc-money .amount=${this.total} variant="plain"></wc-money>
                 </td>
               </tr>
+              <tr class="bars" aria-hidden="true">
+                ${heights.map(
+                  (height) => html`
+                    <td class="bar-cell">
+                      <div class="bar-track">
+                        <div
+                          class="bar"
+                          data-empty=${height === 0 ? 'true' : 'false'}
+                          style="height:${Math.max(height, 2)}%"
+                        ></div>
+                      </div>
+                    </td>
+                  `,
+                )}
+                <td></td>
+              </tr>
             </tbody>
           </table>
-        </div>
-
-        <div class="bars" aria-hidden="true">
-          ${heights.map(
-            (height) => html`
-              <div
-                class="bar"
-                data-empty=${height === 0 ? 'true' : 'false'}
-                style="height:${Math.max(height, 2)}%"
-              ></div>
-            `,
-          )}
         </div>
       </div>
     `;

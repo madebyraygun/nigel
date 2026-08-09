@@ -62,6 +62,32 @@ describe('wc-aging-bars', () => {
     expect(el.shadowRoot?.querySelectorAll('.bar')).toHaveLength(5);
   });
 
+  it('gives each bar the column of the bucket it measures', async () => {
+    const el = await mount();
+    const root = el.shadowRoot;
+    const headers = [...(root?.querySelectorAll('thead th') ?? [])].map((th) =>
+      th.textContent?.trim(),
+    );
+    const barCells = [...(root?.querySelectorAll('tr.bars > td') ?? [])];
+
+    // A bar aligns with its label only because they share a table column, so the
+    // rows have to stay the same width — a 5-cell bar row under a 6-column table
+    // slides every bar one bucket to the right.
+    expect(barCells).toHaveLength(headers.length);
+
+    barCells.forEach((cell, index) => {
+      const bar = cell.querySelector('.bar');
+      // The last column is Total, which has no bar of its own.
+      if (index === headers.length - 1) {
+        expect(headers[index]).toBe('Total');
+        expect(bar).toBeNull();
+        return;
+      }
+      expect(bar).not.toBeNull();
+      expect(headers[index]).toBe(BUCKETS[index]?.label);
+    });
+  });
+
   it('links to the full report only when given somewhere to go', async () => {
     const bare = await mount();
     expect(bare.shadowRoot?.querySelector('a')).toBeNull();
