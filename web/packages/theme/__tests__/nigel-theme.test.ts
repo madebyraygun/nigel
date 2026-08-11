@@ -55,6 +55,17 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
+  it('makes the bundled mono the primary face', () => {
+    expect(text).toMatch(/--wa-font-family-sans:\s*'IBM Plex Mono'/);
+  });
+
+  it('keeps a system mono behind it, so a missing face still aligns columns', () => {
+    // The fallback is deliberately mono rather than the old sans stack: if the
+    // bundled face fails, money columns should still line up.
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*ui-monospace/);
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*monospace;/);
+  });
+
   it('pins color-scheme when a mode is forced, so native widgets follow', () => {
     // :root declares `color-scheme: light dark`, which lets the UA pick
     // scrollbars, date pickers and form-control defaults from the OS. An

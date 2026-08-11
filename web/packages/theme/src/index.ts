@@ -5,6 +5,7 @@ export { nigelTheme } from './themes/index.js';
 export { NIGEL_PALETTE, gradientCss } from './tokens/gradient.js';
 export { colorCss, colorDarkCss } from './tokens/color.js';
 export { typographyCss } from './tokens/typography.js';
+export { fontFacesCss, FONT_FAMILY, BUNDLED_FONT_WEIGHTS } from './tokens/font-faces.js';
 export { spacingCss } from './tokens/spacing.js';
 export { radiusCss } from './tokens/radius.js';
 export { shadowCss } from './tokens/shadow.js';
