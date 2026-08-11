@@ -1,11 +1,11 @@
 ---
 id: TASK-70
 title: 'Invoicing: decide on a UNIQUE index for clients.name'
-status: In Progress
+status: Done
 assignee:
   - '@stream-1'
 created_date: '2026-08-08 08:21'
-updated_date: '2026-08-11 21:25'
+updated_date: '2026-08-11 22:12'
 labels:
   - invoicing
 dependencies: []

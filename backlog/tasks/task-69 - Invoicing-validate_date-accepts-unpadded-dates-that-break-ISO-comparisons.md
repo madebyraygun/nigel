@@ -1,11 +1,11 @@
 ---
 id: TASK-69
 title: 'Invoicing: validate_date accepts unpadded dates that break ISO comparisons'
-status: In Progress
+status: Done
 assignee:
   - '@stream-1'
 created_date: '2026-08-08 04:33'
-updated_date: '2026-08-11 21:24'
+updated_date: '2026-08-11 22:12'
 labels:
   - invoicing
   - bug
