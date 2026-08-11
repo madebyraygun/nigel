@@ -3,10 +3,11 @@ id: TASK-72
 title: >-
   Web UI: dialogs and form fields render unpainted — theme ::part() overrides
   never match
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-4'
 created_date: '2026-08-09 00:45'
-updated_date: '2026-08-11 20:02'
+updated_date: '2026-08-11 20:04'
 labels:
   - bug
   - web

@@ -77,6 +77,24 @@ Use Web Awesome `<wa-*>` primitives unless behavior demands custom. Wrappers
 read theme tokens and expose them as cascading variables; they never inline a
 brand value. Pure logic, state and service work is exempt.
 
+**A component that renders a `wa-*` primitive adopts `controlsCss`:**
+
+```ts
+import { controlsCss } from '@nigel/theme';
+
+static styles = [controlsCss, css`  …your rules…  `];
+```
+
+`controlsCss` is the theme's treatment for Web Awesome primitives — the dialog
+panel, field chrome, the brand gradient on primary buttons, the focus ring. It
+is adopted rather than loaded because a `::part()` rule reaches exactly one
+shadow boundary down, *from the tree the rule is written in*: a `wa-dialog`
+inside `wc-manager-dialog` inside a screen inside `nigel-app` is three
+boundaries from the document, so a document-level copy cannot even select the
+host. Order matters — `controlsCss` first, so your own rules can still override
+it. `controls-adoption.test.ts` in each package fails the build if you forget,
+and it applies to app screens as well as to `wc-*` components.
+
 ## The api seam
 
 `apps/app/src/api/` is the only module that talks to the server. This is the
@@ -360,21 +378,31 @@ captured data behind them.
 
 ### Printing
 
-A printed report is the artifact someone keeps, so `@media print` in
-`@nigel/theme`'s `print.ts` gives the page over to the report: shell chrome
-hidden, black on white, 1.5cm margins, table headings repeating across page
-breaks, and rows and panels kept from splitting.
+A printed report is the artifact someone keeps, so the page has to be the report
+and nothing else: black on white, 1.5cm margins, table headings repeating across
+page breaks, rows and panels kept from splitting, and no screen chrome.
 
-The recolouring works by redefining the tokens at `:root`, not by restyling
-components — custom properties inherit through shadow boundaries, which is the
-only thing that reaches inside every `wc-*` element at once. Hiding the shell
-needs the other route through the boundary, which is why `wc-app-shell` exposes
-`sidebar`, `header`, `banner` and `content` as parts.
+That is done in two places, because a stylesheet reaches a shadow root in only
+one way. **Recolouring** is `@media print` in `@nigel/theme`'s `print.ts`,
+redefining the tokens at `:root` — custom properties inherit through shadow
+boundaries, which is the only thing that reaches inside every `wc-*` element at
+once. **Hiding** cannot ride that channel: a rule that hides an element has to
+be in the tree that element is in, and everything in this app lives inside
+`nigel-app`'s shadow root. So each component hides its own chrome —
+`wc-app-shell` its header, banner and sidebar slot (and its `100vh`/
+`overflow: hidden` clamp, which would otherwise crop a long report to one
+screenful), and `wc-nav-sidebar`, `wc-toast`, `wc-export-links`, `wc-period-nav`
+and `wc-register-toolbar` themselves — while `controlsCss` carries the
+`wa-button`/`wa-select` and table rules into every root that hosts a control.
 
-`packages/theme/__tests__/print.test.ts` asserts the rules that carry the
-behaviour, and the build test proves they reach `dist/css/nigel.css`. What a
-printer actually does still needs eyes, so before changing this sheet, run
-through:
+`wc-app-shell` still exposes `sidebar`, `header`, `banner` and `content` as
+parts. They are cheap and `nigel-app` is one boundary away, but print no longer
+depends on them.
+
+`packages/theme/__tests__/print.test.ts` asserts what the document sheet carries
+and, as importantly, that it no longer carries the component selectors it could
+never match; each component's own test asserts it hides itself. What a printer
+actually does still needs eyes, so before changing any of this, run through:
 
 - [ ] `npm run dev`, open each of the eight reports, print preview
 - [ ] No sidebar, header, banner, period control or export buttons
