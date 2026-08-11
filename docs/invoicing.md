@@ -448,7 +448,51 @@ template literal, or a `{{ not a key }}` aside passes through as literal text.
 Checking happens when the template is loaded, which is why `nigel invoice
 template path` and `nigel invoice preview` both report the problem.
 
-The PDF is not customizable — it is built by code rather than from a template.
+## Customizing the invoice PDF
+
+The PDF has no template. It is drawn by code, and the one thing it takes from
+you is your business name:
+
+```
+Invoice #1248        <- the invoice number
+Bluepeak LLC           <- your business name
+Billed to: Acme Co
+Issued: 2026-08-04
+```
+
+That name is the `company_name` the rest of Nigel already knows — the same value
+`{{COMPANY}}` renders on the HTML page — so setting it once brands both:
+
+```bash
+nigel                          # dashboard -> p (Settings) -> Business name
+```
+
+It also becomes the PDF's document title (`Bluepeak LLC - Invoice #1248`), which is
+what a viewer puts in its window and what a browser suggests as a filename. Leave
+`company_name` unset and the document is headed by the invoice number alone —
+nothing is invented and no placeholder appears.
+
+Everything else about the PDF — typography, column widths, the order of the
+blocks — is fixed. Customize the HTML page instead; it is the artifact clients
+open, and the PDF rides along as the attachment.
+
+### Why there is no logo
+
+A logo would mean embedding an image, and neither route is worth its price:
+
+- **`printpdf`'s image support** (`embedded_images`) pulls in nine crates —
+  `image`, `png`, `gif`, `jpeg-decoder`, `tiff`, and friends — because its
+  `image` dependency hard-enables every format. There is no way to take PNG
+  alone. Its soft-mask path also sizes a transparent image's mask from the
+  image's *width*, so a wide logo — the shape a logo actually is — embeds
+  wrong; working around that means building the image object and splitting the
+  alpha channel by hand.
+- **HTML-to-PDF** (headless browser, Typst, WeasyPrint) would make the page and
+  the PDF one document, but Nigel ships as a single static binary with nothing
+  to install, and none of those three can be carried inside one.
+
+So the PDF stays text. Put your logo on the HTML page, where an `<img>` costs
+nothing.
 
 ## Recording payments
 
