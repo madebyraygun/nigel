@@ -88,7 +88,7 @@ pub fn register(
         to_date.as_deref(),
         &filters,
     )?;
-    let subtitle = register_subtitle(&register_range_label(&month, &y), &filters);
+    let subtitle = register_subtitle(&register_range_label(y, mm), &filters);
     Ok(with_header(
         &company,
         with_subtitle(&subtitle, format_register(&data)),

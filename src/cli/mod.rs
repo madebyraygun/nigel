@@ -555,7 +555,8 @@ pub struct RegisterFilterArgs {
 }
 
 impl RegisterFilterArgs {
-    /// Validate the selection against the database, resolving the category name to an id.
+    /// Validate the category name against the database, resolving it to an id;
+    /// the account passes through unvalidated.
     pub fn resolve(
         &self,
         conn: &rusqlite::Connection,

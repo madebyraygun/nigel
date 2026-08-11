@@ -599,6 +599,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_register_export_refuses_the_cli_only_category_filters() {
+        // A download the caller believes is filtered must not quietly carry the
+        // whole register; the parameter is refused, matching /api/reports.
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = get_json(
+            &app,
+            "/api/exports/register?format=text&category=Travel",
+            &token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("category"),
+            "message should name the parameter: {body}"
+        );
+
+        let (status, _) = get_json(
+            &app,
+            "/api/exports/register?format=text&uncategorized=true",
+            &token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn a_locked_database_refuses_every_export() {
         let (_dir, db_path) = seeded_db();
         encrypt(&db_path);

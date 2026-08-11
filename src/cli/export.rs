@@ -171,7 +171,7 @@ pub fn register(
         &filters,
     )?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let subtitle = register_subtitle(&register_range_label(&month, &y), &filters);
+    let subtitle = register_subtitle(&register_range_label(y, mm), &filters);
     let bytes = crate::pdf::render_register(&report, &company, &subtitle)?;
     let path = output
         .map(PathBuf::from)

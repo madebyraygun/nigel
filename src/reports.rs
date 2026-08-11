@@ -444,12 +444,19 @@ pub struct RegisterReport {
 /// Which categories a register selection covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CategorySelection {
-    Named { id: i64, name: String },
+    /// `name` is the display name of the category row `id` refers to;
+    /// construct via `RegisterFilters::resolve` so the pair cannot drift.
+    Named {
+        id: i64,
+        name: String,
+    },
     Uncategorized,
 }
 
-/// Non-date filters applied to a register selection. Carries the display names so
-/// report headers and export filenames can describe the selection.
+/// Non-date filters applied to a register selection. Carries the display names
+/// so report headers can describe the selection. The category was validated at
+/// construction; the account deliberately was not — an unknown account is an
+/// empty register, matching what `--account` has always done.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegisterFilters {
     pub account: Option<String>,
@@ -457,7 +464,12 @@ pub struct RegisterFilters {
 }
 
 impl RegisterFilters {
-    /// Resolve raw CLI arguments, validating the category name against the database.
+    /// Resolve raw CLI arguments, validating the category name against the
+    /// database and resolving it to an id; the account passes through
+    /// unvalidated. Only active categories match: an inactive one has zero
+    /// transactions by construction (`delete_blocker` refuses otherwise), and
+    /// its name may since have been reused by a live category — binding to the
+    /// dead row would silently answer an empty register for a name with data.
     pub fn resolve(
         conn: &Connection,
         account: Option<String>,
@@ -465,9 +477,16 @@ impl RegisterFilters {
         uncategorized: bool,
     ) -> Result<Self> {
         let category = match (category, uncategorized) {
-            (Some(name), _) => {
+            (Some(_), true) => {
+                // Clap refuses this combination at the CLI; a programmatic
+                // caller gets the same answer rather than a silent preference.
+                return Err(crate::error::NigelError::Invalid(
+                    "--category and --uncategorized are mutually exclusive".into(),
+                ));
+            }
+            (Some(name), false) => {
                 let id = match conn.query_row(
-                    "SELECT id FROM categories WHERE name = ?1",
+                    "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
                     [&name],
                     |row| row.get(0),
                 ) {
@@ -505,22 +524,34 @@ impl RegisterFilters {
 /// Filename-safe fragments describing a register selection, used to name default
 /// exports. Takes the raw arguments so callers can name the file without first
 /// opening the database to validate them.
+///
+/// A filter whose name slugs to nothing (all punctuation, a non-Latin script)
+/// still contributes a `filtered` fragment: dropping it would give a filtered
+/// export the unfiltered register's default filename, silently overwriting a
+/// same-day unfiltered export.
 pub fn register_slug_parts(
     account: Option<&str>,
     category: Option<&str>,
     uncategorized: bool,
 ) -> Vec<String> {
+    let slug_or_placeholder = |name: &str| {
+        let slug = crate::fmt::slugify(name);
+        if slug.is_empty() {
+            "filtered".to_string()
+        } else {
+            slug
+        }
+    };
     let mut parts = Vec::new();
     if let Some(account) = account {
-        parts.push(crate::fmt::slugify(account));
+        parts.push(slug_or_placeholder(account));
     }
     if let Some(category) = category {
-        parts.push(crate::fmt::slugify(category));
+        parts.push(slug_or_placeholder(category));
     }
     if uncategorized {
         parts.push("uncategorized".to_string());
     }
-    parts.retain(|p| !p.is_empty());
     parts
 }
 
@@ -1583,8 +1614,104 @@ mod tests {
             vec!["uncategorized".to_string()]
         );
         assert!(register_slug_parts(None, None, false).is_empty());
-        // A name that slugifies to nothing must not leave a bare separator behind.
-        assert!(register_slug_parts(Some("!!!"), None, false).is_empty());
+        // A name that slugifies to nothing still marks the export as filtered:
+        // dropping it would hand this export the unfiltered register's default
+        // filename, silently overwriting a same-day unfiltered export.
+        assert_eq!(
+            register_slug_parts(Some("!!!"), None, false),
+            vec!["filtered".to_string()]
+        );
+        assert_eq!(
+            register_slug_parts(Some("現金"), Some("Rent"), false),
+            vec!["filtered".to_string(), "rent".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_register_uncategorized_filter_composes_with_account() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        conn.execute(
+            "INSERT INTO accounts (name, account_type) VALUES ('Other', 'checking')",
+            [],
+        )
+        .unwrap();
+        let other = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-01', 'OTHER MYSTERY', -5.0)",
+            rusqlite::params![other],
+        )
+        .unwrap();
+        let acct: i64 = conn
+            .query_row("SELECT id FROM accounts WHERE name = 'Test'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-02', 'TEST MYSTERY', -7.0)",
+            rusqlite::params![acct],
+        )
+        .unwrap();
+
+        let filters = RegisterFilters::resolve(&conn, Some("Test".into()), None, true).unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].description, "TEST MYSTERY");
+    }
+
+    #[test]
+    fn test_register_filters_reject_category_and_uncategorized_together() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        // Clap refuses this combination at the CLI; the data layer must give a
+        // programmatic caller the same answer, not silently prefer one filter.
+        let err = RegisterFilters::resolve(&conn, None, Some("Rent".into()), true).unwrap_err();
+        assert!(
+            matches!(err, crate::error::NigelError::Invalid(_)),
+            "expected Invalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_register_filters_match_exact_case_and_only_active_categories() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+
+        // The name match is exact, like account matching.
+        let err =
+            RegisterFilters::resolve(&conn, None, Some("software & subscriptions".into()), false)
+                .unwrap_err();
+        assert!(matches!(err, crate::error::NigelError::UnknownCategory(_)));
+
+        // An inactive category no longer matches: it has zero transactions by
+        // construction, and its name may since have been reused. With a dead
+        // row shadowing a live one, the filter must bind to the live id.
+        conn.execute(
+            "INSERT INTO categories (name, category_type, is_active) \
+             VALUES ('Ghost', 'expense', 0)",
+            [],
+        )
+        .unwrap();
+        let err = RegisterFilters::resolve(&conn, None, Some("Ghost".into()), false).unwrap_err();
+        assert!(matches!(err, crate::error::NigelError::UnknownCategory(_)));
+
+        conn.execute(
+            "INSERT INTO categories (name, category_type, is_active) \
+             VALUES ('Ghost', 'expense', 1)",
+            [],
+        )
+        .unwrap();
+        let live = conn.last_insert_rowid();
+        let filters = RegisterFilters::resolve(&conn, None, Some("Ghost".into()), false).unwrap();
+        assert_eq!(
+            filters.category,
+            Some(CategorySelection::Named {
+                id: live,
+                name: "Ghost".into()
+            })
+        );
     }
 
     #[test]

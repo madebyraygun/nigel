@@ -564,19 +564,34 @@ fn report_register_uncategorized_filter() {
     let env = TestEnv::new();
     env.init_and_demo();
 
-    // Demo data is fully categorized; strip one row's category to have something to find.
+    // Demo data is fully categorized; strip one row's category to have
+    // something to find. The newest row is dated near today, so it falls
+    // inside register_stdout's current-year filter.
     env.db()
         .execute(
             "UPDATE transactions SET category_id = NULL \
-             WHERE id = (SELECT MIN(id) FROM transactions)",
+             WHERE id = (SELECT MAX(id) FROM transactions)",
             [],
         )
         .expect("failed to uncategorize a transaction");
+    let description: String = env
+        .db()
+        .query_row(
+            "SELECT description FROM transactions WHERE category_id IS NULL",
+            [],
+            |r| r.get(0),
+        )
+        .expect("failed to read the uncategorized row back");
 
     let out = register_stdout(&env, &["--uncategorized"]);
     assert!(
         out.contains("uncategorized"),
         "header should mark the uncategorized selection:\n{out}"
+    );
+    assert!(
+        out.contains(&description),
+        "the uncategorized transaction should appear (an empty register would \
+         also pass the negative assertions):\n{out}"
     );
     assert!(
         !out.contains("Software & Subscriptions"),
@@ -668,6 +683,41 @@ fn report_register_default_export_filename_encodes_filters() {
         .assert()
         .success();
     assert!(explicit.exists());
+}
+
+/// The default export format is PDF, which is separate wiring from the text
+/// path: `dispatch_pdf` threads `export_basename()` through `export::register`
+/// and the subtitle through `render_register`. A broken passthrough there
+/// would ship silently in the default flow if only `--format text` is tested.
+#[cfg(feature = "pdf")]
+#[test]
+fn report_register_default_pdf_export_encodes_filters() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+
+    let year = chrono::Local::now().format("%Y").to_string();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    env.cmd()
+        .args([
+            "report",
+            "register",
+            "--year",
+            &year,
+            "--category",
+            "Software & Subscriptions",
+            "--mode",
+            "export",
+        ])
+        .assert()
+        .success();
+
+    let expected = env
+        .data_dir()
+        .join("exports")
+        .join(format!("register-software-subscriptions-{date}.pdf"));
+    let pdf = std::fs::read(&expected)
+        .unwrap_or_else(|_| panic!("expected filtered pdf at {}", expected.display()));
+    assert!(pdf.starts_with(b"%PDF"));
 }
 
 #[test]

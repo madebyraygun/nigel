@@ -10,16 +10,17 @@ use crate::error::Result;
 use super::ReportCommands;
 
 /// The period label for a register: "2026-03", "FY 2026", or "All dates" when
-/// no date filter was given. The register is the one report whose unfiltered
-/// selection spans every year in the database rather than defaulting to the
-/// current one, which is why this does not reuse `reports::date_range_label`.
-pub(crate) fn register_range_label(month: &Option<String>, year: &Option<i32>) -> String {
-    if let Some(m) = month {
-        return m.clone();
-    }
-    match year {
-        Some(y) => format!("FY {y}"),
-        None => "All dates".to_string(),
+/// no date filter was given. An unfiltered register shows every transaction,
+/// so its label must say so — `reports::date_range_label` instead labels a
+/// missing year as the current FY, matching the other report views'
+/// current-year default. Built from the parsed values `get_register` is
+/// actually asked with, so a `--month` that failed to parse (and therefore
+/// filtered nothing) is labelled "All dates", never echoed as a period.
+pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
+    match (year, month) {
+        (Some(y), Some(m)) => format!("{y}-{m:02}"),
+        (Some(y), None) => format!("FY {y}"),
+        (None, _) => "All dates".to_string(),
     }
 }
 
@@ -231,17 +232,12 @@ mod tests {
 
     #[test]
     fn register_range_label_variants() {
-        assert_eq!(
-            register_range_label(&Some("2025-03".into()), &None),
-            "2025-03"
-        );
-        assert_eq!(register_range_label(&None, &Some(2025)), "FY 2025");
-        assert_eq!(register_range_label(&None, &None), "All dates");
-        // An explicit month wins over a year.
-        assert_eq!(
-            register_range_label(&Some("2025-03".into()), &Some(2024)),
-            "2025-03"
-        );
+        assert_eq!(register_range_label(Some(2025), Some(3)), "2025-03");
+        assert_eq!(register_range_label(Some(2025), None), "FY 2025");
+        // No date filter — including a `--month` that failed to parse and so
+        // filtered nothing — labels the selection the query actually ran.
+        assert_eq!(register_range_label(None, None), "All dates");
+        assert_eq!(register_range_label(None, Some(3)), "All dates");
     }
 
     #[test]

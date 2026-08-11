@@ -979,12 +979,6 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
         &filters,
     )?;
 
-    if data.rows.is_empty() {
-        println!("No transactions found.");
-        return Ok(());
-    }
-
-    let categories = crate::reviewer::get_categories(&conn).unwrap_or_default();
     let mut parts = Vec::new();
     if let Some(y) = y {
         parts.push(format!("year: {y}"));
@@ -995,6 +989,19 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
     } else {
         parts.join(", ")
     };
+
+    if data.rows.is_empty() {
+        // Name the filters, so an empty selection reads as "nothing matched
+        // this" rather than "the books are empty".
+        if parts.is_empty() {
+            println!("No transactions found.");
+        } else {
+            println!("No transactions found ({filter_desc}).");
+        }
+        return Ok(());
+    }
+
+    let categories = crate::reviewer::get_categories(&conn).unwrap_or_default();
 
     let mut browser =
         crate::browser::RegisterBrowser::new(data.rows, data.total, filter_desc, categories);
