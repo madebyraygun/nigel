@@ -117,4 +117,4 @@ describe('wc-account-form', () => {
 
 describePreviewA11y(preview);
 
-describeControlsAdoption(WcAccountForm, 'wa-input::part(base)', 'wa-select::part(base)');
+describeControlsAdoption(WcAccountForm, ':focus-visible');

@@ -7,6 +7,7 @@ import { radiusCss } from '../tokens/radius.js';
 import { shadowCss } from '../tokens/shadow.js';
 import { motionCss } from '../tokens/motion.js';
 import { fontFacesCss } from '../tokens/font-faces.js';
+import { waContractCss } from '../tokens/wa-contract.js';
 import { printCss } from '../print.js';
 
 /**
@@ -35,6 +36,7 @@ export const nigelTheme = css`
   ${radiusCss}
   ${shadowCss}
   ${motionCss}
+  ${waContractCss}
   ${colorDarkCss}
   ${printCss}
 `;

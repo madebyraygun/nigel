@@ -172,4 +172,4 @@ describe('wc-rule-form', () => {
 
 describePreviewA11y(preview);
 
-describeControlsAdoption(WcRuleForm, 'wa-input::part(base)', 'wa-select::part(base)');
+describeControlsAdoption(WcRuleForm, ':focus-visible');

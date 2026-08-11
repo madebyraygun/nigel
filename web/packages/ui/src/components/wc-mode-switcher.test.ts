@@ -126,10 +126,6 @@ describe('wc-mode-switcher', () => {
 
 describePreviewA11y(preview);
 
-describeControlsAdoption(
-  WcModeSwitcher,
-  'wa-radio-group::part(form-control-label)',
-  ':focus-visible',
-);
+describeControlsAdoption(WcModeSwitcher, ':focus-visible');
 
 describePrintHiding(WcModeSwitcher, ':host');

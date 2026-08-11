@@ -93,4 +93,4 @@ describe('wc-client-form', () => {
 
 describePreviewA11y(preview);
 
-describeControlsAdoption(WcClientForm, 'wa-input::part(base)', 'wa-textarea::part(base)');
+describeControlsAdoption(WcClientForm, ':focus-visible');
