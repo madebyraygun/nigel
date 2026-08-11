@@ -4,11 +4,15 @@ title: 'Invoicing: outgoing email needs a display name, a from address and a rep
 status: To Do
 assignee: []
 created_date: '2026-08-10 21:48'
+updated_date: '2026-08-11 20:03'
 labels:
   - enhancement
   - invoicing
   - email
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-80-email-envelope-design.md
+  - docs/superpowers/plans/2026-08-11-task-80-email-envelope.md
 priority: medium
 ---
 

@@ -4,12 +4,16 @@ title: 'Invoicing: client delete on the CLI and the TUI, refused while invoices 
 status: To Do
 assignee: []
 created_date: '2026-08-09 00:46'
+updated_date: '2026-08-11 20:03'
 labels:
   - enhancement
   - invoicing
   - cli
   - tui
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-74-73-client-lifecycle-design.md
+  - docs/superpowers/plans/2026-08-11-task-74-73-client-lifecycle.md
 priority: medium
 ---
 

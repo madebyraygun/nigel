@@ -4,11 +4,15 @@ title: 'Invoicing: a client needs more than one email address'
 status: To Do
 assignee: []
 created_date: '2026-08-10 19:19'
+updated_date: '2026-08-11 20:03'
 labels:
   - enhancement
   - invoicing
   - schema
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-77-client-contacts-design.md
+  - docs/superpowers/plans/2026-08-11-task-77-client-contacts.md
 priority: medium
 ---
 
