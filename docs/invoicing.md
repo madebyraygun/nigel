@@ -262,9 +262,41 @@ pay, and edit. An invoice with payments recorded against it cannot be voided —
 cancel the money side by recording the offsetting movement in the transaction
 register, which is where cash actually lives.
 
-Voiding does **not** tear down a published invoice: the R2 page and PDF stay
-served and the Stripe payment link stays chargeable, so the command warns you to
-deactivate the link in Stripe yourself.
+### What void takes down
+
+A cancelled invoice with a live payment link is the one way voiding can cost you
+money: a client who pays through it pays into an invoice `sync` no longer polls,
+so the payment goes unrecorded. Void therefore tears down what the invoice put
+out in the world, in this order and always **after** the cancellation is
+committed:
+
+1. **The Stripe payment link** is deactivated (`active=false`; Stripe has no
+   delete for payment links). The URL keeps resolving and stops taking money.
+2. **The published page** is replaced with a short "This invoice has been
+   voided" notice. The PDF beside it is left alone and the address keeps
+   working — the document the client was sent is still the document they were
+   sent.
+
+Neither of those can fail the void. The invoice is cancelled in your books
+whatever Stripe and R2 answer; a failure prints a warning naming what is still
+live, with the payment link's own URL so you can deactivate it by hand.
+
+What runs depends on what is configured, and nothing is required — void is the
+one invoicing command that works on an installation with no keys at all:
+
+| The invoice has | Configured | What void does |
+| --- | --- | --- |
+| no payment link | anything | nothing, silently |
+| a payment link | `stripe_secret_key` | deactivates it; a failure warns and prints the URL |
+| a payment link | no Stripe key | warns and prints the URL — the link is live either way |
+| nothing published | anything | nothing, silently |
+| a published page | the four `r2_*` keys and `public_base_url` | replaces the page; a failure warns |
+| a published page | R2 incomplete or unset | warns: the page stays live and still offers to take payment |
+
+So voiding an ordinary draft says nothing beyond `Voided invoice #1248.`, and
+every extra line you do see names something that is still out there. The same
+sentences appear in the dashboard's invoice screen and on the void response in
+the web UI.
 
 ## Sending
 
@@ -456,7 +488,51 @@ template literal, or a `{{ not a key }}` aside passes through as literal text.
 Checking happens when the template is loaded, which is why `nigel invoice
 template path` and `nigel invoice preview` both report the problem.
 
-The PDF is not customizable — it is built by code rather than from a template.
+## Customizing the invoice PDF
+
+The PDF has no template. It is drawn by code, and the one thing it takes from
+you is your business name:
+
+```
+Invoice #1248        <- the invoice number
+Bluepeak LLC           <- your business name
+Billed to: Acme Co
+Issued: 2026-08-04
+```
+
+That name is the `company_name` the rest of Nigel already knows — the same value
+`{{COMPANY}}` renders on the HTML page — so setting it once brands both:
+
+```bash
+nigel                          # dashboard -> p (Settings) -> Business name
+```
+
+It also becomes the PDF's document title (`Bluepeak LLC - Invoice #1248`), which is
+what a viewer puts in its window and what a browser suggests as a filename. Leave
+`company_name` unset and the document is headed by the invoice number alone —
+nothing is invented and no placeholder appears.
+
+Everything else about the PDF — typography, column widths, the order of the
+blocks — is fixed. Customize the HTML page instead; it is the artifact clients
+open, and the PDF rides along as the attachment.
+
+### Why there is no logo
+
+A logo would mean embedding an image, and neither route is worth its price:
+
+- **`printpdf`'s image support** (`embedded_images`) pulls in nine crates —
+  `image`, `png`, `gif`, `jpeg-decoder`, `tiff`, and friends — because its
+  `image` dependency hard-enables every format. There is no way to take PNG
+  alone. Its soft-mask path also sizes a transparent image's mask from the
+  image's *width*, so a wide logo — the shape a logo actually is — embeds
+  wrong; working around that means building the image object and splitting the
+  alpha channel by hand.
+- **HTML-to-PDF** (headless browser, Typst, WeasyPrint) would make the page and
+  the PDF one document, but Nigel ships as a single static binary with nothing
+  to install, and none of those three can be carried inside one.
+
+So the PDF stays text. Put your logo on the HTML page, where an `<img>` costs
+nothing.
 
 ## Recording payments
 

@@ -72,6 +72,7 @@ import {
   type UnlockResponse,
   type UpdateAppSettingsRequest,
   type UploadResponse,
+  type VoidResult,
 } from './types.js';
 
 /**
@@ -337,7 +338,14 @@ export interface ApiClient {
   createInvoice(input: NewInvoiceRequest): Promise<InvoiceDetail>;
   /** Draft-only, and `items` replaces the whole list when it is present. */
   updateInvoice(number: number, input: InvoicePatch): Promise<InvoiceDetail>;
-  voidInvoice(number: number): Promise<InvoiceDetail>;
+  /**
+   * Cancel an invoice, and take down what it published.
+   *
+   * The answer is the refreshed detail plus anything the teardown could not
+   * reach — a Stripe link still live, a page still up. Those are a normal 200:
+   * the invoice is void either way, and failing the request would say otherwise.
+   */
+  voidInvoice(number: number): Promise<VoidResult>;
   payInvoice(number: number, input: PayInvoiceRequest): Promise<InvoiceDetail>;
   /**
    * Create the Stripe link, publish, email, and record — in one blocking
@@ -692,8 +700,8 @@ export class FetchApiClient implements ApiClient {
     return this.request<InvoiceDetail>('PATCH', `/invoices/${number}`, input);
   }
 
-  voidInvoice(number: number): Promise<InvoiceDetail> {
-    return this.request<InvoiceDetail>('POST', `/invoices/${number}/void`, {});
+  voidInvoice(number: number): Promise<VoidResult> {
+    return this.request<VoidResult>('POST', `/invoices/${number}/void`, {});
   }
 
   payInvoice(number: number, input: PayInvoiceRequest): Promise<InvoiceDetail> {

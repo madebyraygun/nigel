@@ -77,6 +77,7 @@ import type {
   UnlockResponse,
   UpdateAppSettingsRequest,
   UploadResponse,
+  VoidResult,
 } from '../api/types.js';
 import { UPLOAD_NOT_FOUND } from '../api/types.js';
 import { ApiError } from '../api/client.js';
@@ -940,6 +941,8 @@ export class FakeApiClient implements ApiClient {
   createInvoiceError: Error | null = null;
   updateInvoiceError: Error | null = null;
   voidInvoiceError: Error | null = null;
+  /** What a void could not take down, as the route reports it. */
+  voidTeardown: { paymentLinkUrl?: string; teardownWarnings?: string[] } = {};
   payInvoiceError: Error | null = null;
   sendInvoiceError: Error | null = null;
   syncError: Error | null = null;
@@ -1142,7 +1145,7 @@ export class FakeApiClient implements ApiClient {
     return updated;
   }
 
-  async voidInvoice(number: number): Promise<InvoiceDetail> {
+  async voidInvoice(number: number): Promise<VoidResult> {
     this.calls.push(`voidInvoice:${number}`);
     if (this.voidInvoiceError) throw this.voidInvoiceError;
 
@@ -1156,7 +1159,7 @@ export class FakeApiClient implements ApiClient {
       canPay: false,
     };
     this.invoiceDetails[number] = updated;
-    return updated;
+    return { ...updated, ...this.voidTeardown };
   }
 
   async payInvoice(number: number, input: PayInvoiceRequest): Promise<InvoiceDetail> {

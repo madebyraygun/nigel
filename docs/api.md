@@ -495,7 +495,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/clients/:id` | `DELETE` | — | `{ id, deleted }` |
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
-| `/api/invoices/:number/void` | `POST` | — | `InvoiceDetail` |
+| `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `InvoiceDetail` |
 | `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
@@ -712,6 +712,24 @@ comparison — see the conflict table below.
 the status derive from it; `void` is terminal, so the returned detail has all
 four `can*` flags false.
 
+It also **tears down what the invoice published** — deactivating the Stripe
+payment link and replacing the published page with a voided notice — which makes
+it a blocking request like `send`, bounded by the same per-call timeouts. The
+teardown is best-effort and cannot change the answer: the invoice is void
+whatever Stripe and R2 say. What a failure adds is data. `VoidResult` is the
+detail flattened, exactly as before, plus two fields that are **absent** when
+there is nothing to report:
+
+| Field | Meaning |
+| --- | --- |
+| `paymentLinkUrl` | A Stripe payment link that is *still live* — deactivation was refused, or no `stripe_secret_key` is configured. Deactivate it by hand |
+| `teardownWarnings` | The sentences `nigel invoice void` prints, verbatim, naming everything still live |
+
+A void that could not reach Stripe is therefore a `200`, not a `502`: the
+cancellation happened, and a failed request would both misdescribe it and
+withhold the URL somebody has to open. Which half runs depends on what is
+configured — see the matrix in `docs/invoicing.md`.
+
 ```json
 { "date": "2026-03-14", "amount": 500.0, "method": "ach" }
 ```
@@ -723,9 +741,11 @@ before the insert, so an unknown one is a `400` naming the set rather than a
 constraint violation surfacing as a `500`. A zero, negative or non-finite
 `amount` is `400`.
 
-Both answer the refreshed `InvoiceDetail`, as every invoice write does: the
-status is derived by `refresh_status` on almost all of them, so a response
-echoing only the field that was sent would be showing the old one.
+Both answer the refreshed invoice, as every invoice write does: the status is
+derived by `refresh_status` on almost all of them, so a response echoing only
+the field that was sent would be showing the old one. `pay` answers an
+`InvoiceDetail`; `void` answers that same detail flattened inside a
+`VoidResult`, so it reads as one everywhere an `InvoiceDetail` is expected.
 
 Dates on these routes follow the API's own rule, not the CLI's: zero-padded
 `YYYY-MM-DD`, so `2026-4-1` is a `400` here where `nigel invoice pay` accepts it.

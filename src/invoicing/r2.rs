@@ -62,6 +62,15 @@ impl AssetPublisher for R2Publisher {
         self.put(&object_key(token, "invoice.pdf"), pdf, "application/pdf")?;
         Ok(public_url(&self.public_base_url, token))
     }
+
+    fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
+        self.put(
+            &object_key(token, "index.html"),
+            html,
+            "text/html; charset=utf-8",
+        )?;
+        Ok(public_url(&self.public_base_url, token))
+    }
 }
 
 #[cfg(test)]

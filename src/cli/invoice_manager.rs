@@ -8,7 +8,9 @@ use ratatui::{
 };
 use rusqlite::Connection;
 
-use crate::cli::invoice::{build_clients, company_name, PUBLISHED_VOID_WARNING};
+use crate::cli::invoice::{
+    build_clients, company_name, optional_gateway, optional_publisher, PUBLISHED_VOID_NOTICE,
+};
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
 use crate::invoicing::clients::{get_client, list_clients};
@@ -16,10 +18,11 @@ use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{
     create_invoice, ensure_not_void, ensure_voidable, get_invoice, is_void, line_items,
     list_invoices, paid_amount, payment_amount, payments, record_payment, validate_currency,
-    validate_date, validate_items, void_invoice, InvoiceListRow, NewLineItem,
+    validate_date, validate_items, InvoiceListRow, NewLineItem,
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::send_invoice;
+use crate::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 use crate::tui::{FOOTER_STYLE, GREEN, HEADER_STYLE};
@@ -40,6 +43,11 @@ enum Screen {
     ConfirmVoid,
     ConfirmSend,
     Sending,
+    /// Void, once it has been confirmed. Like `Sending`, this is a frame the
+    /// controller paints before the work runs: voiding a published invoice
+    /// deactivates its Stripe payment link and republishes its page, and those
+    /// are network calls on the same thread that reads keys.
+    Voiding,
     ActionResult {
         title: String,
         lines: Vec<String>,
@@ -459,6 +467,7 @@ impl InvoiceManager {
             Screen::Detail | Screen::ConfirmVoid | Screen::ConfirmSend => self.draw_detail(frame),
             Screen::PayForm(form) => self.draw_pay_form(frame, form),
             Screen::Sending => self.draw_sending(frame),
+            Screen::Voiding => self.draw_voiding(frame),
             Screen::ActionResult {
                 title,
                 lines,
@@ -480,8 +489,15 @@ impl InvoiceManager {
             Line::from(Span::styled(format!(" {title}"), title_style)),
             Line::from(""),
         ];
+        // Wrapped, because what lands here is a sentence from somewhere else —
+        // an upstream's refusal, or a payment link an operator has to open. A
+        // truncated URL is a URL nobody can use.
         for line in body {
-            lines.push(Line::from(format!("   {line}")));
+            let (wrapped, _) =
+                crate::tui::wrap_text(line, (content_area.width as usize).max(20) - 6);
+            for wrapped_line in wrapped.lines() {
+                lines.push(Line::from(format!("   {wrapped_line}")));
+            }
         }
         frame.render_widget(Paragraph::new(lines), content_area);
         frame.render_widget(Paragraph::new(" Esc=back").style(FOOTER_STYLE), hints_area);
@@ -630,6 +646,36 @@ impl InvoiceManager {
             _ => " Tab=field  Ins/F2=add line  Enter=create  Esc=cancel",
         };
         frame.render_widget(Paragraph::new(hint).style(FOOTER_STYLE), hints_area);
+    }
+
+    /// The void counterpart of S7, and only ever painted for an invoice with
+    /// something live behind it: `begin_void` runs a teardown-free void inline
+    /// and never enters this state, so the two calls this frame names are calls
+    /// that are actually about to be made.
+    fn draw_voiding(&self, frame: &mut Frame) {
+        let (content_area, hints_area) = self.draw_chrome(frame);
+        let Some(detail) = &self.detail else {
+            return;
+        };
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Voiding invoice #{}", detail.invoice.number),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("   Cancelling it, deactivating its Stripe payment link and replacing"),
+            Line::from("   its published page."),
+            Line::from(""),
+            Line::from("   This can take a few seconds. Nigel is not reading keys until it"),
+            Line::from("   finishes."),
+        ];
+        frame.render_widget(Paragraph::new(lines), content_area);
+        frame.render_widget(
+            Paragraph::new(" Working\u{2026}").style(FOOTER_STYLE),
+            hints_area,
+        );
     }
 
     fn draw_pay_form(&self, frame: &mut Frame, form: &PayForm) {
@@ -967,8 +1013,8 @@ impl InvoiceManager {
                 InvoiceAction::Continue
             }
             // The screen is painted and then blocks; no key is read until the
-            // send returns.
-            Screen::Sending => InvoiceAction::Continue,
+            // work returns.
+            Screen::Sending | Screen::Voiding => InvoiceAction::Continue,
         }
     }
 
@@ -1018,8 +1064,9 @@ impl InvoiceManager {
         self.detail_scroll = usize::MAX;
     }
 
-    /// Run the send the confirmation authorised. The controller calls this
-    /// after painting S7, because the work blocks the whole loop.
+    /// Run the work the confirmation authorised. The controller calls this
+    /// after painting S7 or its void counterpart, because the work blocks the
+    /// whole loop.
     pub fn perform_pending(&mut self, conn: &Connection) {
         self.perform_pending_with(
             conn,
@@ -1030,6 +1077,9 @@ impl InvoiceManager {
         drain_buffered_input();
     }
 
+    /// The screen is what says which work is pending: both blocking states are
+    /// entered by the key handler that returned `Perform`, so the two cannot get
+    /// out of step with a flag kept beside them.
     pub(crate) fn perform_pending_with(
         &mut self,
         conn: &Connection,
@@ -1040,6 +1090,19 @@ impl InvoiceManager {
         if self.detail.is_none() {
             return;
         }
+        match self.screen {
+            Screen::Voiding => self.perform_pending_void(conn, today, cfg),
+            _ => self.perform_pending_send(conn, today, cfg, data_dir),
+        }
+    }
+
+    fn perform_pending_send(
+        &mut self,
+        conn: &Connection,
+        today: &str,
+        cfg: InvoicingConfig,
+        data_dir: &std::path::Path,
+    ) {
         let prepared = load_template(data_dir).and_then(|template| {
             let clients = build_clients(cfg)?;
             Ok((template, clients))
@@ -1056,6 +1119,18 @@ impl InvoiceManager {
             }
             Err(e) => self.finish_send(conn, Err(e)),
         }
+    }
+
+    /// Void needs no template and refuses nothing for want of a key: it takes
+    /// whichever clients this installation has and reports what it could not
+    /// reach.
+    fn perform_pending_void(&mut self, conn: &Connection, today: &str, cfg: InvoicingConfig) {
+        self.perform_void(
+            conn,
+            today,
+            optional_gateway(&cfg).as_ref(),
+            optional_publisher(&cfg).as_ref(),
+        );
     }
 
     /// The testable half: the same orchestration against injected clients.
@@ -1158,24 +1233,71 @@ impl InvoiceManager {
 
     fn handle_void_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
         match code {
-            KeyCode::Char('y') => self.do_void(conn, &crate::cli::today()),
-            KeyCode::Char('n') | KeyCode::Esc => self.screen = Screen::Detail,
-            _ => {}
+            KeyCode::Char('y') => self.begin_void(conn),
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.screen = Screen::Detail;
+                InvoiceAction::Continue
+            }
+            _ => InvoiceAction::Continue,
         }
-        InvoiceAction::Continue
     }
 
-    fn do_void(&mut self, conn: &Connection, today: &str) {
+    /// Run the void the confirmation authorised, or hand it to the controller.
+    ///
+    /// An invoice with nothing published and no payment link reaches no network
+    /// whatever is configured, so it runs here: it is the database write it
+    /// always was, and freezing the terminal behind a frame promising two calls
+    /// it will not make would be a lie told at the user's expense. Anything with
+    /// something live goes the long way round, like send.
+    fn begin_void(&mut self, conn: &Connection) -> InvoiceAction {
+        let Some(detail) = &self.detail else {
+            return InvoiceAction::Continue;
+        };
+        if !has_teardown_work(&detail.invoice) {
+            self.perform_void(
+                conn,
+                &crate::cli::today(),
+                None::<&crate::invoicing::stripe::StripeClient>,
+                None::<&crate::invoicing::r2::R2Publisher>,
+            );
+            return InvoiceAction::Continue;
+        }
+        self.screen = Screen::Voiding;
+        InvoiceAction::Perform
+    }
+
+    /// The testable half of void: the same orchestration against injected
+    /// clients, either of which may be absent on an installation that has not
+    /// configured it.
+    pub(crate) fn perform_void<G: PaymentGateway, P: AssetPublisher>(
+        &mut self,
+        conn: &Connection,
+        today: &str,
+        gateway: Option<&G>,
+        publisher: Option<&P>,
+    ) {
         let Some(detail) = &self.detail else {
             return;
         };
         let (invoice_id, number) = (detail.invoice.id, detail.invoice.number);
         // The date is the fact refresh_status derives `void` from, so it is
         // today's, never an empty string.
-        match void_invoice(conn, invoice_id, today) {
-            Ok(()) => {
+        match void_invoice_with_teardown(conn, invoice_id, today, gateway, publisher) {
+            Ok(outcome) => {
                 self.after_mutation(conn, invoice_id);
-                self.set_status(format!("Voided invoice #{number}."));
+                let warnings = outcome.warnings();
+                if warnings.is_empty() {
+                    self.set_status(format!("Voided invoice #{number}."));
+                    return;
+                }
+                // A live payment link and its URL do not fit on the status line,
+                // and truncating the one address an operator has to open would
+                // be worse than a screen they dismiss with Esc.
+                self.screen = Screen::ActionResult {
+                    title: format!("Voided invoice #{number}"),
+                    lines: warnings,
+                    is_error: false,
+                };
             }
             Err(e) => {
                 self.screen = Screen::Detail;
@@ -1465,14 +1587,15 @@ fn drain_buffered_input() {
     }
 }
 
-/// What void does not undo, wrapped to the screen — the sentence
-/// `nigel invoice void` prints, for the same invoices. Empty for an invoice
-/// that was never published, which is the case that needs no warning.
+/// What voiding a published invoice does to what it published, wrapped to the
+/// screen — the sentence `nigel invoice void` prints before the same question.
+/// Empty for an invoice that was never published, which is the case with nothing
+/// live behind it.
 fn warning_lines(invoice: &Invoice, width: u16) -> Vec<String> {
     if invoice.published_at.is_none() {
         return Vec::new();
     }
-    let (wrapped, _) = crate::tui::wrap_text(PUBLISHED_VOID_WARNING, (width as usize).max(20) - 6);
+    let (wrapped, _) = crate::tui::wrap_text(PUBLISHED_VOID_NOTICE, (width as usize).max(20) - 6);
     wrapped.lines().map(|line| format!("   {line}")).collect()
 }
 
@@ -2424,13 +2547,43 @@ mod tests {
         }
     }
 
+    /// Answer the void confirmation, then run the work the controller runs
+    /// after painting the frame — through `perform_pending_with`, so the
+    /// dispatch that tells a pending void from a pending send is exercised too.
+    /// Nothing is configured here, which is the case these tests are about.
+    fn confirm_void(mgr: &mut InvoiceManager, conn: &Connection) {
+        match mgr.handle_key(KeyCode::Char('y'), conn) {
+            // Nothing live behind the invoice: the void ran inline, with no
+            // blocking frame to paint.
+            InvoiceAction::Continue => assert!(
+                !matches!(mgr.screen, Screen::Voiding),
+                "an inline void enters no blocking state"
+            ),
+            InvoiceAction::Perform => {
+                assert!(
+                    matches!(mgr.screen, Screen::Voiding),
+                    "the frame is painted"
+                );
+                // Through `perform_pending_with`, so the dispatch that tells a
+                // pending void from a pending send is exercised too.
+                mgr.perform_pending_with(
+                    conn,
+                    &crate::cli::today(),
+                    no_config(),
+                    std::path::Path::new("/nonexistent"),
+                );
+            }
+            InvoiceAction::Close => panic!("void never closes the screen"),
+        }
+    }
+
     #[test]
     fn y_voids_and_reloads_the_detail() {
         let (_d, conn) = test_conn();
         seed_invoice(&conn, "Acme Co", 100.0);
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
-        mgr.handle_key(KeyCode::Char('y'), &conn);
+        confirm_void(&mut mgr, &conn);
 
         assert!(matches!(mgr.screen, Screen::Detail));
         assert_eq!(detail_of(&mgr).invoice.status, "void");
@@ -2445,24 +2598,30 @@ mod tests {
     }
 
     #[test]
-    fn voiding_a_published_invoice_says_what_void_does_not_undo() {
+    fn voiding_a_published_invoice_says_what_void_will_do_to_what_it_published() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 100.0);
         mark_published(&conn, id, "2026-07-16").unwrap();
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
 
-        // Before the decision: the confirmation carries the CLI's warning.
+        // Before the decision: the confirmation carries the CLI's own notice.
         let dialog = rendered(&mut mgr);
         // Fragments short enough to survive the wrap, whatever the width.
         assert!(dialog.contains("already published"), "{dialog}");
-        assert!(dialog.contains("deactivate the link in Stripe"), "{dialog}");
+        assert!(dialog.contains("replaces the published page"), "{dialog}");
 
-        // And after it, on the voided invoice itself.
-        mgr.handle_key(KeyCode::Char('y'), &conn);
+        // Nothing is configured, so the page it names is still up — and the
+        // result screen says so rather than passing the void off as complete.
+        confirm_void(&mut mgr, &conn);
         let after = rendered(&mut mgr);
-        assert!(after.contains("already published"), "{after}");
-        assert!(after.contains("deactivate the link in Stripe"), "{after}");
+        assert!(after.contains("Voided invoice #1248"), "{after}");
+        assert!(after.contains("page stays live"), "{after}");
+
+        // Dismissed, the invoice itself still carries the notice.
+        mgr.handle_key(KeyCode::Esc, &conn);
+        let detail = rendered(&mut mgr);
+        assert!(detail.contains("already published"), "{detail}");
     }
 
     #[test]
@@ -2521,7 +2680,7 @@ mod tests {
         seed_invoice(&conn, "Acme Co", 100.0);
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
-        mgr.handle_key(KeyCode::Char('y'), &conn);
+        confirm_void(&mut mgr, &conn);
 
         // refresh_status derives `void` from this column, so a wrong or empty
         // date produces an invoice that will not stay void.
@@ -2565,7 +2724,7 @@ mod tests {
         seed_invoice(&conn, "Acme Co", 100.0);
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
-        mgr.handle_key(KeyCode::Char('y'), &conn);
+        confirm_void(&mut mgr, &conn);
 
         mgr.handle_key(KeyCode::Char('p'), &conn);
         assert!(
@@ -2778,6 +2937,178 @@ mod tests {
         assert_eq!(get_invoice(&conn, 1).unwrap().status, "draft");
     }
 
+    /// Void with clients injected: no PDF is rendered and no template is
+    /// loaded, so unlike send this runs in every build.
+    mod void_teardown {
+        use super::*;
+        use crate::error::NigelError;
+        use crate::invoicing::gateway::{PaidSession, PaymentLink};
+        use crate::invoicing::invoices::set_payment_link;
+        use std::cell::RefCell;
+
+        #[derive(Default)]
+        struct FakeGw {
+            deactivated: RefCell<Vec<String>>,
+        }
+        impl PaymentGateway for FakeGw {
+            fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
+                unreachable!("void creates nothing")
+            }
+            fn paid_sessions(&self, _id: &str) -> Result<Vec<PaidSession>> {
+                Ok(vec![])
+            }
+            fn deactivate_payment_link(&self, id: &str) -> Result<()> {
+                self.deactivated.borrow_mut().push(id.to_string());
+                Ok(())
+            }
+        }
+
+        struct FailGw;
+        impl PaymentGateway for FailGw {
+            fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
+                unreachable!("void creates nothing")
+            }
+            fn paid_sessions(&self, _id: &str) -> Result<Vec<PaidSession>> {
+                Ok(vec![])
+            }
+            fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+                Err(NigelError::Other(
+                    "stripe 401: Invalid API Key provided".into(),
+                ))
+            }
+        }
+
+        #[derive(Default)]
+        struct FakePub {
+            pages: RefCell<u32>,
+        }
+        impl AssetPublisher for FakePub {
+            fn publish(&self, _t: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
+                unreachable!("void publishes no PDF")
+            }
+            fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
+                *self.pages.borrow_mut() += 1;
+                Ok(format!("https://billing.example.test/i/{token}/"))
+            }
+        }
+
+        /// A sent invoice, as far as the teardown can tell: a link and a page.
+        fn seed_sent(conn: &Connection) -> i64 {
+            let id = seed_invoice(conn, "Cedar Systems", 100.0);
+            set_payment_link(conn, id, "plink_1", "https://buy.stripe.com/x").unwrap();
+            mark_published(conn, id, "2026-07-16").unwrap();
+            id
+        }
+
+        fn open_and_confirm(mgr: &mut InvoiceManager, conn: &Connection) {
+            open_void(mgr, conn);
+            assert!(matches!(
+                mgr.handle_key(KeyCode::Char('y'), conn),
+                InvoiceAction::Perform
+            ));
+        }
+
+        #[test]
+        fn a_configured_void_deactivates_the_link_and_says_nothing_more() {
+            let (_d, conn) = test_conn();
+            seed_sent(&conn);
+            let mut mgr = manager(&conn);
+            open_and_confirm(&mut mgr, &conn);
+
+            let gateway = FakeGw::default();
+            let publisher = FakePub::default();
+            mgr.perform_void(&conn, "2026-08-07", Some(&gateway), Some(&publisher));
+
+            assert_eq!(*gateway.deactivated.borrow(), vec!["plink_1".to_string()]);
+            assert_eq!(*publisher.pages.borrow(), 1);
+            assert!(matches!(mgr.screen, Screen::Detail));
+            assert_eq!(mgr.status_message.as_deref(), Some("Voided invoice #1248."));
+            assert_eq!(detail_of(&mgr).invoice.status, "void");
+        }
+
+        /// AC #2 in the TUI: the invoice is voided either way, and the URL an
+        /// operator has to open is on screen rather than truncated into the
+        /// status line.
+        #[test]
+        fn a_stripe_failure_still_voids_and_shows_the_link_to_kill_by_hand() {
+            let (_d, conn) = test_conn();
+            seed_sent(&conn);
+            let mut mgr = manager(&conn);
+            open_and_confirm(&mut mgr, &conn);
+
+            let publisher = FakePub::default();
+            mgr.perform_void(&conn, "2026-08-07", Some(&FailGw), Some(&publisher));
+
+            assert_eq!(voided_at(&conn), Some("2026-08-07".to_string()));
+            let screen = rendered(&mut mgr);
+            assert!(screen.contains("Voided invoice #1248"), "{screen}");
+            // The address survives whole: it is wrapped onto its own line
+            // rather than truncated, because it is what an operator has to open.
+            assert!(screen.contains("https://buy.stripe.com/x"), "{screen}");
+            // Fragments short enough to survive the wrap, whatever the width.
+            assert!(screen.contains("stripe 401"), "{screen}");
+        }
+
+        #[test]
+        fn the_frame_painted_before_the_work_says_the_terminal_is_frozen() {
+            let (_d, conn) = test_conn();
+            seed_sent(&conn);
+            let mut mgr = manager(&conn);
+            open_and_confirm(&mut mgr, &conn);
+
+            let screen = rendered(&mut mgr);
+            assert!(screen.contains("Voiding invoice #1248"), "{screen}");
+            assert!(screen.contains("not reading keys"), "{screen}");
+            assert!(screen.contains("Working"), "{screen}");
+        }
+
+        /// The frame names two network calls, so an invoice that is going to
+        /// make neither must never see it: a draft void is a database write and
+        /// runs inline, on the keypress.
+        #[test]
+        fn a_draft_void_paints_no_blocking_frame_and_needs_no_second_pass() {
+            let (_d, conn) = test_conn();
+            seed_invoice(&conn, "Cedar Systems", 100.0);
+            let mut mgr = manager(&conn);
+            open_void(&mut mgr, &conn);
+
+            assert!(matches!(
+                mgr.handle_key(KeyCode::Char('y'), &conn),
+                InvoiceAction::Continue
+            ));
+
+            // Voided already, without the controller doing anything more.
+            assert_eq!(voided_at(&conn), Some(crate::cli::today()));
+            assert!(matches!(mgr.screen, Screen::Detail));
+            assert_eq!(mgr.status_message.as_deref(), Some("Voided invoice #1248."));
+            let screen = rendered(&mut mgr);
+            assert!(!screen.contains("Voiding invoice"), "{screen}");
+            assert!(!screen.contains("Stripe payment link"), "{screen}");
+        }
+
+        /// Half a reason is reason enough: an unpublished draft that carries a
+        /// link has a call to make, so it takes the long way round.
+        #[test]
+        fn an_unpublished_invoice_with_a_link_still_gets_the_frame() {
+            let (_d, conn) = test_conn();
+            let id = seed_invoice(&conn, "Cedar Systems", 100.0);
+            set_payment_link(&conn, id, "plink_1", "https://buy.stripe.com/x").unwrap();
+            let mut mgr = manager(&conn);
+            open_void(&mut mgr, &conn);
+
+            assert!(matches!(
+                mgr.handle_key(KeyCode::Char('y'), &conn),
+                InvoiceAction::Perform
+            ));
+            assert!(matches!(mgr.screen, Screen::Voiding));
+            assert_eq!(
+                voided_at(&conn),
+                None,
+                "nothing is written until the work runs"
+            );
+        }
+    }
+
     // Sending needs a real PDF to publish and attach, so the orchestration is
     // only exercisable in a `pdf` build — the same gate invoicing::send uses.
     #[cfg(feature = "pdf")]
@@ -2792,6 +3123,9 @@ mod tests {
             create_calls: RefCell<u32>,
         }
         impl PaymentGateway for FakeGw {
+            fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+                unreachable!("deactivation belongs to void, not to this path")
+            }
             fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
                 *self.create_calls.borrow_mut() += 1;
                 Ok(PaymentLink {
@@ -2808,10 +3142,16 @@ mod tests {
             fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
                 Ok(format!("https://billing.example.com/i/{token}/"))
             }
+            fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
+                Ok(format!("https://billing.example.com/i/{token}/"))
+            }
         }
         struct FailPub;
         impl AssetPublisher for FailPub {
             fn publish(&self, _t: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
+                Err(NigelError::Other("upload down".into()))
+            }
+            fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))
             }
         }

@@ -48,6 +48,7 @@ import {
   payRequest,
   sendStepViews,
   today,
+  voidConfirmationMessage,
 } from './invoice-data.js';
 import {
   invoicingGuardrailMessage,
@@ -253,6 +254,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
    * which is the manager screens' alert-region rule, one screen over.
    */
   @state() private actionError: string | null = null;
+  /**
+   * What a void could not take down: a Stripe link still live, a page still up.
+   * Held beside `actionError` rather than in it — the void succeeded, and a
+   * danger notice would say it had not.
+   */
+  @state() private voidWarnings: string[] = [];
   @state() private busy = false;
 
   @state() private form: InvoiceFormValue = EMPTY_INVOICE_FORM;
@@ -322,8 +329,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.loading = true;
     this.error = null;
     // A refetch that a refusal triggered keeps the refusal; a route change
-    // drops it, because it was about the invoice being left behind.
-    if (!keepActionError) this.actionError = null;
+    // drops it, because it was about the invoice being left behind. The void
+    // warnings follow the same rule for the same reason.
+    if (!keepActionError) {
+      this.actionError = null;
+      this.voidWarnings = [];
+    }
 
     // Answered before anything is fetched, rather than left to fall through the
     // view branches: the fall-through marked the route loaded and kept the
@@ -479,8 +490,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
     const confirmed = await confirmDialog({
       heading: `Void invoice #${detail.number}?`,
-      message:
-        'A void invoice cannot be edited, sent or paid, and voiding does not take down a page that has already been published or deactivate its payment link.',
+      message: voidConfirmationMessage(detail),
       confirmLabel: 'Void invoice',
       variant: 'danger',
     });
@@ -488,9 +498,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
     this.busy = true;
     try {
-      await this.client.voidInvoice(detail.number);
+      const result = await this.client.voidInvoice(detail.number);
       this.actionError = null;
-      await this.refresh();
+      // A teardown that could not reach Stripe or R2 is a normal answer, not a
+      // failure: the invoice is void, and what is still live is something a
+      // person has to go and deal with — including, when there is one, the
+      // payment link's own address.
+      this.voidWarnings = result.teardownWarnings ?? [];
+      await this.refresh(this.voidWarnings.length > 0);
     } catch (error) {
       // `confirmDialog()` has already resolved and removed itself, so the
       // refusal lands above the invoice it is about — never in place of it.
@@ -506,6 +521,15 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   private dismissActionError = (): void => {
     this.actionError = null;
   };
+
+  /**
+   * One warning, not all of them: the two-warning case — a live payment link
+   * *and* a page still up — is the one this exists for, and dealing with the
+   * link is no reason to lose the sentence about the page.
+   */
+  private dismissVoidWarning(index: number): void {
+    this.voidWarnings = this.voidWarnings.filter((_, i) => i !== index);
+  }
 
   private openPayment = (): void => {
     const detail = this.detail;
@@ -737,6 +761,16 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
             @nc-notice-action=${this.dismissActionError}
           ></wc-notice-bar>`
         : nothing}
+      ${this.voidWarnings.map(
+        (warning, index) =>
+          html`<wc-notice-bar
+            variant="warning"
+            data-void-warning
+            message=${warning}
+            action-label="Dismiss"
+            @nc-notice-action=${() => this.dismissVoidWarning(index)}
+          ></wc-notice-bar>`
+      )}
 
       <wc-invoice-summary
         .number=${detail.number}

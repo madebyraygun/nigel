@@ -304,6 +304,20 @@ export function outstandingOrNull(invoice: { status: string; balance: number }):
   return invoice.status === 'void' ? null : invoice.balance;
 }
 
+/**
+ * What the void dialog says voiding will do, for this invoice.
+ *
+ * A published invoice is the one that has anything out there: voiding replaces
+ * its page and deactivates its payment link wherever those are configured, and
+ * whatever is not configured is reported afterwards rather than promised here.
+ * A draft has nothing published and nothing to say about it.
+ */
+export function voidConfirmationMessage(detail: InvoiceDetail): string {
+  const terminal = 'A void invoice cannot be edited, sent or paid.';
+  if (detail.publishedAt === null) return terminal;
+  return `${terminal} This invoice has been published: voiding it replaces the published page with a voided notice and deactivates its Stripe payment link, wherever each of those is configured.`;
+}
+
 /** The detail view's outstanding figure. */
 export function detailBalance(detail: InvoiceDetail): number | null {
   return outstandingOrNull(detail);

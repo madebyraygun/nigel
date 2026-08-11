@@ -943,6 +943,25 @@ export interface InvoiceDetail {
   canPay: boolean;
 }
 
+/**
+ * `POST /api/invoices/{number}/void` — the refreshed detail, plus whatever the
+ * void could not take down.
+ *
+ * The detail's own fields are flattened, so this reads as an `InvoiceDetail`
+ * everywhere one is expected. Both extra fields are absent in the ordinary case:
+ * a draft with no payment link and nothing published leaves nothing live.
+ */
+export interface VoidResult extends InvoiceDetail {
+  /**
+   * The Stripe payment link that is **still live** and needs a person —
+   * deactivation was refused, or no `stripe_secret_key` is configured. Absent
+   * when the link was deactivated or there never was one.
+   */
+  paymentLinkUrl?: string;
+  /** The sentences `nigel invoice void` prints, verbatim. */
+  teardownWarnings?: string[];
+}
+
 export interface AgingBucket {
   label: string;
   count: number;
