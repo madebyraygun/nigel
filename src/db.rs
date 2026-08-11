@@ -1,7 +1,9 @@
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
+use zeroize::Zeroize;
 
 use crate::error::Result;
 use crate::migrations;
@@ -103,6 +105,45 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 ";
 
+/// Metadata key recording which chart-of-accounts template a database was
+/// created with. Absent on databases created before profiles existed, which
+/// all carried the business chart.
+pub const PROFILE_KEY: &str = "profile";
+
+/// Which kind of books a database keeps: the business chart of accounts
+/// (Schedule C / 1120-S) or a personal one with no tax mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Profile {
+    #[default]
+    Business,
+    Personal,
+}
+
+impl Profile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Profile::Business => "business",
+            Profile::Personal => "personal",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "business" => Some(Profile::Business),
+            "personal" => Some(Profile::Personal),
+            _ => None,
+        }
+    }
+}
+
+/// The profile a database keeps books under. Missing or unrecognized metadata
+/// reads as business — the only chart that existed before profiles did.
+pub fn get_profile(conn: &Connection) -> Profile {
+    get_metadata(conn, PROFILE_KEY)
+        .and_then(|value| Profile::parse(&value))
+        .unwrap_or_default()
+}
+
 type CategoryDef = (
     &'static str,
     Option<i64>,
@@ -112,7 +153,7 @@ type CategoryDef = (
     &'static str,
 );
 
-const DEFAULT_CATEGORIES: &[CategoryDef] = &[
+const BUSINESS_CATEGORIES: &[CategoryDef] = &[
     // Income
     (
         "Client Services",
@@ -357,6 +398,200 @@ const DEFAULT_CATEGORIES: &[CategoryDef] = &[
     ),
 ];
 
+/// The personal chart of accounts. No `tax_line`/`form_line` mapping — those
+/// belong to the business worksheets — except `Transfer`, whose `excluded`
+/// marker is what keeps moves between own accounts out of the money reports.
+const PERSONAL_CATEGORIES: &[CategoryDef] = &[
+    // Income
+    (
+        "Salary & Wages",
+        None,
+        "income",
+        None,
+        None,
+        "Paychecks and take-home pay",
+    ),
+    (
+        "Interest Income",
+        None,
+        "income",
+        None,
+        None,
+        "Bank interest",
+    ),
+    (
+        "Other Income",
+        None,
+        "income",
+        None,
+        None,
+        "Refunds, rebates, anything else",
+    ),
+    // Expenses
+    (
+        "Rent / Mortgage",
+        None,
+        "expense",
+        None,
+        None,
+        "Housing payments",
+    ),
+    (
+        "Groceries",
+        None,
+        "expense",
+        None,
+        None,
+        "Food and household staples",
+    ),
+    (
+        "Dining & Takeout",
+        None,
+        "expense",
+        None,
+        None,
+        "Restaurants, cafes, delivery",
+    ),
+    (
+        "Utilities",
+        None,
+        "expense",
+        None,
+        None,
+        "Electric, gas, water, internet, phone",
+    ),
+    (
+        "Transportation",
+        None,
+        "expense",
+        None,
+        None,
+        "Fuel, transit fares, parking, rideshare",
+    ),
+    (
+        "Auto & Vehicle",
+        None,
+        "expense",
+        None,
+        None,
+        "Car payments, repairs, registration",
+    ),
+    (
+        "Health & Medical",
+        None,
+        "expense",
+        None,
+        None,
+        "Doctors, dental, pharmacy",
+    ),
+    (
+        "Insurance",
+        None,
+        "expense",
+        None,
+        None,
+        "Home, auto, health premiums",
+    ),
+    (
+        "Subscriptions & Streaming",
+        None,
+        "expense",
+        None,
+        None,
+        "Streaming, apps, memberships",
+    ),
+    (
+        "Shopping",
+        None,
+        "expense",
+        None,
+        None,
+        "Clothing, electronics, general purchases",
+    ),
+    (
+        "Home & Garden",
+        None,
+        "expense",
+        None,
+        None,
+        "Furnishings, repairs, maintenance",
+    ),
+    (
+        "Travel",
+        None,
+        "expense",
+        None,
+        None,
+        "Flights, hotels, holidays",
+    ),
+    (
+        "Entertainment",
+        None,
+        "expense",
+        None,
+        None,
+        "Events, hobbies, going out",
+    ),
+    (
+        "Education",
+        None,
+        "expense",
+        None,
+        None,
+        "Tuition, courses, books",
+    ),
+    (
+        "Childcare & Family",
+        None,
+        "expense",
+        None,
+        None,
+        "Childcare, school costs, allowances",
+    ),
+    ("Pets", None, "expense", None, None, "Food, vet, supplies"),
+    (
+        "Personal Care",
+        None,
+        "expense",
+        None,
+        None,
+        "Haircuts, gym, wellness",
+    ),
+    (
+        "Gifts & Donations",
+        None,
+        "expense",
+        None,
+        None,
+        "Presents and charitable giving",
+    ),
+    (
+        "Bank & Merchant Fees",
+        None,
+        "expense",
+        None,
+        None,
+        "Account fees, card charges",
+    ),
+    (
+        "Taxes",
+        None,
+        "expense",
+        None,
+        None,
+        "Income and property tax payments",
+    ),
+    (
+        "Transfer",
+        None,
+        "expense",
+        None,
+        Some("excluded"),
+        "Transfers between own accounts, credit card payments",
+    ),
+    ("Uncategorized", None, "expense", None, None, "Needs review"),
+];
+
 pub fn get_connection(db_path: &Path) -> Result<Connection> {
     let password = get_db_password();
     open_connection(db_path, password.as_deref())
@@ -414,12 +649,67 @@ pub fn validate_password(db_path: &Path, password: &str) -> Result<bool> {
     }
 }
 
-/// If the database is encrypted, prompt the user for a password (up to 3 attempts).
-/// Sets the global password on success. Returns an error after 3 failures.
+/// Environment variable consulted for the database password whenever the
+/// database is encrypted, so `nigel` can unlock one with no terminal attached.
+/// Set but empty, invalid UTF-8, or wrong are all errors rather than a silent
+/// fall back to prompting.
+const PASSWORD_ENV_VAR: &str = "NIGEL_DB_PASSWORD";
+
+/// Validate a password supplied through the environment, where `raw` is the
+/// variable's value or `None` when unset. `Ok(None)` means nothing was supplied
+/// and the caller should prompt.
+///
+/// `raw` is a parameter rather than read from the process environment here
+/// because cargo runs tests as parallel threads of one process, which share
+/// one environment and would clobber each other's setting.
+fn env_password(db_path: &Path, raw: Option<OsString>) -> Result<Option<String>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    // Every failure below is fatal. A caller running unattended cannot answer the
+    // prompt, so falling through to one would hang the job instead of reporting.
+    let Ok(mut pw) = raw.into_string() else {
+        return Err(crate::error::NigelError::Other(format!(
+            "{PASSWORD_ENV_VAR} is set but is not valid UTF-8."
+        )));
+    };
+
+    if pw.is_empty() {
+        return Err(crate::error::NigelError::Other(format!(
+            "{PASSWORD_ENV_VAR} is set but empty — the command that supplies it likely failed."
+        )));
+    }
+
+    if validate_password(db_path, &pw)? {
+        return Ok(Some(pw));
+    }
+    pw.zeroize();
+
+    // A wrong password and a damaged file are indistinguishable here: SQLCipher
+    // reports both as "not a database", and `is_encrypted` reads anything without
+    // the plaintext header as encrypted. Naming one cause would send an operator
+    // rotating a password when the ledger is actually corrupt.
+    Err(crate::error::NigelError::Other(format!(
+        "{PASSWORD_ENV_VAR} did not unlock {}. The password may be wrong, or the database file may be damaged.",
+        db_path.display()
+    )))
+}
+
+/// If the database is encrypted, unlock it from `NIGEL_DB_PASSWORD`, falling
+/// back to prompting the user (up to 3 attempts). Sets the global password on
+/// success. Returns an error if the environment holds an unusable password, or
+/// after 3 failed prompts.
 pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
     if !is_encrypted(db_path)? {
         return Ok(());
     }
+
+    if let Some(pw) = env_password(db_path, std::env::var_os(PASSWORD_ENV_VAR))? {
+        set_db_password(Some(pw));
+        return Ok(());
+    }
+
     for attempt in 1..=3 {
         let pw = rpassword::prompt_password("Database password: ")
             .map_err(|e| crate::error::NigelError::Other(e.to_string()))?;
@@ -443,16 +733,35 @@ pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
 }
 
 pub fn init_db(conn: &Connection) -> Result<()> {
+    init_db_with_profile(conn, Profile::Business)
+}
+
+/// `init_db`, but seeding the chart of accounts for the given profile.
+///
+/// The profile only matters on a database whose categories table is empty —
+/// seeding and the profile stamp happen together, so re-running against an
+/// existing database changes neither its chart nor its recorded profile.
+pub fn init_db_with_profile(conn: &Connection, profile: Profile) -> Result<()> {
     conn.execute_batch(SCHEMA)?;
 
     let count: i64 = conn.query_row("SELECT count(*) FROM categories", [], |row| row.get(0))?;
     if count == 0 {
-        for cat in DEFAULT_CATEGORIES {
-            conn.execute(
+        let template = match profile {
+            Profile::Business => BUSINESS_CATEGORIES,
+            Profile::Personal => PERSONAL_CATEGORIES,
+        };
+        // One transaction: a failure partway must not leave a non-empty
+        // categories table with no profile stamp, which would read as a
+        // half-seeded business database forever.
+        let tx = conn.unchecked_transaction()?;
+        for cat in template {
+            tx.execute(
                 "INSERT INTO categories (name, parent_id, category_type, tax_line, form_line, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 rusqlite::params![cat.0, cat.1, cat.2, cat.3, cat.4, cat.5],
             )?;
         }
+        set_metadata(&tx, PROFILE_KEY, profile.as_str())?;
+        tx.commit()?;
     }
 
     migrations::run_migrations(conn)?;
@@ -552,6 +861,91 @@ mod tests {
             expense >= 20,
             "expected >= 20 expense categories, got {expense}"
         );
+    }
+
+    #[test]
+    fn test_init_db_stamps_business_profile() {
+        let (_dir, conn) = test_db();
+        assert_eq!(
+            get_metadata(&conn, PROFILE_KEY).as_deref(),
+            Some("business")
+        );
+        assert_eq!(get_profile(&conn), Profile::Business);
+    }
+
+    #[test]
+    fn test_personal_profile_seeds_personal_chart() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("personal.db")).unwrap();
+        init_db_with_profile(&conn, Profile::Personal).unwrap();
+
+        assert_eq!(get_profile(&conn), Profile::Personal);
+        let groceries: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM categories WHERE name = 'Groceries'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(groceries, 1);
+        let business_only: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM categories WHERE name = 'Client Services'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(business_only, 0);
+        // The excluded Transfer marker is what keeps transfers out of the
+        // money reports, so the personal chart must carry it too.
+        let transfer_form_line: Option<String> = conn
+            .query_row(
+                "SELECT form_line FROM categories WHERE name = 'Transfer'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(transfer_form_line.as_deref(), Some("excluded"));
+        // No other personal category maps to a tax form.
+        let mapped: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM categories \
+                 WHERE name <> 'Transfer' AND (tax_line IS NOT NULL OR form_line IS NOT NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mapped, 0);
+    }
+
+    #[test]
+    fn test_reinit_does_not_change_profile_or_chart() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("personal.db")).unwrap();
+        init_db_with_profile(&conn, Profile::Personal).unwrap();
+        // The dispatch pre-flight calls plain init_db (business) on every
+        // launch; it must not restamp or reseed an existing database.
+        init_db(&conn).unwrap();
+        assert_eq!(get_profile(&conn), Profile::Personal);
+        let business_only: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM categories WHERE name = 'Client Services'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(business_only, 0);
+    }
+
+    #[test]
+    fn test_missing_profile_metadata_reads_as_business() {
+        let (_dir, conn) = test_db();
+        conn.execute("DELETE FROM metadata WHERE key = ?1", [PROFILE_KEY])
+            .unwrap();
+        assert_eq!(get_profile(&conn), Profile::Business);
+        // Unrecognized values read as business too, rather than erroring.
+        set_metadata(&conn, PROFILE_KEY, "cryptocurrency").unwrap();
+        assert_eq!(get_profile(&conn), Profile::Business);
     }
 
     #[test]
@@ -691,6 +1085,99 @@ mod tests {
         let path = dir.path().join("garbage.db");
         std::fs::write(&path, b"this is not a database at all").unwrap();
         assert!(!validate_password(&path, "test").unwrap());
+    }
+
+    /// Build an encrypted database at a temp path locked with "secret".
+    ///
+    /// Uses `open_connection` with an explicit password rather than the global
+    /// `DB_PASSWORD`: cargo runs these as parallel threads of one process, and a
+    /// test that set the global would hand its password to every other test
+    /// building a fixture through `get_connection`.
+    fn encrypted_db() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("encrypted.db");
+        let conn = open_connection(&db_path, Some("secret")).unwrap();
+        init_db(&conn).unwrap();
+        drop(conn);
+        (dir, db_path)
+    }
+
+    #[test]
+    fn test_env_password_unset_defers_to_prompt() {
+        let (_dir, db_path) = encrypted_db();
+        assert_eq!(env_password(&db_path, None).unwrap(), None);
+    }
+
+    #[test]
+    fn test_env_password_correct_unlocks() {
+        let (_dir, db_path) = encrypted_db();
+        let resolved = env_password(&db_path, Some("secret".into())).unwrap();
+        assert_eq!(resolved.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn test_env_password_wrong_errors_without_prompting() {
+        let (_dir, db_path) = encrypted_db();
+        let err = env_password(&db_path, Some("wrong".into())).unwrap_err();
+        assert!(err.to_string().contains(PASSWORD_ENV_VAR));
+    }
+
+    #[test]
+    fn test_env_password_empty_is_fatal_not_treated_as_unset() {
+        let (_dir, db_path) = encrypted_db();
+        let err = env_password(&db_path, Some(OsString::new()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("empty"),
+            "message should name the cause: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_env_password_invalid_utf8_is_fatal_not_treated_as_unset() {
+        use std::os::unix::ffi::OsStringExt;
+        let (_dir, db_path) = encrypted_db();
+        let raw = OsString::from_vec(b"secret\xff".to_vec());
+        let err = env_password(&db_path, Some(raw)).unwrap_err().to_string();
+        assert!(
+            err.contains("UTF-8"),
+            "message should name the cause: {err}"
+        );
+    }
+
+    #[test]
+    fn test_env_password_error_does_not_leak_password() {
+        let (_dir, db_path) = encrypted_db();
+        let err = env_password(&db_path, Some("hunter2".into()))
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("hunter2"));
+    }
+
+    #[test]
+    fn test_env_password_failure_names_both_possible_causes() {
+        let (_dir, db_path) = encrypted_db();
+        let err = env_password(&db_path, Some("wrong".into()))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("password may be wrong"), "{err}");
+        assert!(err.contains("may be damaged"), "{err}");
+        assert!(err.contains(&db_path.display().to_string()), "{err}");
+    }
+
+    /// The companion `backup_ignores_env_password_on_plain_database` covers the
+    /// case this cannot: setting the variable requires a child process, because
+    /// the environment is shared across cargo's parallel test threads.
+    #[test]
+    fn test_plain_db_needs_no_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("plain.db");
+        let conn = open_connection(&db_path, None).unwrap();
+        init_db(&conn).unwrap();
+        drop(conn);
+        assert!(prompt_password_if_needed(&db_path).is_ok());
     }
 
     #[test]

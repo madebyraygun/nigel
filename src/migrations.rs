@@ -55,6 +55,84 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 4,
+        description: "add invoicing tables (clients, invoices, line items, payments)",
+        up: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS clients (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    billing_address TEXT,
+                    notes TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS invoices (
+                    id INTEGER PRIMARY KEY,
+                    number INTEGER NOT NULL UNIQUE,
+                    client_id INTEGER NOT NULL,
+                    issue_date TEXT NOT NULL,
+                    due_date TEXT,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    subtotal REAL NOT NULL DEFAULT 0,
+                    tax REAL NOT NULL DEFAULT 0,
+                    total REAL NOT NULL DEFAULT 0,
+                    notes TEXT,
+                    terms TEXT,
+                    token TEXT NOT NULL UNIQUE,
+                    stripe_payment_link_id TEXT,
+                    stripe_payment_link_url TEXT,
+                    published_at TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (client_id) REFERENCES clients(id)
+                );
+                CREATE TABLE IF NOT EXISTS invoice_line_items (
+                    id INTEGER PRIMARY KEY,
+                    invoice_id INTEGER NOT NULL,
+                    description TEXT NOT NULL,
+                    quantity REAL NOT NULL DEFAULT 1,
+                    unit_amount REAL NOT NULL DEFAULT 0,
+                    line_total REAL NOT NULL DEFAULT 0,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+                );
+                CREATE TABLE IF NOT EXISTS invoice_payments (
+                    id INTEGER PRIMARY KEY,
+                    invoice_id INTEGER NOT NULL,
+                    amount REAL NOT NULL,
+                    paid_date TEXT NOT NULL,
+                    method TEXT NOT NULL CHECK (method IN ('stripe','ach','direct_deposit','other')),
+                    stripe_checkout_session_id TEXT UNIQUE,
+                    recorded_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+                );",
+            )?;
+            Ok(())
+        },
+    },
+    Migration {
+        version: 5,
+        description: "add voided_at to invoices so void is a derived status like sent",
+        up: |conn| {
+            // SQLite has no ADD COLUMN IF NOT EXISTS; the probe is what makes a
+            // replay of this migration as harmless as v4's IF NOT EXISTS tables.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('invoices') WHERE name = 'voided_at'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                conn.execute_batch("ALTER TABLE invoices ADD COLUMN voided_at TEXT")?;
+            }
+            conn.execute_batch(
+                "UPDATE invoices SET voided_at = COALESCE(published_at, issue_date)
+                     WHERE status = 'void' AND voided_at IS NULL",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -187,6 +265,80 @@ mod tests {
             )
             .unwrap();
         assert!(!table_exists);
+    }
+}
+
+#[cfg(test)]
+mod invoicing_migration_tests {
+    use crate::db::{get_connection, init_db};
+    use crate::migrations::run_migrations;
+
+    #[test]
+    fn invoicing_tables_exist_after_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        init_db(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        for table in [
+            "clients",
+            "invoices",
+            "invoice_line_items",
+            "invoice_payments",
+        ] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "missing table {table}");
+        }
+    }
+
+    #[test]
+    fn invoices_carry_a_voided_at_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        init_db(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+
+        let mut stmt = conn.prepare("PRAGMA table_info(invoices)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(cols.iter().any(|c| c == "voided_at"), "got: {cols:?}");
+    }
+
+    #[test]
+    fn a_hand_set_void_status_is_backfilled_with_a_voided_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        let up_to_v4 = &crate::migrations::MIGRATIONS[..4];
+        crate::migrations::apply_migrations(&conn, up_to_v4).unwrap();
+
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO invoices (number, client_id, issue_date, status, token)
+             VALUES (1248, 1, '2026-08-04', 'void', 'tok')",
+            [],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let voided_at: Option<String> = conn
+            .query_row(
+                "SELECT voided_at FROM invoices WHERE number = 1248",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(voided_at.as_deref(), Some("2026-08-04"));
     }
 }
 

@@ -16,10 +16,12 @@ You can also load demo data any time from the command line:
 $ nigel demo
 Demo data loaded!
   Account:      BofA Checking
-  Transactions: 252
-  Rules:        9
-  Categorized:  168
+  Transactions: 270
+  Rules:        10
+  Categorized:  186
   Flagged:      84
+  Clients:      3
+  Invoices:     4
 
 Try these next:
   nigel accounts list
@@ -27,9 +29,10 @@ Try these next:
   nigel report pnl
   nigel report flagged
   nigel review
+  nigel invoice list
 ```
 
-Nigel created a checking account with 18 months of sample transactions (dynamically generated from the current date backwards), added 9 categorization rules, and auto-categorized everything it could. The remaining transactions are flagged for review.
+Nigel created a checking account with 18 months of sample transactions (dynamically generated from the current date backwards), added 10 categorization rules, and auto-categorized everything it could. The remaining transactions are flagged for review. It also added three invoicing clients and four invoices — one paid, one partly paid, one sent and awaiting payment, and one still a draft — so the invoice and client screens have something in them.
 
 Running `nigel` with no arguments launches the interactive dashboard — your main hub for everything:
 
