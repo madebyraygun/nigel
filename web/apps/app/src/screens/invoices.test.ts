@@ -493,6 +493,51 @@ describe('nigel-invoices-screen', () => {
     expect(fake.calls).toContain('voidInvoice:1252');
   });
 
+  it('renders what a void could not take down, without calling it a failure', async () => {
+    // The invoice is void either way. What is left is a live payment link and a
+    // page, which are somebody's next task rather than this request's error.
+    await answerConfirm(true);
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, canVoid: true });
+    fake.voidTeardown = {
+      paymentLinkUrl: 'https://buy.stripe.com/x',
+      teardownWarnings: [
+        'Warning: could not deactivate the Stripe payment link (stripe 401: Invalid API Key provided). It is still live: https://buy.stripe.com/x — deactivate it in Stripe yourself.',
+      ],
+    };
+    const { el } = await mount('number=1252', fake);
+
+    button(el, '[data-void]').click();
+    await settle(el);
+
+    const notices = el.shadowRoot?.querySelectorAll('[data-void-warning]');
+    expect(notices?.length).toBe(1);
+    expect(notices?.[0].getAttribute('variant')).toBe('warning');
+    // The address rides through verbatim: it is what an operator has to open.
+    expect(notices?.[0].getAttribute('message')).toContain('https://buy.stripe.com/x');
+    expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+
+    el.shadowRoot
+      ?.querySelector('[data-void-warning]')
+      ?.dispatchEvent(new CustomEvent('nc-notice-action', { bubbles: true, composed: true }));
+    await settle(el);
+    expect(el.shadowRoot?.querySelector('[data-void-warning]')).toBeNull();
+  });
+
+  it('says nothing extra about a void that had nothing to take down', async () => {
+    await answerConfirm(true);
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canVoid: true });
+    const { el } = await mount('number=1252', fake);
+
+    button(el, '[data-void]').click();
+    await settle(el);
+
+    expect(el.shadowRoot?.querySelector('[data-void-warning]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
+  });
+
   it('renders a refused void beside the invoice, not in place of it', async () => {
     // A guardrail is a normal answer. Routing it through the "that did not
     // load" state would blank the very invoice the message is about.

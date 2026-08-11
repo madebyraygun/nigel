@@ -37,6 +37,7 @@ use crate::invoicing::render::{render_invoice, RenderedInvoice};
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::{send_invoice_traced, SendFailure, SendStep, StepOutcome};
 use crate::invoicing::sync::{sync_all_report_within, SyncReport};
+use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
 
 use super::super::error::{ApiError, ApiErrorCode, ApiResult};
@@ -382,23 +383,74 @@ async fn update(
     Ok(Json(detail))
 }
 
-/// Cancel an invoice. `void_invoice` writes `voided_at` and lets
-/// `refresh_status` derive the status from it, so the route passes the server's
-/// own today — the value `pay` passes too.
+/// What a void answers.
+///
+/// The refreshed detail is flattened rather than nested, because it is what this
+/// route has always answered and a screen that reads `status` off the response
+/// must keep working. What is added is the teardown: `paymentLinkUrl` is the
+/// Stripe link that is *still live* — present only when one is, and absent when
+/// it was deactivated or never existed — and `teardownWarnings` are the
+/// sentences the CLI prints, verbatim.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoidResult {
+    #[serde(flatten)]
+    invoice: InvoiceDetail,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payment_link_url: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    teardown_warnings: Vec<String>,
+}
+
+/// Cancel an invoice, and take down what it published.
+///
+/// `void_invoice` writes `voided_at` and lets `refresh_status` derive the status
+/// from it, so the route passes the server's own today — the value `pay` passes
+/// too. The teardown that follows is **best-effort**: it can reach Stripe and
+/// R2, which makes this a blocking request like `send` (two calls, each bounded
+/// by `invoicing::REQUEST_TIMEOUT`), but no failure out there changes the
+/// answer. A void that could not deactivate the link is still a 200 carrying a
+/// voided invoice and the URL a person has to open — failing the request would
+/// claim the invoice is still open, which it is not.
 async fn void(
     State(state): State<AppState>,
     ApiPath(number): ApiPath<i64>,
-) -> ApiResult<Json<InvoiceDetail>> {
+) -> ApiResult<Json<VoidResult>> {
     let today = crate::cli::today();
-    let detail = with_conn_api(&state, move |conn| {
-        let invoice = find_invoice(conn, number)?;
-        let paid = inv::paid_amount(conn, invoice.id)?;
-        inv::void_invoice(conn, invoice.id, &today)
-            .map_err(|e| enrich_conflict(e, &invoice, paid))?;
-        detail_for(conn, find_invoice(conn, number)?)
+    // Whatever this installation configured. Unlike send, nothing here is
+    // required: `optional_gateway`/`optional_publisher` answer `None` and the
+    // teardown reports what it could not reach.
+    let config = crate::settings::invoicing_config();
+    let gateway = crate::cli::invoice::optional_gateway(&config);
+    let publisher = crate::cli::invoice::optional_publisher(&config);
+
+    let result = with_conn_api(&state, move |conn| {
+        void_with(conn, number, &today, gateway.as_ref(), publisher.as_ref())
     })
     .await?;
-    Ok(Json(detail))
+    Ok(Json(result))
+}
+
+/// The void with its collaborators passed in — `send_with`'s seam, for the same
+/// reason: everything below this line takes traits, so the teardown is tested
+/// with fakes and no test in this file can reach the network.
+fn void_with<G: PaymentGateway, P: AssetPublisher>(
+    conn: &Connection,
+    number: i64,
+    today: &str,
+    gateway: Option<&G>,
+    publisher: Option<&P>,
+) -> ApiResult<VoidResult> {
+    let invoice = find_invoice(conn, number)?;
+    let paid = inv::paid_amount(conn, invoice.id)?;
+    let outcome = void_invoice_with_teardown(conn, invoice.id, today, gateway, publisher)
+        .map_err(|e| enrich_conflict(e, &invoice, paid))?;
+
+    Ok(VoidResult {
+        invoice: detail_for(conn, find_invoice(conn, number)?)?,
+        payment_link_url: outcome.payment_link_url.clone(),
+        teardown_warnings: outcome.warnings(),
+    })
 }
 
 /// `amount` omitted means the whole outstanding balance, exactly as `--amount`
@@ -1427,6 +1479,120 @@ mod tests {
         assert_eq!(body["error"]["details"]["reason"], "void");
     }
 
+    /// Stripe refusing a deactivation the way a wrong key does.
+    struct DeadGw;
+    impl PaymentGateway for DeadGw {
+        fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> NigelResult<PaymentLink> {
+            unreachable!("void creates nothing")
+        }
+        fn paid_sessions(&self, _id: &str) -> NigelResult<Vec<PaidSession>> {
+            Ok(vec![])
+        }
+        fn deactivate_payment_link(&self, _id: &str) -> NigelResult<()> {
+            Err(NigelError::Other(
+                "stripe 401: Invalid API Key provided".into(),
+            ))
+        }
+    }
+
+    /// 1251 is the seeded sent invoice: published, with a live payment link.
+    #[test]
+    fn voiding_a_sent_invoice_deactivates_its_link_and_republishes_its_page() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+
+        let result = void_with(&conn, 1251, AS_OF, Some(&gateway), Some(&publisher))
+            .expect("the void goes through");
+
+        assert_eq!(
+            *gateway.deactivated.borrow(),
+            vec!["plink_seed_1251".to_string()]
+        );
+        let pages = publisher.pages.borrow();
+        assert_eq!(pages.len(), 1, "index.html, once");
+        assert!(pages[0].contains("voided"), "{}", pages[0]);
+        assert!(pages[0].contains("#1251"), "{}", pages[0]);
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["status"], "void");
+        assert!(json.get("paymentLinkUrl").is_none(), "{json}");
+        assert!(json.get("teardownWarnings").is_none(), "{json}");
+    }
+
+    /// AC #2 over HTTP: the request succeeds, the invoice is void, and the link
+    /// a person has to kill by hand rides on the answer.
+    #[test]
+    fn a_stripe_failure_still_voids_and_answers_the_link_for_manual_cleanup() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let publisher = FakePub::default();
+
+        let result = void_with(&conn, 1251, AS_OF, Some(&DeadGw), Some(&publisher))
+            .expect("a failed teardown is not a failed void");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["status"], "void");
+        assert_eq!(
+            json["paymentLinkUrl"],
+            "https://buy.stripe.com/test_seed_1251"
+        );
+        let warnings = json["teardownWarnings"].as_array().expect("warnings");
+        assert_eq!(warnings.len(), 1, "{json}");
+        assert!(
+            warnings[0].as_str().unwrap().contains("Invalid API Key"),
+            "the upstream's own words: {json}"
+        );
+        // The page half still ran.
+        assert_eq!(publisher.pages.borrow().len(), 1);
+    }
+
+    /// An installation with no invoicing keys voids exactly as it always did,
+    /// and is told what stayed live rather than refused.
+    #[test]
+    fn an_unconfigured_void_answers_warnings_instead_of_failing() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+
+        let result = void_with(&conn, 1251, AS_OF, None::<&FakeGw>, None::<&FakePub>)
+            .expect("voids with nothing configured");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["status"], "void");
+        assert_eq!(
+            json["paymentLinkUrl"],
+            "https://buy.stripe.com/test_seed_1251"
+        );
+        assert_eq!(
+            json["teardownWarnings"].as_array().unwrap().len(),
+            2,
+            "{json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_void_reaches_neither_stripe_nor_r2() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+
+        // 1248 is paid in full, so the data layer's guard refuses it.
+        let err = void_with(&conn, 1248, AS_OF, Some(&gateway), Some(&publisher))
+            .expect_err("a paid invoice cannot be voided");
+
+        assert!(gateway.deactivated.borrow().is_empty());
+        assert!(publisher.pages.borrow().is_empty());
+        let (status, json) = error_json(err).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{json}");
+        assert_eq!(json["error"]["details"]["reason"], "has_payments");
+    }
+
     #[tokio::test]
     async fn voiding_a_void_invoice_is_a_409_already_void() {
         let (_dir, db_path) = seeded_db();
@@ -1820,9 +1986,9 @@ mod tests {
     // Send and sync
     // -----------------------------------------------------------------------
 
-    // The two seams the fakes go through, taken by name: everything else in
+    // The three seams the fakes go through, taken by name: everything else in
     // this module is exercised over HTTP.
-    use super::{send_with, sync_with};
+    use super::{send_with, sync_with, void_with};
     use crate::error::{NigelError, Result as NigelResult};
     use crate::invoicing::gateway::{
         AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,

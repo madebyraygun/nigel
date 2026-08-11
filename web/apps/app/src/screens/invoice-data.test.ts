@@ -16,6 +16,7 @@ import {
   payRequest,
   sendStepViews,
   today,
+  voidConfirmationMessage,
 } from './invoice-data.js';
 import type { Client, InvoiceDetail, InvoiceListRow } from '../api/types.js';
 
@@ -357,6 +358,22 @@ describe('detailBalance', () => {
 
   it('reports a live invoice at its balance', () => {
     expect(detailBalance({ ...DETAIL, status: 'sent', balance: 1200 })).toBe(1200);
+  });
+});
+
+describe('voidConfirmationMessage', () => {
+  it('promises nothing about a page for an invoice that was never published', () => {
+    const message = voidConfirmationMessage({ ...DETAIL, publishedAt: null });
+    expect(message).toContain('cannot be edited, sent or paid');
+    expect(message).not.toContain('published page');
+  });
+
+  it('names what void does to a published invoice, conditionally on the config', () => {
+    const message = voidConfirmationMessage({ ...DETAIL, publishedAt: '2026-02-20' });
+    expect(message).toContain('replaces the published page');
+    expect(message).toContain('deactivates its Stripe payment link');
+    // What is actually configured is the server's to report, afterwards.
+    expect(message).toContain('wherever each of those is configured');
   });
 });
 
