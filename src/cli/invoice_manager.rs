@@ -592,7 +592,15 @@ impl InvoiceManager {
         }
 
         lines.push(Line::from(""));
-        lines.push(total_line("Total", form.total()));
+        // Through the table's own budget, so the running total lands under the
+        // Amount column rather than under the detail view's narrower one.
+        lines.push(Line::from(item_row_text(
+            "",
+            "",
+            "",
+            "Total",
+            &money(form.total()),
+        )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("   {DRAFT_HINT}"),
