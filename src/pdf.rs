@@ -1055,6 +1055,16 @@ mod invoice_pdf_tests {
         assert!(at("Bluepeak LLC") < at("Billed to: Acme"));
     }
 
+    fn document_title_of(bytes: &[u8]) -> String {
+        let doc = lopdf::Document::load_mem(bytes).unwrap();
+        doc.trailer
+            .get(b"Info")
+            .and_then(|info| doc.get_dictionary(info.as_reference().unwrap()))
+            .and_then(|info| info.get(b"Title"))
+            .map(|t| String::from_utf8_lossy(t.as_str().unwrap()).into_owned())
+            .expect("document info carries a title")
+    }
+
     #[test]
     fn an_unset_company_leaves_a_text_only_header() {
         let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "").unwrap();
@@ -1065,21 +1075,13 @@ mod invoice_pdf_tests {
                 .unwrap_or_else(|| panic!("missing: {text}"))
         };
         assert!(at("Invoice #1248") < at("Billed to: Acme"));
+        assert_eq!(document_title_of(&bytes), "Invoice #1248");
     }
 
     #[test]
     fn the_document_title_carries_the_company() {
         let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "Bluepeak LLC").unwrap();
-        let doc = lopdf::Document::load_mem(&bytes).unwrap();
-        let title = doc
-            .trailer
-            .get(b"Info")
-            .and_then(|info| doc.get_dictionary(info.as_reference().unwrap()))
-            .and_then(|info| info.get(b"Title"))
-            .map(|t| String::from_utf8_lossy(t.as_str().unwrap()).into_owned())
-            .expect("document info carries a title");
-        assert!(title.contains("Bluepeak LLC"), "got: {title}");
-        assert!(title.contains("Invoice #1248"), "got: {title}");
+        assert_eq!(document_title_of(&bytes), "Bluepeak LLC - Invoice #1248");
     }
 
     #[test]
