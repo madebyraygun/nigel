@@ -1,11 +1,11 @@
 ---
 id: TASK-80
 title: 'Invoicing: outgoing email needs a display name, a from address and a reply-to'
-status: In Progress
+status: Done
 assignee:
   - '@stream-3'
 created_date: '2026-08-10 21:48'
-updated_date: '2026-08-11 20:38'
+updated_date: '2026-08-11 23:30'
 labels:
   - enhancement
   - invoicing
