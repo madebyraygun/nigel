@@ -1,10 +1,11 @@
 ---
 id: TASK-75
 title: 'Web UI: dark and light mode switcher'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-4'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 20:02'
+updated_date: '2026-08-11 20:34'
 labels:
   - enhancement
   - web
