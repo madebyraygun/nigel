@@ -4,11 +4,15 @@ title: 'Invoicing: republish HTML and PDF when payments change an invoice'
 status: To Do
 assignee: []
 created_date: '2026-08-07 23:09'
+updated_date: '2026-08-11 20:06'
 labels:
   - invoicing
 dependencies: []
 references:
   - 'https://github.com/madebyraygun/nigel-keeps-your-books/pull/172'
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-67-64-publish-pipeline-design.md
+  - docs/superpowers/plans/2026-08-11-task-67-64-publish-pipeline.md
 priority: medium
 ---
 
