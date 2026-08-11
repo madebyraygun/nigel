@@ -1109,8 +1109,9 @@ such a build — otherwise the saved `.pdf` file is that JSON.
 
 ### Not on the API
 
-- **Bulk export.** `nigel report all` writes nine files into a directory; a
-  browser downloads one file at a time. There is no `/api/exports/all`.
+- **Bulk export.** `nigel report all` writes nine files into a directory
+  (eight on personal books, which skip the K-1 worksheet); a browser downloads
+  one file at a time. There is no `/api/exports/all`.
 - **A/R aging as a report.** Aging is served at
   [`/api/invoices/aging`](#get-apiinvoicesaging), not in `/api/reports` or
   `/api/exports`: `ReportKind` has no variant for it, and giving it one would

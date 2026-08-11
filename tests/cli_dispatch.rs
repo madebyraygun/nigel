@@ -377,9 +377,21 @@ fn report_all_skips_k1_on_personal_books() {
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
+    // pnl, expenses, tax, cashflow, register, flagged, balance, aging — the
+    // business nine minus the K-1 worksheet, with aging on both profiles.
+    assert_eq!(
+        names.len(),
+        8,
+        "expected 8 report files, got {}: {names:?}",
+        names.len()
+    );
     assert!(
         names.iter().any(|n| n.starts_with("pnl")),
         "expected the standard reports, got {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n.starts_with("aging")),
+        "personal report all should include aging, got {names:?}"
     );
     assert!(
         !names.iter().any(|n| n.starts_with("k1-prep")),
