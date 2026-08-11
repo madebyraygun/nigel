@@ -212,11 +212,8 @@ impl Onboarding {
         effects::render_logo(self.phase, frame, logo_area);
 
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "What will you keep books for?",
-                HEADER_STYLE,
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
+            Paragraph::new(Span::styled("What will you keep books for?", HEADER_STYLE))
+                .alignment(ratatui::layout::Alignment::Center),
             prompt_area,
         );
 
@@ -228,7 +225,11 @@ impl Onboarding {
             .iter()
             .enumerate()
             .map(|(i, label)| {
-                let marker = if i == self.profile_selection { ">" } else { " " };
+                let marker = if i == self.profile_selection {
+                    ">"
+                } else {
+                    " "
+                };
                 let style = if i == self.profile_selection {
                     Style::default().add_modifier(Modifier::BOLD)
                 } else {

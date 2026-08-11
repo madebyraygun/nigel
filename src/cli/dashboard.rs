@@ -134,7 +134,10 @@ enum ReportPickerMode {
 /// The rows a report picker shows for the given profile. Personal books drop
 /// the K-1 worksheet; every dispatch index below stays keyed to the business
 /// lists, with `canonical_report_idx` translating a picker selection back.
-fn report_picker_items(profile: crate::db::Profile, mode: ReportPickerMode) -> &'static [&'static str] {
+fn report_picker_items(
+    profile: crate::db::Profile,
+    mode: ReportPickerMode,
+) -> &'static [&'static str] {
     use crate::db::Profile;
     match (mode, profile) {
         (ReportPickerMode::View, Profile::Business) => REPORT_TYPES,
@@ -1395,17 +1398,17 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::ReportPicker { selection, mode } => {
-                            let max_idx =
-                                report_picker_items(dashboard.profile, *mode).len() - 1;
+                            let max_idx = report_picker_items(dashboard.profile, *mode).len() - 1;
                             match key.code {
                                 KeyCode::Up => *selection = selection.saturating_sub(1),
                                 KeyCode::Down => *selection = (*selection + 1).min(max_idx),
                                 KeyCode::Esc | KeyCode::Char('q') => return_home = true,
                                 KeyCode::Enter => match mode {
                                     ReportPickerMode::View => {
-                                        dashboard.pending_report_view = Some(
-                                            canonical_report_idx(dashboard.profile, *selection),
-                                        );
+                                        dashboard.pending_report_view = Some(canonical_report_idx(
+                                            dashboard.profile,
+                                            *selection,
+                                        ));
                                     }
                                     ReportPickerMode::Export => {
                                         // Keep the picker index here so Esc from
@@ -1436,8 +1439,7 @@ pub fn run() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let format = EXPORT_FORMATS[*selection];
-                                    let idx =
-                                        canonical_report_idx(dashboard.profile, *report_idx);
+                                    let idx = canonical_report_idx(dashboard.profile, *report_idx);
                                     if format == "Text" {
                                         dashboard.pending_text_export = Some(idx);
                                     } else {
@@ -1595,12 +1597,18 @@ mod tests {
         // past that row are one short of canonical; dispatching row 7
         // uncorrected would open the K-1 worksheet instead of A/R aging.
         for selection in 0..7 {
-            assert_eq!(canonical_report_idx(Profile::Personal, selection), selection);
+            assert_eq!(
+                canonical_report_idx(Profile::Personal, selection),
+                selection
+            );
         }
         assert_eq!(canonical_report_idx(Profile::Personal, 7), 8); // A/R Aging
         assert_eq!(canonical_report_idx(Profile::Personal, 8), 9); // All Reports
         for selection in 0..EXPORT_TYPES.len() {
-            assert_eq!(canonical_report_idx(Profile::Business, selection), selection);
+            assert_eq!(
+                canonical_report_idx(Profile::Business, selection),
+                selection
+            );
         }
     }
 

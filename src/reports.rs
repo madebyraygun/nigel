@@ -908,9 +908,11 @@ mod tests {
             )
             .unwrap();
         let transfer: i64 = conn
-            .query_row("SELECT id FROM categories WHERE name = 'Transfer'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM categories WHERE name = 'Transfer'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let rows: [(&str, &str, f64, i64); 4] = [
             ("2025-01-10", "CLIENT PAYMENT", 5000.0, income),
@@ -990,9 +992,11 @@ mod tests {
         // the running year) has something to add up.
         let year = chrono::Local::now().year();
         let transfer: i64 = conn
-            .query_row("SELECT id FROM categories WHERE name = 'Transfer'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT id FROM categories WHERE name = 'Transfer'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let income: i64 = conn
             .query_row(
@@ -1028,7 +1032,11 @@ mod tests {
         );
         // The fixture's dated rows only join the YTD figure when the suite
         // happens to run in their calendar year.
-        let expected_ytd = if year == 2025 { 1000.0 + 4950.0 } else { 1000.0 };
+        let expected_ytd = if year == 2025 {
+            1000.0 + 4950.0
+        } else {
+            1000.0
+        };
         assert_eq!(report.ytd_net_income, expected_ytd);
     }
 
