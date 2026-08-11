@@ -142,6 +142,5 @@ describePreviewA11y(preview);
 
 describeControlsAdoption(
   WcCategoryForm,
-  'wa-input::part(base)',
-  'wa-radio-group::part(form-control-label)',
+  ':focus-visible',
 );

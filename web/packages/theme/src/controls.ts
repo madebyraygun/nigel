@@ -45,26 +45,13 @@ export const controlsCss = css`
     letter-spacing: 0.01em;
   }
 
-  wa-input::part(form-control-label),
-  wa-select::part(form-control-label),
-  wa-switch::part(form-control-label),
-  wa-checkbox::part(form-control-label),
-  wa-radio::part(form-control-label),
-  wa-radio-group::part(form-control-label),
-  wa-textarea::part(form-control-label) {
-    font-family: var(--wa-font-family-sans);
-    font-weight: var(--wa-font-weight-medium);
-    color: var(--wa-color-text);
-  }
-
-  wa-input::part(base),
-  wa-select::part(base),
-  wa-textarea::part(base) {
-    background: var(--wa-color-surface);
-    border-color: var(--wa-color-border);
-    border-radius: var(--wa-radius-sm);
-    color: var(--wa-color-text);
-  }
+  /* Field chrome and label type are deliberately *not* here. They belong to
+     the --wa-form-control-* tokens in tokens/wa-contract.ts, and a part rule
+     would be worse than redundant: a rule written in the outer tree beats the
+     shadow tree's own for the same property whatever the specificity, so an
+     unconditional background on an input's base part overrides Web Awesome's
+     disabled and filled-appearance treatments as well as its default one.
+     The token reaches the same declaration and leaves the variants intact. */
 
   wa-dialog::part(header),
   wa-dialog::part(body),

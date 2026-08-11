@@ -403,3 +403,87 @@ them correctly rather than adding new ones. The harness walk is the review.
    has never rendered. That is the intended design, but it is a visible change
    nobody has seen. Worth a look at the harness before the browser pass on the
    app.
+
+---
+
+## 8. Addendum: the token contract Web Awesome reads
+
+Adopting `controlsCss` (§3) makes the theme's `::part()` rules match, and that
+is necessary but not sufficient. The primitives also arrive with **no
+structural styling at all** — no padding on buttons, no border on inputs, no
+padding on the dialog header, a heading at body size — and no `::part()` rule
+was going to fix that.
+
+### 8.1 Why
+
+Web Awesome splits each component in two: compiled component CSS inside the
+shadow root, and the `--wa-*` custom properties that CSS reads, which ship in
+the stylesheet this app deliberately never loads. `@nigel/theme` defined a
+colour and type vocabulary; it did not define the structural one. Measured
+against the nine primitives the app renders, **68 of the 74 `--wa-*` tokens
+they read were undefined.**
+
+An undefined custom property is not a default. It is nothing, and CSS discards
+the declaration that references it:
+
+| Web Awesome writes | Undefined token | Result |
+|---|---|---|
+| `padding: 0 var(--wa-form-control-padding-inline)` | padding-inline | button is exactly as wide as its label |
+| `height: var(--wa-form-control-height)` | height | button has no minimum height |
+| `border-style: var(--wa-form-control-border-style)` | border-style | input has **no border** — a border with no style is not drawn, so setting only `border-color` from a part rule cannot bring it back |
+| `padding-block-start: calc(var(--spacing) - var(--wa-form-control-padding-block))` | padding-block | **invalid calc voids the whole declaration**, so the dialog header sits flush |
+| `font-size: var(--wa-font-size-l)` | font-size-l | dialog title renders at inherited body size |
+
+Note the third and fourth rows: those are the two failures that look like the
+theme is doing nothing when it is in fact doing something that cannot work. A
+part rule supplying `border-color` alone is inert, and one undefined token
+inside a `calc()` takes its whole declaration with it.
+
+Three `--wa-shadow-s/m/l` were a variant of the same trap: defined only inside
+`print.ts`'s `@media print` block, so a naive scan reported them present while
+every component on screen saw nothing.
+
+### 8.2 Tokens, not part rules
+
+`tokens/wa-contract.ts` defines the missing vocabulary in terms of the tokens
+the package already owns. This is the mechanism to prefer, for reasons that are
+about more than tidiness:
+
+- **One definition reaches every component.** Custom properties inherit through
+  shadow boundaries, so the contract is delivered to all forty adopting roots
+  at once. A part rule fixes one part of one component.
+- **Dark mode and print come free.** `var()` resolves at use time, so a
+  contract expressed as `var(--wa-color-surface)` follows whatever the dark
+  block or the print block put in scope. Nothing is restated per mode.
+- **State variants survive.** A `::part()` rule written in the outer tree beats
+  the shadow tree's own for the same property *regardless of specificity* —
+  the very property that makes §3 work. So an unconditional
+  `wa-input::part(base) { background }` also overrides Web Awesome's disabled
+  and `appearance="filled"` treatments. The token supplies the same default and
+  leaves the variants intact. The field-chrome and `form-control-label` part
+  rules were therefore **removed** from `controls.ts` when the tokens landed.
+- **The contrast suite is untouched.** `contrast.test.ts` indexes tokens by
+  their *n*th `#rrggbb` occurrence, so the contract carries no hex at all —
+  every value is a `var()` reference or an alpha `rgb()`.
+
+Part rules remain for what the token vocabulary has no word for: the brand
+gradient on a primary button, the dialog panel's header rule, and the
+`:focus-visible` ring, which has to reach plain focusable elements too.
+
+### 8.3 Keeping it honest
+
+`__tests__/wa-contract.test.ts` reads the token list **out of the installed
+Web Awesome package** rather than from a written-down list — it walks each
+component's styles chunk, collects every bare `var(--wa-…)`, and fails naming
+any the theme does not define on screen. A hand-maintained list would go stale
+at the next upgrade in exactly the way that produces an unstyled control and a
+green suite.
+
+Two refinements the mechanism forced:
+
+- `var(--x, fallback)` is not a hole. Web Awesome uses that form for
+  per-variant indirection (`var(--wa-color-fill-loud,
+  var(--wa-color-neutral-fill-loud))`), and defining those at `:root` would pin
+  every button to one variant. Only a bare `var(--x)` is counted.
+- The scan of what the theme defines stops at `@media print`, so a token
+  defined only for paper is correctly reported as missing on screen.

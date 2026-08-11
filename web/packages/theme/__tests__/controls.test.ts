@@ -17,15 +17,24 @@ describe('controlsCss', () => {
     'wa-dialog::part(header)',
     'wa-dialog::part(body)',
     'wa-dialog::part(footer)',
-    'wa-input::part(base)',
-    'wa-select::part(base)',
-    'wa-textarea::part(base)',
     "wa-button[variant='brand']::part(base)",
-    '::part(form-control-label)',
     '::part(label)',
     ':focus-visible',
   ])('carries %s', (rule) => {
     expect(text).toContain(rule);
+  });
+
+  it.each([
+    'wa-input::part(base)',
+    'wa-select::part(base)',
+    'wa-textarea::part(base)',
+    '::part(form-control-label)',
+  ])('leaves %s to the tokens', (rule) => {
+    // Field chrome is --wa-form-control-* now. A part rule for it would also
+    // override Web Awesome's disabled and appearance variants, because an
+    // outer-tree ::part() rule wins over the shadow tree's own for the same
+    // property regardless of specificity.
+    expect(text).not.toContain(rule);
   });
 
   it('reads only tokens, never a literal brand value', () => {
