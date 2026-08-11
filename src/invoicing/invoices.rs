@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{get_metadata, set_metadata};
 use crate::error::{NigelError, Result};
-use crate::invoicing::clients::ensure_client_exists;
+use crate::invoicing::clients::ensure_client_active;
 use crate::models::{Invoice, InvoiceLineItem, InvoicePayment, InvoiceStatus};
 
 const NEXT_NUMBER_KEY: &str = "next_invoice_number";
@@ -98,7 +98,10 @@ pub fn create_invoice(
     notes: Option<&str>,
     terms: Option<&str>,
 ) -> Result<i64> {
-    ensure_client_exists(conn, client_id)?;
+    // Before the transaction opens, so a refusal writes nothing. This is also
+    // the existence check: `ensure_client_active` reads the row, so a missing
+    // client is its `NotFound` rather than a second query's.
+    ensure_client_active(conn, client_id)?;
     validate_items(items)?;
     let issue_date = validate_date(issue_date, "issue")?;
     let due_date = match due_date {
@@ -1279,6 +1282,91 @@ mod tests {
             unit_amount: 100.0,
         }];
         create_invoice(conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap()
+    }
+
+    #[test]
+    fn a_new_invoice_for_an_archived_client_is_refused_naming_the_reason() {
+        use crate::invoicing::clients::archive_client;
+
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        archive_client(&conn, cid, "2026-08-11").unwrap();
+
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let err = create_invoice(&conn, cid, "2026-08-12", None, "USD", &items, None, None)
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(conflict_code(&err), "client_archived");
+        assert!(err.to_string().contains("Acme Co"), "got: {err}");
+        assert_eq!(
+            list_invoices(&conn, None, None).unwrap().len(),
+            0,
+            "nothing was written"
+        );
+    }
+
+    #[test]
+    fn unarchiving_makes_the_client_invoiceable_again() {
+        use crate::invoicing::clients::{archive_client, unarchive_client};
+
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        archive_client(&conn, cid, "2026-08-11").unwrap();
+        unarchive_client(&conn, cid).unwrap();
+
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        create_invoice(&conn, cid, "2026-08-12", None, "USD", &items, None, None).unwrap();
+        assert_eq!(list_invoices(&conn, None, None).unwrap().len(), 1);
+    }
+
+    /// AC #3: archive changes no query that lists or ages an invoice.
+    #[test]
+    fn an_archived_clients_existing_invoices_stay_in_every_list() {
+        use crate::invoicing::clients::archive_client;
+
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        for issued in ["2026-06-01", "2026-07-01"] {
+            let id = create_invoice(
+                &conn,
+                cid,
+                issued,
+                Some("2026-07-15"),
+                "USD",
+                &items,
+                None,
+                None,
+            )
+            .unwrap();
+            mark_published(&conn, id, issued).unwrap();
+            refresh_status(&conn, id, "2026-08-11").unwrap();
+        }
+        archive_client(&conn, cid, "2026-08-11").unwrap();
+
+        let rows = list_invoices(&conn, None, None).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|r| r.client_name.as_deref() == Some("Acme Co")));
+
+        let aging = ar_aging_detail(&conn, "2026-08-11").unwrap();
+        assert!(
+            aging.invoices.iter().any(|i| i.client == "Acme Co"),
+            "the archived client is still on the aging report"
+        );
     }
 
     fn conflict_code(err: &crate::error::NigelError) -> &'static str {

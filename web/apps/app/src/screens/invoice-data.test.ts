@@ -26,6 +26,7 @@ const CLIENT: Client = {
   email: 'ap@acme.test',
   billingAddress: '1 Main St',
   notes: null,
+  archivedAt: null,
 };
 
 const DETAIL: InvoiceDetail = {

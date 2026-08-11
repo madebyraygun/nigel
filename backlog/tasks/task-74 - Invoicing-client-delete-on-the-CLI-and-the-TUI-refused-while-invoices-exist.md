@@ -1,10 +1,11 @@
 ---
 id: TASK-74
 title: 'Invoicing: client delete on the CLI and the TUI, refused while invoices exist'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-3'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 20:03'
+updated_date: '2026-08-11 21:24'
 labels:
   - enhancement
   - invoicing
@@ -31,10 +32,32 @@ The data layer and the guard already exist, so this is surface work: no new refu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 nigel client delete <id> removes a client that has no invoices
-- [ ] #2 It refuses a client with invoices of any status, in the same words the web and the data layer already use, naming the count
-- [ ] #3 The refusal points at the invoices, the way the web guardrail does
-- [ ] #4 The TUI client manager offers delete with a confirmation, and refuses on the same terms
-- [ ] #5 No new guard logic is introduced — both surfaces call clients::delete_blocker/delete_client
-- [ ] #6 Deleting requires confirmation on the CLI, consistent with the other destructive commands
+- [x] #1 nigel client delete <id> removes a client that has no invoices
+- [x] #2 It refuses a client with invoices of any status, in the same words the web and the data layer already use, naming the count
+- [x] #3 The refusal points at the invoices, the way the web guardrail does
+- [x] #4 The TUI client manager offers delete with a confirmation, and refuses on the same terms
+- [x] #5 No new guard logic is introduced — both surfaces call clients::delete_blocker/delete_client
+- [x] #6 Deleting requires confirmation on the CLI, consistent with the other destructive commands
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Delete introduces no guard and no sentence. `nigel client delete <id> [--yes]`
+and the TUI's `d` both call `clients::delete_blocker` and `clients::delete_client`
+and print what those already say — the CLI adds only the pointer
+`Run \`nigel client show <id>\` to see them.`, which is where the web guardrail
+already points.
+
+Both surfaces ask the block **before** the confirmation, so a client that cannot
+be deleted never sees a dialog: the CLI exits non-zero with the block's sentence,
+and the TUI sets it on the status line and stays on the list
+(`account_manager`'s precedent).
+
+`confirm_void`'s body moved to `cli::confirm_or_refuse(question, refusal, yes)`,
+shared with `invoice void`, so the two destructive commands behave identically
+on a pipe. The void wording is pinned byte-for-byte by
+`invoice_void_requires_confirmation_without_a_tty`.
+
+Migration: none for this half. Shipped in PR #199 with TASK-73.
+<!-- SECTION:NOTES:END -->

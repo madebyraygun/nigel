@@ -109,6 +109,7 @@ export {
   type NcManagerActionDetail,
 } from './wc-manager-table.js';
 export { WcManagerDialog } from './wc-manager-dialog.js';
+export { WcRowBadge } from './wc-row-badge.js';
 export {
   ACCOUNT_TYPES,
   accountTypeLabel,

@@ -356,6 +356,7 @@ mod tests {
             email: Some("a@b.test".into()),
             billing_address: None,
             notes: None,
+            archived_at: None,
         };
         let items = vec![InvoiceLineItem {
             id: None,

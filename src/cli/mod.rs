@@ -48,6 +48,31 @@ pub fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// Ask before something irreversible, or refuse when nobody can be asked.
+///
+/// `invoice void` and `client delete` share this so the two destructive
+/// commands behave identically on a pipe: without `--yes` and without a
+/// terminal, the command fails rather than defaulting either way.
+pub(crate) fn confirm_or_refuse(
+    question: &str,
+    refusal: &str,
+    yes: bool,
+) -> crate::error::Result<bool> {
+    use std::io::IsTerminal;
+
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(crate::error::NigelError::Other(refusal.to_string()));
+    }
+    print!("{question} ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("y"))
+}
+
 pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
     if let Some(m) = month {
         let parts: Vec<&str> = m.split('-').collect();
@@ -340,8 +365,30 @@ pub enum ClientCommands {
         #[arg(long)]
         notes: Option<String>,
     },
+    /// Delete a client. Refused while any invoice bills them, of any status.
+    Delete {
+        /// Client ID (shown in `nigel client list`)
+        id: i64,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Archive a client: hide it from the list without deleting anything.
+    Archive {
+        /// Client ID (shown in `nigel client list`)
+        id: i64,
+    },
+    /// Bring an archived client back to the working list.
+    Unarchive {
+        /// Client ID (shown in `nigel client list --all`)
+        id: i64,
+    },
     /// List all clients.
-    List,
+    List {
+        /// Include archived clients
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]

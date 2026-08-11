@@ -630,6 +630,12 @@ fn seed_invoicing(conn: &Connection) {
         None,
     )
     .expect("northwind");
+    // A finished client, so the archived state is in the fixtures. Named last
+    // alphabetically and given no invoices, so the default-scope list — and the
+    // committed `clients.txt` — is exactly the three above.
+    let umbrella =
+        add_client(conn, "Umbrella Corp", Some("ap@umbrella.test"), None, None).expect("umbrella");
+    crate::invoicing::clients::archive_client(conn, umbrella, "2026-03-01").expect("archive");
 
     // 1247 — void.
     let id = inv::create_invoice(

@@ -18,8 +18,16 @@ const CLIENTS: Client[] = [
     email: 'ap@acme.test',
     billingAddress: '1 Main St',
     notes: null,
+    archivedAt: null,
   },
-  { id: 2, name: 'Globex', email: null, billingAddress: null, notes: null },
+  {
+    id: 2,
+    name: 'Globex',
+    email: null,
+    billingAddress: null,
+    notes: null,
+    archivedAt: null,
+  },
 ];
 
 function client(clients: Client[] = CLIENTS): FakeApiClient {
@@ -40,10 +48,14 @@ interface Mounted {
   routes: { screen: ScreenId; params: string }[];
 }
 
-async function mount(fake: FakeApiClient = client()): Promise<Mounted> {
+async function mount(
+  fake: FakeApiClient = client(),
+  query = '',
+): Promise<Mounted> {
   const routes: { screen: ScreenId; params: string }[] = [];
   const el = document.createElement('nigel-clients-screen');
   el.client = fake;
+  el.params = new URLSearchParams(query);
   el.navigate = (screen, params) =>
     routes.push({ screen, params: params?.toString() ?? '' });
   document.body.appendChild(el);
@@ -61,6 +73,11 @@ function table(el: NigelClientsScreen): WcManagerTable {
   const found = el.shadowRoot?.querySelector<WcManagerTable>('wc-manager-table');
   if (!found) throw new Error('no table on screen');
   return found;
+}
+
+function rowLabels(el: NigelClientsScreen): string[] {
+  return [...(table(el).shadowRoot?.querySelectorAll('tr[data-row] td:first-child') ?? [])]
+    .map((cell) => cell.textContent?.trim().split('\n')[0].trim() ?? '');
 }
 
 function dialog(el: NigelClientsScreen): WcManagerDialog | null {
@@ -119,6 +136,86 @@ describe('nigel-clients-screen', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  describe('archiving', () => {
+    const ARCHIVED: Client[] = [
+      ...CLIENTS,
+      {
+        id: 3,
+        name: 'Umbrella Corp',
+        email: 'ap@umbrella.test',
+        billingAddress: null,
+        notes: null,
+        archivedAt: '2026-03-01',
+      },
+    ];
+
+    it('asks for the active list by default and the whole one when told', async () => {
+      const { fake } = await mount(client(ARCHIVED));
+      expect(fake.calls).toContain('getClients');
+      expect(fake.calls).not.toContain('getClients:all');
+
+      const withArchived = await mount(client(ARCHIVED), 'archived=1');
+      expect(withArchived.fake.calls).toContain('getClients:all');
+      expect(rowLabels(withArchived.el)).toContain('Umbrella Corp');
+    });
+
+    it('marks an archived row with a badge rather than a column', async () => {
+      const { el } = await mount(client(ARCHIVED), 'archived=1');
+      const badges = table(el)
+        .shadowRoot?.querySelectorAll('wc-row-badge');
+      expect(badges?.length).toBe(1);
+      expect(badges?.[0].getAttribute('label')).toBe('Archived');
+      // No fourth column: the badge rides in the name cell.
+      expect(table(el).shadowRoot?.querySelectorAll('thead th').length).toBe(4);
+    });
+
+    it('writes the filter into the route rather than into state', async () => {
+      const { el, routes } = await mount();
+      const toggle = el.shadowRoot?.querySelector<HTMLElement>(
+        '[data-archived-toggle]',
+      );
+      toggle?.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle(el);
+      expect(routes).toEqual([{ screen: 'clients', params: 'archived=1' }]);
+    });
+
+    it('offers Archive on an active row and Unarchive on an archived one', async () => {
+      const { el } = await mount(client(ARCHIVED), 'archived=1');
+      const labels = [...(table(el).shadowRoot?.querySelectorAll('tr[data-row]') ?? [])].map(
+        (row) =>
+          [...row.querySelectorAll('wa-button')].map((b) => b.getAttribute('data-action')),
+      );
+      expect(labels[0]).toContain('archive');
+      expect(labels[2]).toContain('unarchive');
+    });
+
+    it('archives without a confirmation and refetches the list', async () => {
+      const { el, fake } = await mount(client(ARCHIVED));
+      await rowAction(el, 'archive', 2);
+
+      expect(fake.calls).toContain('archiveClient:2');
+      // Refetched, not spliced: the row leaves the unfiltered list.
+      expect(fake.calls.filter((call) => call === 'getClients')).toHaveLength(2);
+      expect(rowLabels(el)).not.toContain('Globex');
+    });
+
+    it('unarchives from the filtered list', async () => {
+      const { el, fake } = await mount(client(ARCHIVED), 'archived=1');
+      await rowAction(el, 'unarchive', 3);
+      expect(fake.calls).toContain('unarchiveClient:3');
+    });
+
+    it('reports a failed archive in the layout rather than silently', async () => {
+      const fake = client(ARCHIVED);
+      fake.archiveClientError = conflictError('client_archived', {
+        message: 'nope',
+      });
+      const { el } = await mount(fake);
+      await rowAction(el, 'archive', 2);
+      expect(layout(el).error).toBeTruthy();
+    });
   });
 
   it('lists the clients, with an em dash for the ones missing a field', async () => {

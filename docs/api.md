@@ -239,7 +239,7 @@ table is what `report` holds. The list routes below it answer with a bare array.
 | `/api/imports` | — | `ImportListItem[]` |
 | `/api/imports/formats` | — | `ImporterFormat[]` |
 | `/api/csv-profiles` | — | `CsvProfile[]` |
-| `/api/clients` | — | `Client[]` |
+| `/api/clients` | `includeArchived` | `Client[]` |
 | `/api/clients/{id}` | — | `ClientDetail` |
 | `/api/invoices` | `status`, `clientId` | `InvoiceListRow[]` |
 | `/api/invoices/{number}` | — | `InvoiceDetail` |
@@ -309,8 +309,13 @@ pagination.
 ]
 ```
 
-- `/api/clients` — every invoicing client, by name. `email`,
-  `billingAddress` and `notes` are `null` when unset.
+- `/api/clients` — every active invoicing client, by name. `email`,
+  `billingAddress` and `notes` are `null` when unset, and `archivedAt` is
+  `null` on every row this route answers by default. `?includeArchived=true`
+  adds the archived clients, each carrying the date it was archived;
+  `?includeArchived=false` is the default spelled out, and any other value is a
+  `400`. The order is by name in both cases — an archived row does not sink to
+  the bottom.
 - `/api/invoices` — every invoice, number descending.
 
 ### Invoicing
@@ -328,6 +333,7 @@ the same round trip `nigel client show` makes:
 {
   "id": 1, "name": "Acme Co", "email": "ap@acme.test",
   "billingAddress": "1 Main St, Portland OR", "notes": null,
+  "archivedAt": null,
   "invoices": [
     { "number": 1251, "status": "sent", "issueDate": "2026-03-06",
       "dueDate": "2026-04-06", "total": 1850.0, "paid": 0.0 }
@@ -511,6 +517,8 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?` | `Client` (`201`) |
 | `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?` | `Client` |
 | `/api/clients/:id` | `DELETE` | — | `{ id, deleted }` |
+| `/api/clients/:id/archive` | `POST` | — | `Client` |
+| `/api/clients/:id/unarchive` | `POST` | — | `Client` |
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
@@ -676,8 +684,27 @@ client on a page that has already gone out:
 }
 ```
 
-There is no CLI equivalent: `nigel client` has no `delete`, and the TUI's client
-manager offers none for the same reason this route guards it.
+`nigel client delete <id>` and the TUI client manager's `d` refuse the same
+thing in the same words: all three call `delete_blocker` and print what it says.
+
+`POST /api/clients/:id/archive` and `…/unarchive` answer the refreshed
+`Client`. Archive is a state transition with a timestamp the server writes, so
+it is a verb of its own rather than a `PATCH` field — the same reasoning as
+`POST /api/invoices/:number/void`. Neither touches an invoice, a payment or a
+figure; what changes is that the client leaves the default list and a **new
+invoice for it is refused**:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "message": "client 'Globex' is archived — unarchive it before invoicing",
+    "details": { "reason": "client_archived" }
+  }
+}
+```
+
+An unknown id is `404` `client_not_found` on both.
 
 #### Creating and editing an invoice
 

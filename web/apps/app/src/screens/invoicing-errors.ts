@@ -85,6 +85,10 @@ function sentenceFor(details: ConflictDetails): string | null {
         : 'This client has no email address. Add one before sending.';
     case 'invoice_not_payable':
       return 'This invoice has nothing to bill for, so there is nothing to send.';
+    case 'client_archived':
+      return details.clientName
+        ? `${details.clientName} is archived. Unarchive the client before raising a new invoice.`
+        : 'This client is archived. Unarchive it before raising a new invoice.';
     case 'send_not_configured':
       return missingKeysSentence(details.missing ?? []);
     // A key that is set but unusable, which is a different thing to say than
