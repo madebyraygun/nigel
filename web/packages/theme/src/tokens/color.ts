@@ -64,6 +64,19 @@ const darkTokens = css`
 /**
  * Dark mode by system preference, with `.light-mode` able to opt back out and
  * `.dark-mode` able to force it on regardless of the system setting.
+ *
+ * `:root` declares `color-scheme: light dark`, which is what lets the UA draw
+ * scrollbars, the reconcile screen's `type="month"` picker and form-control
+ * defaults from the OS setting. That is right while we are following the OS,
+ * and wrong the moment someone overrides it — so an explicit choice pins the
+ * scheme to match. The system arm needs no pin: `light dark` already resolves
+ * the way the OS asks.
+ *
+ * `darkTokens` is interpolated exactly twice here and must stay that way.
+ * `contrast.test.ts` selects a token by the *n*th `#rrggbb` occurrence in the
+ * composed sheet, so a third copy shifts every index and fails that suite with
+ * a message pointing nowhere near the cause. Declarations carrying no hex, as
+ * below, are safe.
  */
 export const colorDarkCss = css`
   @media (prefers-color-scheme: dark) {
@@ -72,7 +85,13 @@ export const colorDarkCss = css`
     }
   }
 
+  :root.light-mode {
+    color-scheme: light;
+  }
+
   :root.dark-mode {
+    color-scheme: dark;
+
     ${darkTokens}
   }
 `;

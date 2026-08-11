@@ -55,6 +55,14 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
+  it('pins color-scheme when a mode is forced, so native widgets follow', () => {
+    // :root declares `color-scheme: light dark`, which lets the UA pick
+    // scrollbars, date pickers and form-control defaults from the OS. An
+    // explicit choice has to pin it, or the app is light with dark scrollbars.
+    expect(text).toMatch(/:root\.light-mode\s*{[^}]*color-scheme:\s*light/);
+    expect(text).toMatch(/:root\.dark-mode\s*{[^}]*color-scheme:\s*dark/);
+  });
+
   it('supports system dark mode and both explicit overrides', () => {
     expect(text).toMatch(/prefers-color-scheme:\s*dark/);
     expect(text).toContain('.dark-mode');
