@@ -63,6 +63,16 @@ export class WcRegisterToolbar extends LitElement {
         padding-bottom: var(--wa-space-2xs, 4px);
         white-space: nowrap;
       }
+
+      /* Screen chrome, not part of the report. This lives here rather than in
+         @nigel/theme's print sheet because a rule that hides an element has to
+         be in the tree that element is in, and every wc-* here sits inside
+         nigel-app's shadow root where a document rule cannot reach it. */
+      @media print {
+        :host {
+          display: none;
+        }
+      }
     `,
   ];
 

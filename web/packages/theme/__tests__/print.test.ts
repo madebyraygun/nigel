@@ -37,20 +37,20 @@ describe('printCss', () => {
     expect(print).toMatch(/--wa-shadow-m:\s*none/);
   });
 
-  it.each(['sidebar', 'header', 'banner'])('hides the shell %s part', (part) => {
-    expect(print).toContain(`wc-app-shell::part(${part})`);
+  it('leaves component chrome to the components that own it', () => {
+    // These used to be here and could never match: wc-app-shell and its
+    // neighbours live inside nigel-app's shadow root, and a document sheet
+    // reaches exactly one boundary down. Each component now hides itself, and
+    // its own test asserts it — see describePrintHiding.
+    expect(print).not.toContain('wc-app-shell::part(');
+    for (const tag of ['wc-nav-sidebar', 'wc-toast', 'wc-export-links', 'wc-period-nav']) {
+      expect(print).not.toContain(tag);
+    }
   });
 
-  it('gives the page over to the content part', () => {
-    expect(print).toMatch(/wc-app-shell::part\(content\)\s*{[^}]*padding:\s*0/);
+  it('keeps the token repaint, which is the part that does reach shadow roots', () => {
+    expect(print).toMatch(/--wa-color-bg:\s*#ffffff/);
   });
-
-  it.each(['wc-nav-sidebar', 'wc-toast', 'wc-export-links', 'wc-period-nav'])(
-    'hides %s',
-    (tag) => {
-      expect(print).toContain(tag);
-    },
-  );
 
   it('repeats table headings across page breaks', () => {
     expect(print).toMatch(/thead\s*{[^}]*display:\s*table-header-group/);

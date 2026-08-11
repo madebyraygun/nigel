@@ -34,8 +34,8 @@ describe('controlsCss', () => {
 });
 
 describe('nigelTheme', () => {
-  it('ships no wa-* ::part() rule — a document sheet cannot reach one', () => {
-    expect(composed).not.toMatch(/wa-[\w-]+[^{;]*::part\(/);
+  it('ships no ::part() rule at all — a document sheet cannot reach one', () => {
+    expect(composed).not.toContain('::part(');
   });
 
   it('does not carry controlsCss, which only works once adopted', () => {

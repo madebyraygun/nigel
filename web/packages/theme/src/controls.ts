@@ -81,4 +81,32 @@ export const controlsCss = css`
     outline: 2px solid var(--wa-color-focus);
     outline-offset: 2px;
   }
+
+  /* Print, for content that lives inside a shadow root.
+     @nigel/theme's print sheet carries the same rules for content in the
+     document; these are the copy that reaches the other side of the boundary,
+     and this sheet is adopted by every root that hosts a control. */
+  @media print {
+    wa-button,
+    wa-select {
+      display: none;
+    }
+
+    [data-print='hide'] {
+      display: none;
+    }
+
+    /* A report that runs over a page break keeps its column headings. */
+    thead {
+      display: table-header-group;
+    }
+
+    tr {
+      break-inside: avoid;
+    }
+
+    a {
+      text-decoration: none;
+    }
+  }
 `;
