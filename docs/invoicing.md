@@ -574,6 +574,12 @@ nigel invoice pay 1248 --date 2026-08-20 --method ach
 are allowed, since banks make them. `--method` is one of `stripe`, `ach`,
 `direct_deposit` (the default), or `other`.
 
+`--date` must be a real date in `YYYY-MM-DD`; anything else is refused rather
+than recorded. A month or day you typed without its leading zero is accepted and
+stored padded — `--date 2026-8-9` lands in the books as `2026-08-09`, which is
+also what `--issue` and `--due` do on `invoice new` and `invoice edit`. Dates are
+stored one way so they compare and sort as dates.
+
 ### Sync on launch
 
 Every subcommand that reads or writes the books runs a sync first, as long as a
@@ -612,6 +618,12 @@ whenever it is published or paid:
 | `overdue` | Published, past its due date, with a balance |
 | `paid` | Paid in full (settled to within half a cent) |
 | `void` | Cancelled; cannot be sent, paid, or edited |
+
+`overdue` is derived against the day the command runs, so an invoice that passes
+its due date reads as overdue the next time anything touches it — a send, a
+payment, an edit, or a sync. Recording a payment derives against the payment's
+own date instead, so entering last month's cheque today does not backdate or
+advance anything else.
 
 ## A/R aging
 

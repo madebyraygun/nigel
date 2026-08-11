@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-1'
 created_date: '2026-08-08 08:21'
-updated_date: '2026-08-11 20:58'
+updated_date: '2026-08-11 20:59'
 labels:
   - invoicing
 dependencies: []
@@ -24,5 +24,5 @@ add_client/update_client refuse duplicate names in the data layer (advisory — 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Either a UNIQUE index exists with a migration that handles pre-existing duplicates, or the advisory-only behavior is documented as deliberate
+- [x] #1 Either a UNIQUE index exists with a migration that handles pre-existing duplicates, or the advisory-only behavior is documented as deliberate
 <!-- AC:END -->
