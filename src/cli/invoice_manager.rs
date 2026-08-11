@@ -11,11 +11,12 @@ use rusqlite::Connection;
 use crate::cli::invoice::{build_clients, company_name, PUBLISHED_VOID_WARNING};
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
-use crate::invoicing::clients::get_client;
+use crate::invoicing::clients::{get_client, list_clients};
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{
-    ensure_not_void, ensure_voidable, get_invoice, is_void, line_items, list_invoices, paid_amount,
-    payment_amount, payments, record_payment, validate_date, void_invoice, InvoiceListRow,
+    create_invoice, ensure_not_void, ensure_voidable, get_invoice, is_void, line_items,
+    list_invoices, paid_amount, payment_amount, payments, record_payment, validate_currency,
+    validate_date, validate_items, void_invoice, InvoiceListRow, NewLineItem,
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::send_invoice;
@@ -33,6 +34,7 @@ pub enum InvoiceAction {
 
 enum Screen {
     List,
+    NewInvoice(InvoiceForm),
     Detail,
     PayForm(PayForm),
     ConfirmVoid,
@@ -101,6 +103,245 @@ const AMOUNT_IDX: usize = 0;
 const DATE_IDX: usize = 1;
 const METHOD_IDX: usize = 2;
 const PAY_FIELDS: usize = 3;
+
+/// The draft form's four header fields, in the order `create_invoice` takes
+/// them. The line-item cells continue the same focus index past
+/// `HEADER_FIELDS`.
+const CLIENT_IDX: usize = 0;
+const ISSUE_IDX: usize = 1;
+const DUE_IDX: usize = 2;
+const CURRENCY_IDX: usize = 3;
+const HEADER_FIELDS: usize = 4;
+
+const DESC_CELL: usize = 0;
+const QTY_CELL: usize = 1;
+const UNIT_CELL: usize = 2;
+const CELLS_PER_ROW: usize = 3;
+
+/// The due date a fresh form suggests. `nigel invoice new` has no default; a
+/// form has a field that must hold something, and Net 30 is what the stock
+/// invoice template's terms say.
+const DEFAULT_TERM_DAYS: i64 = 30;
+
+/// One line-item row mid-edit. Every cell is text until Enter, because a
+/// half-typed quantity is a state the form has to be able to hold.
+#[derive(Default)]
+struct ItemRow {
+    description: String,
+    quantity: String,
+    unit_amount: String,
+}
+
+impl ItemRow {
+    /// The row's amount, once both figures parse — `None` while either is
+    /// blank or half-typed, which renders as an em dash rather than an
+    /// invented `0.00`.
+    fn amount(&self) -> Option<f64> {
+        Some(cell_number(&self.quantity).ok()? * cell_number(&self.unit_amount).ok()?)
+    }
+}
+
+/// The two rules a form owns that the data layer cannot see: a blank cell and
+/// an unparseable one. `cli::invoice`'s `--item` parser reports both against
+/// the flag (`bad quantity '2x' in --item '…'`); beside a field, the field is
+/// what needs naming — the same call `record_pay_form` makes about `--amount`.
+fn cell_number(value: &str) -> std::result::Result<f64, &'static str> {
+    let trimmed = value.trim().replace(',', "");
+    if trimmed.is_empty() {
+        return Err("is required");
+    }
+    trimmed.parse().map_err(|_| "must be a number")
+}
+
+fn plus_days(date: &str, days: i64) -> Option<String> {
+    let parsed = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    Some(
+        parsed
+            .checked_add_signed(chrono::Duration::days(days))?
+            .format("%Y-%m-%d")
+            .to_string(),
+    )
+}
+
+/// A draft invoice being typed. A refusal is held as the field it belongs to
+/// plus the sentence the data layer wrote, so it can be rendered beside that
+/// field rather than in a status line at the bottom.
+struct InvoiceForm {
+    /// Never empty: the screen refuses to open the form on a book with no
+    /// clients, so `client()` always has a row to point at.
+    clients: Vec<Client>,
+    client_idx: usize,
+    issue_date: String,
+    due_date: String,
+    currency: String,
+    items: Vec<ItemRow>,
+    focused: usize,
+    error: Option<(usize, String)>,
+}
+
+impl InvoiceForm {
+    fn new(clients: Vec<Client>, today: &str) -> Self {
+        Self {
+            clients,
+            client_idx: 0,
+            issue_date: today.to_string(),
+            due_date: plus_days(today, DEFAULT_TERM_DAYS).unwrap_or_default(),
+            currency: "USD".to_string(),
+            items: vec![ItemRow::default()],
+            focused: CLIENT_IDX,
+            error: None,
+        }
+    }
+
+    fn client(&self) -> &Client {
+        &self.clients[self.client_idx]
+    }
+
+    fn field_count(&self) -> usize {
+        HEADER_FIELDS + CELLS_PER_ROW * self.items.len()
+    }
+
+    fn cell_index(row: usize, cell: usize) -> usize {
+        HEADER_FIELDS + row * CELLS_PER_ROW + cell
+    }
+
+    /// The row and cell the focus is in, or `None` on a header field.
+    fn focused_cell(&self) -> Option<(usize, usize)> {
+        let offset = self.focused.checked_sub(HEADER_FIELDS)?;
+        Some((offset / CELLS_PER_ROW, offset % CELLS_PER_ROW))
+    }
+
+    /// What the rows that currently parse add up to.
+    fn total(&self) -> f64 {
+        self.items.iter().filter_map(ItemRow::amount).sum()
+    }
+
+    fn push(&mut self, c: char) {
+        self.error = None;
+        match self.focused_cell() {
+            Some((row, DESC_CELL)) if !c.is_control() => self.items[row].description.push(c),
+            Some((row, QTY_CELL)) if c.is_ascii_digit() || c == '.' => {
+                self.items[row].quantity.push(c)
+            }
+            Some((row, UNIT_CELL)) if c.is_ascii_digit() || c == '.' || c == ',' => {
+                self.items[row].unit_amount.push(c)
+            }
+            Some(_) => {}
+            None => match self.focused {
+                ISSUE_IDX if c.is_ascii_digit() || c == '-' => self.issue_date.push(c),
+                DUE_IDX if c.is_ascii_digit() || c == '-' => self.due_date.push(c),
+                // Uppercased on the way in, because that is the only shape
+                // `validate_currency` stores.
+                CURRENCY_IDX if c.is_ascii_alphabetic() => {
+                    self.currency.push(c.to_ascii_uppercase())
+                }
+                _ => {}
+            },
+        }
+    }
+
+    fn backspace(&mut self) {
+        self.error = None;
+        let field = match self.focused_cell() {
+            Some((row, DESC_CELL)) => &mut self.items[row].description,
+            Some((row, QTY_CELL)) => &mut self.items[row].quantity,
+            Some((row, UNIT_CELL)) => &mut self.items[row].unit_amount,
+            Some(_) => return,
+            None => match self.focused {
+                ISSUE_IDX => &mut self.issue_date,
+                DUE_IDX => &mut self.due_date,
+                CURRENCY_IDX => &mut self.currency,
+                _ => return,
+            },
+        };
+        field.pop();
+    }
+
+    /// A new row below the focused one — or at the end, when the focus is on a
+    /// header field — taking the focus with it.
+    fn add_row(&mut self) {
+        let at = self
+            .focused_cell()
+            .map_or(self.items.len(), |(row, _)| row + 1);
+        self.items.insert(at, ItemRow::default());
+        self.focused = Self::cell_index(at, DESC_CELL);
+        self.error = None;
+    }
+
+    fn remove_row(&mut self) {
+        let Some((row, _)) = self.focused_cell() else {
+            return;
+        };
+        if self.items.len() == 1 {
+            // Asking the data layer rather than restating it: an invoice with
+            // no lines is exactly what `validate_items` refuses on Enter.
+            let message = validate_items(&[])
+                .expect_err("an empty item list is refused")
+                .to_string();
+            self.error = Some((Self::cell_index(0, DESC_CELL), message));
+            return;
+        }
+        self.items.remove(row);
+        self.focused = Self::cell_index(row.min(self.items.len() - 1), DESC_CELL);
+        self.error = None;
+    }
+
+    fn line_items(&self) -> std::result::Result<Vec<NewLineItem>, (usize, String)> {
+        self.items
+            .iter()
+            .enumerate()
+            .map(|(row, item)| {
+                Ok(NewLineItem {
+                    description: item.description.trim().to_string(),
+                    quantity: cell_number(&item.quantity).map_err(|why| {
+                        (Self::cell_index(row, QTY_CELL), format!("Quantity {why}"))
+                    })?,
+                    unit_amount: cell_number(&item.unit_amount).map_err(|why| {
+                        (
+                            Self::cell_index(row, UNIT_CELL),
+                            format!("Unit amount {why}"),
+                        )
+                    })?,
+                })
+            })
+            .collect()
+    }
+
+    /// Create the draft, or answer with the field a refusal belongs to.
+    ///
+    /// The three validators run here are the ones `create_invoice` runs, in its
+    /// order, and they run **only to attribute a failure to a field**;
+    /// `create_invoice` re-runs every one of them and stays the sole writer, so
+    /// the screen never becomes the authority on what a valid invoice is.
+    /// Whatever it refuses that was not attributed above — a client deleted
+    /// from another screen, a database failure — lands on the client field,
+    /// which is the only one that could have caused it.
+    fn submit(&self, conn: &Connection) -> std::result::Result<i64, (usize, String)> {
+        let items = self.line_items()?;
+        let issue = self.issue_date.trim();
+        let due = self.due_date.trim();
+        let currency = self.currency.trim();
+
+        validate_items(&items).map_err(|e| (Self::cell_index(0, DESC_CELL), e.to_string()))?;
+        validate_date(issue, "issue").map_err(|e| (ISSUE_IDX, e.to_string()))?;
+        if !due.is_empty() {
+            validate_date(due, "due").map_err(|e| (DUE_IDX, e.to_string()))?;
+        }
+        validate_currency(currency).map_err(|e| (CURRENCY_IDX, e.to_string()))?;
+
+        create_invoice(
+            conn,
+            self.client().id,
+            issue,
+            (!due.is_empty()).then_some(due),
+            currency,
+            &items,
+            None,
+            None,
+        )
+        .map_err(|e| (CLIENT_IDX, e.to_string()))
+    }
+}
 
 /// Everything the detail view shows, loaded on entry and reloaded after every
 /// mutation.
@@ -214,6 +455,7 @@ impl InvoiceManager {
     pub fn draw(&mut self, frame: &mut Frame) {
         match &self.screen {
             Screen::List => self.draw_list(frame),
+            Screen::NewInvoice(form) => self.draw_new_form(frame, form),
             Screen::Detail | Screen::ConfirmVoid | Screen::ConfirmSend => self.draw_detail(frame),
             Screen::PayForm(form) => self.draw_pay_form(frame, form),
             Screen::Sending => self.draw_sending(frame),
@@ -272,6 +514,102 @@ impl InvoiceManager {
             Paragraph::new(" Working\u{2026}").style(FOOTER_STYLE),
             hints_area,
         );
+    }
+
+    /// The draft form. Header fields, then the line-item table, then the
+    /// running total — with any refusal on its own line directly under the
+    /// field it is about.
+    fn draw_new_form(&self, frame: &mut Frame, form: &InvoiceForm) {
+        let (content_area, hints_area) = self.draw_chrome(frame);
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                " New Draft Invoice",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        // Which rendered line the focus is on, so a form taller than the
+        // terminal scrolls to follow it — the arrow keys move between fields
+        // here, so there is no scroll key left to press.
+        let mut focus_line = 0;
+        let client = form.client().name.clone();
+        for (idx, label, value) in [
+            (
+                CLIENT_IDX,
+                "Client",
+                if form.focused == CLIENT_IDX {
+                    format!("< {client} >")
+                } else {
+                    format!("  {client}")
+                },
+            ),
+            (ISSUE_IDX, "Issue date", format!("  {}", form.issue_date)),
+            (DUE_IDX, "Due date", format!("  {}", form.due_date)),
+            (CURRENCY_IDX, "Currency", format!("  {}", form.currency)),
+        ] {
+            let focused = form.focused == idx;
+            let (label_style, value_style, cursor) = if focused {
+                (
+                    Style::default().add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Cyan),
+                    if idx == CLIENT_IDX { "" } else { "_" },
+                )
+            } else {
+                (Style::default(), Style::default(), "")
+            };
+            if focused {
+                focus_line = lines.len();
+            }
+            lines.push(Line::from(vec![
+                Span::styled(format!("   {label:<12} "), label_style),
+                Span::styled(format!("{value}{cursor}"), value_style),
+            ]));
+            lines.extend(error_line(form, idx, FIELD_VALUE_COLUMN));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            item_row_text("#", "Description", "Qty", "Unit", "Amount"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for row in 0..form.items.len() {
+            if form.focused_cell().is_some_and(|(r, _)| r == row) {
+                focus_line = lines.len();
+            }
+            lines.push(item_line(form, row));
+            for cell in [DESC_CELL, QTY_CELL, UNIT_CELL] {
+                lines.extend(error_line(
+                    form,
+                    InvoiceForm::cell_index(row, cell),
+                    ITEM_TEXT_COLUMN,
+                ));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(total_line("Total", form.total()));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("   {DRAFT_HINT}"),
+            FOOTER_STYLE,
+        )));
+
+        let visible = (content_area.height as usize).max(1);
+        let start = (focus_line + 1).saturating_sub(visible);
+        let end = (start + visible).min(lines.len());
+        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), content_area);
+
+        let hint = if form.focused_cell().is_some() {
+            " Tab=field  Ins/F2=add line  Del/F3=remove line  Enter=create  Esc=cancel"
+        } else {
+            " Tab=field  Left/Right=client  Ins/F2=add line  Enter=create  Esc=cancel"
+        };
+        frame.render_widget(Paragraph::new(hint).style(FOOTER_STYLE), hints_area);
     }
 
     fn draw_pay_form(&self, frame: &mut Frame, form: &PayForm) {
@@ -539,10 +877,7 @@ impl InvoiceManager {
         ];
 
         if self.rows.is_empty() {
-            lines.push(Line::from(
-                "   No invoices yet. Draft one with `nigel invoice new` \u{2014} the dashboard",
-            ));
-            lines.push(Line::from("   cannot create invoices yet."));
+            lines.push(Line::from("   No invoices yet. Press 'a' to draft one."));
         } else {
             lines.push(Line::from(Span::styled(
                 format!(
@@ -583,7 +918,7 @@ impl InvoiceManager {
             );
         } else {
             frame.render_widget(
-                Paragraph::new(" Enter=open  Esc=back  q=quit").style(FOOTER_STYLE),
+                Paragraph::new(" a=new  Enter=open  Esc=back  q=quit").style(FOOTER_STYLE),
                 hints_area,
             );
         }
@@ -597,8 +932,11 @@ impl InvoiceManager {
             }
         }
 
+        // The screen is matched before the key, so a printable character on a
+        // form types into the field instead of firing the list's binding.
         match &self.screen {
             Screen::List => self.handle_list_key(code, conn),
+            Screen::NewInvoice(_) => self.handle_new_key(code, conn),
             Screen::Detail => self.handle_detail_key(code, conn),
             Screen::PayForm(_) => self.handle_pay_key(code, conn),
             Screen::ConfirmVoid => self.handle_void_key(code, conn),
@@ -976,7 +1314,93 @@ impl InvoiceManager {
         self.detail = None;
     }
 
+    /// `a` (or `n`) on the list. Refused before the form opens on a book with
+    /// no clients — an invoice needs one, and the client selector would
+    /// otherwise have nothing to select.
+    fn open_new_form(&mut self, conn: &Connection, today: &str) {
+        let clients = list_clients(conn).unwrap_or_default();
+        if clients.is_empty() {
+            self.set_status("No clients yet. Add one on the Clients screen first.".into());
+            return;
+        }
+        self.screen = Screen::NewInvoice(InvoiceForm::new(clients, today));
+    }
+
+    fn handle_new_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
+        let Screen::NewInvoice(form) = &mut self.screen else {
+            return InvoiceAction::Continue;
+        };
+        match code {
+            KeyCode::Esc => self.screen = Screen::List,
+            KeyCode::Tab | KeyCode::Down => form.focused = (form.focused + 1) % form.field_count(),
+            KeyCode::BackTab | KeyCode::Up => {
+                form.focused = if form.focused == 0 {
+                    form.field_count() - 1
+                } else {
+                    form.focused - 1
+                };
+            }
+            KeyCode::Left if form.focused == CLIENT_IDX => {
+                form.client_idx = if form.client_idx == 0 {
+                    form.clients.len() - 1
+                } else {
+                    form.client_idx - 1
+                };
+            }
+            KeyCode::Right if form.focused == CLIENT_IDX => {
+                form.client_idx = (form.client_idx + 1) % form.clients.len();
+            }
+            // A `Ctrl`-based binding is unavailable — the dashboard hands the
+            // screen a bare `KeyCode` — and every printable character belongs
+            // to the description field, so the row keys come from the
+            // navigation block. `F2`/`F3` are bound alongside them because an
+            // Apple keyboard has no `Insert` key at all.
+            KeyCode::Insert | KeyCode::F(2) => form.add_row(),
+            KeyCode::Delete | KeyCode::F(3) => form.remove_row(),
+            KeyCode::Char(c) => form.push(c),
+            KeyCode::Backspace => form.backspace(),
+            KeyCode::Enter => self.create_from_form(conn),
+            _ => {}
+        }
+        InvoiceAction::Continue
+    }
+
+    fn create_from_form(&mut self, conn: &Connection) {
+        let Screen::NewInvoice(form) = &self.screen else {
+            return;
+        };
+        match form.submit(conn) {
+            Ok(invoice_id) => {
+                self.reload_list(conn);
+                self.screen = Screen::List;
+                if let Some(row) = self.rows.iter().position(|r| r.id == invoice_id) {
+                    self.selection = row;
+                    self.ensure_visible(self.last_visible_rows);
+                }
+                if let Some(row) = self.rows.get(self.selection) {
+                    let (number, total) = (row.number, row.total);
+                    self.set_status(format!(
+                        "Created draft invoice #{number} for {}.",
+                        money(total)
+                    ));
+                }
+            }
+            Err((anchor, message)) => {
+                if let Screen::NewInvoice(form) = &mut self.screen {
+                    form.error = Some((anchor, message));
+                    form.focused = anchor;
+                }
+            }
+        }
+    }
+
     fn handle_list_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
+        // Ahead of the empty-list guard: drafting the first invoice is the one
+        // thing an empty list exists to offer.
+        if matches!(code, KeyCode::Char('a') | KeyCode::Char('n')) {
+            self.open_new_form(conn, &crate::cli::today());
+            return InvoiceAction::Continue;
+        }
         if self.rows.is_empty() {
             return match code {
                 KeyCode::Char('q') | KeyCode::Esc => InvoiceAction::Close,
@@ -1057,6 +1481,85 @@ fn field_wording(message: String) -> String {
 /// One right-aligned label/amount row under the line items.
 fn total_line(label: &str, amount: f64) -> Line<'static> {
     Line::from(format!("   {:>44} {:>15}", label, money(amount)))
+}
+
+const DRAFT_HINT: &str = "A draft is not sent. Open it and press s to send it.";
+
+/// Where a header field's value starts, and where a line item's description
+/// does — a refusal is indented to its field so it reads as belonging to it.
+const FIELD_VALUE_COLUMN: usize = 18;
+const ITEM_TEXT_COLUMN: usize = 7;
+
+/// The refusal for one field, or nothing. Rendered as its own line directly
+/// beneath the field, which is what makes it read as beside that field rather
+/// than as a status line about the form as a whole.
+fn error_line(form: &InvoiceForm, field: usize, indent: usize) -> Option<Line<'static>> {
+    let (anchor, message) = form.error.as_ref()?;
+    if *anchor != field {
+        return None;
+    }
+    Some(Line::from(Span::styled(
+        format!("{:indent$}{message}", ""),
+        Style::default().fg(Color::Yellow),
+    )))
+}
+
+/// The line-item table's column budget, shared by the header and every row so
+/// the two cannot drift. 79 columns, one inside an 80-column frame.
+fn item_row_text(number: &str, description: &str, qty: &str, unit: &str, amount: &str) -> String {
+    format!("   {number:>2}  {description:<38} {qty:>8} {unit:>11} {amount:>12}")
+}
+
+/// One editable row: the focused cell is cyan and carries the cursor, and the
+/// amount is derived, never typed.
+fn item_line(form: &InvoiceForm, row: usize) -> Line<'static> {
+    let item = &form.items[row];
+    let focused = form
+        .focused_cell()
+        .and_then(|(r, cell)| (r == row).then_some(cell));
+    let typed = |cell: usize, value: &str| {
+        if focused == Some(cell) {
+            format!("{value}_")
+        } else {
+            value.to_string()
+        }
+    };
+    let style = |cell: usize| {
+        if focused == Some(cell) {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        }
+    };
+    let amount = item
+        .amount()
+        .map_or_else(|| "\u{2014}".to_string(), |a| format!("{a:.2}"));
+
+    Line::from(vec![
+        Span::styled(
+            format!("   {:>2}  ", row + 1),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{:<38}", truncate(&typed(DESC_CELL, &item.description), 38)),
+            style(DESC_CELL),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>8}", typed(QTY_CELL, &item.quantity)),
+            style(QTY_CELL),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>11}", typed(UNIT_CELL, &item.unit_amount)),
+            style(UNIT_CELL),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{amount:>12}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
 }
 
 /// An absent value reads as an em dash, never as an invented blank.
@@ -2496,15 +2999,484 @@ mod tests {
         draw(&mut mgr); // confirm send
         mgr.handle_key(KeyCode::Char('y'), &conn);
         draw(&mut mgr); // sending
+
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        fill_row(&mut mgr, &conn, 0, ("Strategy workshop", "2", "1500"));
+        draw(&mut mgr); // draft form
     }
 
     #[test]
-    fn the_empty_list_points_at_the_command_that_creates_one() {
+    fn the_empty_list_points_at_the_form_not_at_the_cli() {
         let (_d, conn) = test_conn();
         let mut mgr = manager(&conn);
         let screen = rendered(&mut mgr);
         assert!(screen.contains("Invoices (0)"), "{screen}");
-        assert!(screen.contains("nigel invoice new"), "{screen}");
+        assert!(screen.contains("Press 'a' to draft one"), "{screen}");
+        assert!(!screen.contains("nigel invoice new"), "{screen}");
+    }
+
+    fn new_form(mgr: &InvoiceManager) -> &InvoiceForm {
+        match &mgr.screen {
+            Screen::NewInvoice(form) => form,
+            _ => panic!("not on the draft form"),
+        }
+    }
+
+    fn open_form(mgr: &mut InvoiceManager, conn: &Connection) {
+        mgr.handle_key(KeyCode::Char('a'), conn);
+    }
+
+    fn invoice_rows(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Two clients and no invoices — the state the form is opened from.
+    fn seed_clients(conn: &Connection) {
+        add_client(conn, "Cedar Systems", Some("ops@cedar.test"), None, None).unwrap();
+        add_client(conn, "Harbor & Vale", Some("ap@harbor.test"), None, None).unwrap();
+    }
+
+    #[test]
+    fn a_opens_the_draft_form_prefilled() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+
+        let form = new_form(&mgr);
+        assert_eq!(form.client().name, "Cedar Systems");
+        assert_eq!(form.issue_date, crate::cli::today());
+        assert_eq!(form.due_date, plus_days(&crate::cli::today(), 30).unwrap());
+        assert_eq!(form.currency, "USD");
+        assert_eq!(form.items.len(), 1);
+        assert_eq!(form.focused, CLIENT_IDX);
+    }
+
+    #[test]
+    fn n_opens_the_same_form_as_a() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Char('n'), &conn);
+        assert!(matches!(mgr.screen, Screen::NewInvoice(_)));
+    }
+
+    #[test]
+    fn the_form_opens_from_an_empty_list_too() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        assert!(mgr.rows.is_empty());
+        open_form(&mut mgr, &conn);
+        assert!(matches!(mgr.screen, Screen::NewInvoice(_)));
+    }
+
+    #[test]
+    fn a_with_no_clients_is_refused_before_the_form_opens() {
+        let (_d, conn) = test_conn();
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("No clients yet. Add one on the Clients screen first.")
+        );
+    }
+
+    #[test]
+    fn left_and_right_cycle_the_client() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Right, &conn);
+        assert_eq!(new_form(&mgr).client().name, "Harbor & Vale");
+        mgr.handle_key(KeyCode::Right, &conn);
+        assert_eq!(new_form(&mgr).client().name, "Cedar Systems", "it wraps");
+        mgr.handle_key(KeyCode::Left, &conn);
+        assert_eq!(new_form(&mgr).client().name, "Harbor & Vale");
+    }
+
+    /// Tab around to a given field index.
+    fn focus_field(mgr: &mut InvoiceManager, conn: &Connection, idx: usize) {
+        while new_form(mgr).focused != idx {
+            mgr.handle_key(KeyCode::Tab, conn);
+        }
+    }
+
+    #[test]
+    fn tab_walks_every_header_field_and_every_cell_then_wraps() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        let count = new_form(&mgr).field_count();
+        assert_eq!(
+            count,
+            HEADER_FIELDS + CELLS_PER_ROW,
+            "one row of three cells"
+        );
+
+        for expected in 1..count {
+            mgr.handle_key(KeyCode::Tab, &conn);
+            assert_eq!(new_form(&mgr).focused, expected);
+        }
+        mgr.handle_key(KeyCode::Tab, &conn);
+        assert_eq!(new_form(&mgr).focused, 0, "Tab wraps");
+        mgr.handle_key(KeyCode::BackTab, &conn);
+        assert_eq!(new_form(&mgr).focused, count - 1, "and so does BackTab");
+    }
+
+    #[test]
+    fn insert_adds_a_line_below_the_focused_row_and_delete_removes_it() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+        type_str(&mut mgr, &conn, "First");
+
+        mgr.handle_key(KeyCode::Insert, &conn);
+        assert_eq!(new_form(&mgr).items.len(), 2);
+        assert_eq!(
+            new_form(&mgr).focused,
+            InvoiceForm::cell_index(1, DESC_CELL),
+            "the new row takes focus"
+        );
+        type_str(&mut mgr, &conn, "Second");
+        assert_eq!(new_form(&mgr).items[0].description, "First");
+        assert_eq!(new_form(&mgr).items[1].description, "Second");
+
+        mgr.handle_key(KeyCode::Delete, &conn);
+        assert_eq!(new_form(&mgr).items.len(), 1);
+        assert_eq!(new_form(&mgr).items[0].description, "First");
+    }
+
+    #[test]
+    fn f2_and_f3_are_bound_alongside_insert_and_delete() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+
+        mgr.handle_key(KeyCode::F(2), &conn);
+        assert_eq!(new_form(&mgr).items.len(), 2);
+        mgr.handle_key(KeyCode::F(3), &conn);
+        assert_eq!(new_form(&mgr).items.len(), 1);
+    }
+
+    #[test]
+    fn the_last_line_cannot_be_removed_and_says_so_in_the_data_layers_words() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+        mgr.handle_key(KeyCode::Delete, &conn);
+
+        assert_eq!(new_form(&mgr).items.len(), 1);
+        let (_, message) = new_form(&mgr).error.clone().unwrap();
+        assert_eq!(message, "An invoice needs at least one line item.");
+    }
+
+    #[test]
+    fn delete_on_a_header_field_removes_nothing() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Insert, &conn);
+        focus_field(&mut mgr, &conn, ISSUE_IDX);
+        mgr.handle_key(KeyCode::Delete, &conn);
+        assert_eq!(new_form(&mgr).items.len(), 2);
+    }
+
+    /// Type one line item into an existing row.
+    fn fill_row(mgr: &mut InvoiceManager, conn: &Connection, row: usize, item: (&str, &str, &str)) {
+        focus_field(mgr, conn, InvoiceForm::cell_index(row, DESC_CELL));
+        type_str(mgr, conn, item.0);
+        mgr.handle_key(KeyCode::Tab, conn);
+        type_str(mgr, conn, item.1);
+        mgr.handle_key(KeyCode::Tab, conn);
+        type_str(mgr, conn, item.2);
+    }
+
+    #[test]
+    fn a_completed_form_creates_a_draft_with_every_line_item() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Right, &conn); // Harbor & Vale
+        fill_row(&mut mgr, &conn, 0, ("Strategy workshop", "2", "1500"));
+        mgr.handle_key(KeyCode::Insert, &conn);
+        fill_row(&mut mgr, &conn, 1, ("Technical audit", "1", "2,200.50"));
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert!(matches!(mgr.screen, Screen::List), "back to the list");
+        assert_eq!(invoice_rows(&conn), 1);
+
+        let invoice = get_invoice(&conn, 1).unwrap();
+        assert_eq!(invoice.status, "draft");
+        assert_eq!(invoice.currency, "USD");
+        assert_eq!(invoice.issue_date, crate::cli::today());
+        assert_eq!(
+            invoice.due_date.as_deref(),
+            Some(plus_days(&crate::cli::today(), 30).unwrap().as_str())
+        );
+        assert_eq!(invoice.total, 5_200.50);
+        assert!(invoice.published_at.is_none());
+        assert!(invoice.stripe_payment_link_id.is_none());
+
+        let items = line_items(&conn, invoice.id).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].description, "Strategy workshop");
+        assert_eq!(items[0].quantity, 2.0);
+        assert_eq!(items[0].line_total, 3_000.0);
+        assert_eq!(items[1].description, "Technical audit");
+        assert_eq!(items[1].line_total, 2_200.50);
+
+        let client = get_client(&conn, invoice.client_id).unwrap();
+        assert_eq!(client.name, "Harbor & Vale");
+
+        assert_eq!(mgr.rows.len(), 1, "the list reloaded");
+        assert_eq!(mgr.selection, 0, "on the new invoice");
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Created draft invoice #1248 for $5,200.50.")
+        );
+    }
+
+    #[test]
+    fn a_blank_due_date_creates_an_invoice_that_never_goes_overdue() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, DUE_IDX);
+        clear_field(&mut mgr, &conn);
+        fill_row(&mut mgr, &conn, 0, ("Retainer", "1", "1000"));
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert_eq!(get_invoice(&conn, 1).unwrap().due_date, None);
+    }
+
+    #[test]
+    fn the_currency_field_uppercases_what_is_typed() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, CURRENCY_IDX);
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "eur1-");
+        assert_eq!(new_form(&mgr).currency, "EUR");
+    }
+
+    #[test]
+    fn every_refusal_is_the_data_layers_own_and_writes_nothing() {
+        // (issue, due, currency, quantity, unit, message, the field it belongs to)
+        let cases: [(&str, &str, &str, &str, &str, &str, usize); 6] = [
+            (
+                "2026-13-45",
+                "",
+                "USD",
+                "1",
+                "100",
+                "Invalid issue date: 2026-13-45 (expected YYYY-MM-DD)",
+                ISSUE_IDX,
+            ),
+            (
+                "2026-08-10",
+                "2026-13-45",
+                "USD",
+                "1",
+                "100",
+                "Invalid due date: 2026-13-45 (expected YYYY-MM-DD)",
+                DUE_IDX,
+            ),
+            (
+                "2026-08-10",
+                "",
+                "US",
+                "1",
+                "100",
+                "Invalid currency: US (expected a 3-letter code like USD)",
+                CURRENCY_IDX,
+            ),
+            (
+                "2026-08-10",
+                "",
+                "USD",
+                "0",
+                "100",
+                "An invoice must total more than zero, got 0.00.",
+                InvoiceForm::cell_index(0, DESC_CELL),
+            ),
+            (
+                "2026-08-10",
+                "",
+                "USD",
+                "",
+                "100",
+                "Quantity is required",
+                InvoiceForm::cell_index(0, QTY_CELL),
+            ),
+            (
+                "2026-08-10",
+                "",
+                "USD",
+                "1",
+                "",
+                "Unit amount is required",
+                InvoiceForm::cell_index(0, UNIT_CELL),
+            ),
+        ];
+
+        for (issue, due, currency, quantity, unit, expected, anchor) in cases {
+            let (_d, conn) = test_conn();
+            seed_clients(&conn);
+            let mut mgr = manager(&conn);
+            open_form(&mut mgr, &conn);
+            for (idx, value) in [(ISSUE_IDX, issue), (DUE_IDX, due), (CURRENCY_IDX, currency)] {
+                focus_field(&mut mgr, &conn, idx);
+                clear_field(&mut mgr, &conn);
+                type_str(&mut mgr, &conn, value);
+            }
+            fill_row(&mut mgr, &conn, 0, ("Consulting", quantity, unit));
+            mgr.handle_key(KeyCode::Enter, &conn);
+
+            let (got_anchor, message) = new_form(&mgr)
+                .error
+                .clone()
+                .unwrap_or_else(|| panic!("no refusal for {expected}"));
+            assert_eq!(message, expected);
+            assert_eq!(got_anchor, anchor, "{expected} is anchored to its field");
+            assert_eq!(new_form(&mgr).focused, anchor, "focus moved to it");
+            assert_eq!(invoice_rows(&conn), 0, "{expected} wrote a row");
+        }
+    }
+
+    #[test]
+    fn an_unparseable_figure_names_the_field_not_the_cli_flag() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        // The cells take digits, `.` and `,`, so `..` is the only junk typable.
+        fill_row(&mut mgr, &conn, 0, ("Consulting", "..", "100"));
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let (_, message) = new_form(&mgr).error.clone().unwrap();
+        assert_eq!(message, "Quantity must be a number");
+        assert!(!message.contains("--item"), "got: {message}");
+    }
+
+    #[test]
+    fn a_refusal_renders_beside_the_field_it_is_about() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, DUE_IDX);
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "2026-13-45");
+        fill_row(&mut mgr, &conn, 0, ("Consulting", "1", "100"));
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let screen = rendered(&mut mgr);
+        let lines: Vec<&str> = screen.lines().collect();
+        let due = lines
+            .iter()
+            .position(|l| l.contains("Due date"))
+            .expect("no due date field");
+        assert!(
+            lines[due + 1].contains("Invalid due date: 2026-13-45 (expected YYYY-MM-DD)"),
+            "the message is not under the field:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn esc_cancels_the_draft_without_writing() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        fill_row(&mut mgr, &conn, 0, ("Consulting", "1", "100"));
+        mgr.handle_key(KeyCode::Esc, &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert_eq!(invoice_rows(&conn), 0);
+    }
+
+    #[test]
+    fn q_types_into_the_form_instead_of_quitting() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+        let action = mgr.handle_key(KeyCode::Char('q'), &conn);
+
+        assert!(!is_close(action));
+        assert_eq!(new_form(&mgr).items[0].description, "q");
+    }
+
+    #[test]
+    fn the_form_renders_its_fields_the_running_totals_and_its_keys() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        fill_row(&mut mgr, &conn, 0, ("Strategy workshop", "2", "1500"));
+        mgr.handle_key(KeyCode::Insert, &conn);
+        fill_row(&mut mgr, &conn, 1, ("Technical audit", "1", "200"));
+
+        let screen = rendered(&mut mgr);
+        assert!(screen.contains("New Draft Invoice"), "{screen}");
+        assert!(screen.contains("Cedar Systems"), "{screen}");
+        for label in ["Client", "Issue date", "Due date", "Currency"] {
+            assert!(screen.contains(label), "{label} missing:\n{screen}");
+        }
+        assert!(screen.contains("Strategy workshop"), "{screen}");
+        assert!(screen.contains("3000.00"), "the line amount:\n{screen}");
+        assert!(screen.contains("$3,200.00"), "the running total:\n{screen}");
+        assert!(
+            screen.contains("Ins/F2=add line  Del/F3=remove line  Enter=create  Esc=cancel"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn an_incomplete_row_shows_an_em_dash_rather_than_a_zero_amount() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+        type_str(&mut mgr, &conn, "Not priced yet");
+
+        assert_eq!(new_form(&mgr).items[0].amount(), None);
+        assert_eq!(new_form(&mgr).total(), 0.0);
+        let screen = rendered(&mut mgr);
+        assert!(screen.contains('\u{2014}'), "{screen}");
+    }
+
+    #[test]
+    fn the_list_footer_offers_the_form() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Cedar Systems", 100.0);
+        let mut mgr = manager(&conn);
+        let screen = rendered(&mut mgr);
+        assert!(
+            screen.contains("a=new  Enter=open  Esc=back  q=quit"),
+            "{screen}"
+        );
     }
 
     #[test]
