@@ -181,6 +181,7 @@ pub fn edit(
     notes: Option<String>,
     terms: Option<String>,
     items: &[String],
+    today: &str,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
@@ -198,7 +199,7 @@ pub fn edit(
         terms: terms.map(Some),
         items: optional_items(items)?,
     };
-    update_invoice(&conn, invoice.id, &update)?;
+    update_invoice(&conn, invoice.id, &update, today)?;
 
     let updated = get_invoice(&conn, invoice.id)?;
     println!(

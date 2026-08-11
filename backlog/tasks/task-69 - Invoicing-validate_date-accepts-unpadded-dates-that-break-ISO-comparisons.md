@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-1'
 created_date: '2026-08-08 04:33'
-updated_date: '2026-08-11 19:56'
+updated_date: '2026-08-11 20:38'
 labels:
   - invoicing
   - bug
@@ -25,6 +25,6 @@ invoices::validate_date (68.1's shared rule) accepts chrono-parseable but unpadd
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An unpadded but valid date entered anywhere (new/edit/pay, CLI or TUI) is stored zero-padded
-- [ ] #2 refresh_status and ar_aging behave identically for dates entered padded or unpadded
+- [x] #1 An unpadded but valid date entered anywhere (new/edit/pay, CLI or TUI) is stored zero-padded
+- [x] #2 refresh_status and ar_aging behave identically for dates entered padded or unpadded
 <!-- AC:END -->

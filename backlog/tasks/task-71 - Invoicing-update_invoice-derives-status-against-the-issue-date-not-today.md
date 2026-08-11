@@ -1,10 +1,11 @@
 ---
 id: TASK-71
 title: 'Invoicing: update_invoice derives status against the issue date, not today'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-1'
 created_date: '2026-08-08 08:22'
-updated_date: '2026-08-11 19:54'
+updated_date: '2026-08-11 20:39'
 labels:
   - invoicing
   - bug

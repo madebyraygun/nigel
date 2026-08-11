@@ -370,6 +370,7 @@ async fn update(
         ));
     }
 
+    let today = crate::cli::today();
     let detail = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
         let paid = inv::paid_amount(conn, invoice.id)?;
@@ -377,7 +378,7 @@ async fn update(
         // its own transaction, so draft-only is enforced against the current
         // status rather than anything the client sent — and this route must not
         // open a transaction of its own around it.
-        inv::update_invoice(conn, invoice.id, &update)
+        inv::update_invoice(conn, invoice.id, &update, &today)
             .map_err(|e| enrich_conflict(e, &invoice, paid))?;
         detail_for(conn, find_invoice(conn, number)?)
     })

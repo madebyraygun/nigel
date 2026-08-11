@@ -374,7 +374,16 @@ fn replace_line_items(
 }
 
 /// Apply a partial update to a draft invoice, guarded by `ensure_editable`.
-pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate) -> Result<()> {
+///
+/// `today` is the reference day the resulting status is derived against, taken
+/// as a parameter like `void_invoice`'s `voided_on`: nothing under
+/// `src/invoicing/` reads the clock.
+pub fn update_invoice(
+    conn: &Connection,
+    invoice_id: i64,
+    update: &InvoiceUpdate,
+    today: &str,
+) -> Result<()> {
     let invoice = get_invoice(conn, invoice_id)?;
     ensure_editable(conn, &invoice)?;
     if update.is_empty() {
@@ -461,8 +470,7 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
     }
 
     tx.commit()?;
-    let reference_day = issue_date.unwrap_or(invoice.issue_date.clone());
-    refresh_status(conn, invoice_id, &reference_day)?;
+    refresh_status(conn, invoice_id, today)?;
     Ok(())
 }
 
@@ -1344,7 +1352,7 @@ mod tests {
             issue_date: Some("2026-08-09".into()),
             ..InvoiceUpdate::default()
         };
-        let err = update_invoice(&conn, id, &update).unwrap_err();
+        let err = update_invoice(&conn, id, &update, "2026-08-11").unwrap_err();
         assert_eq!(conflict_code(&err), "not_draft");
         assert_eq!(get_invoice(&conn, id).unwrap().issue_date, "2026-08-04");
     }
@@ -1454,6 +1462,7 @@ mod tests {
                 due_date: Some(Some("2026-09-30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1476,6 +1485,7 @@ mod tests {
                 due_date: Some(Some("2026-09-30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1486,6 +1496,7 @@ mod tests {
                 due_date: Some(None),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1505,6 +1516,7 @@ mod tests {
                 terms: Some(Some("Net 30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1518,7 +1530,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
 
-        let err = update_invoice(&conn, id, &InvoiceUpdate::default()).unwrap_err();
+        let err = update_invoice(&conn, id, &InvoiceUpdate::default(), "2026-08-11").unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
         assert_eq!(
             err.to_string(),
@@ -1567,6 +1579,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1593,6 +1606,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1614,6 +1628,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1645,6 +1660,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .is_err());
 
@@ -1756,6 +1772,7 @@ mod tests {
                 items: Some(line(1e308, 1e308)),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
@@ -1790,6 +1807,7 @@ mod tests {
                 issue_date: Some("2026-13-45".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(
@@ -1804,6 +1822,7 @@ mod tests {
                 due_date: Some(Some("nope".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(
@@ -1824,6 +1843,7 @@ mod tests {
                 currency: Some("eur".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
         assert_eq!(get_invoice(&conn, id).unwrap().currency, "EUR");
@@ -1835,6 +1855,7 @@ mod tests {
                 currency: Some("dollars".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
@@ -1861,6 +1882,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1882,6 +1904,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1906,6 +1929,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(conflict_code(&err), "not_draft");
@@ -2518,6 +2542,7 @@ mod tests {
                 due_date: Some(Some("2026-9-1".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -2623,6 +2648,41 @@ mod tests {
         assert_eq!(
             get_invoice(&conn, id).unwrap().voided_at.as_deref(),
             Some("2026-08-06")
+        );
+    }
+
+    /// `update_invoice` passed the invoice's own issue date to `refresh_status` as
+    /// "today", so a due-date edit derived overdue against the wrong day.
+    ///
+    /// `published_at` is set by hand because this is the only shape where an
+    /// *editable* invoice can reach the overdue branch at all: `mark_published`
+    /// would move the status off `draft` and `ensure_editable` would then refuse the
+    /// edit. That is exactly why the bug was invisible — and why it is a trap.
+    #[test]
+    fn a_due_date_edit_derives_status_against_today_not_the_issue_date() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn); // issued 2026-08-04, still `draft`
+        conn.execute(
+            "UPDATE invoices SET published_at = '2026-08-05' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                due_date: Some(Some("2026-08-06".into())),
+                ..Default::default()
+            },
+            "2026-08-20",
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().status,
+            "overdue",
+            "derived against the issue date (2026-08-04), which is not past the due date"
         );
     }
 }
