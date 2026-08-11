@@ -477,35 +477,110 @@ fn default_method() -> String {
     "direct_deposit".to_string()
 }
 
+/// What a recorded payment answers with: the refreshed invoice, and whatever
+/// the republish behind it could not do.
+///
+/// `VoidResult`'s shape, for `VoidResult`'s reason — a best-effort step that
+/// failed is a 200 carrying a correct invoice plus something a human has to do,
+/// never a failed request. Flattened, so a client reading `.status` or
+/// `.balance` off the pay response keeps working and the addition is additive.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PayResult {
+    #[serde(flatten)]
+    invoice: InvoiceDetail,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    republish_warnings: Vec<String>,
+}
+
+/// `POST /api/invoices/{number}/pay` — record a payment, then correct the page.
+///
+/// **This route reaches the network.** A payment against a *published* invoice
+/// re-renders the page and the PDF and puts them back, so it joins `send` and
+/// `void` as a blocking request bounded by `invoicing::REQUEST_TIMEOUT` — two
+/// uploads, about 60s at worst — and holds `db_gate` for that long. The
+/// alternative was leaving the browser's page stale until the next sync, which
+/// is the bug this exists to fix. A payment against an unpublished invoice
+/// reaches nothing and is the write it always was.
 async fn pay(
     State(state): State<AppState>,
     ApiPath(number): ApiPath<i64>,
     ApiJson(request): ApiJson<PayRequest>,
-) -> ApiResult<Json<InvoiceDetail>> {
+) -> ApiResult<Json<PayResult>> {
     // The method refusal is the data layer's, so the CLI and the API name the
     // same legal set. `record_payment` checks it again; asking here is what
     // keeps a request that cannot succeed from opening a connection at all.
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
 
-    let detail = with_conn_api(&state, move |conn| {
-        let invoice = find_invoice(conn, number)?;
-        let paid = inv::paid_amount(conn, invoice.id)?;
-        let amount = inv::payment_amount(&invoice, paid, request.amount)
-            .map_err(|e| enrich_conflict(e, &invoice, paid))?;
-        inv::record_payment(
-            conn,
-            invoice.id,
-            amount,
-            &request.date,
-            &request.method,
-            None,
-        )
-        .map_err(|e| enrich_conflict(e, &invoice, paid))?;
-        detail_for(conn, find_invoice(conn, number)?)
+    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
+    let result = with_conn_api(&state, move |conn| {
+        pay_with(conn, number, &request, publisher.as_ref())
     })
     .await?;
-    Ok(Json(detail))
+    Ok(Json(result))
+}
+
+/// The pay with its publisher passed in, which is what makes the republish
+/// testable without a network — the seam `void_with` and `send_with` established.
+fn pay_with<P: AssetPublisher>(
+    conn: &Connection,
+    number: i64,
+    request: &PayRequest,
+    publisher: Option<&P>,
+) -> ApiResult<PayResult> {
+    let invoice = find_invoice(conn, number)?;
+    let paid = inv::paid_amount(conn, invoice.id)?;
+    let amount = inv::payment_amount(&invoice, paid, request.amount)
+        .map_err(|e| enrich_conflict(e, &invoice, paid))?;
+    inv::record_payment(
+        conn,
+        invoice.id,
+        amount,
+        &request.date,
+        &request.method,
+        None,
+    )
+    .map_err(|e| enrich_conflict(e, &invoice, paid))?;
+
+    // After the write has committed, and unable to undo it: the branding is
+    // resolved the way `cli::invoice::republish_after_payment` resolves it, and
+    // every failure out here is a sentence rather than a status.
+    let refreshed = find_invoice(conn, number)?;
+    let republish_warnings = republish_page(conn, &refreshed, publisher);
+    Ok(PayResult {
+        invoice: detail_for(conn, refreshed)?,
+        republish_warnings,
+    })
+}
+
+/// Re-render one published invoice through the CLI layer's resolver, with the
+/// publisher the route was given. Infallible: the payment is already recorded.
+fn republish_page<P: AssetPublisher>(
+    conn: &Connection,
+    invoice: &Invoice,
+    publisher: Option<&P>,
+) -> Vec<String> {
+    if invoice.published_at.is_none() {
+        return Vec::new();
+    }
+    let client = match get_client(conn, invoice.client_id) {
+        Ok(client) => client,
+        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (reading the client: {e}).")],
+    };
+    let template = match load_template(&crate::settings::get_data_dir()) {
+        Ok(template) => template,
+        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (loading the invoice template: {e}).")],
+    };
+    let (contact_email, _) =
+        crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
+    let branding = Branding {
+        template: &template,
+        company: &crate::cli::invoice::company_name(conn),
+        contact_email: &contact_email,
+    };
+    crate::invoicing::republish::republish_invoice(conn, invoice, &client, &branding, publisher)
+        .warnings()
 }
 
 // ---------------------------------------------------------------------------
@@ -741,15 +816,51 @@ fn send_error(conn: &Connection, invoice: &Invoice, failure: SendFailure) -> Api
 /// No confirmation: the run is idempotent by checkout session id (it already
 /// happens at every CLI launch), and it writes only payments Stripe says were
 /// taken.
-async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncReport>> {
+/// A completed sync, plus whatever the republishes behind it could not do.
+///
+/// Flattened over `SyncReport`, so `recorded`, `invoicesChecked`, `failures` and
+/// `recordedInvoices` stay where they were and the warnings are additive — the
+/// rule the per-invoice failures already follow, because a browser cannot read
+/// the server's stderr.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncResult {
+    #[serde(flatten)]
+    report: SyncReport,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    republish_warnings: Vec<String>,
+}
+
+async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
     let Some(secret_key) = crate::settings::invoicing_config().stripe_secret_key else {
         return Err(not_configured("Payment sync", &["stripe_secret_key"]));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
     let today = crate::cli::today();
+    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
 
-    let report = with_conn_api(&state, move |conn| sync_with(conn, &today, &gateway)).await?;
-    Ok(Json(report))
+    let result = with_conn_api(&state, move |conn| {
+        let report = sync_with(conn, &today, &gateway)?;
+        // Every invoice the run moved gets its page corrected, for the reason
+        // `pay` does: a client following their bookmark must not see a balance
+        // they have already settled.
+        let republish_warnings = report
+            .recorded_invoices
+            .iter()
+            .flat_map(|number| match inv::get_invoice_by_number(conn, *number) {
+                Ok(invoice) => republish_page(conn, &invoice, publisher.as_ref()),
+                Err(e) => vec![format!(
+                    "Warning: could not republish invoice #{number}'s page ({e})."
+                )],
+            })
+            .collect();
+        Ok(SyncResult {
+            report,
+            republish_warnings,
+        })
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 /// How long a sync request may spend at the gateway in total.
@@ -1547,6 +1658,103 @@ mod tests {
         }
     }
 
+    fn pay_request(amount: f64) -> PayRequest {
+        PayRequest {
+            amount: Some(amount),
+            date: AS_OF.to_string(),
+            method: "other".to_string(),
+        }
+    }
+
+    /// 1251 is the seeded sent invoice: published, with a live payment link. A
+    /// payment against it puts a corrected page back where the client is
+    /// looking.
+    #[test]
+    fn paying_a_published_invoice_republishes_its_page() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let publisher = FakePub::default();
+
+        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&publisher))
+            .expect("the payment goes through");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["paid"], 100.0, "{json}");
+        assert!(
+            json.get("republishWarnings").is_none(),
+            "nothing to warn about: {json}"
+        );
+        // With the `pdf` feature both artifacts go back; without it the page
+        // is corrected and the attachment the client was sent is left alone.
+        #[cfg(feature = "pdf")]
+        assert_eq!(publisher.pairs.borrow().len(), 1, "the page and the PDF");
+        #[cfg(not(feature = "pdf"))]
+        assert_eq!(publisher.pages.borrow().len(), 1, "the page alone");
+    }
+
+    #[test]
+    fn a_failed_republish_is_still_a_200_carrying_the_payment() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+
+        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&ForbiddenPub))
+            .expect("a failed republish is not a failed payment");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["paid"], 100.0, "the money is recorded: {json}");
+        let warnings = json["republishWarnings"].as_array().expect("warnings");
+        assert_eq!(warnings.len(), 1, "{json}");
+        assert!(
+            warnings[0]
+                .as_str()
+                .unwrap()
+                .contains("SignatureDoesNotMatch"),
+            "the upstream's own words: {json}"
+        );
+    }
+
+    /// 1252 is the seeded draft: nothing was ever published, so there is no
+    /// page to correct and nothing to say about one.
+    #[test]
+    fn paying_an_unpublished_invoice_carries_no_warnings_field() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let publisher = FakePub::default();
+
+        let result = pay_with(&conn, 1252, &pay_request(10.0), Some(&publisher))
+            .expect("the payment goes through");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert!(json.get("republishWarnings").is_none(), "{json}");
+        assert!(
+            publisher.pages.borrow().is_empty() && publisher.pairs.borrow().is_empty(),
+            "nothing was uploaded"
+        );
+    }
+
+    /// Nothing configured: the payment lands and the operator is told the page
+    /// they published is now out of date.
+    #[test]
+    fn paying_a_published_invoice_with_no_publisher_warns() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+
+        let result = pay_with(&conn, 1251, &pay_request(100.0), None::<&FakePub>)
+            .expect("the payment lands");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["paid"], 100.0);
+        let warnings = json["republishWarnings"].as_array().expect("warnings");
+        assert!(
+            warnings[0].as_str().unwrap().contains("old balance"),
+            "{json}"
+        );
+    }
+
     /// 1251 is the seeded sent invoice: published, with a live payment link.
     #[test]
     fn voiding_a_sent_invoice_deactivates_its_link_and_republishes_its_page() {
@@ -2040,7 +2248,7 @@ mod tests {
 
     // The three seams the fakes go through, taken by name: everything else in
     // this module is exercised over HTTP.
-    use super::{send_with, sync_with, void_with};
+    use super::{pay_with, send_with, sync_with, void_with, PayRequest};
     use crate::error::{NigelError, Result as NigelResult};
     use crate::invoicing::gateway::{
         AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
@@ -2073,9 +2281,11 @@ mod tests {
     #[derive(Default)]
     struct FakePub {
         pages: RefCell<Vec<String>>,
+        pairs: RefCell<Vec<String>>,
     }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
+            self.pairs.borrow_mut().push(token.to_string());
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, html: &[u8]) -> NigelResult<String> {

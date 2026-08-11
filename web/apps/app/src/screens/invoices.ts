@@ -255,11 +255,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
    */
   @state() private actionError: string | null = null;
   /**
-   * What a void could not take down: a Stripe link still live, a page still up.
-   * Held beside `actionError` rather than in it — the void succeeded, and a
-   * danger notice would say it had not.
+   * What an action that *succeeded* could not finish: a Stripe link a void left
+   * live, a page a payment could not republish. Held beside `actionError`
+   * rather than in it — the action worked, and a danger notice would say it had
+   * not. The sentences come from Rust verbatim; nothing here re-derives them.
    */
-  @state() private voidWarnings: string[] = [];
+  @state() private actionWarnings: string[] = [];
   @state() private busy = false;
 
   @state() private form: InvoiceFormValue = EMPTY_INVOICE_FORM;
@@ -334,7 +335,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     // warnings follow the same rule for the same reason.
     if (!keepActionError) {
       this.actionError = null;
-      this.voidWarnings = [];
+      this.actionWarnings = [];
     }
 
     // Answered before anything is fetched, rather than left to fall through the
@@ -505,8 +506,8 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       // failure: the invoice is void, and what is still live is something a
       // person has to go and deal with — including, when there is one, the
       // payment link's own address.
-      this.voidWarnings = result.teardownWarnings ?? [];
-      await this.refresh(this.voidWarnings.length > 0);
+      this.actionWarnings = result.teardownWarnings ?? [];
+      await this.refresh(this.actionWarnings.length > 0);
     } catch (error) {
       // `confirmDialog()` has already resolved and removed itself, so the
       // refusal lands above the invoice it is about — never in place of it.
@@ -528,8 +529,8 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
    * *and* a page still up — is the one this exists for, and dealing with the
    * link is no reason to lose the sentence about the page.
    */
-  private dismissVoidWarning(index: number): void {
-    this.voidWarnings = this.voidWarnings.filter((_, i) => i !== index);
+  private dismissActionWarning(index: number): void {
+    this.actionWarnings = this.actionWarnings.filter((_, i) => i !== index);
   }
 
   private openPayment = (): void => {
@@ -562,9 +563,15 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.busy = true;
     this.paymentError = null;
     try {
-      await this.client.payInvoice(detail.number, payRequest(payment));
+      const result = await this.client.payInvoice(detail.number, payRequest(payment));
       this.closePayment();
-      await this.refresh();
+      // A republish that could not reach R2 is a normal answer, not a failure:
+      // the payment is recorded, and the stale page is somebody's next task.
+      const warnings = result.republishWarnings ?? [];
+      // The refetch keeps them for the reason a void's are kept: the write went
+      // through, and what could not be corrected is still true afterwards.
+      await this.refresh(warnings.length > 0);
+      this.actionWarnings = warnings;
     } catch (error) {
       this.paymentError = invoicingGuardrailMessage(error, 'invoice');
     } finally {
@@ -764,14 +771,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
             @nc-notice-action=${this.dismissActionError}
           ></wc-notice-bar>`
         : nothing}
-      ${this.voidWarnings.map(
+      ${this.actionWarnings.map(
         (warning, index) =>
           html`<wc-notice-bar
             variant="warning"
-            data-void-warning
+            data-action-warning
             message=${warning}
             action-label="Dismiss"
-            @nc-notice-action=${() => this.dismissVoidWarning(index)}
+            @nc-notice-action=${() => this.dismissActionWarning(index)}
           ></wc-notice-bar>`
       )}
 

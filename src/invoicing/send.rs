@@ -5,8 +5,8 @@ use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{ensure_not_void, get_invoice, mark_published, set_payment_link};
-use crate::invoicing::render::render_invoice;
-use crate::invoicing::render_html::{Branding, PayButton};
+use crate::invoicing::render::{pay_button_for, render_invoice};
+use crate::invoicing::render_html::Branding;
 use crate::models::Client;
 
 /// What a send that reaches the render step needs and a build without the `pdf`
@@ -225,12 +225,11 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     trace.done(PaymentLink, link_outcome);
 
     let pay_url = invoice.stripe_payment_link_url.clone();
-    let pay = match pay_url.as_deref() {
-        Some(url) => PayButton::Link(url),
-        None => PayButton::Omitted,
-    };
-    let rendered =
-        render_invoice(conn, &invoice, &client, pay, branding).map_err(|e| (Render, e))?;
+    // The same rule preview and republish apply: a settled or cancelled invoice
+    // gets no working Pay button, which is what makes re-sending a paid invoice
+    // publish an honest page.
+    let rendered = render_invoice(conn, &invoice, &client, pay_button_for(&invoice), branding)
+        .map_err(|e| (Render, e))?;
     let pdf = rendered
         .pdf
         .ok_or((Render, NigelError::Other(PDF_REQUIRED_MESSAGE.into())))?;

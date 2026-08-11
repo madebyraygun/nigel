@@ -72,6 +72,7 @@ import {
   type UnlockResponse,
   type UpdateAppSettingsRequest,
   type UploadResponse,
+  type PayResult,
   type VoidResult,
 } from './types.js';
 
@@ -346,7 +347,7 @@ export interface ApiClient {
    * the invoice is void either way, and failing the request would say otherwise.
    */
   voidInvoice(number: number): Promise<VoidResult>;
-  payInvoice(number: number, input: PayInvoiceRequest): Promise<InvoiceDetail>;
+  payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult>;
   /**
    * Create the Stripe link, publish, email, and record — in one blocking
    * request.
@@ -704,7 +705,7 @@ export class FetchApiClient implements ApiClient {
     return this.request<VoidResult>('POST', `/invoices/${number}/void`, {});
   }
 
-  payInvoice(number: number, input: PayInvoiceRequest): Promise<InvoiceDetail> {
+  payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult> {
     return this.request<InvoiceDetail>('POST', `/invoices/${number}/pay`, input);
   }
 

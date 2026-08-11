@@ -375,6 +375,34 @@ describe('nigel-invoices-screen', () => {
     expect(button(draft.el, '[data-edit]').hasAttribute('disabled')).toBe(false);
   });
 
+  it('shows a republish warning after a payment without hiding the payment', async () => {
+    // The payment is recorded money. A page that could not be corrected is the
+    // operator's next task, not this request's failure — so it lands in a
+    // warning notice beside the invoice, never in place of it.
+    const fake = client();
+    fake.payRepublish = {
+      republishWarnings: [
+        "Warning: could not republish invoice #1250's page (r2 403: SignatureDoesNotMatch). It still shows the old balance.",
+      ],
+    };
+    const { el } = await mount('number=1250', fake);
+
+    button(el, '[data-pay]').click();
+    await settle(el);
+    el.shadowRoot
+      ?.querySelector('wc-manager-dialog')
+      ?.dispatchEvent(new CustomEvent('nc-manager-save'));
+    await settle(el);
+
+    const notices = el.shadowRoot?.querySelectorAll('[data-action-warning]');
+    expect(notices?.length).toBe(1);
+    expect(notices?.[0].getAttribute('variant')).toBe('warning');
+    expect(notices?.[0].getAttribute('message')).toContain('SignatureDoesNotMatch');
+    // The payment itself went through and the invoice is still on screen.
+    expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+  });
+
   it('records a payment and refetches the invoice', async () => {
     const { el, fake } = await mount('number=1250');
 
@@ -510,7 +538,7 @@ describe('nigel-invoices-screen', () => {
     button(el, '[data-void]').click();
     await settle(el);
 
-    const notices = el.shadowRoot?.querySelectorAll('[data-void-warning]');
+    const notices = el.shadowRoot?.querySelectorAll('[data-action-warning]');
     expect(notices?.length).toBe(1);
     expect(notices?.[0].getAttribute('variant')).toBe('warning');
     // The address rides through verbatim: it is what an operator has to open.
@@ -519,10 +547,10 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
 
     el.shadowRoot
-      ?.querySelector('[data-void-warning]')
+      ?.querySelector('[data-action-warning]')
       ?.dispatchEvent(new CustomEvent('nc-notice-action', { bubbles: true, composed: true }));
     await settle(el);
-    expect(el.shadowRoot?.querySelector('[data-void-warning]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('[data-action-warning]')).toBeNull();
   });
 
   it('dismisses one void warning without losing the other', async () => {
@@ -542,14 +570,14 @@ describe('nigel-invoices-screen', () => {
 
     button(el, '[data-void]').click();
     await settle(el);
-    expect(el.shadowRoot?.querySelectorAll('[data-void-warning]').length).toBe(2);
+    expect(el.shadowRoot?.querySelectorAll('[data-action-warning]').length).toBe(2);
 
     el.shadowRoot
-      ?.querySelectorAll('[data-void-warning]')[0]
+      ?.querySelectorAll('[data-action-warning]')[0]
       .dispatchEvent(new CustomEvent('nc-notice-action', { bubbles: true, composed: true }));
     await settle(el);
 
-    const left = el.shadowRoot?.querySelectorAll('[data-void-warning]');
+    const left = el.shadowRoot?.querySelectorAll('[data-action-warning]');
     expect(left?.length).toBe(1);
     expect(left?.[0].getAttribute('message')).toContain('page stays live');
   });
@@ -563,7 +591,7 @@ describe('nigel-invoices-screen', () => {
     button(el, '[data-void]').click();
     await settle(el);
 
-    expect(el.shadowRoot?.querySelector('[data-void-warning]')).toBeNull();
+    expect(el.shadowRoot?.querySelector('[data-action-warning]')).toBeNull();
     expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
   });
 

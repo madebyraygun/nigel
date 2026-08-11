@@ -20,9 +20,8 @@ use crate::invoicing::mailgun::{
 };
 use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
 use crate::invoicing::render::render_invoice;
-use crate::invoicing::render_html::{
-    load_template, template_path, Branding, PayButton, DEFAULT_TEMPLATE,
-};
+use crate::invoicing::render_html::{load_template, template_path, Branding, DEFAULT_TEMPLATE};
+use crate::invoicing::republish::republish_invoice;
 use crate::invoicing::send::send_invoice;
 use crate::invoicing::stripe::StripeClient;
 use crate::invoicing::sync::sync_all_report;
@@ -450,17 +449,75 @@ fn preview_paths(dir: &Path, number: i64) -> (PathBuf, PathBuf) {
     )
 }
 
-pub(crate) fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
-    // A voided invoice can still carry a live Stripe URL, and rendering a
-    // working Pay button on a cancelled invoice is the one way this command
-    // could cost someone money.
-    if is_void(invoice) {
-        return PayButton::Omitted;
+/// Which pay element a rendered invoice carries. It lives beside the render
+/// seam, so `preview`, `send`, a republish and the API's preview routes cannot
+/// disagree about the same invoice; this is the name the CLI and the server
+/// already import it by.
+pub(crate) use crate::invoicing::render::pay_button_for;
+
+/// Republish one invoice's published page after a payment. Returns the
+/// sentences to print; never fails.
+///
+/// `src/invoicing/` reads no settings and loads no template, so the branding,
+/// the publisher and the rows are resolved here and passed down. A broken custom
+/// template, an unreadable data directory and an R2 outage are all *warnings*:
+/// the payment is committed, and nothing at this end may read as its failure.
+pub(crate) fn republish_after_payment(conn: &Connection, invoice_id: i64) -> Vec<String> {
+    let warn = |what: &str, e: NigelError| {
+        vec![format!(
+            "Warning: the payment is recorded, but the published page could not be republished \
+             ({what}: {e})."
+        )]
+    };
+
+    let invoice = match get_invoice(conn, invoice_id) {
+        Ok(invoice) => invoice,
+        Err(e) => return warn("reading the invoice", e),
+    };
+    // The ordinary case, and the one that must cost nothing: most payments land
+    // on invoices that were never published.
+    if invoice.published_at.is_none() {
+        return Vec::new();
     }
-    match invoice.stripe_payment_link_url.as_deref() {
-        Some(url) => PayButton::Link(url),
-        None => PayButton::Placeholder,
-    }
+    let client = match get_client(conn, invoice.client_id) {
+        Ok(client) => client,
+        Err(e) => return warn("reading the client", e),
+    };
+    let template = match load_template(&get_data_dir()) {
+        Ok(template) => template,
+        Err(e) => return warn("loading the invoice template", e),
+    };
+
+    let cfg = invoicing_config();
+    // The preview fallback, not `require`: a republish must not depend on an
+    // address being configured, since the page it is correcting is already up.
+    let (contact_email, _) = contact_email_for_preview(&cfg);
+    let branding = Branding {
+        template: &template,
+        company: &company_name(conn),
+        contact_email: &contact_email,
+    };
+    republish_invoice(
+        conn,
+        &invoice,
+        &client,
+        &branding,
+        optional_publisher(&cfg).as_ref(),
+    )
+    .warnings()
+}
+
+/// The same, for every invoice a sync recorded a payment against.
+pub fn republish_all(conn: &Connection, numbers: &[i64]) -> Vec<String> {
+    numbers
+        .iter()
+        .flat_map(|number| match get_invoice_by_number(conn, *number) {
+            Ok(invoice) => republish_after_payment(conn, invoice.id),
+            Err(e) => vec![format!(
+                "Warning: could not republish invoice #{number}'s page ({e})."
+            )],
+        })
+        .collect()
 }
 
 /// The address the published page's direct-deposit line prints. Falls back to
@@ -579,6 +636,9 @@ pub fn sync(today: &str) -> Result<()> {
         );
     }
     println!("Recorded {} new payment(s)", report.recorded);
+    for warning in republish_all(&conn, &report.recorded_invoices) {
+        println!("{warning}");
+    }
     Ok(())
 }
 
@@ -594,6 +654,11 @@ pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result
         "Recorded {amount:.2} against invoice #{number} ({})",
         invoice.status
     );
+    // After the payment is committed, and never able to undo it: the page a
+    // client bookmarked is corrected, or a warning says why it was not.
+    for warning in republish_after_payment(&conn, invoice.id) {
+        println!("{warning}");
+    }
     Ok(())
 }
 
@@ -667,7 +732,7 @@ mod tests {
     use super::*;
     use crate::db::init_db;
     use crate::invoicing::clients::add_client;
-    use crate::invoicing::invoices::{create_invoice, set_payment_link, void_invoice};
+    use crate::invoicing::invoices::create_invoice;
     use crate::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
@@ -897,6 +962,80 @@ mod tests {
             from_email: Some("billing@mg.example.test".into()),
             ..config_up_to_mailgun()
         }
+    }
+
+    /// The published invoice these three work on.
+    fn seed_published(conn: &Connection) -> i64 {
+        let id = seed_invoice(conn);
+        crate::invoicing::invoices::mark_published(conn, id, "2026-08-04").unwrap();
+        crate::invoicing::invoices::record_payment(conn, id, 40.0, "2026-08-05", "other", None)
+            .unwrap();
+        id
+    }
+
+    /// A whole isolated installation: a temp config directory *and* a temp data
+    /// directory, because `republish_after_payment` resolves both. Without the
+    /// second, a test that writes a template writes it into whatever
+    /// `~/Documents/nigel` a developer has.
+    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
+        let guard = crate::settings::TempConfigDir::new();
+        let mut settings = crate::settings::load_settings();
+        settings.data_dir = dir.to_string_lossy().into_owned();
+        crate::settings::save_settings(&settings).expect("settings");
+        guard
+    }
+
+    #[test]
+    fn republishing_with_nothing_configured_warns_and_records_nothing() {
+        let (_d, conn) = test_conn();
+        let _config = isolated(_d.path());
+        let id = seed_published(&conn);
+
+        let warnings = republish_after_payment(&conn, id);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("#1248"), "{warnings:?}");
+        assert!(warnings[0].contains("old balance"), "{warnings:?}");
+        // The payment is money that was received; nothing here touched it.
+        assert_eq!(paid_amount(&conn, id).unwrap(), 40.0);
+    }
+
+    #[test]
+    fn republishing_an_unpublished_invoice_says_nothing() {
+        let (_d, conn) = test_conn();
+        let _config = isolated(_d.path());
+        let id = seed_invoice(&conn);
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+
+        assert!(republish_after_payment(&conn, id).is_empty());
+    }
+
+    #[test]
+    fn a_broken_custom_template_is_a_warning_not_a_failure() {
+        let (_d, conn) = test_conn();
+        let _config = isolated(_d.path());
+        let id = seed_published(&conn);
+
+        let path = template_path(&get_data_dir());
+        assert!(
+            path.starts_with(_d.path()),
+            "the test must not write outside its temp dir: {path:?}"
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+        )
+        .unwrap();
+
+        let warnings = republish_after_payment(&conn, id);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("{{TOTL}}"), "{warnings:?}");
+        assert!(
+            warnings[0].contains("payment is recorded"),
+            "a template typo may not read as a failed payment: {warnings:?}"
+        );
     }
 
     #[test]
@@ -1240,56 +1379,6 @@ mod tests {
 
         let (dir, is_default) = preview_dir(None);
         assert!(is_default && dir.ends_with("previews"), "got: {dir:?}");
-    }
-
-    #[test]
-    fn a_draft_with_no_link_gets_the_placeholder_button() {
-        let (_d, conn) = test_conn();
-        seed_invoice(&conn);
-        let invoice = find_invoice(&conn, 1248).unwrap();
-        assert!(matches!(pay_button_for(&invoice), PayButton::Placeholder));
-    }
-
-    #[test]
-    fn a_sent_invoice_previews_with_its_real_link() {
-        let (_d, conn) = test_conn();
-        let id = seed_invoice(&conn);
-        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
-        let invoice = find_invoice(&conn, 1248).unwrap();
-        assert!(matches!(
-            pay_button_for(&invoice),
-            PayButton::Link("https://pay/x")
-        ));
-    }
-
-    #[test]
-    fn a_void_invoice_never_renders_a_pay_button_even_with_a_live_link() {
-        let (_d, conn) = test_conn();
-        let id = seed_invoice(&conn);
-        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
-        void_invoice(&conn, id, "2026-08-06").unwrap();
-        let invoice = find_invoice(&conn, 1248).unwrap();
-
-        assert!(
-            matches!(pay_button_for(&invoice), PayButton::Omitted),
-            "a cancelled invoice must not offer a working payment link"
-        );
-    }
-
-    #[test]
-    fn a_stale_void_status_still_omits_the_pay_button() {
-        let (_d, conn) = test_conn();
-        let id = seed_invoice(&conn);
-        // A void whose status write did not land: the timestamp is the fact,
-        // the same reading `ensure_not_void` takes.
-        conn.execute(
-            "UPDATE invoices SET voided_at='2026-08-06', status='draft',
-                                 stripe_payment_link_url='https://pay/x' WHERE id=?1",
-            [id],
-        )
-        .unwrap();
-        let invoice = find_invoice(&conn, 1248).unwrap();
-        assert!(matches!(pay_button_for(&invoice), PayButton::Omitted));
     }
 
     #[test]
