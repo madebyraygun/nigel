@@ -1,7 +1,10 @@
 import { html } from 'lit';
 import './wc-manager-dialog.js';
 import './wc-account-form.js';
+import './wc-client-form.js';
+import './wc-manager-table.js';
 import type { Preview } from '../../preview/types.js';
+import type { ManagerAction, ManagerColumn, ManagerRow } from './wc-manager-table.js';
 
 const value = {
   name: 'Chase Business',
@@ -9,6 +12,46 @@ const value = {
   institution: 'Chase',
   lastFour: '9921',
 };
+
+const clientColumns: ManagerColumn[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'email', label: 'Email' },
+  { key: 'billingAddress', label: 'Billing address' },
+];
+
+const clientRows: ManagerRow[] = [
+  {
+    id: 1,
+    label: 'Acme Co',
+    cells: ['Acme Co', 'ap@acme.test', '1 Main St, Springfield'],
+  },
+  {
+    id: 2,
+    label: 'Blackwood Partners',
+    cells: ['Blackwood Partners', 'billing@blackwood.test', '400 Harbor Way, Oakland'],
+  },
+  { id: 3, label: 'Corvid Labs', cells: ['Corvid Labs', null, '77 Rookery Ln, Portland'] },
+  {
+    id: 4,
+    label: 'Delta Provisioning',
+    cells: ['Delta Provisioning', 'invoices@delta.test', '9 Front St, Seattle'],
+  },
+  {
+    id: 5,
+    label: 'Eastgate Holdings',
+    cells: ['Eastgate Holdings', 'ap@eastgate.test', '1200 Bell Ave, Denver'],
+  },
+  {
+    id: 6,
+    label: 'Foxglove Studio',
+    cells: ['Foxglove Studio', 'hello@foxglove.test', '3 Kiln Court, Austin'],
+  },
+];
+
+const editDelete: ManagerAction[] = [
+  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
+  { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
+];
 
 const preview: Preview = {
   id: 'wc-manager-dialog',
@@ -56,6 +99,28 @@ const preview: Preview = {
       render: () => html`
         <wc-manager-dialog open busy heading="Add account" confirm-label="Add">
           <wc-account-form .value=${value} disabled></wc-account-form>
+        </wc-manager-dialog>
+      `,
+    },
+    {
+      name: 'over-a-populated-list',
+      // The bug as reported: the clients table reading straight through the
+      // dialog's header, body and footer. The panel has to be opaque here.
+      render: () => html`
+        <wc-manager-table
+          .columns=${clientColumns}
+          .rows=${clientRows}
+          .actions=${editDelete}
+        ></wc-manager-table>
+        <wc-manager-dialog open heading="Edit client">
+          <wc-client-form
+            .value=${{
+              name: 'Acme Co',
+              email: 'ap@acme.test',
+              billingAddress: '1 Main St, Springfield',
+              notes: 'Net 30, PO required',
+            }}
+          ></wc-client-form>
         </wc-manager-dialog>
       `,
     },
