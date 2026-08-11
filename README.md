@@ -2,9 +2,9 @@
 
 ![Onboarding](docs/screenshots/onboarding.png)
 
-Nigel is a cash-basis bookkeeping CLI for small consultancies — and for personal finances. Replace QuickBooks with a simple, local-first workflow: import bank CSVs and payroll reports, auto-categorize transactions via rules, review flagged items, and generate reports — all from the terminal. Choose **business books** (a Schedule C / Form 1120-S chart of accounts, tax summaries, and a K-1 prep worksheet) or **personal books** (a household chart of accounts with the same imports, rules, review, and reports) during onboarding or with `nigel init --profile personal`.
+Nigel is a cross-platform cash-basis bookkeeping app for small businesses and individuals. Replace QuickBooks with a simple, local-first workflow: import bank CSVs and payroll reports, auto-categorize transactions via rules, review flagged items, and generate reports. **Businesses** get a Schedule C / Form 1120-S chart of accounts, tax summaries, and a K-1 prep worksheet, **individuals** get a household chart of accounts with the same imports, rules, review, and reports. Choose during onboarding or with `nigel init --profile personal`.
 
-Nigel is designed for humans but works extremely well with AI agents. The repo includes [Claude skills](docs/skills.md) to add new importers and intelligently create new rules from your statements before importing into Nigel. With a tool like Claude Cowork, point it at your CSV statement and say "Import my latest statements into Nigel and generate my monthly P&L" or "Generate a Schedule K-1 prep report for 2026."
+Nigel is primarily terminal-based, but a web client is in the works. The terminal app is designed for humans but works extremely well with AI agents. The repo includes [Claude skills](docs/skills.md) to add new importers and intelligently create new rules from your statements before importing into Nigel. With a tool like Claude Cowork, point it at your CSV statement and say "Import my latest statements into Nigel and generate my monthly P&L" or "Generate a Schedule K-1 prep report for 2026."
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -26,10 +26,10 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Register filters** — narrow `nigel report register` and `nigel browse register` by `--account`, `--category`, or `--uncategorized`, composed with any date range; active filters appear in the report header and in the default export filename
 - **Interactive browser** — paginated register browser showing all transactions, starting at today with full backwards scrolling, keyboard navigation, jump-to-date, and transaction search
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`
-- **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`; voiding a sent invoice deactivates that link and replaces its page, so nobody can pay a cancelled invoice. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too — add and edit clients, draft a new invoice with `a` (client, dates, currency and as many line items as you like), then open it to send it, record a payment against it or void it. The client-facing page is yours to restyle — `nigel invoice template export` writes it out to edit, no rebuild required — and the attached PDF is headed by your business name, taken from the same setting. See [docs/invoicing.md](docs/invoicing.md)
+- **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too. See [docs/invoicing.md](docs/invoicing.md)
 - **Monthly reconciliation** — compare calculated balances against bank statements
-- **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same. Transfers between your own accounts (the `Transfer` category) don't count as income or spending in the P&L, expense breakdown, or cash flow, on either profile — the register, account balances, and tax summary still show them, because there the cash movement itself is the point
-- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link; nothing is exposed to your network. The eight ledger reports are there too, for any period, with text and PDF downloads and a print-friendly layout, and A/R aging joins them as a ninth. Invoicing is in the browser as well: manage clients, draft and edit invoices, preview the client-facing page, record payments, void, and send — a send names every consequence before it happens and reports the step it stopped at if it does
+- **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same.
+- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link
 - **SQLite storage** — single portable database, no server required
 - **Database encryption** — optional SQLCipher encryption; set a password during onboarding or manage via the Settings screen (`p` from dashboard) or `nigel password set`; returning users enter their password inline on the splash screen, or in the browser when using `nigel serve`; backups preserve encryption state
 - **Auto-updater** — checks GitHub Releases for new versions on launch (once per 24 hours); run `nigel update` to download and install the latest binary in-place; opt out via the Settings screen or `update_check: false` in settings.json
@@ -178,7 +178,7 @@ nigel completions bash                            # Also: zsh, fish, powershell
 
 ## Automated backups
 
-`nigel backup` uses SQLite's online-backup API, so it produces a consistent snapshot even while Nigel is running, and an encrypted database yields an encrypted backup. Copying `nigel.db` with `cp` or a file-sync tool does **not** give you this — such a copy can catch the database mid-write, along with an out-of-step `-wal` file, and may not restore.
+`nigel backup` uses SQLite's online-backup API, so it produces a consistent snapshot even while Nigel is running, and an encrypted database yields an encrypted backup.
 
 On an encrypted database, `nigel` normally prompts for the password on the terminal. Scheduled jobs have no terminal, so set `NIGEL_DB_PASSWORD` instead:
 
@@ -187,21 +187,15 @@ NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
   nigel backup --output ~/Documents/nigel/backups/nigel-$(date +%F).db
 ```
 
-`NIGEL_DB_PASSWORD` is fatal when unusable — wrong, empty, or not valid UTF-8 — rather than falling back to a prompt no scheduled job could answer. An empty value reports itself as empty, since the usual cause is the secret lookup failing rather than a bad password. Leave the variable unset for normal interactive use; while it is set, it takes precedence over the prompt even in a terminal.
+Put this in a wrapper script rather than directly in a launchd plist.
 
-A plaintext database ignores the variable entirely, so a value left over in your shell cannot lock you out of a database that never had a password.
-
-Put this in a wrapper script rather than directly in a launchd plist: `ProgramArguments` execs without a shell, so command substitution, `~`, and `VAR=value` prefixes are all inert there. Launch agents also start with a minimal `PATH` that excludes `~/.cargo/bin`, so call `nigel` by absolute path.
-
-Read the password from a secret store, as above, rather than writing it into a script or a plist. Note that an environment variable is visible to other processes running as you (`ps -E` on macOS), so on a shared account prefer running the backup interactively.
+Read the password from a secret store, as above, rather than writing it into a script or a plist.
 
 ## Configuration
 
 Settings are stored in `~/.config/nigel/settings.json`. The data directory defaults to `~/Documents/nigel/` and can be changed by re-running `nigel init --data-dir <path>`. Use `nigel load <path>` to switch between existing data directories without reinitializing. `nigel status` shows the active database and summary statistics. Set `"update_check": false` to disable automatic update checks on launch. Invoicing credentials (Stripe, Mailgun, Cloudflare R2) also live in `settings.json` or in matching `NIGEL_*` environment variables — see [docs/invoicing.md](docs/invoicing.md).
 
-`nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start, so the URL it prints is what grants access — it is never saved to disk. Requests from any other host or origin are refused. An encrypted database stays locked until you enter its password in the browser; the password is held in memory for that run only. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
-
-The browser's Settings screen covers the same ground as the dashboard's: business name, the auto-update check, setting, changing or removing the database password, and switching data directories (which reloads the page onto the new books). Switching away from a database whose password you have forgotten is a terminal job — `nigel load` — because that screen is behind the same lock as everything else.
+`nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
 
 ## Feature Flags
 
