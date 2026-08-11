@@ -512,6 +512,59 @@ fn insert_demo_data(conn: &Connection) -> Result<usize> {
     Ok(txn_count)
 }
 
+/// What a loaded demo database holds, read back rather than tallied, so a run
+/// that only filled in a missing half still reports what is actually there.
+struct DemoSummary {
+    transactions: i64,
+    rules: i64,
+    categorized: i64,
+    flagged: i64,
+    clients: i64,
+    invoices: i64,
+}
+
+fn demo_summary(conn: &Connection) -> Result<DemoSummary> {
+    let count = |sql: &str| -> Result<i64> { Ok(conn.query_row(sql, [], |r| r.get(0))?) };
+    Ok(DemoSummary {
+        transactions: count("SELECT COUNT(*) FROM transactions")?,
+        rules: count("SELECT COUNT(*) FROM rules")?,
+        categorized: count("SELECT COUNT(*) FROM transactions WHERE category_id IS NOT NULL")?,
+        flagged: count("SELECT COUNT(*) FROM transactions WHERE is_flagged = 1")?,
+        clients: count("SELECT COUNT(*) FROM clients")?,
+        invoices: count("SELECT COUNT(*) FROM invoices")?,
+    })
+}
+
+/// Seed whatever is missing, answering whether anything was written.
+///
+/// The two halves cannot share a transaction — `create_invoice` opens its own,
+/// and SQLite has no nested `BEGIN` — so they are two commits, and a failure
+/// between them would be permanent if the account row alone were the guard:
+/// every later run would report the data already loaded and never seed the
+/// invoicing half. Each half is therefore guarded on what it writes.
+fn seed_demo(conn: &Connection) -> Result<bool> {
+    let exists = |sql: &str| -> Result<bool> { Ok(conn.query_row(sql, [], |r| r.get(0))?) };
+    let has_ledger: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1)",
+        [ACCOUNT_NAME],
+        |r| r.get(0),
+    )?;
+    let has_invoicing = exists("SELECT EXISTS(SELECT 1 FROM invoices)")?;
+    if has_ledger && has_invoicing {
+        return Ok(false);
+    }
+
+    if !has_ledger {
+        insert_demo_data(conn)?;
+    }
+    if !has_invoicing {
+        insert_demo_invoicing(conn)?;
+    }
+    crate::db::set_metadata(conn, "company_name", "Acme Consulting LLC")?;
+    categorize_transactions(conn)?;
+    Ok(true)
+}
+
 pub fn run() -> Result<()> {
     let settings = load_settings();
     let db_path = PathBuf::from(&settings.data_dir).join("nigel.db");
@@ -524,33 +577,23 @@ pub fn run() -> Result<()> {
     let conn = get_connection(&db_path)?;
     init_db(&conn)?;
 
-    // Idempotency guard
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1)",
-        [ACCOUNT_NAME],
-        |r| r.get(0),
-    )?;
-    if exists {
+    if !seed_demo(&conn)? {
         println!(
             "Demo data already loaded (account '{}' exists).",
             ACCOUNT_NAME
         );
         return Ok(());
     }
-
-    let txn_count = insert_demo_data(&conn)?;
-    let (client_count, invoice_count) = insert_demo_invoicing(&conn)?;
-    crate::db::set_metadata(&conn, "company_name", "Acme Consulting LLC")?;
-    let result = categorize_transactions(&conn)?;
+    let summary = demo_summary(&conn)?;
 
     println!("Demo data loaded!");
     println!("  Account:      {ACCOUNT_NAME}");
-    println!("  Transactions: {txn_count}");
-    println!("  Rules:        {}", RULES.len());
-    println!("  Categorized:  {}", result.categorized);
-    println!("  Flagged:      {}", result.still_flagged);
-    println!("  Clients:      {client_count}");
-    println!("  Invoices:     {invoice_count}");
+    println!("  Transactions: {}", summary.transactions);
+    println!("  Rules:        {}", summary.rules);
+    println!("  Categorized:  {}", summary.categorized);
+    println!("  Flagged:      {}", summary.flagged);
+    println!("  Clients:      {}", summary.clients);
+    println!("  Invoices:     {}", summary.invoices);
     println!();
     println!("Try these next:");
     println!("  nigel accounts list");
@@ -582,17 +625,7 @@ pub fn setup_demo() -> Result<()> {
     let conn = get_connection(&db_path)?;
     init_db(&conn)?;
 
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1)",
-        [ACCOUNT_NAME],
-        |r| r.get(0),
-    )?;
-    if !exists {
-        insert_demo_data(&conn)?;
-        insert_demo_invoicing(&conn)?;
-        crate::db::set_metadata(&conn, "company_name", "Acme Consulting LLC")?;
-        categorize_transactions(&conn)?;
-    }
+    seed_demo(&conn)?;
 
     // Point settings at the demo directory
     settings.data_dir = demo_dir.to_string_lossy().to_string();
@@ -820,6 +853,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(syncable, 0);
+    }
+
+    /// The two halves are two commits, so a failure between them is a real
+    /// state. Keying the guard on the account alone would make it permanent.
+    #[test]
+    fn a_seed_that_stopped_after_the_transactions_is_finished_by_the_next_run() {
+        let (_dir, conn) = test_db();
+        insert_demo_data(&conn).unwrap();
+        let transactions = demo_summary(&conn).unwrap().transactions;
+
+        assert!(
+            seed_demo(&conn).unwrap(),
+            "the missing invoicing half was not seeded"
+        );
+        let after = demo_summary(&conn).unwrap();
+        assert_eq!(after.clients, 3);
+        assert_eq!(after.invoices, 4);
+        assert_eq!(
+            after.transactions, transactions,
+            "the ledger half was seeded twice"
+        );
+
+        assert!(!seed_demo(&conn).unwrap(), "a complete seed is left alone");
+        let again = demo_summary(&conn).unwrap();
+        assert_eq!(again.invoices, 4);
+        assert_eq!(again.transactions, transactions);
+    }
+
+    #[test]
+    fn seed_demo_fills_an_empty_database_and_then_stops() {
+        let (_dir, conn) = test_db();
+        assert!(seed_demo(&conn).unwrap());
+        let summary = demo_summary(&conn).unwrap();
+        assert_eq!(summary.transactions, 18 * 15);
+        assert_eq!(summary.rules, RULES.len() as i64);
+        assert_eq!(summary.invoices, 4);
+        assert!(summary.categorized > 0);
+        assert!(summary.flagged > 0);
+        assert_eq!(
+            crate::db::get_metadata(&conn, "company_name").as_deref(),
+            Some("Acme Consulting LLC")
+        );
+
+        assert!(!seed_demo(&conn).unwrap());
     }
 
     #[test]
