@@ -7,11 +7,14 @@ use tempfile::TempDir;
 
 /// Every `NIGEL_*` key `settings::invoicing_config()` reads. Env vars win over the
 /// settings file, and the temp HOME cannot mask them, so they are cleared per command.
-const INVOICING_ENV_VARS: [&str; 9] = [
+const INVOICING_ENV_VARS: [&str; 12] = [
     "NIGEL_STRIPE_SECRET_KEY",
     "NIGEL_MAILGUN_API_KEY",
     "NIGEL_MAILGUN_DOMAIN",
     "NIGEL_FROM_EMAIL",
+    "NIGEL_FROM_NAME",
+    "NIGEL_REPLY_TO_EMAIL",
+    "NIGEL_CONTACT_EMAIL",
     "NIGEL_R2_ACCOUNT_ID",
     "NIGEL_R2_ACCESS_KEY",
     "NIGEL_R2_SECRET_KEY",
@@ -1238,6 +1241,118 @@ fn invoice_preview_needs_no_invoicing_config_and_makes_no_network_call() {
         .assert()
         .success()
         .stderr(predicate::str::contains("missing invoicing config").not());
+}
+
+/// Nine keys set and a display name carrying a line break: header injection, a
+/// hard refusal, and it happens before any client is built — so no Stripe link
+/// is made and the invoice is still a draft.
+#[test]
+fn invoice_send_refuses_a_display_name_carrying_a_line_break() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
+        .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
+        .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
+        .env("NIGEL_FROM_EMAIL", "billing@mg.example.test")
+        .env("NIGEL_FROM_NAME", "Bluepeak\r\nBcc: someone@else.test")
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "ak")
+        .env("NIGEL_R2_SECRET_KEY", "sk")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "https://billing.example.test/i")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("from_name"))
+        .stderr(predicate::str::contains("someone@else.test").not());
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+/// Header injection through `NIGEL_FROM_EMAIL`, refused before any client is
+/// built — so no Stripe link, no upload, no email.
+#[test]
+fn invoice_send_refuses_a_from_address_carrying_a_line_break() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
+        .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
+        .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
+        .env(
+            "NIGEL_FROM_EMAIL",
+            "billing@mg.example.test\r\nBcc: attacker@evil.test",
+        )
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "ak")
+        .env("NIGEL_R2_SECRET_KEY", "sk")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "https://billing.example.test/i")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("from_email"))
+        .stderr(predicate::str::contains("attacker@evil.test").not());
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+#[test]
+fn invoice_preview_names_contact_email_when_neither_key_is_set() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "neither contact_email nor from_email",
+        ));
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(
+        html.contains("(contact_email not configured)"),
+        "got: {html}"
+    );
+}
+
+/// AC #3 end to end: the page's direct-deposit line is `contact_email`, not the
+/// address the email is sent from.
+#[test]
+fn contact_email_is_what_the_page_prints_not_from_email() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .env("NIGEL_FROM_EMAIL", "billing@mg.example.test")
+        .env("NIGEL_CONTACT_EMAIL", "accounts@example.test")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(html.contains("accounts@example.test"), "got: {html}");
+    assert!(!html.contains("billing@mg.example.test"), "got: {html}");
 }
 
 #[test]

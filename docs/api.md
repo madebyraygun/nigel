@@ -504,7 +504,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `InvoiceDetail` |
-| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` |
+| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings`) |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
 
 ### Write conventions

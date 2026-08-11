@@ -193,7 +193,7 @@ Read the password from a secret store, as above, rather than writing it into a s
 
 ## Configuration
 
-Settings are stored in `~/.config/nigel/settings.json`. The data directory defaults to `~/Documents/nigel/` and can be changed by re-running `nigel init --data-dir <path>`. Use `nigel load <path>` to switch between existing data directories without reinitializing. `nigel status` shows the active database and summary statistics. Set `"update_check": false` to disable automatic update checks on launch. Invoicing credentials (Stripe, Mailgun, Cloudflare R2) also live in `settings.json` or in matching `NIGEL_*` environment variables — see [docs/invoicing.md](docs/invoicing.md).
+Settings are stored in `~/.config/nigel/settings.json`. The data directory defaults to `~/Documents/nigel/` and can be changed by re-running `nigel init --data-dir <path>`. Use `nigel load <path>` to switch between existing data directories without reinitializing. `nigel status` shows the active database and summary statistics. Set `"update_check": false` to disable automatic update checks on launch. Invoicing credentials (Stripe, Mailgun, Cloudflare R2) also live in `settings.json` or in matching `NIGEL_*` environment variables, alongside the outgoing email envelope keys `from_email`, `from_name`, `reply_to_email` and `contact_email` — see [docs/invoicing.md](docs/invoicing.md).
 
 `nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
 
