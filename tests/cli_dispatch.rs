@@ -2413,3 +2413,90 @@ fn serve_without_the_feature_reports_a_clear_error() {
         .failure()
         .stderr(predicate::str::contains("requires the 'serve' feature"));
 }
+
+/// TASK-69 AC #1 through the binary: nothing between clap and the column pads
+/// these but the data layer.
+#[test]
+fn unpadded_dates_round_trip_through_new_edit_and_pay_as_padded() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-8-7",
+            "--due",
+            "2026-9-1",
+            "--item",
+            "Consulting:1:100",
+        ])
+        .assert()
+        .success();
+
+    let row = |sql: &str| -> Option<String> { env.db().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        row("SELECT issue_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-08-07")
+    );
+    assert_eq!(
+        row("SELECT due_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-09-01")
+    );
+
+    env.cmd()
+        .args(["invoice", "edit", "1249", "--due", "2026-9-30"])
+        .assert()
+        .success();
+    assert_eq!(
+        row("SELECT due_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-09-30")
+    );
+
+    env.cmd()
+        .args([
+            "invoice", "pay", "1249", "--amount", "25", "--date", "2026-9-2",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        row("SELECT paid_date FROM invoice_payments WHERE invoice_id =
+             (SELECT id FROM invoices WHERE number = 1249)")
+        .as_deref(),
+        Some("2026-09-02")
+    );
+
+    // And it reads back padded everywhere a user looks.
+    env.cmd()
+        .args(["invoice", "show", "1249"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("2026-08-07").and(predicate::str::contains("2026-8-7").not()),
+        );
+}
+
+/// `invoice pay` never checked its date; the column took whatever was typed and
+/// `refresh_status` used it as the reference day.
+#[test]
+fn invoice_pay_refuses_a_malformed_date() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice", "pay", "1248", "--amount", "10", "--date", "March",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid payment date"));
+
+    let payments: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoice_payments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(payments, 0);
+}
