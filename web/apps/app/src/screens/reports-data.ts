@@ -2,6 +2,7 @@ import type { ReportColumn, ReportTableRow } from '@nigel/ui';
 
 import type {
   AgingReport,
+  BooksProfile,
   CashflowReport,
   ExpenseBreakdown,
   ExportParams,
@@ -148,8 +149,21 @@ export function isReportViewSlug(value: string | null): value is ReportViewSlug 
   return isReportSlug(value) || value === 'aging';
 }
 
-export function reportDefs(): ReportDef[] {
-  return [...REPORT_SLUGS.map((slug) => REPORTS[slug]), AGING_DEF];
+/**
+ * The reports the landing page offers, for the given books profile.
+ *
+ * Personal books drop the K-1 worksheet — a Form 1120-S artifact with nothing
+ * to say about a chart of accounts that maps to no tax form. The route itself
+ * stays reachable, exactly as `nigel report k1` does in a terminal; only
+ * the directory stops offering it. Aging closes the list on both profiles.
+ */
+export function reportDefs(profile: BooksProfile = 'business'): ReportDef[] {
+  return [
+    ...REPORT_SLUGS.filter((slug) => profile === 'business' || slug !== 'k1').map(
+      (slug) => REPORTS[slug],
+    ),
+    AGING_DEF,
+  ];
 }
 
 /** The def for any slug the screen serves, aging included. */

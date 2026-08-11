@@ -2,7 +2,7 @@
 
 ![Onboarding](docs/screenshots/onboarding.png)
 
-Nigel is a cash-basis bookkeeping CLI for small consultancies. Replace QuickBooks with a simple, local-first workflow: import bank CSVs and payroll reports, auto-categorize transactions via rules, review flagged items, and generate reports — all from the terminal.
+Nigel is a cash-basis bookkeeping CLI for small consultancies — and for personal finances. Replace QuickBooks with a simple, local-first workflow: import bank CSVs and payroll reports, auto-categorize transactions via rules, review flagged items, and generate reports — all from the terminal. Choose **business books** (a Schedule C / Form 1120-S chart of accounts, tax summaries, and a K-1 prep worksheet) or **personal books** (a household chart of accounts with the same imports, rules, review, and reports) during onboarding or with `nigel init --profile personal`.
 
 Nigel is designed for humans but works extremely well with AI agents. The repo includes [Claude skills](docs/skills.md) to add new importers and intelligently create new rules from your statements before importing into Nigel. With a tool like Claude Cowork, point it at your CSV statement and say "Import my latest statements into Nigel and generate my monthly P&L" or "Generate a Schedule K-1 prep report for 2026."
 
@@ -27,6 +27,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`
 - **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`; voiding a sent invoice deactivates that link and replaces its page, so nobody can pay a cancelled invoice. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too — add and edit clients, draft a new invoice with `a` (client, dates, currency and as many line items as you like), then open it to send it, record a payment against it or void it. The client-facing page is yours to restyle — `nigel invoice template export` writes it out to edit, no rebuild required — and the attached PDF is headed by your business name, taken from the same setting. See [docs/invoicing.md](docs/invoicing.md)
 - **Monthly reconciliation** — compare calculated balances against bank statements
+- **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same. Transfers between your own accounts (the `Transfer` category) don't count as income or spending in the P&L, expense breakdown, or cash flow, on either profile — the register, account balances, and tax summary still show them, because there the cash movement itself is the point
 - **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link; nothing is exposed to your network. The eight ledger reports are there too, for any period, with text and PDF downloads and a print-friendly layout, and A/R aging joins them as a ninth. Invoicing is in the browser as well: manage clients, draft and edit invoices, preview the client-facing page, record payments, void, and send — a send names every consequence before it happens and reports the step it stopped at if it does
 - **SQLite storage** — single portable database, no server required
 - **Database encryption** — optional SQLCipher encryption; set a password during onboarding or manage via the Settings screen (`p` from dashboard) or `nigel password set`; returning users enter their password inline on the splash screen, or in the browser when using `nigel serve`; backups preserve encryption state
@@ -49,6 +50,9 @@ cargo install --path .
 ```bash
 # Initialize — prompts for data directory on first run
 nigel init
+
+# Or keep personal books instead of business books
+nigel init --profile personal
 
 # Load sample data to explore
 nigel demo

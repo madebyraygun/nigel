@@ -113,6 +113,7 @@ uninitialized, so the SPA can decide which screen to show before it has data.
   "encrypted": true,
   "locked": false,
   "companyName": "Bluepeak LLC",
+  "profile": "business",
   "version": "1.0.1",
   "dataDir": "/home/you/Documents/nigel",
   "pdfExport": true,
@@ -129,6 +130,12 @@ uninitialized, so the SPA can decide which screen to show before it has data.
 a key, and `locked` whether this process still lacks that key. `companyName` is
 `null` while locked or uninitialized — reading it requires the key — and
 `dataDir` names the directory of the database the server actually opened.
+`profile` is `business` or `personal` — which chart of accounts the database
+was created with (`nigel init --profile`). The SPA hides the K-1 worksheet
+from the report directory and relabels the name field for personal books;
+while locked or uninitialized it reads `business`, since the profile lives in
+the database. The K-1 report and export routes stay reachable either way,
+exactly as `nigel report k1` does in a terminal.
 `pdfExport` is whether this binary was built with the `pdf` feature; a client
 uses it to decide whether to offer a PDF download at all (see
 [Exporting reports](#exporting-reports)).
@@ -1102,8 +1109,9 @@ such a build — otherwise the saved `.pdf` file is that JSON.
 
 ### Not on the API
 
-- **Bulk export.** `nigel report all` writes nine files into a directory; a
-  browser downloads one file at a time. There is no `/api/exports/all`.
+- **Bulk export.** `nigel report all` writes nine files into a directory
+  (eight on personal books, which skip the K-1 worksheet); a browser downloads
+  one file at a time. There is no `/api/exports/all`.
 - **A/R aging as a report.** Aging is served at
   [`/api/invoices/aging`](#get-apiinvoicesaging), not in `/api/reports` or
   `/api/exports`: `ReportKind` has no variant for it, and giving it one would

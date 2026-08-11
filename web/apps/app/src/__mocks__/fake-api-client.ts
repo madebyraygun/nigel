@@ -167,6 +167,7 @@ export const UNLOCKED_STATUS: StatusResponse = {
   encrypted: false,
   locked: false,
   companyName: 'Test Consultancy',
+  profile: 'business',
   version: '0.0.0-test',
   dataDir: '/tmp/nigel',
   pdfExport: true,

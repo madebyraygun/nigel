@@ -68,6 +68,13 @@ describe('the report catalog', () => {
     // report but is served at /api/invoices/aging, so it is not in
     // REPORT_SLUGS and has no export route.
     expect(reportDefs().map((def) => def.slug)).toEqual([...REPORT_SLUGS, 'aging']);
+    expect(reportDefs('business').map((def) => def.slug)).toEqual([...REPORT_SLUGS, 'aging']);
+  });
+
+  it('drops the K-1 worksheet for personal books, keeping aging', () => {
+    const slugs = reportDefs('personal').map((def) => def.slug);
+    expect(slugs).not.toContain('k1');
+    expect(slugs).toEqual([...REPORT_SLUGS.filter((slug) => slug !== 'k1'), 'aging']);
   });
 
   it('recognizes a slug and rejects anything else', () => {

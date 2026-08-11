@@ -273,11 +273,15 @@ pub fn all(year: Option<i32>, output_dir: Option<String>) -> Result<String> {
         &path("balance"),
     )?;
 
-    let report = crate::reports::get_k1_prep(&conn, year)?;
-    write_pdf(
-        &crate::pdf::render_k1(&report, &company, &range)?,
-        &path("k1-prep"),
-    )?;
+    // The K-1 worksheet only means something under the business chart of
+    // accounts; personal books skip it in the bulk export.
+    if crate::db::get_profile(&conn) == crate::db::Profile::Business {
+        let report = crate::reports::get_k1_prep(&conn, year)?;
+        write_pdf(
+            &crate::pdf::render_k1(&report, &company, &range)?,
+            &path("k1-prep"),
+        )?;
+    }
 
     let report = crate::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     write_pdf(

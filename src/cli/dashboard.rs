@@ -93,6 +93,31 @@ const EXPORT_TYPES: &[&str] = &[
     "All Reports",
 ];
 
+/// The pickers for personal books: the business lists without the K-1 prep
+/// worksheet, which only means something under the business chart of accounts.
+const PERSONAL_REPORT_TYPES: &[&str] = &[
+    "Profit & Loss",
+    "Expense Breakdown",
+    "Tax Summary",
+    "Cash Flow",
+    "Transaction Register",
+    "Flagged Transactions",
+    "Cash Position",
+    "A/R Aging",
+];
+
+const PERSONAL_EXPORT_TYPES: &[&str] = &[
+    "Profit & Loss",
+    "Expense Breakdown",
+    "Tax Summary",
+    "Cash Flow",
+    "Transaction Register",
+    "Flagged Transactions",
+    "Cash Position",
+    "A/R Aging",
+    "All Reports",
+];
+
 /// The report slug behind each picker index. `REPORT_TYPES`, `EXPORT_TYPES`,
 /// `enter_report_view_with_date`, `do_export` and `do_text_export` are all keyed
 /// by that bare index; this is what the guard test holds them to.
@@ -104,6 +129,33 @@ const REPORT_SLUGS: &[&str] = &[
 enum ReportPickerMode {
     View,
     Export,
+}
+
+/// The rows a report picker shows for the given profile. Personal books drop
+/// the K-1 worksheet; every dispatch index below stays keyed to the business
+/// lists, with `canonical_report_idx` translating a picker selection back.
+fn report_picker_items(
+    profile: crate::db::Profile,
+    mode: ReportPickerMode,
+) -> &'static [&'static str] {
+    use crate::db::Profile;
+    match (mode, profile) {
+        (ReportPickerMode::View, Profile::Business) => REPORT_TYPES,
+        (ReportPickerMode::View, Profile::Personal) => PERSONAL_REPORT_TYPES,
+        (ReportPickerMode::Export, Profile::Business) => EXPORT_TYPES,
+        (ReportPickerMode::Export, Profile::Personal) => PERSONAL_EXPORT_TYPES,
+    }
+}
+
+/// Translate a picker selection into the canonical report index the dispatch
+/// functions match on. The personal lists drop K-1 (canonical 7), so every
+/// personal selection at or past that row sits one short of its canonical
+/// index; business selections are already canonical.
+fn canonical_report_idx(profile: crate::db::Profile, selection: usize) -> usize {
+    match profile {
+        crate::db::Profile::Personal if selection >= 7 => selection + 1,
+        _ => selection,
+    }
 }
 
 #[cfg(feature = "pdf")]
@@ -187,6 +239,9 @@ struct Dashboard {
     /// Tracks which report index is currently displayed (for reload on date change)
     current_report_idx: Option<usize>,
     update_notification: Option<String>,
+    /// Which chart of accounts this database keeps books under; refreshed with
+    /// the home data so a data-directory switch picks up the new profile.
+    profile: crate::db::Profile,
 }
 
 impl Dashboard {
@@ -214,12 +269,15 @@ impl Dashboard {
             needs_reload: false,
             current_report_idx: None,
             update_notification,
+            profile: crate::db::Profile::default(),
         }
     }
 
     fn load_data(&mut self, conn: &rusqlite::Connection) -> Result<()> {
         let now = chrono::Local::now();
         let year = now.year();
+
+        self.profile = crate::db::get_profile(conn);
 
         let pnl = reports::get_pnl(conn, Some(year), None, None, None)?;
         let balance = reports::get_balance(conn)?;
@@ -378,10 +436,11 @@ impl Dashboard {
             return;
         }
         if let DashboardScreen::ReportPicker { selection, mode } = self.screen {
-            let (title, items) = match mode {
-                ReportPickerMode::View => ("Select a report to view", REPORT_TYPES as &[&str]),
-                ReportPickerMode::Export => ("Select a report to export", EXPORT_TYPES as &[&str]),
+            let title = match mode {
+                ReportPickerMode::View => "Select a report to view",
+                ReportPickerMode::Export => "Select a report to export",
             };
+            let items = report_picker_items(self.profile, mode);
             self.draw_picker(frame, title, items, selection);
             return;
         }
@@ -936,6 +995,8 @@ fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<Str
             6 => super::export::balance(None)?,
             7 => super::export::k1(year, None)?,
             8 => super::export::aging(None)?,
+            // `export::all` reads the profile itself and skips K-1 for
+            // personal books.
             n if n == REPORT_SLUGS.len() => return super::export::all(year, None),
             _ => return Ok(String::new()),
         };
@@ -943,7 +1004,12 @@ fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<Str
     }
 }
 
-fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<String> {
+fn do_text_export(
+    idx: usize,
+    year: Option<i32>,
+    month: Option<String>,
+    profile: crate::db::Profile,
+) -> Result<String> {
     let year = year.or_else(|| Some(chrono::Local::now().year()));
 
     if idx == REPORT_SLUGS.len() {
@@ -952,7 +1018,7 @@ fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Resul
         let dir = crate::settings::get_data_dir().join("exports");
         std::fs::create_dir_all(&dir)?;
         let mut count = 0;
-        let reports: Vec<(&str, Result<String>)> = vec![
+        let mut reports: Vec<(&str, Result<String>)> = vec![
             ("pnl", super::report::text::pnl(None, year, None, None)),
             ("expenses", super::report::text::expenses(None, year)),
             ("tax", super::report::text::tax(year)),
@@ -963,9 +1029,11 @@ fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Resul
             ),
             ("flagged", super::report::text::flagged()),
             ("balance", super::report::text::balance()),
-            ("k1-prep", super::report::text::k1(year)),
             ("aging", super::report::text::aging(&crate::cli::today())),
         ];
+        if profile == crate::db::Profile::Business {
+            reports.push(("k1-prep", super::report::text::k1(year)));
+        }
         let mut failed = Vec::new();
         for (name, result) in reports {
             match result {
@@ -1027,6 +1095,7 @@ pub fn run() -> Result<()> {
     // First-run: show onboarding, then ensure data dir + DB exist
     let mut post_setup_action = None;
     let mut onboarding_company = None;
+    let mut onboarding_profile = crate::db::Profile::default();
     if is_first_run {
         if let Some(result) = super::onboarding::run()? {
             let mut settings = load_settings();
@@ -1039,6 +1108,7 @@ pub fn run() -> Result<()> {
                 onboarding_company = Some(result.company_name);
             }
             post_setup_action = Some(result.action);
+            onboarding_profile = result.profile;
 
             if let Some(ref pw) = result.password {
                 crate::db::set_db_password(Some(pw.clone()));
@@ -1061,7 +1131,24 @@ pub fn run() -> Result<()> {
     std::fs::create_dir_all(&backups_dir)?;
     crate::settings::restrict_dir_permissions(&backups_dir)?;
     let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
-    crate::db::init_db(&conn)?;
+    crate::db::init_db_with_profile(&conn, onboarding_profile)?;
+
+    // The chosen profile only takes effect on a fresh database. If onboarding
+    // ran against books that already exist (settings.json was deleted, or a
+    // prior run was skipped after the database was created), say so — the
+    // same courtesy `nigel init --profile` extends — instead of leaving the
+    // user believing they switched charts.
+    let mut profile_notice = None;
+    if post_setup_action.is_some() {
+        let seeded = crate::db::get_profile(&conn);
+        if seeded != onboarding_profile {
+            profile_notice = Some(format!(
+                "These books already keep {} records; the {} choice was ignored.",
+                seeded.as_str(),
+                onboarding_profile.as_str()
+            ));
+        }
+    }
 
     // Save company_name from onboarding to DB metadata
     if let Some(company) = onboarding_company {
@@ -1116,6 +1203,9 @@ pub fn run() -> Result<()> {
         let conn = get_connection(&get_data_dir().join("nigel.db"))?;
         let mut dashboard = Dashboard::new(user_name.clone(), update_notification.clone());
         dashboard.load_data(&conn)?;
+        if let Some(notice) = profile_notice.take() {
+            dashboard.status_message = Some(notice);
+        }
 
         let mut terminal = ratatui::init();
 
@@ -1308,19 +1398,21 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::ReportPicker { selection, mode } => {
-                            let max_idx = match mode {
-                                ReportPickerMode::View => REPORT_TYPES.len() - 1,
-                                ReportPickerMode::Export => EXPORT_TYPES.len() - 1,
-                            };
+                            let max_idx = report_picker_items(dashboard.profile, *mode).len() - 1;
                             match key.code {
                                 KeyCode::Up => *selection = selection.saturating_sub(1),
                                 KeyCode::Down => *selection = (*selection + 1).min(max_idx),
                                 KeyCode::Esc | KeyCode::Char('q') => return_home = true,
                                 KeyCode::Enter => match mode {
                                     ReportPickerMode::View => {
-                                        dashboard.pending_report_view = Some(*selection);
+                                        dashboard.pending_report_view = Some(canonical_report_idx(
+                                            dashboard.profile,
+                                            *selection,
+                                        ));
                                     }
                                     ReportPickerMode::Export => {
+                                        // Keep the picker index here so Esc from
+                                        // the format picker restores the row.
                                         dashboard.screen = DashboardScreen::ExportFormatPicker {
                                             report_idx: *selection,
                                             selection: 0,
@@ -1347,10 +1439,11 @@ pub fn run() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let format = EXPORT_FORMATS[*selection];
+                                    let idx = canonical_report_idx(dashboard.profile, *report_idx);
                                     if format == "Text" {
-                                        dashboard.pending_text_export = Some(*report_idx);
+                                        dashboard.pending_text_export = Some(idx);
                                     } else {
-                                        dashboard.pending_export = Some(*report_idx);
+                                        dashboard.pending_export = Some(idx);
                                     }
                                 }
                                 _ => {}
@@ -1426,7 +1519,7 @@ pub fn run() -> Result<()> {
                             } else {
                                 (None, None)
                             };
-                        match do_text_export(idx, year, month) {
+                        match do_text_export(idx, year, month, dashboard.profile) {
                             Ok(msg) => dashboard.status_message = Some(msg),
                             Err(e) => {
                                 dashboard.status_message = Some(format!("Export failed: {e}"))
@@ -1464,7 +1557,60 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::Profile;
     use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+
+    #[test]
+    fn business_pickers_show_every_report() {
+        assert_eq!(
+            report_picker_items(Profile::Business, ReportPickerMode::View),
+            REPORT_TYPES
+        );
+        assert_eq!(
+            report_picker_items(Profile::Business, ReportPickerMode::Export),
+            EXPORT_TYPES
+        );
+    }
+
+    #[test]
+    fn personal_pickers_drop_only_the_k1_row() {
+        let view = report_picker_items(Profile::Personal, ReportPickerMode::View);
+        assert!(!view.contains(&"K-1 Prep (1120-S)"));
+        assert_eq!(view, [&REPORT_TYPES[..7], &REPORT_TYPES[8..]].concat());
+
+        let export = report_picker_items(Profile::Personal, ReportPickerMode::Export);
+        assert!(!export.contains(&"K-1 Prep (1120-S)"));
+        assert_eq!(export, [&EXPORT_TYPES[..7], &EXPORT_TYPES[8..]].concat());
+    }
+
+    /// `canonical_report_idx` hard-codes 7 as the row the personal lists drop.
+    #[test]
+    fn k1_sits_at_canonical_row_seven() {
+        assert_eq!(REPORT_TYPES[7], "K-1 Prep (1120-S)");
+        assert_eq!(EXPORT_TYPES[7], "K-1 Prep (1120-S)");
+        assert_eq!(REPORT_SLUGS[7], "k1-prep");
+    }
+
+    #[test]
+    fn personal_selections_translate_to_canonical_indices() {
+        // The personal pickers drop K-1 (canonical 7), so selections at or
+        // past that row are one short of canonical; dispatching row 7
+        // uncorrected would open the K-1 worksheet instead of A/R aging.
+        for selection in 0..7 {
+            assert_eq!(
+                canonical_report_idx(Profile::Personal, selection),
+                selection
+            );
+        }
+        assert_eq!(canonical_report_idx(Profile::Personal, 7), 8); // A/R Aging
+        assert_eq!(canonical_report_idx(Profile::Personal, 8), 9); // All Reports
+        for selection in 0..EXPORT_TYPES.len() {
+            assert_eq!(
+                canonical_report_idx(Profile::Business, selection),
+                selection
+            );
+        }
+    }
 
     fn aging(buckets: &[(&'static str, f64)]) -> AgingReport {
         let buckets: Vec<AgingBucket> = buckets

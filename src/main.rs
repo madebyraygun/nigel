@@ -152,7 +152,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
     }
 
     match command {
-        Commands::Init { data_dir } => cli::init::run(data_dir),
+        Commands::Init { data_dir, profile } => cli::init::run(data_dir, &profile),
         Commands::Accounts { command } => match command {
             AccountsCommands::Add {
                 name,

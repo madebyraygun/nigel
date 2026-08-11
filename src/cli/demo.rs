@@ -577,6 +577,16 @@ pub fn run() -> Result<()> {
     let conn = get_connection(&db_path)?;
     init_db(&conn)?;
 
+    // Demo data is business books: its rules name business categories, so on
+    // a personal chart the inserts would fail partway through the category
+    // lookups, leaving transactions with no import row for `nigel undo`.
+    if crate::db::get_profile(&conn) == crate::db::Profile::Personal {
+        eprintln!("These books are personal, and the demo data is a business (its rules");
+        eprintln!("name business categories). Try it in its own directory instead:");
+        eprintln!("  nigel init --data-dir ~/nigel-demo && nigel demo");
+        std::process::exit(1);
+    }
+
     if !seed_demo(&conn)? {
         println!(
             "Demo data already loaded (account '{}' exists).",

@@ -420,8 +420,25 @@ mod tests {
         assert_eq!(json["encrypted"], false);
         assert_eq!(json["locked"], false);
         assert_eq!(json["companyName"], "Bluepeak LLC");
+        assert_eq!(json["profile"], "business");
         assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(json["dataDir"], dir.path().display().to_string());
+    }
+
+    #[tokio::test]
+    async fn status_reports_a_personal_database_profile() {
+        crate::db::set_db_password(None);
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nigel.db");
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        crate::db::init_db_with_profile(&conn, crate::db::Profile::Personal).unwrap();
+        drop(conn);
+
+        let (app, token) = app_for(&db_path);
+        let json = status_json(&app, &token).await;
+
+        // The SPA hides the K-1 worksheet and relabels the name field on this.
+        assert_eq!(json["profile"], "personal");
     }
 
     #[tokio::test]
@@ -470,6 +487,8 @@ mod tests {
         assert_eq!(json["encrypted"], false);
         assert_eq!(json["locked"], false);
         assert_eq!(json["companyName"], serde_json::Value::Null);
+        // No database to read a profile from — business is the documented default.
+        assert_eq!(json["profile"], "business");
     }
 
     #[tokio::test]
@@ -488,6 +507,8 @@ mod tests {
         assert_eq!(json["locked"], true);
         // Reading it would need the key we do not have yet.
         assert_eq!(json["companyName"], serde_json::Value::Null);
+        // Unknown until unlocked; business is the superset the SPA can show.
+        assert_eq!(json["profile"], "business");
     }
 
     #[tokio::test]

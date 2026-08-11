@@ -24,6 +24,8 @@ import {
   toCategoryForm,
 } from './categories-data.js';
 import { guardrailAction, guardrailMessage } from './manager-errors.js';
+import { getAppStore } from '../state/app-store.js';
+import { SignalWatcher } from '../mixins/signal-watcher.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -55,7 +57,9 @@ interface Editor {
  * here would make this the one screen where the chart looks different.
  */
 @customElement('nigel-categories-screen')
-export class NigelCategoriesScreen extends LitElement {
+// SignalWatcher because render() reads the status signal for the books
+// profile — a late-arriving status must repaint the description.
+export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
       display: block;
@@ -240,7 +244,9 @@ export class NigelCategoriesScreen extends LitElement {
     return html`
       <wc-manager-layout
         heading="Chart of Accounts"
-        description="Categories map transactions onto Schedule C and Form 1120-S lines."
+        description=${getAppStore().status.get()?.profile === 'personal'
+          ? 'Categories organize your transactions for reports.'
+          : 'Categories map transactions onto Schedule C and Form 1120-S lines.'}
         .count=${this.loading ? null : this.categories.length}
         add-label="Add category"
         ?busy=${this.loading}

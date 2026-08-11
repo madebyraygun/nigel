@@ -136,6 +136,16 @@ describe('the reports screen', () => {
       expect(client.calls).toEqual([]);
     });
 
+    it('offers no K-1 worksheet on personal books', async () => {
+      const client = seeded();
+      client.status = { ...UNLOCKED_STATUS, profile: 'personal' };
+      const { el } = await mount('', client);
+      const grid = query(el, 'wc-link-grid');
+      const links = [...(grid?.shadowRoot?.querySelectorAll('a') ?? [])];
+      expect(links).toHaveLength(8);
+      expect(links.map((a) => a.getAttribute('href'))).not.toContain('#/reports?report=k1');
+    });
+
     it('serves A/R aging from the invoices route, with no export links', async () => {
       // Aging is the ninth entry in a catalog of eight routes: it reads like a
       // report, but `/api/exports` carries no `aging` slug because
