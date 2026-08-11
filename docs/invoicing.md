@@ -254,9 +254,41 @@ pay, and edit. An invoice with payments recorded against it cannot be voided —
 cancel the money side by recording the offsetting movement in the transaction
 register, which is where cash actually lives.
 
-Voiding does **not** tear down a published invoice: the R2 page and PDF stay
-served and the Stripe payment link stays chargeable, so the command warns you to
-deactivate the link in Stripe yourself.
+### What void takes down
+
+A cancelled invoice with a live payment link is the one way voiding can cost you
+money: a client who pays through it pays into an invoice `sync` no longer polls,
+so the payment goes unrecorded. Void therefore tears down what the invoice put
+out in the world, in this order and always **after** the cancellation is
+committed:
+
+1. **The Stripe payment link** is deactivated (`active=false`; Stripe has no
+   delete for payment links). The URL keeps resolving and stops taking money.
+2. **The published page** is replaced with a short "This invoice has been
+   voided" notice. The PDF beside it is left alone and the address keeps
+   working — the document the client was sent is still the document they were
+   sent.
+
+Neither of those can fail the void. The invoice is cancelled in your books
+whatever Stripe and R2 answer; a failure prints a warning naming what is still
+live, with the payment link's own URL so you can deactivate it by hand.
+
+What runs depends on what is configured, and nothing is required — void is the
+one invoicing command that works on an installation with no keys at all:
+
+| The invoice has | Configured | What void does |
+| --- | --- | --- |
+| no payment link | anything | nothing, silently |
+| a payment link | `stripe_secret_key` | deactivates it; a failure warns and prints the URL |
+| a payment link | no Stripe key | warns and prints the URL — the link is live either way |
+| nothing published | anything | nothing, silently |
+| a published page | the four `r2_*` keys and `public_base_url` | replaces the page; a failure warns |
+| a published page | R2 incomplete or unset | warns: the page stays live and still offers to take payment |
+
+So voiding an ordinary draft says nothing beyond `Voided invoice #1248.`, and
+every extra line you do see names something that is still out there. The same
+sentences appear in the dashboard's invoice screen and on the void response in
+the web UI.
 
 ## Sending
 

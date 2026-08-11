@@ -227,6 +227,27 @@ pub struct Branding<'a> {
     pub contact_email: &'a str,
 }
 
+/// The page that replaces a published invoice when it is voided.
+///
+/// It takes no template and no configuration: the invoice template is the
+/// operator's to edit, and a voided page that could fail to render — a broken
+/// override, a missing `from_email` — would leave a live Pay button up because
+/// the notice replacing it did not compile. The only value on it is the number,
+/// which is an `i64` and so cannot carry markup. No figures, no client name and
+/// no pay button: whoever opens this address may be anyone the link was
+/// forwarded to, and a cancelled invoice owes them one fact.
+pub fn voided_page_html(number: i64) -> String {
+    format!(
+        "<!doctype html>\n\
+         <html><head><meta charset=\"utf-8\"><title>Invoice {number} — voided</title>\n\
+         <style>body{{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem}}</style>\n\
+         </head><body>\n\
+         <h1>This invoice has been voided</h1>\n\
+         <p>Invoice #{number} was cancelled and is no longer payable. Please contact the sender if you were expecting to pay it.</p>\n\
+         </body></html>\n"
+    )
+}
+
 pub fn render_invoice_html(
     branding: &Branding<'_>,
     invoice: &Invoice,
@@ -852,5 +873,22 @@ mod tests {
             PayButton::Omitted,
         );
         assert!(html.contains("<script>alert(1)</script>"));
+    }
+
+    #[test]
+    fn the_voided_page_names_the_invoice_and_offers_nothing_to_pay() {
+        let html = voided_page_html(1248);
+        assert!(html.contains("voided"), "got: {html}");
+        assert!(html.contains("#1248"), "got: {html}");
+        assert!(!html.contains("class=\"pay\""), "got: {html}");
+        assert!(!html.contains("href"), "no link to follow: {html}");
+    }
+
+    /// It renders from nothing but the number, so no configuration and no
+    /// operator template can stop a void from replacing the live page.
+    #[test]
+    fn the_voided_page_expands_no_placeholders() {
+        let html = voided_page_html(1248);
+        assert!(!html.contains("{{"), "got: {html}");
     }
 }

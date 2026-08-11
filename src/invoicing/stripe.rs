@@ -27,6 +27,18 @@ pub fn payment_link_params(price_id: &str, invoice: &Invoice) -> Vec<(String, St
     ]
 }
 
+const PAYMENT_LINKS_URL: &str = "https://api.stripe.com/v1/payment_links";
+
+/// Where an update to one payment link goes. Stripe has no delete for these —
+/// `active=false` is the whole of taking a link out of service.
+pub fn payment_link_url(payment_link_id: &str) -> String {
+    format!("{PAYMENT_LINKS_URL}/{payment_link_id}")
+}
+
+pub fn deactivate_params() -> Vec<(String, String)> {
+    vec![("active".into(), "false".into())]
+}
+
 #[derive(Deserialize)]
 struct SessionList {
     data: Vec<Session>,
@@ -68,6 +80,19 @@ fn required_str(value: &serde_json::Value, field: &str) -> Result<String> {
         .ok_or_else(|| NigelError::Other(format!("stripe response missing {field}")))
 }
 
+/// A 2xx is not the whole answer: Stripe echoes the updated payment link, and
+/// the field this call exists to move is the one worth reading. A link that came
+/// back still active is a failure the operator has to hear about, not a success.
+fn deactivated_from_value(value: &serde_json::Value) -> Result<()> {
+    match value["active"].as_bool() {
+        Some(false) => Ok(()),
+        Some(true) => Err(NigelError::Other(
+            "stripe left the payment link active".into(),
+        )),
+        None => Err(NigelError::Other("stripe response missing active".into())),
+    }
+}
+
 fn payment_link_from_value(value: &serde_json::Value) -> Result<PaymentLink> {
     Ok(PaymentLink {
         id: required_str(value, "id")?,
@@ -98,11 +123,13 @@ impl PaymentGateway for StripeClient {
     fn create_payment_link(&self, invoice: &Invoice, _client: &Client) -> Result<PaymentLink> {
         let price = self.post_form("https://api.stripe.com/v1/prices", &price_params(invoice))?;
         let price_id = required_str(&price, "id")?;
-        let link = self.post_form(
-            "https://api.stripe.com/v1/payment_links",
-            &payment_link_params(&price_id, invoice),
-        )?;
+        let link = self.post_form(PAYMENT_LINKS_URL, &payment_link_params(&price_id, invoice))?;
         payment_link_from_value(&link)
+    }
+
+    fn deactivate_payment_link(&self, payment_link_id: &str) -> Result<()> {
+        let updated = self.post_form(&payment_link_url(payment_link_id), &deactivate_params())?;
+        deactivated_from_value(&updated)
     }
 
     fn paid_sessions(&self, payment_link_id: &str) -> Result<Vec<PaidSession>> {
@@ -197,6 +224,34 @@ mod tests {
                 .is_err()
         );
         assert!(payment_link_from_value(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn deactivate_posts_active_false_to_the_one_link() {
+        assert_eq!(
+            payment_link_url("plink_1"),
+            "https://api.stripe.com/v1/payment_links/plink_1"
+        );
+        assert_eq!(
+            deactivate_params(),
+            vec![("active".to_string(), "false".to_string())]
+        );
+    }
+
+    #[test]
+    fn deactivated_from_value_reads_the_field_the_call_moves() {
+        assert!(
+            deactivated_from_value(&serde_json::json!({"id": "plink_1", "active": false})).is_ok()
+        );
+
+        let still_active =
+            deactivated_from_value(&serde_json::json!({"id": "plink_1", "active": true}))
+                .unwrap_err();
+        assert!(
+            still_active.to_string().contains("active"),
+            "got: {still_active}"
+        );
+        assert!(deactivated_from_value(&serde_json::json!({"id": "plink_1"})).is_err());
     }
 
     #[test]

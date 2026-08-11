@@ -12,7 +12,7 @@ use crate::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use crate::invoicing::invoices::{
     create_invoice, ensure_not_void, ensure_voidable, get_invoice, get_invoice_by_number, is_void,
     line_items, list_invoices, paid_amount, payment_amount, record_payment, update_invoice,
-    void_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
+    InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::mailgun::MailgunClient;
 use crate::invoicing::r2::R2Publisher;
@@ -23,6 +23,7 @@ use crate::invoicing::render_html::{
 use crate::invoicing::send::send_invoice;
 use crate::invoicing::stripe::StripeClient;
 use crate::invoicing::sync::sync_all_report;
+use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 
@@ -81,11 +82,9 @@ fn find_invoice(conn: &Connection, number: i64) -> Result<Invoice> {
     })
 }
 
-/// What voiding does *not* undo. Void leaves the published page and the Stripe
-/// payment link live, so every front end that voids says so.
-pub(crate) const PUBLISHED_VOID_WARNING: &str =
-    "Warning: this invoice was already published. Its page and Stripe payment link stay live — \
-     deactivate the link in Stripe if you do not want it paid.";
+/// What voiding a published invoice will do, before it does it — the sentence
+/// the CLI's confirmation and the TUI's dialog both show.
+pub(crate) use crate::invoicing::void::PUBLISHED_VOID_NOTICE;
 
 fn require(value: Option<String>, what: &str) -> Result<String> {
     value.ok_or_else(|| {
@@ -104,6 +103,30 @@ pub(crate) fn company_name(conn: &Connection) -> String {
 fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
     Ok(StripeClient {
         secret_key: require(cfg.stripe_secret_key.clone(), "stripe_secret_key")?,
+    })
+}
+
+/// The gateway if this installation has one, rather than a refusal.
+///
+/// Void is the one invoicing command that has to work on a machine with nothing
+/// configured — an invoice can be drafted and cancelled without Stripe ever
+/// being involved — so its teardown asks what is available instead of demanding
+/// the nine keys `send` needs.
+pub(crate) fn optional_gateway(cfg: &InvoicingConfig) -> Option<StripeClient> {
+    Some(StripeClient {
+        secret_key: cfg.stripe_secret_key.clone()?,
+    })
+}
+
+/// The publisher, when every key it takes is set. All five or none: a publisher
+/// missing its bucket is not a publisher that works for four fifths of a page.
+pub(crate) fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
+    Some(R2Publisher {
+        account_id: cfg.r2_account_id.clone()?,
+        access_key: cfg.r2_access_key.clone()?,
+        secret_key: cfg.r2_secret_key.clone()?,
+        bucket: cfg.r2_bucket.clone()?,
+        public_base_url: cfg.public_base_url.clone()?,
     })
 }
 
@@ -197,15 +220,29 @@ pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
     let client = get_client(&conn, invoice.client_id)?;
 
     println!("{}", void_summary(&invoice, &client.name));
+    if invoice.published_at.is_some() {
+        println!("{PUBLISHED_VOID_NOTICE}");
+    }
     if !confirm_void(&invoice, yes)? {
         println!("Aborted.");
         return Ok(());
     }
 
-    void_invoice(&conn, invoice.id, today)?;
+    // Whatever this installation can reach. The teardown is best-effort by
+    // construction, so an unset key is a warning at the end, never a refusal
+    // here — see `invoicing::void`'s matrix.
+    let cfg = invoicing_config();
+    let outcome = void_invoice_with_teardown(
+        &conn,
+        invoice.id,
+        today,
+        optional_gateway(&cfg).as_ref(),
+        optional_publisher(&cfg).as_ref(),
+    )?;
+
     println!("Voided invoice #{number}.");
-    if invoice.published_at.is_some() {
-        println!("{PUBLISHED_VOID_WARNING}");
+    for warning in outcome.warnings() {
+        println!("{warning}");
     }
     Ok(())
 }
@@ -519,7 +556,7 @@ mod tests {
     use super::*;
     use crate::db::init_db;
     use crate::invoicing::clients::add_client;
-    use crate::invoicing::invoices::{create_invoice, set_payment_link};
+    use crate::invoicing::invoices::{create_invoice, set_payment_link, void_invoice};
     use crate::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
@@ -959,5 +996,58 @@ mod tests {
     fn preview_requires_no_invoicing_config_at_all() {
         assert!(build_clients(test_config()).is_err()); // send cannot run
         assert!(!contact_email_for_preview(&test_config()).0.is_empty()); // preview can
+    }
+
+    /// Void's teardown asks what is configured instead of demanding everything:
+    /// an installation that never set a key still voids, and the warning it
+    /// prints is `invoicing::void`'s.
+    #[test]
+    fn nothing_configured_yields_no_gateway_and_no_publisher() {
+        let cfg = test_config();
+        assert!(optional_gateway(&cfg).is_none());
+        assert!(optional_publisher(&cfg).is_none());
+    }
+
+    #[test]
+    fn the_stripe_key_alone_yields_a_gateway_but_no_publisher() {
+        let cfg = InvoicingConfig {
+            stripe_secret_key: Some("sk_test".into()),
+            ..test_config()
+        };
+        assert!(optional_gateway(&cfg).is_some());
+        assert!(
+            optional_publisher(&cfg).is_none(),
+            "a bucketless publisher is not a publisher"
+        );
+    }
+
+    /// All five R2 keys or none: four of them cannot upload four fifths of a
+    /// page.
+    #[test]
+    fn the_publisher_needs_every_one_of_its_five_keys() {
+        fn r2_config() -> InvoicingConfig {
+            InvoicingConfig {
+                r2_account_id: Some("acct".into()),
+                r2_access_key: Some("access".into()),
+                r2_secret_key: Some("secret".into()),
+                r2_bucket: Some("billing".into()),
+                public_base_url: Some("https://billing.example.test/i".into()),
+                ..test_config()
+            }
+        }
+        assert!(optional_publisher(&r2_config()).is_some());
+
+        let drops: [fn(&mut InvoicingConfig); 5] = [
+            |c| c.r2_account_id = None,
+            |c| c.r2_access_key = None,
+            |c| c.r2_secret_key = None,
+            |c| c.r2_bucket = None,
+            |c| c.public_base_url = None,
+        ];
+        for drop in drops {
+            let mut cfg = r2_config();
+            drop(&mut cfg);
+            assert!(optional_publisher(&cfg).is_none());
+        }
     }
 }

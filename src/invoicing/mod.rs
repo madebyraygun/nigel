@@ -9,6 +9,7 @@ pub mod render_html;
 pub mod send;
 pub mod stripe;
 pub mod sync;
+pub mod void;
 
 use std::time::Duration;
 
