@@ -18,7 +18,7 @@ use crate::invoicing::mailgun::{
     from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
     MailgunClient,
 };
-use crate::invoicing::r2::R2Publisher;
+use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
 use crate::invoicing::render::render_invoice;
 use crate::invoicing::render_html::{
     load_template, template_path, Branding, PayButton, DEFAULT_TEMPLATE,
@@ -157,12 +157,23 @@ pub(crate) struct SendClients {
 /// before these keys existed.
 pub(crate) fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients> {
     let stripe = build_gateway(&cfg)?;
+    let account_id = require(cfg.r2_account_id, "r2_account_id")?;
+    let access_key = require(cfg.r2_access_key, "r2_access_key")?;
+    let secret_key = require(cfg.r2_secret_key, "r2_secret_key")?;
+    let bucket = require(cfg.r2_bucket, "r2_bucket")?;
+    let public_base_url = require(cfg.public_base_url, "public_base_url")?;
+    // The single constructor both send paths use, and the last moment before any
+    // client exists: a base URL that cannot produce a working link is refused
+    // here, so nothing is published, nothing is emailed and no Stripe link is
+    // created. `optional_publisher` stays lenient — void and republish only need
+    // the upload to happen and never print the address.
+    validate_public_base_url(&public_base_url)?;
     let r2 = R2Publisher {
-        account_id: require(cfg.r2_account_id, "r2_account_id")?,
-        access_key: require(cfg.r2_access_key, "r2_access_key")?,
-        secret_key: require(cfg.r2_secret_key, "r2_secret_key")?,
-        bucket: require(cfg.r2_bucket, "r2_bucket")?,
-        public_base_url: require(cfg.public_base_url, "public_base_url")?,
+        account_id,
+        access_key,
+        secret_key,
+        bucket,
+        public_base_url,
     };
 
     let api_key = require(cfg.mailgun_api_key, "mailgun_api_key")?;
@@ -194,8 +205,13 @@ pub(crate) fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendC
         validate_header_value(reply_to, "reply_to_email")?;
     }
 
+    // Config cautions travel as data on the one channel, so a terminal, the
+    // TUI and a browser all say the same things about the same installation.
+    // The `/i` one is a caution and not a refusal, because an edge rewrite can
+    // map that prefix onto the domain root.
     let warnings = from_address_domain_warning(&from_address, &domain)
         .into_iter()
+        .chain(public_base_url_warning(&r2.public_base_url).map(str::to_string))
         .collect();
 
     let mail = MailgunClient {
@@ -1072,6 +1088,27 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("public_base_url"), "got: {err}");
+    }
+
+    fn fully_configured_test_config() -> InvoicingConfig {
+        InvoicingConfig {
+            mailgun_domain: Some("mail.example.test".into()),
+            from_email: Some("billing@example.test".into()),
+            ..config_up_to_mailgun()
+        }
+    }
+
+    #[test]
+    fn a_scheme_less_public_base_url_is_refused_before_any_client_is_built() {
+        let mut cfg = fully_configured_test_config();
+        cfg.public_base_url = Some("billing.example.com".into());
+        let err = build_clients(cfg, "").map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("public_base_url"), "got: {err}");
+    }
+
+    #[test]
+    fn a_configured_base_url_that_can_produce_a_link_still_builds() {
+        assert!(build_clients(fully_configured_test_config(), "").is_ok());
     }
 
     fn config_up_to_mailgun() -> InvoicingConfig {

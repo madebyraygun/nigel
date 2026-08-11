@@ -272,13 +272,13 @@ mod tests {
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
             *self.full_publishes.borrow_mut() += 1;
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
             self.pages
                 .borrow_mut()
                 .push((token.to_string(), String::from_utf8(html.to_vec()).unwrap()));
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
     }
 

@@ -336,10 +336,10 @@ mod tests {
     struct FakePub;
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
-            Ok(format!("https://billing.example.com/i/{token}/"))
+            Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
-            Ok(format!("https://billing.example.com/i/{token}/"))
+            Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
     }
     struct CapturePub {
@@ -348,11 +348,11 @@ mod tests {
     impl AssetPublisher for CapturePub {
         fn publish(&self, token: &str, h: &[u8], _p: &[u8]) -> Result<String> {
             *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, h: &[u8]) -> Result<String> {
             *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
     }
     struct FailPub;

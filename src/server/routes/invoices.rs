@@ -136,9 +136,15 @@ fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
 /// The published page's address, built from the token the response never
 /// carries. `None` rather than an error when nothing has been configured — a
 /// missing setting is a fact about the installation, not a failed request.
+///
+/// A base URL that cannot produce a working link is `None` for the same reason:
+/// an absent address is a screen with no link on it, where a composed one is a
+/// button that goes nowhere. The check is `build_clients`'s, so the read path
+/// and the send path agree about which addresses are real.
 fn public_url(invoice: &Invoice) -> Option<String> {
     invoice.published_at.as_ref()?;
     let base = crate::settings::invoicing_config().public_base_url?;
+    crate::invoicing::r2::validate_public_base_url(&base).ok()?;
     Some(crate::invoicing::r2::public_url(&base, &invoice.token))
 }
 
@@ -611,6 +617,21 @@ async fn send(
         return Err(not_configured("Sending invoices", &status.missing));
     }
     let contact_email = crate::cli::invoice::contact_email_for_preview(&config).0;
+    // `build_clients` refuses an unusable `public_base_url` too, but its
+    // sentence quotes the value for the terminal that is answering whoever
+    // typed the command. No response carries a configured setting, so the same
+    // refusal is answered here in the key-and-defect wording instead.
+    if let Some(base) = config.public_base_url.as_deref() {
+        if crate::invoicing::r2::validate_public_base_url(base).is_err() {
+            return Err(ApiError::conflict(
+                crate::invoicing::r2::PUBLIC_BASE_URL_DEFECT,
+                serde_json::json!({
+                    "reason": "invalid_public_base_url",
+                    "step": SendStep::Config.as_str(),
+                }),
+            ));
+        }
+    }
     // One extra connection open on a request about to make five network calls,
     // and it keeps `build_clients` — and its 409 — outside the database work
     // below. It is the same constructor `nigel invoice send` uses, kept rather
@@ -1027,7 +1048,7 @@ mod tests {
         let body = ok_json(&app, "/api/invoices/1251", &token).await;
         assert_eq!(
             body["publicUrl"],
-            format!("https://billing.example.test/i/{}/", seeded.token)
+            format!("https://billing.example.test/i/{}/index.html", seeded.token)
         );
         // The address, never the secret it is built from.
         assert!(body.get("token").is_none(), "{body}");
@@ -2055,13 +2076,13 @@ mod tests {
     }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, html: &[u8]) -> NigelResult<String> {
             self.pages
                 .borrow_mut()
                 .push(String::from_utf8(html.to_vec()).expect("utf-8"));
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
     }
 
@@ -2182,6 +2203,59 @@ mod tests {
             missing.contains(&serde_json::json!("public_base_url")),
             "{json}"
         );
+    }
+
+    /// All nine keys set, one of them unusable: the refusal belongs to the
+    /// config step, not to a 502 from R2 after the upload was attempted — and
+    /// it names the key and the defect without echoing the address.
+    #[tokio::test]
+    async fn a_send_with_an_unusable_public_base_url_fails_at_config() {
+        let _config = TempConfig::new();
+        let mut settings = crate::settings::load_settings();
+        settings.stripe_secret_key = Some("sk_test".into());
+        settings.mailgun_api_key = Some("key".into());
+        settings.mailgun_domain = Some("mail.example.test".into());
+        settings.from_email = Some("billing@mail.example.test".into());
+        settings.r2_account_id = Some("acct".into());
+        settings.r2_access_key = Some("access".into());
+        settings.r2_secret_key = Some("secret".into());
+        settings.r2_bucket = Some("billing".into());
+        settings.public_base_url = Some("books.example.test".into());
+        crate::settings::save_settings(&settings).expect("settings");
+
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/invoices/1252/send",
+            &token,
+            &serde_json::json!({ "confirm": true }),
+        )
+        .await;
+
+        assert!(status.is_client_error(), "{status}: {json}");
+        assert_eq!(json["error"]["details"]["step"], "config", "{json}");
+        assert_eq!(
+            json["error"]["details"]["reason"], "invalid_public_base_url",
+            "{json}"
+        );
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("public_base_url"),
+            "{json}"
+        );
+        // The key and the defect, never the value.
+        assert!(
+            !json.to_string().contains("books.example.test"),
+            "the configured value leaked: {json}"
+        );
+
+        // Refused at config, so nothing reached Stripe, R2 or Mailgun.
+        let invoice = ok_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(invoice["status"], "draft");
     }
 
     /// Every key set, one of them carrying a line break: a different refusal
