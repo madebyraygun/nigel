@@ -6,6 +6,8 @@ use rusqlite::Connection;
 use crate::categorizer::categorize_transactions;
 use crate::db::{get_connection, init_db};
 use crate::error::Result;
+use crate::invoicing::clients::add_client;
+use crate::invoicing::invoices::{create_invoice, mark_published, record_payment, NewLineItem};
 use crate::settings::load_settings;
 
 const ACCOUNT_NAME: &str = "BofA Checking";
@@ -310,6 +312,169 @@ const RULES: &[DemoRule] = &[
     },
 ];
 
+/// The demo's invoicing clients: name, email, billing address.
+const CLIENTS: &[(&str, &str, &str)] = &[
+    (
+        "Cedar Systems",
+        "ap@cedarsystems.test",
+        "88 Cedar Way, Bend OR 97701",
+    ),
+    (
+        "Harbor & Vale",
+        "billing@harborvale.test",
+        "1200 Harbor St, Portland OR 97209",
+    ),
+    (
+        "Juniper Labs",
+        "accounts@juniperlabs.test",
+        "45 Juniper Rd, Eugene OR 97401",
+    ),
+];
+
+struct DemoItem {
+    description: &'static str,
+    quantity: f64,
+    unit_amount: f64,
+}
+
+struct DemoInvoice {
+    /// Index into [`CLIENTS`].
+    client: usize,
+    issued_days_ago: i64,
+    /// Offset from today, so a positive number is a due date still to come.
+    due_in_days: i64,
+    items: &'static [DemoItem],
+    /// Whether `send` has been run on it. Every status but `draft` needs this,
+    /// because `refresh_status` derives `sent` from `published_at`.
+    published: bool,
+    /// One payment: how much, and how many days ago.
+    payment: Option<(f64, i64)>,
+}
+
+/// Four invoices covering the statuses a demo has any use for — paid, partly
+/// paid, sent and unpaid, and a draft still being written. Every date is
+/// relative to today, the way the transactions are, so a demo database is
+/// never stale. All are Net 30.
+const INVOICES: &[DemoInvoice] = &[
+    DemoInvoice {
+        client: 0,
+        issued_days_ago: 75,
+        due_in_days: -45,
+        items: &[DemoItem {
+            description: "Brand identity system",
+            quantity: 1.0,
+            unit_amount: 4800.00,
+        }],
+        published: true,
+        payment: Some((4800.00, 50)),
+    },
+    DemoInvoice {
+        client: 1,
+        issued_days_ago: 25,
+        due_in_days: 5,
+        items: &[DemoItem {
+            description: "Website redesign \u{2014} phase 1",
+            quantity: 1.0,
+            unit_amount: 6500.00,
+        }],
+        published: true,
+        payment: Some((3250.00, 10)),
+    },
+    DemoInvoice {
+        client: 2,
+        issued_days_ago: 12,
+        due_in_days: 18,
+        items: &[
+            DemoItem {
+                description: "Discovery workshop",
+                quantity: 2.0,
+                unit_amount: 1500.00,
+            },
+            DemoItem {
+                description: "Technical audit",
+                quantity: 1.0,
+                unit_amount: 2200.00,
+            },
+        ],
+        published: true,
+        payment: None,
+    },
+    DemoInvoice {
+        client: 0,
+        issued_days_ago: 2,
+        due_in_days: 28,
+        items: &[
+            DemoItem {
+                description: "Q3 retainer",
+                quantity: 1.0,
+                unit_amount: 3200.00,
+            },
+            DemoItem {
+                description: "Additional design hours",
+                quantity: 6.0,
+                unit_amount: 165.00,
+            },
+        ],
+        published: false,
+        payment: None,
+    },
+];
+
+const DEMO_TERMS: &str = "Net 30";
+
+fn offset_day(today: NaiveDate, days: i64) -> String {
+    (today + chrono::Duration::days(days))
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+/// Clients and invoices for the invoicing screens, which `review`'s seed
+/// leaves empty. Returns the counts for the summary.
+///
+/// No invoice here gets a payment link: `set_payment_link` is never called, so
+/// `sync_all_report` — whose query is `WHERE stripe_payment_link_id IS NOT
+/// NULL` — skips every one of them and the launch sync stays silent on a demo
+/// database. Statuses are derived rather than written: `mark_published` and
+/// `record_payment` each call `refresh_status` themselves.
+fn insert_demo_invoicing(conn: &Connection) -> Result<(usize, usize)> {
+    let today = Local::now().date_naive();
+    let client_ids = CLIENTS
+        .iter()
+        .map(|(name, email, address)| add_client(conn, name, Some(email), Some(address), None))
+        .collect::<Result<Vec<i64>>>()?;
+
+    for invoice in INVOICES {
+        let items: Vec<NewLineItem> = invoice
+            .items
+            .iter()
+            .map(|item| NewLineItem {
+                description: item.description.to_string(),
+                quantity: item.quantity,
+                unit_amount: item.unit_amount,
+            })
+            .collect();
+        let issued = offset_day(today, -invoice.issued_days_ago);
+        let id = create_invoice(
+            conn,
+            client_ids[invoice.client],
+            &issued,
+            Some(&offset_day(today, invoice.due_in_days)),
+            "USD",
+            &items,
+            None,
+            Some(DEMO_TERMS),
+        )?;
+        if invoice.published {
+            mark_published(conn, id, &issued)?;
+        }
+        if let Some((amount, days_ago)) = invoice.payment {
+            record_payment(conn, id, amount, &offset_day(today, -days_ago), "ach", None)?;
+        }
+    }
+
+    Ok((CLIENTS.len(), INVOICES.len()))
+}
+
 fn insert_demo_data(conn: &Connection) -> Result<usize> {
     let txns = generate_transactions();
     let txn_count = txns.len();
@@ -374,6 +539,7 @@ pub fn run() -> Result<()> {
     }
 
     let txn_count = insert_demo_data(&conn)?;
+    let (client_count, invoice_count) = insert_demo_invoicing(&conn)?;
     crate::db::set_metadata(&conn, "company_name", "Acme Consulting LLC")?;
     let result = categorize_transactions(&conn)?;
 
@@ -383,6 +549,8 @@ pub fn run() -> Result<()> {
     println!("  Rules:        {}", RULES.len());
     println!("  Categorized:  {}", result.categorized);
     println!("  Flagged:      {}", result.still_flagged);
+    println!("  Clients:      {client_count}");
+    println!("  Invoices:     {invoice_count}");
     println!();
     println!("Try these next:");
     println!("  nigel accounts list");
@@ -390,6 +558,7 @@ pub fn run() -> Result<()> {
     println!("  nigel report pnl");
     println!("  nigel report flagged");
     println!("  nigel review");
+    println!("  nigel invoice list");
 
     Ok(())
 }
@@ -420,6 +589,7 @@ pub fn setup_demo() -> Result<()> {
     )?;
     if !exists {
         insert_demo_data(&conn)?;
+        insert_demo_invoicing(&conn)?;
         crate::db::set_metadata(&conn, "company_name", "Acme Consulting LLC")?;
         categorize_transactions(&conn)?;
     }
@@ -606,6 +776,77 @@ mod tests {
             unprofitable_months >= 2,
             "at least 2 months should be unprofitable, got {unprofitable_months}"
         );
+    }
+
+    /// The invoicing screens open empty on a demo database without this, which
+    /// is what 68.7 is fixing; the statuses are what make the list worth
+    /// looking at.
+    #[test]
+    fn demo_seeds_clients_and_invoices_covering_the_statuses() {
+        let (_dir, conn) = test_db();
+        let (clients, invoices) = insert_demo_invoicing(&conn).unwrap();
+        assert_eq!(clients, 3);
+        assert_eq!(invoices, 4);
+
+        let mut statuses: Vec<String> = conn
+            .prepare("SELECT status FROM invoices ORDER BY number")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        statuses.sort();
+        assert_eq!(statuses, ["draft", "paid", "partial", "sent"]);
+
+        let payments: i64 = conn
+            .query_row("SELECT COUNT(*) FROM invoice_payments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(payments, 2);
+    }
+
+    /// A seeded invoice with a payment link would be pulled at every launch by
+    /// `sync_all_report`, against a Stripe account that has never heard of it.
+    #[test]
+    fn demo_invoices_carry_no_payment_link_so_the_launch_sync_ignores_them() {
+        let (_dir, conn) = test_db();
+        insert_demo_invoicing(&conn).unwrap();
+
+        let syncable: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM invoices
+                 WHERE stripe_payment_link_id IS NOT NULL AND status IN ('sent','partial','overdue')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(syncable, 0);
+    }
+
+    #[test]
+    fn demo_invoice_dates_are_valid_and_sit_around_today() {
+        let (_dir, conn) = test_db();
+        insert_demo_invoicing(&conn).unwrap();
+        let today = Local::now().date_naive();
+
+        let mut stmt = conn
+            .prepare("SELECT issue_date, due_date FROM invoices")
+            .unwrap();
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 4);
+        for (issue, due) in rows {
+            let issue = NaiveDate::parse_from_str(&issue, "%Y-%m-%d").unwrap();
+            let due = NaiveDate::parse_from_str(&due, "%Y-%m-%d").unwrap();
+            assert!(issue <= today, "issued in the future: {issue}");
+            assert_eq!(
+                (due - issue).num_days(),
+                30,
+                "every demo invoice is Net 30: {issue} -> {due}"
+            );
+        }
     }
 
     #[test]
