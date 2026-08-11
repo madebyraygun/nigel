@@ -119,6 +119,60 @@ nigel client list
 `--email` is optional at creation, but an invoice cannot be sent to a client
 without one. `nigel client list` prints the client IDs that `invoice new` takes.
 
+### Who receives an invoice
+
+A client holds a **list** of contacts, each an email address with an optional
+name and title. Exactly one of them is the **billing contact**: that address is
+the invoice's `To`, the one `nigel client list` shows, and the one the published
+page prints. Every other contact is copied — `Cc` on the same message.
+
+```bash
+nigel client edit 1 --contact "ap@acme.test:Ada Payne:AP Manager" \
+                    --contact "dana@acme.test:Dana Chen:Design Lead"
+nigel client show 1
+```
+
+`--contact "email[:name[:title]]"` is repeatable and **replaces the whole
+list** — the same whole-list shape `invoice new --item "desc:qty:unit"` has,
+split the same way, so a title containing a colon keeps its remainder. The
+first one given is the billing recipient.
+
+`--email` and `--contact` cannot be used together: one sets a single field and
+the other replaces the collection, so applying both would make the order they
+were applied in visible. `--email` on its own still means what it always did —
+set the billing address, leave the other contacts alone.
+
+An address is not shape-checked, on any surface: `nigel client add --email`
+never has, and a form that refused what the CLI accepts would make the two
+disagree about what a client is. What *is* refused is a blank address, the same
+address twice on one client (case-insensitively — a cc that is also the `To` is
+a duplicate delivery, not a second recipient), two billing contacts, and a line
+break in any field, because these strings become mail headers.
+
+A refusal writes nothing at all. Adding a client and its contacts is one
+transaction, and so is editing one: a contact list that is turned down leaves
+no client row behind and no half-applied rename.
+
+The one exception is `nigel invoice import`, which takes what the source
+database has: an address carrying a character a mail header may not is copied
+verbatim, counted, and reported at the end of the run, exactly as an
+unparseable date is. Refusing it would abort a whole migration over a value
+nobody can correct until it has been imported. A send to that client refuses
+later, by name.
+
+**Everyone on the list receives the same document and can pay it.** One render,
+one message: the identical HTML body and the identical PDF go to the `To` and
+every `Cc`, Pay button included, and the published page at
+`public_base_url/i/{token}/` is the same page for all of them. That is
+deliberate — a second, button-less render for the cc list would create an
+artifact that is not what was published, and it would achieve nothing, because
+the token URL is forwardable by design. If only one person should be able to
+pay, give the client only one contact.
+
+The published page names the **billing contact only**. It is a static object on
+a public URL, and printing an organisation's whole contact list onto it would
+publish internal addresses to anyone the link reaches.
+
 A name is required and must be unique: an empty one and a name another client
 already has are both refused, on `client add` and on a `client edit` that
 renames. Renaming a client to the name it already has is not a collision.
@@ -143,9 +197,9 @@ nigel client edit 1 --name "Acme Corporation" --address "500 Market St"
 number first) and the balance still open against it — void and fully paid
 invoices contribute nothing.
 
-`client edit` takes `--name`, `--email`, `--address` and `--notes`; the flags you
-leave off are left alone, and passing none at all is an error rather than a silent
-no-op. A blank `--name` is refused, since the column is required. `--notes` is
+`client edit` takes `--name`, `--email`, `--address`, `--notes` and
+`--contact`; the flags you leave off are left alone, and passing none at all is
+an error rather than a silent no-op. A blank `--name` is refused, since the column is required. `--notes` is
 internal and never appears on an invoice.
 
 Edits take effect on the **next** send. Published pages are static snapshots on
@@ -552,7 +606,7 @@ nothing to say.
 |---|---|---|
 | `{{NUMBER}}` | text | Invoice number (**required**) |
 | `{{CLIENT}}` | text | Client name (**required**) |
-| `{{CLIENT_EMAIL}}` | text | Client billing email, empty when unset |
+| `{{CLIENT_EMAIL}}` | text | The billing contact's address, empty when the client has none |
 | `{{CLIENT_ADDRESS}}` | text | Client billing address, empty when unset |
 | `{{COMPANY}}` | text | Your business name, empty when unset |
 | `{{ISSUE}}` | text | Issue date |

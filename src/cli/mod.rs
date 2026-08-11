@@ -342,6 +342,10 @@ pub enum ClientCommands {
         /// Billing address
         #[arg(long)]
         address: Option<String>,
+        /// Contact as "email[:name[:title]]", repeatable. The first is the
+        /// billing recipient; the rest are copied on every invoice.
+        #[arg(long = "contact", conflicts_with = "email")]
+        contacts: Vec<String>,
     },
     /// Show one client: details plus invoice history and open balance.
     Show {
@@ -364,6 +368,10 @@ pub enum ClientCommands {
         /// New internal notes (never shown to the client)
         #[arg(long)]
         notes: Option<String>,
+        /// Contact as "email[:name[:title]]", repeatable. Replaces the whole
+        /// list; the first is the billing recipient.
+        #[arg(long = "contact", conflicts_with = "email")]
+        contacts: Vec<String>,
     },
     /// Delete a client. Refused while any invoice bills them, of any status.
     Delete {

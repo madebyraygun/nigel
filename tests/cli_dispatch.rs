@@ -1192,6 +1192,192 @@ fn invoice_void_with_yes_voids_and_blocks_pay() {
 }
 
 #[test]
+fn client_add_then_contacts_then_show_lists_them_all() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co", "--email", "ap@acme.test"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "client",
+            "edit",
+            "1",
+            "--contact",
+            "ap@acme.test:Ada Payne:AP Manager",
+            "--contact",
+            "dana@acme.test:Dana Chen:Design Lead",
+        ])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ap@acme.test"))
+        .stdout(predicate::str::contains("Ada Payne"))
+        .stdout(predicate::str::contains("AP Manager"))
+        .stdout(predicate::str::contains("dana@acme.test"))
+        .stdout(predicate::str::contains("Design Lead"))
+        .stdout(predicate::str::contains("billing"));
+
+    // The first `--contact` is the billing recipient, which is what the list's
+    // Email column projects.
+    env.cmd()
+        .args(["client", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ap@acme.test"));
+}
+
+/// Atomicity on the CLI: a refused contact list leaves no client behind.
+#[test]
+fn client_add_with_a_refused_contact_list_writes_no_client() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "client",
+            "add",
+            "Acme Co",
+            "--contact",
+            "ap@acme.test",
+            "--contact",
+            "AP@ACME.TEST",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("twice"));
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(count, 0, "the client row outlived the refused contact list");
+}
+
+/// And on an edit: the rename and the list are one write.
+#[test]
+fn client_edit_with_a_refused_contact_list_leaves_the_rename_unapplied() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co", "--email", "ap@acme.test"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "client",
+            "edit",
+            "1",
+            "--name",
+            "Acme Corporation",
+            "--contact",
+            "a@x.test",
+            "--contact",
+            "A@X.TEST",
+        ])
+        .assert()
+        .failure();
+
+    let (name, email): (String, Option<String>) = env
+        .db()
+        .query_row(
+            "SELECT c.name, (SELECT email FROM client_contacts WHERE client_id = c.id)
+               FROM clients c WHERE c.id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("the client row");
+    assert_eq!(name, "Acme Co", "half the edit landed");
+    assert_eq!(email.as_deref(), Some("ap@acme.test"));
+}
+
+#[test]
+fn client_edit_email_and_contact_together_is_refused_by_clap() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "client",
+            "edit",
+            "1",
+            "--email",
+            "ap@acme.test",
+            "--contact",
+            "dana@acme.test",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+/// AC #5 end to end: an address written before contacts existed is still the
+/// billing contact afterwards, with nobody re-entering it.
+#[test]
+fn a_client_upgraded_from_a_single_email_keeps_it_as_the_billing_contact() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co", "--email", "ap@acme.test"])
+        .assert()
+        .success();
+
+    // Rewind to the pre-contacts schema, with the address back in its column.
+    env.db()
+        .execute_batch(
+            "DROP TABLE client_contacts;
+             ALTER TABLE clients ADD COLUMN email TEXT;
+             UPDATE clients SET email = 'ap@acme.test';
+             UPDATE metadata SET value = '7' WHERE key = 'schema_version';",
+        )
+        .expect("failed to rewind the test database");
+
+    env.cmd()
+        .args(["client", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ap@acme.test"))
+        .stdout(predicate::str::contains("billing"));
+
+    let (email, is_billing): (String, i64) = env
+        .db()
+        .query_row(
+            "SELECT email, is_billing FROM client_contacts WHERE client_id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("the migrated contact");
+    assert_eq!(email, "ap@acme.test");
+    assert_eq!(is_billing, 1);
+}
+
+#[test]
 fn client_delete_removes_a_client_with_no_invoices() {
     let env = TestEnv::new();
     env.cmd()

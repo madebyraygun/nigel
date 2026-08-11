@@ -3,15 +3,73 @@ use comfy_table::{Cell, Table};
 use crate::db::get_connection;
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::{
-    add_client, archive_client, client_summary, delete_blocker, delete_client, get_client,
-    list_clients, unarchive_client, update_client, ClientScope, ClientUpdate,
+    add_client_within, archive_client, client_summary, delete_blocker, delete_client, get_client,
+    list_clients, set_billing_email, set_contacts_within, unarchive_client, update_client_within,
+    ClientScope, ClientUpdate, NewContact,
 };
 use crate::models::Client;
 use crate::settings::get_data_dir;
 
-pub fn add(name: &str, email: Option<&str>, address: Option<&str>) -> Result<()> {
+/// `--contact "email[:name[:title]]"`, the shape `--item "desc:qty:unit"` set.
+///
+/// `splitn(3, ':')` gives the last field the remainder, so a title containing a
+/// colon survives. Each part is trimmed and a blank one is `None`.
+pub(crate) fn parse_contact(spec: &str) -> Result<NewContact> {
+    let mut parts = spec.splitn(3, ':');
+    let email = parts.next().unwrap_or("").trim();
+    if email.is_empty() {
+        return Err(NigelError::Other(
+            "bad --contact, want \"email[:name[:title]]\"".into(),
+        ));
+    }
+    let optional = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    Ok(NewContact {
+        email: email.to_string(),
+        name: optional(parts.next()),
+        title: optional(parts.next()),
+        is_billing: false,
+    })
+}
+
+/// The whole list a `--contact` run replaces the client's addresses with. The
+/// first spec is the billing recipient, which is what makes the order on the
+/// command line mean something.
+pub(crate) fn parse_contacts(specs: &[String]) -> Result<Vec<NewContact>> {
+    let mut contacts: Vec<NewContact> = specs
+        .iter()
+        .map(|spec| parse_contact(spec))
+        .collect::<Result<_>>()?;
+    if let Some(first) = contacts.first_mut() {
+        first.is_billing = true;
+    }
+    Ok(contacts)
+}
+
+pub fn add(
+    name: &str,
+    email: Option<&str>,
+    address: Option<&str>,
+    contacts: &[String],
+) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let id = add_client(&conn, name, email, address, None)?;
+    let parsed = parse_contacts(contacts)?;
+
+    // One transaction over the row and its addresses: a refused contact list
+    // must not leave a client behind that nobody asked for.
+    let tx = conn.unchecked_transaction()?;
+    let id = add_client_within(&tx, name, address, None)?;
+    if parsed.is_empty() {
+        set_billing_email(&tx, id, email)?;
+    } else {
+        set_contacts_within(&tx, id, &parsed)?;
+    }
+    tx.commit()?;
+
     println!("Added client {id}: {name}");
     Ok(())
 }
@@ -30,6 +88,20 @@ pub fn show(id: i64) -> Result<()> {
     println!("Notes:    {}", client.notes.as_deref().unwrap_or("-"));
     if let Some(on) = &client.archived_at {
         println!("Archived: {on}");
+    }
+
+    if !summary.contacts.is_empty() {
+        let mut table = Table::new();
+        table.set_header(vec!["Email", "Name", "Title", ""]);
+        for contact in &summary.contacts {
+            table.add_row(vec![
+                Cell::new(&contact.email),
+                Cell::new(contact.name.as_deref().unwrap_or("-")),
+                Cell::new(contact.title.as_deref().unwrap_or("-")),
+                Cell::new(if contact.is_billing { "billing" } else { "" }),
+            ]);
+        }
+        println!("{table}");
     }
 
     if summary.invoices.is_empty() {
@@ -59,6 +131,7 @@ pub fn edit(
     email: Option<String>,
     address: Option<String>,
     notes: Option<String>,
+    contacts: &[String],
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let update = ClientUpdate {
@@ -67,7 +140,27 @@ pub fn edit(
         billing_address: address.map(Some),
         notes: notes.map(Some),
     };
-    update_client(&conn, id, &update)?;
+    // `--contact` alone is a legitimate edit, so the empty-update refusal has
+    // to account for it — but an edit naming nothing at all is still an error
+    // rather than a silent no-op.
+    if update.is_empty() && contacts.is_empty() {
+        return Err(NigelError::Invalid(
+            "Nothing to update — provide at least one flag".to_string(),
+        ));
+    }
+    let parsed = parse_contacts(contacts)?;
+
+    // One transaction: a refused contact list leaves the rename unapplied too,
+    // rather than half an edit nobody can see the shape of.
+    let tx = conn.unchecked_transaction()?;
+    if !update.is_empty() {
+        update_client_within(&tx, id, &update)?;
+    }
+    if !parsed.is_empty() {
+        set_contacts_within(&tx, id, &parsed)?;
+    }
+    tx.commit()?;
+
     let client = get_client(&conn, id)?;
     println!("Updated client {id}: {}", client.name);
     Ok(())
@@ -183,6 +276,45 @@ mod tests {
             archived_at: Some(on.into()),
             ..client(id, name, None)
         }
+    }
+
+    #[test]
+    fn a_contact_spec_parses_email_name_and_title() {
+        assert_eq!(
+            parse_contact("ap@acme.test").unwrap(),
+            NewContact {
+                email: "ap@acme.test".into(),
+                ..Default::default()
+            }
+        );
+        let c = parse_contact("ap@acme.test:Ada Payne:AP Manager").unwrap();
+        assert_eq!(
+            (c.email.as_str(), c.name.as_deref(), c.title.as_deref()),
+            ("ap@acme.test", Some("Ada Payne"), Some("AP Manager"))
+        );
+    }
+
+    #[test]
+    fn a_contact_spec_with_a_colon_in_the_title_keeps_the_remainder() {
+        let c = parse_contact("a@x.test:Ada:Head: Billing").unwrap();
+        assert_eq!(c.title.as_deref(), Some("Head: Billing"));
+    }
+
+    #[test]
+    fn an_empty_contact_spec_is_refused_with_the_flag_in_the_message() {
+        for bad in ["", "   ", ":Ada:AP"] {
+            let err = parse_contact(bad).map(|_| ()).unwrap_err().to_string();
+            assert!(err.contains("--contact"), "{bad:?} got: {err}");
+        }
+    }
+
+    #[test]
+    fn the_first_contact_is_the_billing_recipient() {
+        let contacts =
+            parse_contacts(&["ap@acme.test:Ada".to_string(), "dana@acme.test".to_string()])
+                .unwrap();
+        assert!(contacts[0].is_billing);
+        assert!(!contacts[1].is_billing);
     }
 
     /// Byte-for-byte what `nigel client list` prints.
