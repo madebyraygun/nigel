@@ -95,6 +95,87 @@ host. Order matters — `controlsCss` first, so your own rules can still overrid
 it. `controls-adoption.test.ts` in each package fails the build if you forget,
 and it applies to app screens as well as to `wc-*` components.
 
+## Typefaces
+
+**IBM Plex Mono, everywhere in the app, bundled into the binary.** The browser
+is meant to read as the same product as the CLI, and the app has almost no
+prose to lose by it — the longest strings anywhere are two-sentence guardrail
+explanations and empty states.
+
+Weights **400 / 500 / 600**, matching `--wa-font-weight-normal` / `-medium` /
+`-bold` exactly. That match is why Plex Mono and not Fira Mono, which has no
+600: every table header and field label would be browser-synthesised, which
+looks worst at small sizes on a mono. No italics — nothing in the UI is italic.
+
+| | bytes |
+|---|---|
+| `ibm-plex-mono-400.woff2` | 21,676 |
+| `ibm-plex-mono-500.woff2` | 22,264 |
+| `ibm-plex-mono-600.woff2` | 22,348 |
+| **total on disk** | **66,288** |
+| `web/dist` | 648,126 → 715,713 (**+67,587**) |
+| `target/release/nigel` | 25,606,416 → 25,676,408 (**+69,992**, +0.27%) |
+
+The binary delta is the number that matters and it is measured, not derived —
+rust-embed stores the bytes plus path metadata, so it is not the sum of the
+files.
+
+### How they reach the browser
+
+The files live in `packages/theme/src/fonts/`, are declared by
+`src/tokens/font-faces.ts` with **relative** URLs, and are copied to
+`dist/fonts/` by `scripts/build-css.js`. Both Vite roots — the app and the
+preview harness — alias `dist/css/nigel.css`, so each resolves `../fonts/…`
+against it and emits hashed copies into its own `assets/`. rust-embed bakes
+`web/dist` into the binary and `static_files.rs` serves them as `font/woff2`
+with an immutable cache header.
+
+The relative URL is the load-bearing part. An absolute `/fonts/…` would work in
+the app and 404 in the harness on :9090, so every component state would be
+reviewed in the wrong typeface with nothing to say so.
+
+**Nothing is fetched at runtime.** `src/__tests__/no-remote-fonts.test.ts`
+fails the build on a font host, a preconnect hint, a remote `@import` or an
+absolute font URL in any of the three HTML entry points, and
+`font-faces.test.ts` fails on any remote URL in the composed sheet.
+`build-css.test.ts` asserts every declared face is actually present in
+`dist/fonts/` — a `@font-face` pointing at a missing file fails *silently*, and
+the whole UI would render in a system face with every test green.
+
+### Regenerating the subsets
+
+Run by hand, never by the build and never in CI; the output is committed, so a
+checkout needs no font tooling.
+
+```bash
+cd web/packages/theme
+npm pack @ibm/plex-mono@2.5.0 && tar xzf ibm-plex-mono-2.5.0.tgz
+node scripts/subset-fonts.mjs ./package ./src/fonts
+rm -rf package ibm-plex-mono-2.5.0.tgz
+```
+
+The script keeps Latin-1, Latin Extended-A, General Punctuation, Currency
+Symbols, the arrows and `✓`. Ranges rather than the exact glyphs in use,
+because client names and bank descriptions are real-world text: a subset that
+drops `é` renders half a name in a fallback face, mid-word. Anything outside
+the subset falls back per glyph, which is correct behaviour and is why the
+Latin ranges are generous.
+
+### Known gap: eight glyphs the font does not have
+
+IBM Plex Mono has **no glyph** for `✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻`. This is a property of the
+upstream font, verified against the complete release rather than the subset —
+subsetting is not the cause and a wider subset would not fix it.
+
+They are drawn by `wc-invoice-status` (all six status markers),
+`wc-send-dialog` (`⟳`, `✗`) and `wc-reconciliation-history` (`✗`), and they
+fall back to a system face per glyph. `✓` is present, so a reconciled row and a
+discrepancy row currently draw their marks from two different fonts.
+
+The fix is to replace them with `wc-icon-*` SVGs — the library already has
+`WcIconBase` and the icon set for it — rather than to chase a mono with
+dingbat coverage. Not done here: it is a component change, not a typeface one.
+
 ## Light and dark
 
 Three states, expressed as two classes on `<html>`:
