@@ -267,9 +267,11 @@ fn default_currency() -> String {
 /// Every date on this API is zero-padded `YYYY-MM-DD`.
 ///
 /// This is the same parser `/api/reports` and the aging route use, not a second
-/// one: the data layer's `validate_date` goes through chrono, which accepts
-/// `2026-4-1`, and the HTTP API is deliberately stricter with dates than the
-/// CLI is. `create_invoice` and `record_payment` validate again on the way in.
+/// one: the data layer's `validate_date` goes through chrono, which accepts and
+/// normalizes `2026-4-1`, and the HTTP API is deliberately stricter with dates
+/// than the CLI is — a terminal user typing a date deserves the padding done for
+/// them; a JSON client sending one has a bug. `create_invoice` and
+/// `record_payment` validate again on the way in.
 fn checked_date(param: &str, value: &str) -> ApiResult<()> {
     super::reports::parse_date(param, value).map(|_| ())
 }
@@ -368,6 +370,7 @@ async fn update(
         ));
     }
 
+    let today = crate::cli::today();
     let detail = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
         let paid = inv::paid_amount(conn, invoice.id)?;
@@ -375,7 +378,7 @@ async fn update(
         // its own transaction, so draft-only is enforced against the current
         // status rather than anything the client sent — and this route must not
         // open a transaction of its own around it.
-        inv::update_invoice(conn, invoice.id, &update)
+        inv::update_invoice(conn, invoice.id, &update, &today)
             .map_err(|e| enrich_conflict(e, &invoice, paid))?;
         detail_for(conn, find_invoice(conn, number)?)
     })

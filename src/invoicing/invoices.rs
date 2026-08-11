@@ -100,10 +100,11 @@ pub fn create_invoice(
 ) -> Result<i64> {
     ensure_client_exists(conn, client_id)?;
     validate_items(items)?;
-    validate_date(issue_date, "issue")?;
-    if let Some(due) = due_date {
-        validate_date(due, "due")?;
-    }
+    let issue_date = validate_date(issue_date, "issue")?;
+    let due_date = match due_date {
+        Some(due) => Some(validate_date(due, "due")?),
+        None => None,
+    };
     let currency = validate_currency(currency)?;
     let tx = conn.unchecked_transaction()?;
 
@@ -220,6 +221,7 @@ pub fn record_payment(
     stripe_session: Option<&str>,
 ) -> Result<bool> {
     validate_payment_method(method)?;
+    let paid_date = validate_date(paid_date, "payment")?;
     ensure_not_void(&get_invoice(conn, invoice_id)?, "paid")?;
     if let Some(sid) = stripe_session {
         let seen: bool = conn.query_row(
@@ -238,7 +240,7 @@ pub fn record_payment(
     )?;
     // The payment date, not the wall clock, is the reference day so the derived
     // status is deterministic regardless of when the payment is entered.
-    refresh_status(conn, invoice_id, paid_date)?;
+    refresh_status(conn, invoice_id, &paid_date)?;
     Ok(true)
 }
 
@@ -285,14 +287,34 @@ fn is_overdue(due_date: Option<&str>, today: &str) -> bool {
     }
 }
 
-/// `YYYY-MM-DD`, or an `Invalid` error naming the field.
-pub fn validate_date(value: &str, what: &str) -> Result<()> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+/// The one date rule every invoicing writer applies: a real calendar day written
+/// `YYYY-MM-DD` with a four-digit year.
+///
+/// chrono's `%Y` alone is not that rule — it reads `26-8-9` as the year 26 AD,
+/// which would book a payment two millennia off and hand `refresh_status` that
+/// day as its reference. The year is therefore counted before chrono sees it.
+pub fn parse_date(value: &str, what: &str) -> Result<NaiveDate> {
+    let invalid = || {
         NigelError::Invalid(format!(
             "Invalid {what} date: {value} (expected YYYY-MM-DD)"
         ))
-    })?;
-    Ok(())
+    };
+    let trimmed = value.trim();
+    let year = trimmed.split('-').next().unwrap_or_default();
+    if year.len() != 4 || !year.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").map_err(|_| invalid())
+}
+
+/// `YYYY-MM-DD`, zero-padded, or an `Invalid` error naming the field.
+///
+/// Returns the re-formatted date rather than the caller's string: `2026-8-7` is a
+/// real day, and a value stored that way is never `>` its own month in
+/// `is_overdue`'s string comparison. Same shape as `validate_currency` below,
+/// which has always returned the normalized code.
+pub fn validate_date(value: &str, what: &str) -> Result<String> {
+    Ok(parse_date(value, what)?.format("%Y-%m-%d").to_string())
 }
 
 /// Normalizes a 3-letter code to uppercase, or an `Invalid` error.
@@ -367,7 +389,16 @@ fn replace_line_items(
 }
 
 /// Apply a partial update to a draft invoice, guarded by `ensure_editable`.
-pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate) -> Result<()> {
+///
+/// `today` is the reference day the resulting status is derived against, taken
+/// as a parameter like `void_invoice`'s `voided_on`: nothing under
+/// `src/invoicing/` reads the clock.
+pub fn update_invoice(
+    conn: &Connection,
+    invoice_id: i64,
+    update: &InvoiceUpdate,
+    today: &str,
+) -> Result<()> {
     let invoice = get_invoice(conn, invoice_id)?;
     ensure_editable(conn, &invoice)?;
     if update.is_empty() {
@@ -375,16 +406,20 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
             "Nothing to update — provide at least one flag".to_string(),
         ));
     }
+    let today = validate_date(today, "reference")?;
 
     if let Some(ref items) = update.items {
         validate_items(items)?;
     }
-    if let Some(ref issue_date) = update.issue_date {
-        validate_date(issue_date, "issue")?;
-    }
-    if let Some(Some(ref due_date)) = update.due_date {
-        validate_date(due_date, "due")?;
-    }
+    let issue_date = match update.issue_date {
+        Some(ref d) => Some(validate_date(d, "issue")?),
+        None => None,
+    };
+    let due_date = match update.due_date {
+        Some(Some(ref d)) => Some(Some(validate_date(d, "due")?)),
+        Some(None) => Some(None),
+        None => None,
+    };
     let currency = match update.currency {
         Some(ref code) => Some(validate_currency(code)?),
         None => None,
@@ -394,11 +429,11 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
 
     let mut updates = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    if let Some(ref issue_date) = update.issue_date {
+    if let Some(ref issue_date) = issue_date {
         params.push(Box::new(issue_date.clone()));
         updates.push(format!("issue_date = ?{}", params.len()));
     }
-    if let Some(ref due_date) = update.due_date {
+    if let Some(ref due_date) = due_date {
         params.push(Box::new(due_date.clone()));
         updates.push(format!("due_date = ?{}", params.len()));
     }
@@ -451,11 +486,7 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
     }
 
     tx.commit()?;
-    let issue_date = update
-        .issue_date
-        .clone()
-        .unwrap_or(invoice.issue_date.clone());
-    refresh_status(conn, invoice_id, &issue_date)?;
+    refresh_status(conn, invoice_id, &today)?;
     Ok(())
 }
 
@@ -464,12 +495,13 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
 pub fn void_invoice(conn: &Connection, invoice_id: i64, voided_on: &str) -> Result<()> {
     let invoice = get_invoice(conn, invoice_id)?;
     ensure_voidable(conn, &invoice)?;
+    let voided_on = validate_date(voided_on, "void")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE invoices SET voided_at = ?1 WHERE id = ?2",
         rusqlite::params![voided_on, invoice_id],
     )?;
-    refresh_status(&tx, invoice_id, voided_on)?;
+    refresh_status(&tx, invoice_id, &voided_on)?;
     tx.commit()?;
     Ok(())
 }
@@ -602,11 +634,12 @@ pub fn set_payment_link(conn: &Connection, id: i64, link_id: &str, url: &str) ->
 }
 
 pub fn mark_published(conn: &Connection, id: i64, published_at: &str) -> Result<()> {
+    let published_at = validate_date(published_at, "published")?;
     conn.execute(
         "UPDATE invoices SET published_at = ?1 WHERE id = ?2",
         rusqlite::params![published_at, id],
     )?;
-    refresh_status(conn, id, published_at)?;
+    refresh_status(conn, id, &published_at)?;
     Ok(())
 }
 
@@ -814,9 +847,8 @@ pub struct AgingReport {
 const AGING_LABELS: [&str; 5] = ["current", "1-30", "31-60", "61-90", "90+"];
 
 pub fn ar_aging_detail(conn: &Connection, today: &str) -> Result<AgingReport> {
-    let as_of = today.to_string();
-    validate_date(today, "as-of")?;
-    let today = NaiveDate::parse_from_str(today, "%Y-%m-%d").expect("validate_date just parsed it");
+    let today = parse_date(today, "as-of")?;
+    let as_of = today.format("%Y-%m-%d").to_string();
 
     let mut buckets: Vec<AgingBucket> = AGING_LABELS
         .iter()
@@ -1336,7 +1368,7 @@ mod tests {
             issue_date: Some("2026-08-09".into()),
             ..InvoiceUpdate::default()
         };
-        let err = update_invoice(&conn, id, &update).unwrap_err();
+        let err = update_invoice(&conn, id, &update, "2026-08-11").unwrap_err();
         assert_eq!(conflict_code(&err), "not_draft");
         assert_eq!(get_invoice(&conn, id).unwrap().issue_date, "2026-08-04");
     }
@@ -1446,6 +1478,7 @@ mod tests {
                 due_date: Some(Some("2026-09-30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1468,6 +1501,7 @@ mod tests {
                 due_date: Some(Some("2026-09-30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1478,6 +1512,7 @@ mod tests {
                 due_date: Some(None),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1497,6 +1532,7 @@ mod tests {
                 terms: Some(Some("Net 30".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1510,7 +1546,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
 
-        let err = update_invoice(&conn, id, &InvoiceUpdate::default()).unwrap_err();
+        let err = update_invoice(&conn, id, &InvoiceUpdate::default(), "2026-08-11").unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
         assert_eq!(
             err.to_string(),
@@ -1559,6 +1595,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1585,6 +1622,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1606,6 +1644,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1637,6 +1676,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .is_err());
 
@@ -1748,6 +1788,7 @@ mod tests {
                 items: Some(line(1e308, 1e308)),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
@@ -1782,6 +1823,7 @@ mod tests {
                 issue_date: Some("2026-13-45".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(
@@ -1796,6 +1838,7 @@ mod tests {
                 due_date: Some(Some("nope".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(
@@ -1816,6 +1859,7 @@ mod tests {
                 currency: Some("eur".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
         assert_eq!(get_invoice(&conn, id).unwrap().currency, "EUR");
@@ -1827,6 +1871,7 @@ mod tests {
                 currency: Some("dollars".into()),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
@@ -1853,6 +1898,7 @@ mod tests {
                 }]),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1874,6 +1920,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap();
 
@@ -1898,6 +1945,7 @@ mod tests {
                 notes: Some(Some("Thanks".into())),
                 ..Default::default()
             },
+            "2026-08-11",
         )
         .unwrap_err();
         assert_eq!(conflict_code(&err), "not_draft");
@@ -2237,8 +2285,8 @@ mod tests {
     #[test]
     fn a_malformed_as_of_date_is_invalid_not_other() {
         let (_d, conn) = test_conn();
-        // Zero-padding is not checked here: chrono's %Y-%m-%d accepts
-        // "2026-3-1" and every other validate_date caller lives with that. The
+        // Zero-padding is not *rejected* here: chrono's %Y-%m-%d accepts
+        // "2026-3-1", which validate_date normalizes rather than refuses. The
         // HTTP layer is where the stricter parse belongs.
         for as_of in ["March", "2026-08-32", ""] {
             let err = ar_aging_detail(&conn, as_of).unwrap_err();
@@ -2460,5 +2508,300 @@ mod tests {
         let (_d, conn) = test_conn();
         let (_cid, ids) = seed_three(&conn);
         assert!(payments(&conn, ids[0]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn validate_date_normalizes_to_zero_padded_iso() {
+        assert_eq!(validate_date("2026-8-7", "issue").unwrap(), "2026-08-07");
+        assert_eq!(validate_date("2026-08-07", "issue").unwrap(), "2026-08-07");
+        assert_eq!(validate_date("2026-12-31", "due").unwrap(), "2026-12-31");
+        for bad in ["March", "2026-13-01", "2026-08-32", "", "2026-08-07extra"] {
+            assert!(validate_date(bad, "issue").is_err(), "accepted {bad:?}");
+        }
+    }
+
+    /// chrono's `%Y` reads "26" as the year 26 AD, so a two-digit-year typo would
+    /// otherwise book a date two millennia off and take the status reference day
+    /// with it. The error message promises `YYYY-MM-DD`; the rule keeps that promise.
+    #[test]
+    fn validate_date_requires_a_four_digit_year() {
+        for bad in ["26-8-9", "26-08-09", "0-1-1", "126-08-09", "20267-08-09"] {
+            let err = validate_date(bad, "issue").unwrap_err();
+            assert!(matches!(err, NigelError::Invalid(_)), "{bad:?}: {err:?}");
+            assert_eq!(
+                err.to_string(),
+                format!("Invalid issue date: {bad} (expected YYYY-MM-DD)")
+            );
+        }
+        // A four-digit year that happens to be long ago is a real date, not a typo.
+        assert_eq!(validate_date("0026-08-09", "issue").unwrap(), "0026-08-09");
+    }
+
+    #[test]
+    fn a_two_digit_year_is_refused_on_new_edit_and_pay() {
+        let (_d, conn) = test_conn();
+        let cid = client_id(&conn, "Acme");
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+
+        let err =
+            create_invoice(&conn, cid, "26-8-9", None, "USD", &items, None, None).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid issue date: 26-8-9 (expected YYYY-MM-DD)"
+        );
+
+        let id = seed_draft(&conn);
+        let err = update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                due_date: Some(Some("26-8-9".into())),
+                ..Default::default()
+            },
+            "2026-08-11",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid due date: 26-8-9 (expected YYYY-MM-DD)"
+        );
+
+        let err = record_payment(&conn, id, 50.0, "26-8-9", "ach", None).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid payment date: 26-8-9 (expected YYYY-MM-DD)"
+        );
+        assert_eq!(paid_amount(&conn, id).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn an_unpadded_issue_or_due_date_is_stored_padded() {
+        let (_d, conn) = test_conn();
+        let cid = client_id(&conn, "Acme");
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-8-7",
+            Some("2026-9-1"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let inv = get_invoice(&conn, id).unwrap();
+        assert_eq!(inv.issue_date, "2026-08-07");
+        assert_eq!(inv.due_date.as_deref(), Some("2026-09-01"));
+    }
+
+    #[test]
+    fn an_unpadded_date_edited_onto_a_draft_is_stored_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                issue_date: Some("2026-8-7".into()),
+                due_date: Some(Some("2026-9-1".into())),
+                ..Default::default()
+            },
+            "2026-08-11",
+        )
+        .unwrap();
+
+        let inv = get_invoice(&conn, id).unwrap();
+        assert_eq!(inv.issue_date, "2026-08-07");
+        assert_eq!(inv.due_date.as_deref(), Some("2026-09-01"));
+    }
+
+    /// `is_overdue` compares due dates as strings, where `"2026-08-20" > "2026-8-7"`
+    /// is false. Both spellings must therefore land in the column the same way.
+    #[test]
+    fn overdue_derives_the_same_whether_the_due_date_was_typed_padded_or_not() {
+        let (_d, conn) = test_conn();
+        let padded = open_invoice(&conn, "Padded", "2026-07-01", Some("2026-07-05"), 100.0);
+        let unpadded = open_invoice(&conn, "Unpadded", "2026-07-01", Some("2026-7-5"), 100.0);
+
+        assert_eq!(
+            refresh_status(&conn, padded, "2026-08-20").unwrap(),
+            "overdue"
+        );
+        assert_eq!(
+            refresh_status(&conn, unpadded, "2026-08-20").unwrap(),
+            "overdue"
+        );
+    }
+
+    /// Aging buckets from the parsed date and prints the stored one, so it is
+    /// indifferent to the spelling in a way `is_overdue` is not. Both halves are
+    /// pinned: the bucket a value lands in, and the string the report shows.
+    #[test]
+    fn aging_buckets_and_prints_the_same_whether_the_due_date_was_typed_padded_or_not() {
+        let (_d, conn) = test_conn();
+        open_invoice(&conn, "Padded", "2026-06-01", Some("2026-07-05"), 100.0);
+        open_invoice(&conn, "Unpadded", "2026-06-01", Some("2026-7-5"), 100.0);
+
+        let report = ar_aging_detail(&conn, AGING_TODAY).unwrap();
+        let padded = report
+            .invoices
+            .iter()
+            .find(|i| i.client == "Padded")
+            .unwrap();
+        let unpadded = report
+            .invoices
+            .iter()
+            .find(|i| i.client == "Unpadded")
+            .unwrap();
+        assert_eq!(padded.bucket, unpadded.bucket);
+        assert_eq!(padded.days_past_due, unpadded.days_past_due);
+        assert_eq!(
+            unpadded.due_date, "2026-07-05",
+            "the stored date must already be padded"
+        );
+    }
+
+    #[test]
+    fn an_unpadded_as_of_date_is_reported_padded() {
+        let (_d, conn) = test_conn();
+        assert_eq!(
+            ar_aging_detail(&conn, "2026-8-4").unwrap().as_of,
+            "2026-08-04"
+        );
+    }
+
+    #[test]
+    fn record_payment_stores_an_unpadded_date_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        record_payment(&conn, id, 50.0, "2026-8-9", "ach", None).unwrap();
+
+        let dates: Vec<String> = payments(&conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.paid_date)
+            .collect();
+        assert_eq!(dates, vec!["2026-08-09".to_string()]);
+    }
+
+    /// The date reaches both the column and `refresh_status`'s reference day, so
+    /// the check belongs in the data layer rather than in whichever front end
+    /// remembers it.
+    #[test]
+    fn record_payment_refuses_a_malformed_date_instead_of_storing_it() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+
+        let err = record_payment(&conn, id, 50.0, "March", "ach", None).unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "Invalid payment date: March (expected YYYY-MM-DD)"
+        );
+        assert_eq!(
+            paid_amount(&conn, id).unwrap(),
+            0.0,
+            "a refused payment writes no row"
+        );
+    }
+
+    #[test]
+    fn void_invoice_stores_an_unpadded_date_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        void_invoice(&conn, id, "2026-8-6").unwrap();
+
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().voided_at.as_deref(),
+            Some("2026-08-06")
+        );
+    }
+
+    /// An edit derives the status against the day passed in, not the invoice's own
+    /// issue date.
+    ///
+    /// `published_at` is set by hand because this is the only shape where an
+    /// *editable* invoice can reach the overdue branch at all: `mark_published`
+    /// moves the status off `draft` and `ensure_editable` then refuses the edit.
+    #[test]
+    fn a_due_date_edit_derives_status_against_today_not_the_issue_date() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn); // issued 2026-08-04, still `draft`
+        conn.execute(
+            "UPDATE invoices SET published_at = '2026-08-05' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                due_date: Some(Some("2026-08-06".into())),
+                ..Default::default()
+            },
+            "2026-08-20",
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().status,
+            "overdue",
+            "derived against the issue date (2026-08-04), which is not past the due date"
+        );
+    }
+
+    #[test]
+    fn update_invoice_refuses_a_malformed_reference_day() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+
+        let err = update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                notes: Some(Some("Thanks".into())),
+                ..Default::default()
+            },
+            "March",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid reference date: March (expected YYYY-MM-DD)"
+        );
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().notes,
+            None,
+            "a refused reference day writes nothing"
+        );
+    }
+
+    #[test]
+    fn mark_published_stores_an_unpadded_date_padded_and_refuses_a_malformed_one() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        mark_published(&conn, id, "2026-8-5").unwrap();
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().published_at.as_deref(),
+            Some("2026-08-05")
+        );
+
+        let other = open_invoice(&conn, "Globex", "2026-08-04", None, 100.0);
+        let err = mark_published(&conn, other, "March").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Invalid published date: March (expected YYYY-MM-DD)"
+        );
     }
 }

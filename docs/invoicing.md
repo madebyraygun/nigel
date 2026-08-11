@@ -98,6 +98,14 @@ A name is required and must be unique: an empty one and a name another client
 already has are both refused, on `client add` and on a `client edit` that
 renames. Renaming a client to the name it already has is not a collision.
 
+That rule lives in the data layer (`add_client`/`update_client`), not in the
+schema: `clients.name` carries no `UNIQUE` index, matching `accounts.name` and
+`categories.name`. Two requests racing each other in the web UI can therefore
+both pass the check and both insert; the result is two clients with one name,
+which nothing resolves by name and which you can fix by renaming one on the
+clients screen. The InvoiceShelf import deliberately does not apply the rule at
+all — it copies your old customer list as it stands.
+
 ### Inspecting and editing a client
 
 ```bash
@@ -566,6 +574,12 @@ nigel invoice pay 1248 --date 2026-08-20 --method ach
 are allowed, since banks make them. `--method` is one of `stripe`, `ach`,
 `direct_deposit` (the default), or `other`.
 
+`--date` must be a real date in `YYYY-MM-DD`; anything else is refused rather
+than recorded. A month or day you typed without its leading zero is accepted and
+stored padded — `--date 2026-8-9` lands in the books as `2026-08-09`, which is
+also what `--issue` and `--due` do on `invoice new` and `invoice edit`. Dates are
+stored one way so they compare and sort as dates.
+
 ### Sync on launch
 
 Every subcommand that reads or writes the books runs a sync first, as long as a
@@ -604,6 +618,19 @@ whenever it is published or paid:
 | `overdue` | Published, past its due date, with a balance |
 | `paid` | Paid in full (settled to within half a cent) |
 | `void` | Cancelled; cannot be sent, paid, or edited |
+
+Status is **stored**, not computed when you read it. It is re-derived only by a
+write to the invoice, and each write names the day it derives against: `invoice
+send` uses the publish date, a payment uses the payment's own date (so entering
+last month's cheque today does not advance anything else), and an edit or a void
+uses the day the command runs. `invoice sync` re-derives only for an invoice it
+records a new Stripe payment against.
+
+An invoice that simply passes its due date with nothing else happening to it
+therefore keeps the status it was last written with — nothing recomputes it in
+the background, and reading the list does not recompute it either. **A/R aging is
+the report to trust for how late something is**: it measures every open invoice
+against today's date directly rather than reading the stored word.
 
 ## A/R aging
 

@@ -181,6 +181,7 @@ pub fn edit(
     notes: Option<String>,
     terms: Option<String>,
     items: &[String],
+    today: &str,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
@@ -198,7 +199,7 @@ pub fn edit(
         terms: terms.map(Some),
         items: optional_items(items)?,
     };
-    update_invoice(&conn, invoice.id, &update)?;
+    update_invoice(&conn, invoice.id, &update, today)?;
 
     let updated = get_invoice(&conn, invoice.id)?;
     println!(
@@ -548,6 +549,13 @@ pub fn import(db: &str) -> Result<()> {
         "Imported {} clients, {} invoices, {} payments. Next invoice number: {}",
         summary.clients, summary.invoices, summary.payments, summary.next_number
     );
+    if summary.unparsed_dates > 0 {
+        eprintln!(
+            "Warning: {} date(s) were not in YYYY-MM-DD form and were copied as they stand. \
+             They will not sort or bucket as dates until corrected.",
+            summary.unparsed_dates
+        );
+    }
     Ok(())
 }
 
