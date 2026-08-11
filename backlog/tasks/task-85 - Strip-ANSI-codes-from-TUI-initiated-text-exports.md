@@ -1,9 +1,9 @@
 ---
-id: TASK-28
+id: TASK-85
 title: Strip ANSI codes from TUI-initiated text exports
 status: To Do
 assignee: []
-created_date: '2026-08-05 23:19'
+created_date: '2026-08-11 15:57'
 labels:
   - reports
 dependencies: []

@@ -378,10 +378,12 @@ impl RegisterBrowser {
                 } else {
                     "  n:next match  N:prev match"
                 };
+                // "(all)" because the export covers the whole register, not
+                // the visible page or an active search selection.
                 let export_keys = match (self.export_hints, cfg!(feature = "pdf")) {
                     (false, _) => "",
-                    (true, true) => "  x:pdf  t:text",
-                    (true, false) => "  t:text",
+                    (true, true) => "  x:pdf(all)  t:text(all)",
+                    (true, false) => "  t:text(all)",
                 };
                 Paragraph::new(format!(
                     "\u{2191}/\u{2193}:select  e:edit  f:flag  \u{2192}:next  \u{2190}:prev  g:page  d:date  i:id  /:search{search_keys}{export_keys}  q:quit"
@@ -855,13 +857,15 @@ impl RegisterBrowser {
         Ok(())
     }
 
-    /// Toggle the flag on the selected transaction.
-    /// Flags are non-destructive metadata — single-keypress toggle is intentional
-    /// since it's instantly reversible (press `f` again).
+    /// Put a message on the browser's own status line — the dashboard's is
+    /// never drawn while the browser is up.
     pub fn set_status(&mut self, msg: String) {
         self.status_message = Some(msg);
     }
 
+    /// Toggle the flag on the selected transaction.
+    /// Flags are non-destructive metadata — single-keypress toggle is intentional
+    /// since it's instantly reversible (press `f` again).
     pub fn toggle_flag(&mut self, conn: &rusqlite::Connection) -> crate::error::Result<()> {
         let abs_idx = self.offset + self.selected;
         let row = self
@@ -1063,6 +1067,24 @@ mod tests {
         match &browser.mode {
             BrowseMode::Search(q) => assert_eq!(q, "tx"),
             _ => panic!("expected search mode"),
+        }
+    }
+
+    /// The browser's half of the export-key treaty: `x` and `t` stay unbound
+    /// in Normal mode. The dashboard intercepts them before this handler, so
+    /// a binding added here would be silently shadowed wherever the browser is
+    /// dashboard-hosted.
+    #[test]
+    fn test_export_keys_stay_unbound_in_normal_mode() {
+        let mut browser = RegisterBrowser::new(make_rows(5), 0.0, String::new(), vec![]);
+        let (selected, offset) = (browser.selected, browser.offset);
+        for code in [KeyCode::Char('x'), KeyCode::Char('t')] {
+            assert!(matches!(
+                browser.handle_key_event(code),
+                BrowseAction::Continue
+            ));
+            assert!(matches!(browser.mode, BrowseMode::Normal));
+            assert_eq!((browser.selected, browser.offset), (selected, offset));
         }
     }
 

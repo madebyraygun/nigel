@@ -820,13 +820,15 @@ impl Dashboard {
         self.current_report_idx = None;
         match reports::get_register(conn, None, None, None, None, &Default::default()) {
             Ok(data) => {
-                let categories = match get_categories(conn) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.status_message =
-                            Some(format!("Warning: could not load categories: {e}"));
-                        vec![]
-                    }
+                // The dashboard's status line is never drawn while the browser
+                // is up, so a category-load warning has to ride the browser's
+                // own status line to be seen.
+                let (categories, warning) = match get_categories(conn) {
+                    Ok(c) => (c, None),
+                    Err(e) => (
+                        vec![],
+                        Some(format!("Warning: could not load categories: {e}")),
+                    ),
                 };
                 self.status_message = None;
                 let mut browser = RegisterBrowser::new(
@@ -837,6 +839,9 @@ impl Dashboard {
                 );
                 browser.scroll_to_today();
                 browser.set_export_hints(true);
+                if let Some(warning) = warning {
+                    browser.set_status(warning);
+                }
                 DashboardScreen::Browse(browser)
             }
             Err(e) => {
@@ -1426,11 +1431,24 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::ReportView(ref mut view) => {
+                            // The status line paints over the footer hints, so
+                            // an "Exported …" message lasts exactly one
+                            // keypress — the browser's own status behaves the
+                            // same way.
+                            dashboard.status_message = None;
                             match (viewer_export_action(key.code), dashboard.current_report_idx) {
                                 (Some(action), Some(idx)) => {
                                     // Stash the export; handled below after borrow ends
                                     let (year, month) = view.date_params();
                                     pending_viewer_export = Some((action, idx, year, month));
+                                }
+                                (Some(_), None) => {
+                                    // Unreachable while every ReportView entry
+                                    // point sets current_report_idx, but an
+                                    // advertised key must never silently do
+                                    // nothing.
+                                    dashboard.status_message =
+                                        Some("Nothing to export".to_string());
                                 }
                                 _ => match view.handle_key(key.code) {
                                     ReportViewAction::Close => {
@@ -1512,6 +1530,16 @@ pub fn run() -> Result<()> {
                     }
 
                     if let Some((action, idx, year, month)) = pending_viewer_export {
+                        // The export runs on this thread; paint the frozen
+                        // frame first so it is the one that says it is frozen
+                        // — the invoicing screens' own pattern.
+                        match dashboard.screen {
+                            DashboardScreen::Browse(ref mut browser) => {
+                                browser.set_status("Exporting…".to_string())
+                            }
+                            _ => dashboard.status_message = Some("Exporting…".to_string()),
+                        }
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
                         let result = match action {
                             #[cfg(feature = "pdf")]
                             ExportAction::Pdf => do_export(idx, year, month),
@@ -1545,6 +1573,10 @@ pub fn run() -> Result<()> {
                     }
 
                     if let Some(idx) = dashboard.pending_export.take() {
+                        // Export All renders every report before answering;
+                        // paint the frozen frame first.
+                        dashboard.status_message = Some("Exporting…".to_string());
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
                         dashboard.status_message = Some(match do_export(idx, None, None) {
                             Ok(msg) => msg,
                             Err(e) => format!("Export failed: {e}"),
@@ -1556,6 +1588,8 @@ pub fn run() -> Result<()> {
                     }
 
                     if let Some(idx) = dashboard.pending_text_export.take() {
+                        dashboard.status_message = Some("Exporting…".to_string());
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
                         dashboard.status_message =
                             Some(match do_text_export(idx, None, None, dashboard.profile) {
                                 Ok(msg) => msg,
@@ -2016,5 +2050,86 @@ mod tests {
         for (slug, kind) in REPORT_SLUGS.iter().zip(kinds) {
             assert_eq!(*slug, kind.as_str());
         }
+    }
+
+    /// An isolated data directory the view builders and export helpers (which
+    /// open their own connections through `get_data_dir`) resolve to, instead
+    /// of the developer's real books.
+    fn temp_books() -> (
+        crate::settings::TempConfigDir,
+        tempfile::TempDir,
+        rusqlite::Connection,
+    ) {
+        let guard = crate::settings::TempConfigDir::new();
+        let data = tempfile::tempdir().unwrap();
+        let mut settings = crate::settings::load_settings();
+        settings.data_dir = data.path().to_string_lossy().into_owned();
+        crate::settings::save_settings(&settings).unwrap();
+        let conn = crate::db::get_connection(&data.path().join("nigel.db")).unwrap();
+        crate::db::init_db(&conn).unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+        (guard, data, conn)
+    }
+
+    /// The canonical idx → screen dispatch, end to end. `current_report_idx`
+    /// is the idx a later `e`/`t` keypress exports, so a transposed arm here
+    /// is a viewer export writing the wrong report.
+    #[test]
+    fn every_report_slug_opens_its_own_viewer() {
+        let (_guard, _data, conn) = temp_books();
+        for (idx, slug) in REPORT_SLUGS.iter().enumerate() {
+            let mut dash = Dashboard::new(Some("Sam".into()), None);
+            dash.screen = dash.enter_report_view_with_date(idx, &conn, None, None);
+            if idx == REGISTER_IDX {
+                match dash.screen {
+                    DashboardScreen::Browse(ref browser) => {
+                        assert!(browser.export_hints_enabled())
+                    }
+                    ref other => panic!(
+                        "the register (idx {idx}) should open the browser, got {}",
+                        screen_name(other)
+                    ),
+                }
+                assert_eq!(dash.current_report_idx, None);
+            } else {
+                assert!(
+                    matches!(dash.screen, DashboardScreen::ReportView(_)),
+                    "idx {idx} ({slug}) did not open a viewer: {:?}",
+                    dash.status_message
+                );
+                assert_eq!(dash.current_report_idx, Some(idx), "for {slug}");
+            }
+        }
+    }
+
+    /// The dashboard's Export All text path duplicates the CLI's profile
+    /// gating rather than sharing it, so the CLI integration test cannot fail
+    /// for this code path.
+    #[test]
+    fn export_all_text_writes_the_profile_matrix() {
+        let (_guard, data, _conn) = temp_books();
+        let exported = |dir: &std::path::Path| -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let exports = data.path().join("exports");
+
+        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Business).unwrap();
+        let business = exported(&exports);
+        assert_eq!(business.len(), 9, "{business:?}");
+        assert!(business.iter().any(|n| n.starts_with("k1-prep")));
+        assert!(business.iter().any(|n| n.starts_with("aging")));
+
+        std::fs::remove_dir_all(&exports).unwrap();
+        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Personal).unwrap();
+        let personal = exported(&exports);
+        assert_eq!(personal.len(), 8, "{personal:?}");
+        assert!(!personal.iter().any(|n| n.starts_with("k1-prep")));
+        assert!(personal.iter().any(|n| n.starts_with("aging")));
     }
 }

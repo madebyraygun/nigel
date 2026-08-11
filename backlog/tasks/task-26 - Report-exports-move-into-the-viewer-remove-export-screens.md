@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-05 22:19'
-updated_date: '2026-08-05 23:33'
+updated_date: '2026-08-11 15:57'
 labels:
   - reports
   - ux
@@ -36,5 +36,5 @@ Per docs/superpowers/plans/2026-08-05-viewer-export.md: 1. Viewer export keys (e
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Exports moved into the viewers: report viewer exports the exact displayed period via e (PDF) / t (text); the dashboard-hosted register browser exports the browsed set via x (PDF — e is inline-edit there) / t, gated off during search/edit input; standalone CLI viewers unaffected. Standalone export picker and format screens deleted; single View Reports picker (renamed) with an Export All Reports entry (Enter=PDF, t=text). CLI flags untouched. Manual pty verification both feature configs; 310+23 / 303+23 tests green. Follow-ups filed: task-27 period-stamped filenames (high), task-28 ANSI stripping, task-29 footer-hint restore.
+Exports moved into the viewers: report viewer exports the exact displayed period via e (PDF) / t (text); the dashboard-hosted register browser exports the full register via x (PDF — e is inline-edit there) / t, gated off during search/edit input; standalone CLI viewers unaffected. Standalone export picker and format screens deleted; single View Reports picker (renamed) with an Export All Reports entry (Enter=PDF, t=text). CLI flags untouched. Manual pty verification both feature configs; tests green. Follow-ups filed: task-84 period-stamped filenames (high, renumbered from 27 after a merge collision), task-85 ANSI stripping (renumbered from 28); the footer-hint restore follow-up (task-29) was fixed during the PR's review round instead.
 <!-- SECTION:FINAL_SUMMARY:END -->
