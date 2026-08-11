@@ -12,7 +12,9 @@ use ratatui::{
 use crate::browser::{BrowseAction, RegisterBrowser};
 use crate::cli::account_manager::{AccountAction, AccountManager};
 use crate::cli::category_manager::{CategoryAction, CategoryManager};
+use crate::cli::client_manager::{ClientAction, ClientManager};
 use crate::cli::import_manager::{ImportAction, ImportScreen};
+use crate::cli::invoice_manager::{InvoiceAction, InvoiceManager};
 use crate::cli::load_manager::{LoadAction, LoadScreen};
 use crate::cli::reconcile_manager::{ReconcileAction, ReconcileScreen};
 use crate::cli::review::{HandleResult, TransactionReviewer};
@@ -54,6 +56,8 @@ const MENU_ITEMS: &[(&str, char)] = &[
     ("[t] Edit chart of accounts", 't'),
     ("[u] View or edit categorization rules", 'u'),
     ("[z] Undo last import", 'z'),
+    ("[n] Invoices", 'n'),
+    ("[k] Clients", 'k'),
     ("[v] View a report", 'v'),
     ("[e] Export a report", 'e'),
     ("[l] Load a different data file", 'l'),
@@ -62,7 +66,7 @@ const MENU_ITEMS: &[(&str, char)] = &[
 ];
 
 /// Number of menu items in the left column; remainder goes in the right column.
-const MENU_LEFT_COUNT: usize = 7;
+const MENU_LEFT_COUNT: usize = 8;
 
 const REPORT_TYPES: &[&str] = &[
     "Profit & Loss",
@@ -73,6 +77,7 @@ const REPORT_TYPES: &[&str] = &[
     "Flagged Transactions",
     "Cash Position",
     "K-1 Prep (1120-S)",
+    "A/R Aging",
 ];
 
 const EXPORT_TYPES: &[&str] = &[
@@ -84,13 +89,73 @@ const EXPORT_TYPES: &[&str] = &[
     "Flagged Transactions",
     "Cash Position",
     "K-1 Prep (1120-S)",
+    "A/R Aging",
     "All Reports",
+];
+
+/// The pickers for personal books: the business lists without the K-1 prep
+/// worksheet, which only means something under the business chart of accounts.
+const PERSONAL_REPORT_TYPES: &[&str] = &[
+    "Profit & Loss",
+    "Expense Breakdown",
+    "Tax Summary",
+    "Cash Flow",
+    "Transaction Register",
+    "Flagged Transactions",
+    "Cash Position",
+    "A/R Aging",
+];
+
+const PERSONAL_EXPORT_TYPES: &[&str] = &[
+    "Profit & Loss",
+    "Expense Breakdown",
+    "Tax Summary",
+    "Cash Flow",
+    "Transaction Register",
+    "Flagged Transactions",
+    "Cash Position",
+    "A/R Aging",
+    "All Reports",
+];
+
+/// The report slug behind each picker index. `REPORT_TYPES`, `EXPORT_TYPES`,
+/// `enter_report_view_with_date`, `do_export` and `do_text_export` are all keyed
+/// by that bare index; this is what the guard test holds them to.
+const REPORT_SLUGS: &[&str] = &[
+    "pnl", "expenses", "tax", "cashflow", "register", "flagged", "balance", "k1-prep", "aging",
 ];
 
 #[derive(Clone, Copy)]
 enum ReportPickerMode {
     View,
     Export,
+}
+
+/// The rows a report picker shows for the given profile. Personal books drop
+/// the K-1 worksheet; every dispatch index below stays keyed to the business
+/// lists, with `canonical_report_idx` translating a picker selection back.
+fn report_picker_items(
+    profile: crate::db::Profile,
+    mode: ReportPickerMode,
+) -> &'static [&'static str] {
+    use crate::db::Profile;
+    match (mode, profile) {
+        (ReportPickerMode::View, Profile::Business) => REPORT_TYPES,
+        (ReportPickerMode::View, Profile::Personal) => PERSONAL_REPORT_TYPES,
+        (ReportPickerMode::Export, Profile::Business) => EXPORT_TYPES,
+        (ReportPickerMode::Export, Profile::Personal) => PERSONAL_EXPORT_TYPES,
+    }
+}
+
+/// Translate a picker selection into the canonical report index the dispatch
+/// functions match on. The personal lists drop K-1 (canonical 7), so every
+/// personal selection at or past that row sits one short of its canonical
+/// index; business selections are already canonical.
+fn canonical_report_idx(profile: crate::db::Profile, selection: usize) -> usize {
+    match profile {
+        crate::db::Profile::Personal if selection >= 7 => selection + 1,
+        _ => selection,
+    }
 }
 
 #[cfg(feature = "pdf")]
@@ -105,6 +170,8 @@ enum DashboardScreen {
     Review(TransactionReviewer),
     Accounts(AccountManager),
     Categories(CategoryManager),
+    Invoices(InvoiceManager),
+    Clients(ClientManager),
     Rules(RulesManager),
     Reconcile(ReconcileScreen),
     Load(LoadScreen),
@@ -122,6 +189,28 @@ enum DashboardScreen {
     Snake(SnakeGame),
 }
 
+/// What the home screen says about money owed: the total and the oldest
+/// bucket still carrying a balance.
+struct ArSummary {
+    outstanding: f64,
+    oldest_bucket: &'static str,
+}
+
+/// `None` when nothing is outstanding — the home screen then renders exactly
+/// as it did before invoicing existed. Half a cent of slack, the same the rest
+/// of invoicing settles balances with.
+fn ar_summary(report: &crate::invoicing::invoices::AgingReport) -> Option<ArSummary> {
+    if report.outstanding < 0.005 {
+        return None;
+    }
+    // The buckets run current → 90+, so the oldest with money in it is the last.
+    let oldest = report.buckets.iter().rev().find(|b| b.total > 0.005)?;
+    Some(ArSummary {
+        outstanding: report.outstanding,
+        oldest_bucket: oldest.label,
+    })
+}
+
 struct HomeData {
     total_income: f64,
     total_expenses: f64,
@@ -134,6 +223,7 @@ struct HomeData {
     cashflow_expenses: Vec<u64>,
     cashflow_year_range: String,
     top_expenses: Vec<(String, f64)>,
+    ar: Option<ArSummary>,
 }
 
 struct Dashboard {
@@ -149,6 +239,9 @@ struct Dashboard {
     /// Tracks which report index is currently displayed (for reload on date change)
     current_report_idx: Option<usize>,
     update_notification: Option<String>,
+    /// Which chart of accounts this database keeps books under; refreshed with
+    /// the home data so a data-directory switch picks up the new profile.
+    profile: crate::db::Profile,
 }
 
 impl Dashboard {
@@ -176,12 +269,15 @@ impl Dashboard {
             needs_reload: false,
             current_report_idx: None,
             update_notification,
+            profile: crate::db::Profile::default(),
         }
     }
 
     fn load_data(&mut self, conn: &rusqlite::Connection) -> Result<()> {
         let now = chrono::Local::now();
         let year = now.year();
+
+        self.profile = crate::db::get_profile(conn);
 
         let pnl = reports::get_pnl(conn, Some(year), None, None, None)?;
         let balance = reports::get_balance(conn)?;
@@ -271,6 +367,12 @@ impl Dashboard {
             .map(|e| (e.name.clone(), e.total.abs()))
             .collect();
 
+        // `.ok()`, never `?`: an invoicing failure must not blank the dashboard,
+        // and the same expression is the "only when open invoices exist" gate.
+        let ar = crate::invoicing::invoices::ar_aging_detail(conn, &crate::cli::today())
+            .ok()
+            .and_then(|report| ar_summary(&report));
+
         self.home_data = Some(HomeData {
             total_income: pnl.total_income,
             total_expenses: pnl.total_expenses,
@@ -283,6 +385,7 @@ impl Dashboard {
             cashflow_expenses,
             cashflow_year_range,
             top_expenses,
+            ar,
         });
         Ok(())
     }
@@ -308,6 +411,14 @@ impl Dashboard {
             manager.draw(frame);
             return;
         }
+        if let DashboardScreen::Invoices(ref mut manager) = self.screen {
+            manager.draw(frame);
+            return;
+        }
+        if let DashboardScreen::Clients(ref mut manager) = self.screen {
+            manager.draw(frame);
+            return;
+        }
         if let DashboardScreen::Rules(ref mut rules) = self.screen {
             rules.draw(frame);
             return;
@@ -325,10 +436,11 @@ impl Dashboard {
             return;
         }
         if let DashboardScreen::ReportPicker { selection, mode } = self.screen {
-            let (title, items) = match mode {
-                ReportPickerMode::View => ("Select a report to view", REPORT_TYPES as &[&str]),
-                ReportPickerMode::Export => ("Select a report to export", EXPORT_TYPES as &[&str]),
+            let title = match mode {
+                ReportPickerMode::View => "Select a report to view",
+                ReportPickerMode::Export => "Select a report to export",
             };
+            let items = report_picker_items(self.profile, mode);
             self.draw_picker(frame, title, items, selection);
             return;
         }
@@ -357,13 +469,14 @@ impl Dashboard {
 
         let menu_rows = MENU_LEFT_COUNT as u16 + 1;
         let has_update = self.update_notification.is_some();
+        let has_ar = self.home_data.as_ref().is_some_and(|d| d.ar.is_some());
 
         let [header_area, sep1, update_area, stats_area, sep2, charts_area, sep3, menu_area, hints_area] =
             Layout::vertical([
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(if has_update { 1 } else { 0 }),
-                Constraint::Length(5),
+                Constraint::Length(if has_ar { 6 } else { 5 }),
                 Constraint::Length(1),
                 Constraint::Fill(1),
                 Constraint::Length(1),
@@ -399,19 +512,32 @@ impl Dashboard {
                     .areas(stats_area);
 
             // YTD summary — 1-space indent to align with "N" in " Nigel:"
-            let stats_lines = vec![
+            let mut stats_lines = vec![
                 Line::from(vec![
-                    Span::raw(" YTD Income     "),
+                    Span::raw(" YTD Income      "),
                     money_span(data.total_income),
                 ]),
                 Line::from(vec![
-                    Span::raw(" YTD Expenses   "),
+                    Span::raw(" YTD Expenses    "),
                     money_span(data.total_expenses),
                 ]),
-                Line::from(vec![Span::raw(" Net Profit     "), money_span(data.net)]),
-                Line::from(format!(" Transactions   {}", number(data.txn_count))),
-                Line::from(format!(" Flagged        {}", data.flagged_count)),
+                Line::from(vec![Span::raw(" Net Profit      "), money_span(data.net)]),
+                Line::from(format!(" Transactions    {}", number(data.txn_count))),
+                Line::from(format!(" Flagged         {}", data.flagged_count)),
             ];
+
+            if let Some(ar) = &data.ar {
+                let oldest_style = if ar.oldest_bucket == "current" {
+                    FOOTER_STYLE
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+                stats_lines.push(Line::from(vec![
+                    Span::raw(" A/R Outstanding "),
+                    money_span(ar.outstanding),
+                    Span::styled(format!("  ({})", ar.oldest_bucket), oldest_style),
+                ]));
+            }
             frame.render_widget(Paragraph::new(stats_lines), left_area);
 
             // Account balances
@@ -675,24 +801,26 @@ impl Dashboard {
                 Ok(screen) => self.screen = DashboardScreen::Undo(screen),
                 Err(e) => self.status_message = Some(format!("Error: {e}")),
             },
-            8 => {
+            8 => self.screen = DashboardScreen::Invoices(InvoiceManager::new(conn, &self.greeting)),
+            9 => self.screen = DashboardScreen::Clients(ClientManager::new(conn, &self.greeting)),
+            10 => {
                 self.screen = DashboardScreen::ReportPicker {
                     selection: 0,
                     mode: ReportPickerMode::View,
                 }
             }
-            9 => {
+            11 => {
                 self.screen = DashboardScreen::ReportPicker {
                     selection: 0,
                     mode: ReportPickerMode::Export,
                 }
             }
-            10 => self.screen = DashboardScreen::Load(LoadScreen::new(&self.greeting)),
-            11 => match SettingsManager::new(conn, &self.greeting) {
+            12 => self.screen = DashboardScreen::Load(LoadScreen::new(&self.greeting)),
+            13 => match SettingsManager::new(conn, &self.greeting) {
                 Ok(mgr) => self.screen = DashboardScreen::Settings(mgr),
                 Err(e) => self.status_message = Some(format!("Error: {e}")),
             },
-            12 => self.screen = DashboardScreen::Snake(SnakeGame::new()),
+            14 => self.screen = DashboardScreen::Snake(SnakeGame::new()),
             _ => {}
         }
     }
@@ -793,6 +921,7 @@ impl Dashboard {
             5 => super::report::view::build_flagged(),
             6 => super::report::view::build_balance(),
             7 => super::report::view::build_k1(year),
+            8 => super::report::view::build_aging(),
             _ => return DashboardScreen::Home,
         };
         match result {
@@ -873,26 +1002,31 @@ fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<Str
             5 => super::export::flagged(None)?,
             6 => super::export::balance(None)?,
             7 => super::export::k1(year, None)?,
-            8 => return super::export::all(year, None),
+            8 => super::export::aging(None)?,
+            // `export::all` reads the profile itself and skips K-1 for
+            // personal books.
+            n if n == REPORT_SLUGS.len() => return super::export::all(year, None),
             _ => return Ok(String::new()),
         };
         Ok(format!("Exported {path}"))
     }
 }
 
-fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<String> {
+fn do_text_export(
+    idx: usize,
+    year: Option<i32>,
+    month: Option<String>,
+    profile: crate::db::Profile,
+) -> Result<String> {
     let year = year.or_else(|| Some(chrono::Local::now().year()));
-    let names = [
-        "pnl", "expenses", "tax", "cashflow", "register", "flagged", "balance", "k1-prep",
-    ];
 
-    if idx == 8 {
+    if idx == REPORT_SLUGS.len() {
         // "All Reports" text export
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
         let dir = crate::settings::get_data_dir().join("exports");
         std::fs::create_dir_all(&dir)?;
         let mut count = 0;
-        let reports: Vec<(&str, Result<String>)> = vec![
+        let mut reports: Vec<(&str, Result<String>)> = vec![
             ("pnl", super::report::text::pnl(None, year, None, None)),
             ("expenses", super::report::text::expenses(None, year)),
             ("tax", super::report::text::tax(year)),
@@ -903,8 +1037,11 @@ fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Resul
             ),
             ("flagged", super::report::text::flagged()),
             ("balance", super::report::text::balance()),
-            ("k1-prep", super::report::text::k1(year)),
+            ("aging", super::report::text::aging(&crate::cli::today())),
         ];
+        if profile == crate::db::Profile::Business {
+            reports.push(("k1-prep", super::report::text::k1(year)));
+        }
         let mut failed = Vec::new();
         for (name, result) in reports {
             match result {
@@ -923,7 +1060,7 @@ fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Resul
         return Ok(format!("{msg} (skipped: {})", failed.join(", ")));
     }
 
-    let name = names.get(idx).unwrap_or(&"report");
+    let name = REPORT_SLUGS.get(idx).unwrap_or(&"report");
     let content = match idx {
         0 => super::report::text::pnl(month, year, None, None)?,
         1 => super::report::text::expenses(month, year)?,
@@ -933,6 +1070,7 @@ fn do_text_export(idx: usize, year: Option<i32>, month: Option<String>) -> Resul
         5 => super::report::text::flagged()?,
         6 => super::report::text::balance()?,
         7 => super::report::text::k1(year)?,
+        8 => super::report::text::aging(&crate::cli::today())?,
         _ => return Ok(String::new()),
     };
 
@@ -965,6 +1103,7 @@ pub fn run() -> Result<()> {
     // First-run: show onboarding, then ensure data dir + DB exist
     let mut post_setup_action = None;
     let mut onboarding_company = None;
+    let mut onboarding_profile = crate::db::Profile::default();
     if is_first_run {
         if let Some(result) = super::onboarding::run()? {
             let mut settings = load_settings();
@@ -977,6 +1116,7 @@ pub fn run() -> Result<()> {
                 onboarding_company = Some(result.company_name);
             }
             post_setup_action = Some(result.action);
+            onboarding_profile = result.profile;
 
             if let Some(ref pw) = result.password {
                 crate::db::set_db_password(Some(pw.clone()));
@@ -999,7 +1139,24 @@ pub fn run() -> Result<()> {
     std::fs::create_dir_all(&backups_dir)?;
     crate::settings::restrict_dir_permissions(&backups_dir)?;
     let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
-    crate::db::init_db(&conn)?;
+    crate::db::init_db_with_profile(&conn, onboarding_profile)?;
+
+    // The chosen profile only takes effect on a fresh database. If onboarding
+    // ran against books that already exist (settings.json was deleted, or a
+    // prior run was skipped after the database was created), say so — the
+    // same courtesy `nigel init --profile` extends — instead of leaving the
+    // user believing they switched charts.
+    let mut profile_notice = None;
+    if post_setup_action.is_some() {
+        let seeded = crate::db::get_profile(&conn);
+        if seeded != onboarding_profile {
+            profile_notice = Some(format!(
+                "These books already keep {} records; the {} choice was ignored.",
+                seeded.as_str(),
+                onboarding_profile.as_str()
+            ));
+        }
+    }
 
     // Save company_name from onboarding to DB metadata
     if let Some(company) = onboarding_company {
@@ -1054,6 +1211,9 @@ pub fn run() -> Result<()> {
         let conn = get_connection(&get_data_dir().join("nigel.db"))?;
         let mut dashboard = Dashboard::new(user_name.clone(), update_notification.clone());
         dashboard.load_data(&conn)?;
+        if let Some(notice) = profile_notice.take() {
+            dashboard.status_message = Some(notice);
+        }
 
         let mut terminal = ratatui::init();
 
@@ -1090,6 +1250,7 @@ pub fn run() -> Result<()> {
                     }
 
                     let mut return_home = false;
+                    let mut pending_invoice_work = false;
                     let mut pending_reload: Option<(usize, Option<i32>, Option<String>)> = None;
                     let should_quit = match &mut dashboard.screen {
                         DashboardScreen::Home => {
@@ -1168,6 +1329,25 @@ pub fn run() -> Result<()> {
                             }
                             false
                         }
+                        DashboardScreen::Invoices(ref mut manager) => {
+                            match manager.handle_key(key.code, &conn) {
+                                InvoiceAction::Close => {
+                                    return_home = true;
+                                }
+                                InvoiceAction::Continue => {}
+                                InvoiceAction::Perform => pending_invoice_work = true,
+                            }
+                            false
+                        }
+                        DashboardScreen::Clients(ref mut manager) => {
+                            match manager.handle_key(key.code, &conn) {
+                                ClientAction::Close => {
+                                    return_home = true;
+                                }
+                                ClientAction::Continue => {}
+                            }
+                            false
+                        }
                         DashboardScreen::Rules(ref mut rules) => {
                             match rules.handle_key(key.code, &conn) {
                                 RulesAction::Close => {
@@ -1226,19 +1406,21 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::ReportPicker { selection, mode } => {
-                            let max_idx = match mode {
-                                ReportPickerMode::View => REPORT_TYPES.len() - 1,
-                                ReportPickerMode::Export => EXPORT_TYPES.len() - 1,
-                            };
+                            let max_idx = report_picker_items(dashboard.profile, *mode).len() - 1;
                             match key.code {
                                 KeyCode::Up => *selection = selection.saturating_sub(1),
                                 KeyCode::Down => *selection = (*selection + 1).min(max_idx),
                                 KeyCode::Esc | KeyCode::Char('q') => return_home = true,
                                 KeyCode::Enter => match mode {
                                     ReportPickerMode::View => {
-                                        dashboard.pending_report_view = Some(*selection);
+                                        dashboard.pending_report_view = Some(canonical_report_idx(
+                                            dashboard.profile,
+                                            *selection,
+                                        ));
                                     }
                                     ReportPickerMode::Export => {
+                                        // Keep the picker index here so Esc from
+                                        // the format picker restores the row.
                                         dashboard.screen = DashboardScreen::ExportFormatPicker {
                                             report_idx: *selection,
                                             selection: 0,
@@ -1265,10 +1447,11 @@ pub fn run() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let format = EXPORT_FORMATS[*selection];
+                                    let idx = canonical_report_idx(dashboard.profile, *report_idx);
                                     if format == "Text" {
-                                        dashboard.pending_text_export = Some(*report_idx);
+                                        dashboard.pending_text_export = Some(idx);
                                     } else {
-                                        dashboard.pending_export = Some(*report_idx);
+                                        dashboard.pending_export = Some(idx);
                                     }
                                 }
                                 _ => {}
@@ -1294,6 +1477,17 @@ pub fn run() -> Result<()> {
                             false
                         }
                     };
+
+                    // The loop is draw -> blocking read -> handle_key, so work
+                    // done inside handle_key lands after the last paint. One
+                    // more draw first means the frozen frame is the one that
+                    // says it is frozen.
+                    if pending_invoice_work {
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
+                        if let DashboardScreen::Invoices(ref mut manager) = dashboard.screen {
+                            manager.perform_pending(&conn);
+                        }
+                    }
 
                     if let Some((idx, year, month)) = pending_reload {
                         dashboard.screen =
@@ -1333,7 +1527,7 @@ pub fn run() -> Result<()> {
                             } else {
                                 (None, None)
                             };
-                        match do_text_export(idx, year, month) {
+                        match do_text_export(idx, year, month, dashboard.profile) {
                             Ok(msg) => dashboard.status_message = Some(msg),
                             Err(e) => {
                                 dashboard.status_message = Some(format!("Export failed: {e}"))
@@ -1364,6 +1558,361 @@ pub fn run() -> Result<()> {
                 return Ok(());
             }
             Ok(false) => continue, // reload (data directory changed)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Profile;
+    use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+
+    #[test]
+    fn business_pickers_show_every_report() {
+        assert_eq!(
+            report_picker_items(Profile::Business, ReportPickerMode::View),
+            REPORT_TYPES
+        );
+        assert_eq!(
+            report_picker_items(Profile::Business, ReportPickerMode::Export),
+            EXPORT_TYPES
+        );
+    }
+
+    #[test]
+    fn personal_pickers_drop_only_the_k1_row() {
+        let view = report_picker_items(Profile::Personal, ReportPickerMode::View);
+        assert!(!view.contains(&"K-1 Prep (1120-S)"));
+        assert_eq!(view, [&REPORT_TYPES[..7], &REPORT_TYPES[8..]].concat());
+
+        let export = report_picker_items(Profile::Personal, ReportPickerMode::Export);
+        assert!(!export.contains(&"K-1 Prep (1120-S)"));
+        assert_eq!(export, [&EXPORT_TYPES[..7], &EXPORT_TYPES[8..]].concat());
+    }
+
+    /// `canonical_report_idx` hard-codes 7 as the row the personal lists drop.
+    #[test]
+    fn k1_sits_at_canonical_row_seven() {
+        assert_eq!(REPORT_TYPES[7], "K-1 Prep (1120-S)");
+        assert_eq!(EXPORT_TYPES[7], "K-1 Prep (1120-S)");
+        assert_eq!(REPORT_SLUGS[7], "k1-prep");
+    }
+
+    #[test]
+    fn personal_selections_translate_to_canonical_indices() {
+        // The personal pickers drop K-1 (canonical 7), so selections at or
+        // past that row are one short of canonical; dispatching row 7
+        // uncorrected would open the K-1 worksheet instead of A/R aging.
+        for selection in 0..7 {
+            assert_eq!(
+                canonical_report_idx(Profile::Personal, selection),
+                selection
+            );
+        }
+        assert_eq!(canonical_report_idx(Profile::Personal, 7), 8); // A/R Aging
+        assert_eq!(canonical_report_idx(Profile::Personal, 8), 9); // All Reports
+        for selection in 0..EXPORT_TYPES.len() {
+            assert_eq!(
+                canonical_report_idx(Profile::Business, selection),
+                selection
+            );
+        }
+    }
+
+    fn aging(buckets: &[(&'static str, f64)]) -> AgingReport {
+        let buckets: Vec<AgingBucket> = buckets
+            .iter()
+            .map(|(label, total)| AgingBucket {
+                label,
+                count: if *total > 0.0 { 1 } else { 0 },
+                total: *total,
+            })
+            .collect();
+        let outstanding = buckets.iter().map(|b| b.total).sum();
+        AgingReport {
+            as_of: "2026-08-04".into(),
+            buckets,
+            invoices: Vec::<AgingInvoice>::new(),
+            outstanding,
+        }
+    }
+
+    #[test]
+    fn ar_summary_is_none_when_nothing_outstanding() {
+        assert!(ar_summary(&aging(&[("current", 0.0), ("90+", 0.0)])).is_none());
+        assert!(ar_summary(&aging(&[("current", 0.004)])).is_none());
+    }
+
+    #[test]
+    fn ar_summary_picks_oldest_non_empty_bucket() {
+        let summary = ar_summary(&aging(&[
+            ("current", 4200.0),
+            ("1-30", 0.0),
+            ("31-60", 0.0),
+            ("61-90", 3200.0),
+            ("90+", 0.0),
+        ]))
+        .unwrap();
+        assert_eq!(summary.oldest_bucket, "61-90");
+
+        let summary = ar_summary(&aging(&[("current", 4200.0), ("90+", 0.0)])).unwrap();
+        assert_eq!(summary.oldest_bucket, "current");
+    }
+
+    #[test]
+    fn ar_summary_reports_total() {
+        let summary = ar_summary(&aging(&[("current", 4200.0), ("61-90", 3200.0)])).unwrap();
+        assert_eq!(summary.outstanding, 7400.0);
+    }
+
+    fn home_with(ar: Option<ArSummary>) -> Dashboard {
+        home_with_income(ar, 184_200.0)
+    }
+
+    fn home_with_income(ar: Option<ArSummary>, total_income: f64) -> Dashboard {
+        let mut dash = Dashboard::new(Some("Sam".into()), None);
+        dash.home_data = Some(HomeData {
+            total_income,
+            total_expenses: -121_455.0,
+            net: 62_745.0,
+            txn_count: 1_284,
+            flagged_count: 3,
+            balances: vec![("BofA Checking".into(), 42_118.02)],
+            cashflow_labels: Vec::new(),
+            cashflow_income: Vec::new(),
+            cashflow_expenses: Vec::new(),
+            cashflow_year_range: String::new(),
+            top_expenses: Vec::new(),
+            ar,
+        });
+        dash
+    }
+
+    fn rendered(dash: &Dashboard) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| dash.draw_home(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The stats row as rendered, trailing blanks trimmed.
+    fn stats_row(screen: &str, label: &str) -> String {
+        screen
+            .lines()
+            .find(|line| line.contains(label))
+            .unwrap_or_else(|| panic!("no row for {label} in:\n{screen}"))
+            .trim_end()
+            .to_string()
+    }
+
+    #[test]
+    fn home_shows_the_ar_line_only_when_money_is_owed() {
+        let owed = rendered(&home_with(Some(ArSummary {
+            outstanding: 8_900.0,
+            oldest_bucket: "61-90",
+        })));
+        // The label field is padded, so the amount never abuts the wording.
+        assert!(owed.contains("A/R Outstanding "), "{owed}");
+        assert!(owed.contains("$8,900.00"), "{owed}");
+        assert!(owed.contains("(61-90)"), "{owed}");
+
+        let clear = rendered(&home_with(None));
+        assert!(!clear.contains("A/R"), "{clear}");
+    }
+
+    #[test]
+    fn stats_amounts_share_one_column() {
+        let screen = rendered(&home_with(Some(ArSummary {
+            outstanding: 8_900.0,
+            oldest_bucket: "61-90",
+        })));
+        for label in [
+            "YTD Income",
+            "YTD Expenses",
+            "Net Profit",
+            "A/R Outstanding",
+        ] {
+            let row = stats_row(&screen, label);
+            assert_eq!(
+                row.find('$'),
+                Some(17),
+                "amount column moved on the {label} row: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ar_line_fits_the_left_half_at_eighty_columns() {
+        // Widest case: a six-figure balance and the longest bucket label.
+        let screen = rendered(&home_with_income(
+            Some(ArSummary {
+                outstanding: 999_999.99,
+                oldest_bucket: "current",
+            }),
+            999_999.99,
+        ));
+        let row = stats_row(&screen, "A/R Outstanding");
+        assert!(
+            row.chars().count() <= 40,
+            "row is {} cols, over the 40-col left half: {row:?}",
+            row.chars().count()
+        );
+        assert!(row.contains("$999,999.99"), "amount truncated: {row:?}");
+        assert!(row.contains("(current)"), "hint truncated: {row:?}");
+    }
+
+    #[test]
+    fn menu_shortcuts_are_unique_and_leave_quit_alone() {
+        let mut seen = std::collections::HashSet::new();
+        for (label, key) in MENU_ITEMS {
+            assert!(seen.insert(*key), "{key} is bound twice ({label})");
+            assert_ne!(*key, 'q', "q quits the dashboard ({label})");
+        }
+    }
+
+    #[test]
+    fn menu_labels_advertise_their_own_shortcut() {
+        for (label, key) in MENU_ITEMS {
+            assert!(
+                label.starts_with(&format!("[{key}] ")),
+                "{label} does not announce {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_right_column_has_room_for_every_item() {
+        // The menu block is MENU_LEFT_COUNT + 1 rows and the title takes one,
+        // so the right column can only ever show MENU_LEFT_COUNT items.
+        assert!(
+            MENU_ITEMS.len() - MENU_LEFT_COUNT <= MENU_LEFT_COUNT,
+            "{} items in the right column, room for {MENU_LEFT_COUNT}",
+            MENU_ITEMS.len() - MENU_LEFT_COUNT
+        );
+    }
+
+    #[test]
+    fn the_flagged_count_is_still_on_the_review_row() {
+        // menu_item_line's `if i == 2` special case is positional.
+        assert_eq!(MENU_ITEMS[2].1, 'r');
+        let dash = home_with(None);
+        assert!(
+            format!("{:?}", dash.menu_item_line(2, 7)).contains("(7)"),
+            "the flagged count moved off Review"
+        );
+    }
+
+    fn screen_name(screen: &DashboardScreen) -> &'static str {
+        match screen {
+            DashboardScreen::Home => "Home",
+            DashboardScreen::Browse(_) => "Browse",
+            DashboardScreen::Import(_) => "Import",
+            DashboardScreen::Review(_) => "Review",
+            DashboardScreen::Accounts(_) => "Accounts",
+            DashboardScreen::Categories(_) => "Categories",
+            DashboardScreen::Invoices(_) => "Invoices",
+            DashboardScreen::Clients(_) => "Clients",
+            DashboardScreen::Rules(_) => "Rules",
+            DashboardScreen::Reconcile(_) => "Reconcile",
+            DashboardScreen::Load(_) => "Load",
+            DashboardScreen::ReportPicker { .. } => "ReportPicker",
+            DashboardScreen::ExportFormatPicker { .. } => "ExportFormatPicker",
+            DashboardScreen::ReportView(_) => "ReportView",
+            DashboardScreen::Undo(_) => "Undo",
+            DashboardScreen::Settings(_) => "Settings",
+            DashboardScreen::Snake(_) => "Snake",
+        }
+    }
+
+    #[test]
+    fn the_home_screen_renders_every_menu_item() {
+        // The clipping this catches is silent: the right column simply stops
+        // drawing the items it has no rows for.
+        let screen = rendered(&home_with(None));
+        for (label, _) in MENU_ITEMS {
+            assert!(
+                screen.contains(label),
+                "{label} is not on screen:\n{screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_menu_index_has_an_activate_arm() {
+        // activate_menu_item matches on bare integers, so inserting an item
+        // renumbers every arm after it. `None` is a screen whose constructor
+        // depends on data this database does not have — those arms still run,
+        // and prove it by leaving a status message behind.
+        let expected: [Option<&str>; 15] = [
+            Some("Browse"),
+            Some("Import"),
+            None, // Review — nothing flagged in an empty book
+            Some("Reconcile"),
+            Some("Accounts"),
+            Some("Categories"),
+            Some("Rules"),
+            Some("Undo"),
+            Some("Invoices"),
+            Some("Clients"),
+            Some("ReportPicker"),
+            Some("ReportPicker"),
+            Some("Load"),
+            None, // Settings — reads the machine's own data directory
+            Some("Snake"),
+        ];
+        assert_eq!(expected.len(), MENU_ITEMS.len());
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::db::get_connection(&dir.path().join("t.db")).unwrap();
+        crate::db::init_db(&conn).unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+
+        for (idx, want) in expected.iter().enumerate() {
+            let mut dash = Dashboard::new(Some("Sam".into()), None);
+            dash.activate_menu_item(idx, &conn);
+            match want {
+                Some(name) => assert_eq!(
+                    screen_name(&dash.screen),
+                    *name,
+                    "menu item {idx} ({}) opened the wrong screen",
+                    MENU_ITEMS[idx].0
+                ),
+                None => assert!(
+                    !matches!(dash.screen, DashboardScreen::Home) || dash.status_message.is_some(),
+                    "menu item {idx} ({}) has no arm",
+                    MENU_ITEMS[idx].0
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn report_picker_indices_match_report_slugs() {
+        assert_eq!(REPORT_TYPES.len(), REPORT_SLUGS.len());
+        assert_eq!(EXPORT_TYPES.len(), REPORT_SLUGS.len() + 1);
+        assert_eq!(REPORT_TYPES[8], "A/R Aging");
+        assert_eq!(EXPORT_TYPES[8], "A/R Aging");
+        assert_eq!(REPORT_SLUGS[8], "aging");
+        assert_eq!(EXPORT_TYPES[REPORT_SLUGS.len()], "All Reports");
+    }
+
+    #[test]
+    fn report_slugs_are_the_report_kinds_own_slugs() {
+        use crate::reports::ReportKind::*;
+        let kinds = [
+            Pnl, Expenses, Tax, Cashflow, Register, Flagged, Balance, K1, Aging,
+        ];
+        assert_eq!(kinds.len(), REPORT_SLUGS.len());
+        for (slug, kind) in REPORT_SLUGS.iter().zip(kinds) {
+            assert_eq!(*slug, kind.as_str());
         }
     }
 }

@@ -9,9 +9,11 @@ use crate::error::Result;
 
 use super::ReportCommands;
 
-/// Label describing the period a report covers: "2026-03", "FY 2026", or "All dates"
-/// when no date filter was given (reports then span every year in the database).
-pub(crate) fn date_range_label(month: &Option<String>, year: &Option<i32>) -> String {
+/// The period label for a register: "2026-03", "FY 2026", or "All dates" when
+/// no date filter was given. The register is the one report whose unfiltered
+/// selection spans every year in the database rather than defaulting to the
+/// current one, which is why this does not reuse `reports::date_range_label`.
+pub(crate) fn register_range_label(month: &Option<String>, year: &Option<i32>) -> String {
     if let Some(m) = month {
         return m.clone();
     }
@@ -29,6 +31,20 @@ pub(crate) fn register_subtitle(range: &str, filters: &crate::reports::RegisterF
     } else {
         format!("{range} — {}", labels.join(", "))
     }
+}
+
+/// What a build without the `pdf` feature says when asked for a PDF. Shared
+/// with the HTTP export endpoints so the CLI and the API explain the same
+/// missing feature the same way.
+pub const PDF_DISABLED_MESSAGE: &str =
+    "PDF export requires the 'pdf' feature — build with `cargo build --features pdf`";
+
+/// The default basename of an exported report: the report's slug and the day it
+/// was exported, with the extension left to the caller. Used for the CLI's
+/// output paths and for the filename the HTTP download suggests.
+pub fn export_file_stem(name: &str) -> String {
+    let date = chrono::Local::now().format("%Y-%m-%d");
+    format!("{name}-{date}")
 }
 
 pub fn dispatch(cmd: ReportCommands) -> Result<()> {
@@ -99,6 +115,7 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
         ),
         ReportCommands::Flagged { .. } => text::flagged(),
         ReportCommands::Balance { .. } => text::balance(),
+        ReportCommands::Aging { .. } => text::aging(&crate::cli::today()),
         ReportCommands::K1 { year, .. } => text::k1(*year),
         ReportCommands::All { .. } => Err(crate::error::NigelError::Other(
             "`report all` is export-only".into(),
@@ -150,7 +167,7 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
         crate::settings::restrict_dir_permissions(&dir)?;
     }
 
-    let reports: Vec<(&str, Result<String>)> = vec![
+    let mut reports: Vec<(&str, Result<String>)> = vec![
         ("pnl", text::pnl(None, year, None, None)),
         ("expenses", text::expenses(None, year)),
         ("tax", text::tax(year)),
@@ -161,8 +178,15 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
         ),
         ("flagged", text::flagged()),
         ("balance", text::balance()),
-        ("k1-prep", text::k1(year)),
+        ("aging", text::aging(&crate::cli::today())),
     ];
+    // The K-1 worksheet only means something under the business chart of
+    // accounts; personal books skip it in the bulk export.
+    let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
+    if crate::db::get_profile(&conn) == crate::db::Profile::Business {
+        reports.push(("k1-prep", text::k1(year)));
+    }
+    drop(conn);
 
     for (name, result) in reports {
         match result {
@@ -182,10 +206,7 @@ fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()
     #[cfg(not(feature = "pdf"))]
     {
         let _ = (cmd, output);
-        return Err(crate::error::NigelError::Other(
-            "PDF export requires the 'pdf' feature — build with `cargo build --features pdf`"
-                .into(),
-        ));
+        return Err(crate::error::NigelError::Other(PDF_DISABLED_MESSAGE.into()));
     }
 
     #[cfg(feature = "pdf")]
@@ -196,10 +217,9 @@ fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()
 }
 
 fn default_text_path(name: &str) -> String {
-    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     crate::settings::get_data_dir()
         .join("exports")
-        .join(format!("{name}-{date}.txt"))
+        .join(format!("{}.txt", export_file_stem(name)))
         .to_string_lossy()
         .into_owned()
 }
@@ -210,13 +230,16 @@ mod tests {
     use crate::reports::{CategorySelection, RegisterFilters};
 
     #[test]
-    fn date_range_label_variants() {
-        assert_eq!(date_range_label(&Some("2025-03".into()), &None), "2025-03");
-        assert_eq!(date_range_label(&None, &Some(2025)), "FY 2025");
-        assert_eq!(date_range_label(&None, &None), "All dates");
+    fn register_range_label_variants() {
+        assert_eq!(
+            register_range_label(&Some("2025-03".into()), &None),
+            "2025-03"
+        );
+        assert_eq!(register_range_label(&None, &Some(2025)), "FY 2025");
+        assert_eq!(register_range_label(&None, &None), "All dates");
         // An explicit month wins over a year.
         assert_eq!(
-            date_range_label(&Some("2025-03".into()), &Some(2024)),
+            register_range_label(&Some("2025-03".into()), &Some(2024)),
             "2025-03"
         );
     }

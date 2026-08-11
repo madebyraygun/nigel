@@ -2,12 +2,13 @@
 name = "nigel"
 version = "1.0.1"
 edition = "2021"
-description = "Cash-basis bookkeeping CLI for small consultancies"
+description = "Cash-basis bookkeeping CLI for small consultancies and personal finances"
 
 [features]
-default = ["gusto", "pdf"]
+default = ["gusto", "pdf", "serve"]
 gusto = ["dep:calamine"]
 pdf = ["dep:printpdf"]
+serve = ["dep:axum", "dep:tokio", "dep:tower", "dep:rust-embed", "dep:open", "dep:subtle"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -31,11 +32,18 @@ dirs = "5"
 printpdf = { version = "0.7", optional = true }
 anyhow = "1"
 thiserror = "1"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
+rusty-s3 = "0.5"
 rpassword = "7"
 self-replace = "1"
 semver = "1"
 zeroize = "1.8.2"
+axum = { version = "0.8.9", optional = true, default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
+tokio = { version = "1.53", optional = true, features = ["rt-multi-thread", "net", "signal", "sync", "macros", "time"] }
+tower = { version = "0.5", optional = true, features = ["util"] }
+rust-embed = { version = "8.12", optional = true, features = ["debug-embed", "mime-guess"] }
+open = { version = "5.4", optional = true }
+subtle = { version = "2.6", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
