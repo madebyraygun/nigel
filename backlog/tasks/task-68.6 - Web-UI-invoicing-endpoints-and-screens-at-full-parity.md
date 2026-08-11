@@ -1,11 +1,11 @@
 ---
 id: TASK-68.6
 title: 'Web UI: invoicing endpoints and screens at full parity'
-status: In Progress
+status: Done
 assignee:
   - '@opus-team'
 created_date: '2026-08-08 00:28'
-updated_date: '2026-08-08 10:22'
+updated_date: '2026-08-11 03:15'
 labels:
   - invoicing
   - web
@@ -25,7 +25,7 @@ Supersedes TASK-62 with the full scope: Serialize derives on the invoicing struc
 - [x] #1 Invoicing data structs derive Serialize following the task-31.2 pattern
 - [x] #2 JSON API covers clients, invoices, payments, preview, and aging behind the standard guards
 - [x] #3 Send requires explicit confirmation in the UI and reports each step's failure by cause
-- [ ] #4 SPA screens cover client management, invoice management, and aging with CLI figure parity
+- [x] #4 SPA screens cover client management, invoice management, and aging with CLI figure parity
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,3 +56,9 @@ Stage 3 merged (PR #191): write API (clients CRUD incl. delete_client with has_i
 
 Stage 4 merged (PR #192): send (blocking, wire-level confirm, 8-step trace, 502 upstream_failed with step+service, ~150s documented ceiling over five bounded calls) and sync (60s budget, honest SyncReport). TempConfigDir now also pins the env layer of invoicing_config — tests offline UNCONDITIONALLY. Stage 5 owns: ApiClient sendInvoice/syncInvoices, single CHANGELOG entry for 68.6, iframe sandbox WITHOUT allow-same-origin, negative daysPastDue, overdue-not-partial overlap.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Five staged PRs (#189-#193). Data layer: Serialize derives with token excluded, shared validation (items, payment amounts, client names) enforced once for CLI and API. Read API: clients/invoices/aging/next-number/preview with locked-state and session guards, security headers deferring per-route. Write API: full CRUD with guardrail 409s carrying machine reasons. Send/sync: blocking traced orchestration, wire-level confirm, bounded timeouts, 502-with-step, 60s sync budget, unconditionally offline tests. SPA: 11 new wc-* components (preview+axe each), clients/invoices screens, aging as ninth report view, figure parity vs CLI fixtures, send dialog hardened against mid-flight dismissal. User visual review completed (aging-bar alignment fixed in review). Final gates: 937+75 Rust, 1718 web tests, three feature combinations, clippy/fmt clean.
+<!-- SECTION:FINAL_SUMMARY:END -->
