@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-4'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 21:19'
+updated_date: '2026-08-11 23:15'
 labels:
   - enhancement
   - web
@@ -93,6 +93,18 @@ something concrete to be made against.
 ACs #4 and #5 are left unchecked: both are "look at it at 1280 and 1024" and
 neither can be claimed from here. Everything else is asserted in tests.
 The slashed-zero question (§5) is also unanswered — it needs eyes on figures.
+
+RE-MEASURED after the --wa-* token contract landed on the base branch (that
+shifted the baseline, so the earlier absolute figures were stale). Both sides
+measured on the same machine and toolchain, with and without the fonts:
+
+  fonts on disk                                    66,288 B  (unchanged)
+  web/dist      659,310 ->    726,897  =          +67,587 B
+  release bin  25,618,704 -> 25,684,688 =          +65,984 B  (+0.26%)
+
+The font delta on web/dist is byte-identical to the earlier run; the binary
+delta moved from 69,992 to 65,984, which is why the spec says to measure it
+rather than derive it from the file sizes. Still far inside the 200KB target.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -113,8 +113,8 @@ looks worst at small sizes on a mono. No italics — nothing in the UI is italic
 | `ibm-plex-mono-500.woff2` | 22,264 |
 | `ibm-plex-mono-600.woff2` | 22,348 |
 | **total on disk** | **66,288** |
-| `web/dist` | 648,126 → 715,713 (**+67,587**) |
-| `target/release/nigel` | 25,606,416 → 25,676,408 (**+69,992**, +0.27%) |
+| `web/dist` | 659,310 → 726,897 (**+67,587**) |
+| `target/release/nigel` | 25,618,704 → 25,684,688 (**+65,984**, +0.26%) |
 
 The binary delta is the number that matters and it is measured, not derived —
 rust-embed stores the bytes plus path metadata, so it is not the sum of the
