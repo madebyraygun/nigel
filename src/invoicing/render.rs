@@ -1,7 +1,8 @@
 use rusqlite::Connection;
 
 use crate::error::Result;
-use crate::invoicing::invoices::line_items;
+use crate::invoicing::document::MoneySummary;
+use crate::invoicing::invoices::{line_items, paid_amount};
 use crate::invoicing::render_html::{render_invoice_html, Branding, PayButton};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 
@@ -24,10 +25,13 @@ pub fn render_invoice(
     branding: &Branding<'_>,
 ) -> Result<RenderedInvoice> {
     // Loaded here rather than passed in, so both callers get the same rows in
-    // the same order.
+    // the same order — and, for the same reason, the money block is built here
+    // rather than by whoever is rendering: every caller above the seam shows
+    // the same figures without asking for them.
     let items = line_items(conn, invoice.id)?;
-    let html = render_invoice_html(branding, invoice, client, &items, pay);
-    let pdf = render_pdf(invoice, client, &items, branding.company)?;
+    let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
+    let html = render_invoice_html(branding, invoice, client, &items, &money, pay);
+    let pdf = render_pdf(invoice, client, &items, branding.company, &money)?;
     Ok(RenderedInvoice { html, pdf })
 }
 
@@ -37,8 +41,9 @@ fn render_pdf(
     client: &Client,
     items: &[InvoiceLineItem],
     company: &str,
+    money: &MoneySummary,
 ) -> Result<Option<Vec<u8>>> {
-    crate::pdf::render_invoice_pdf(invoice, client, items, company).map(Some)
+    crate::pdf::render_invoice_pdf(invoice, client, items, company, money).map(Some)
 }
 
 #[cfg(not(feature = "pdf"))]
@@ -47,6 +52,7 @@ fn render_pdf(
     _client: &Client,
     _items: &[InvoiceLineItem],
     _company: &str,
+    _money: &MoneySummary,
 ) -> Result<Option<Vec<u8>>> {
     Ok(None)
 }
@@ -164,6 +170,57 @@ mod tests {
         let at = |needle: &str| out.html.find(needle).expect("line item missing from html");
         assert!(at("First") < at("Second"));
         assert!(at("Second") < at("Third"));
+    }
+
+    /// The figures come from below the seam, so preview, send, the API preview
+    /// routes and a republish all show them without any of them asking.
+    #[test]
+    fn the_seam_reads_the_payments_and_the_page_shows_them() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
+            .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+
+        assert!(out.html.contains("Paid"), "got: {}", out.html);
+        assert!(out.html.contains("Balance due"), "got: {}", out.html);
+        assert!(out.html.contains("60.00"), "got: {}", out.html);
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_pdf_and_the_page_carry_the_same_money_labels() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
+            .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        for label in ["Total", "Paid", "Balance due"] {
+            assert!(out.html.contains(label), "{label} missing from the page");
+            assert!(text.contains(label), "{label} missing from the pdf: {text}");
+        }
     }
 
     #[test]

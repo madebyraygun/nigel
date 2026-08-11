@@ -4,6 +4,7 @@ use printpdf::*;
 
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
+use crate::invoicing::document::{address_lines, MoneySummary};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::reports::*;
 
@@ -888,11 +889,19 @@ fn document_title(title: &str, company: &str) -> String {
 /// `company` is the operator's own name — the `company_name` metadata key the
 /// HTML page resolves through `Branding`. Empty means unset, and the document
 /// is headed by the invoice number alone.
+/// The invoice as the client's email attachment carries it.
+///
+/// It deliberately carries **no payment link**. An emailed attachment cannot be
+/// recalled or republished, so a live charge link in it would survive the
+/// settlement it was created for — the same reasoning that makes void deactivate
+/// links. Paying online is the published page's job, and the page is the one
+/// artifact a republish can correct.
 pub fn render_invoice_pdf(
     invoice: &Invoice,
     client: &Client,
     items: &[InvoiceLineItem],
     company: &str,
+    summary: &MoneySummary,
 ) -> Result<Vec<u8>> {
     let title = format!("Invoice #{}", invoice.number);
     let mut pdf = PdfWriter::new(&document_title(&title, company))?;
@@ -910,6 +919,18 @@ pub fn render_invoice_pdf(
         false,
     );
     pdf.y += 5.0;
+    // One row per typed line, matching how the page renders the same address.
+    // An absent one draws nothing, so `Issued:` follows the name directly.
+    for line in address_lines(client.billing_address.as_deref().unwrap_or_default()) {
+        pdf.text(line, MARGIN_LEFT, SUBTITLE_SIZE, false);
+        pdf.y += 5.0;
+    }
+    if let Some(email) = client.email.as_deref().map(str::trim) {
+        if !email.is_empty() {
+            pdf.text(email, MARGIN_LEFT, SUBTITLE_SIZE, false);
+            pdf.y += 5.0;
+        }
+    }
     pdf.text(
         &format!("Issued: {}", invoice.issue_date),
         MARGIN_LEFT,
@@ -957,18 +978,18 @@ pub fn render_invoice_pdf(
     }
 
     pdf.separator();
-    if invoice.tax != 0.0 {
-        let subtotal = money(invoice.subtotal);
-        pdf.table_row(cols, &["Subtotal", "", "", &subtotal], false);
-        let tax = money(invoice.tax);
-        pdf.table_row(cols, &["Tax", "", "", &tax], false);
+    // Which money lines exist is `MoneySummary::lines()`'s decision, taken once
+    // for both documents. Only the total names the currency, which is where
+    // this document has always put it.
+    for line in summary.lines() {
+        let label = if line.label == "Total" {
+            format!("Total ({})", invoice.currency)
+        } else {
+            line.label.to_string()
+        };
+        let amount = money(line.amount);
+        pdf.table_row(cols, &[&label, "", "", &amount], line.emphasis);
     }
-    let total = money(invoice.total);
-    pdf.table_row(
-        cols,
-        &[&format!("Total ({})", invoice.currency), "", "", &total],
-        true,
-    );
 
     if let Some(notes) = &invoice.notes {
         pdf.blank_row();
@@ -1042,9 +1063,108 @@ mod invoice_pdf_tests {
         }]
     }
 
+    /// One line item, nothing paid — what every test that is about something
+    /// else wants.
+    fn pdf_of(invoice: &Invoice, client: &Client, company: &str) -> Vec<u8> {
+        let money = MoneySummary::of(invoice, 0.0);
+        render_invoice_pdf(invoice, client, &items(), company, &money).unwrap()
+    }
+
+    fn text_of(invoice: &Invoice, client: &Client, paid: f64) -> String {
+        let money = MoneySummary::of(invoice, paid);
+        let bytes = render_invoice_pdf(invoice, client, &items(), "Bluepeak LLC", &money).unwrap();
+        extract_text(&bytes)
+    }
+
+    fn rich_client() -> Client {
+        Client {
+            id: 1,
+            name: "Acme".into(),
+            email: Some("ap@acme.test".into()),
+            billing_address: Some("123 Main St\nSpringfield, IL 62704".into()),
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn the_client_block_carries_the_address_and_the_email() {
+        let text = text_of(&invoice(), &rich_client(), 0.0);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("Invoice #1248") < at("Bluepeak LLC"));
+        assert!(at("Bluepeak LLC") < at("Billed to: Acme"));
+        assert!(at("Billed to: Acme") < at("123 Main St"));
+        assert!(at("123 Main St") < at("Springfield, IL 62704"));
+        assert!(at("Springfield, IL 62704") < at("ap@acme.test"));
+        assert!(at("ap@acme.test") < at("Issued:"));
+    }
+
+    #[test]
+    fn an_absent_address_or_email_draws_no_line() {
+        // The sparse client: name only.
+        let text = text_of(&invoice(), &client(), 0.0);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("Billed to: Acme") < at("Issued:"));
+        assert!(!text.contains("Main St"), "got: {text}");
+        assert!(!text.contains("@"), "no email line at all: {text}");
+    }
+
+    #[test]
+    fn the_money_block_is_the_shared_one() {
+        let mut inv = invoice();
+        inv.subtotal = 100.0;
+        inv.tax = 8.25;
+        inv.total = 108.25;
+        let money = MoneySummary::of(&inv, 0.0);
+        let text = text_of(&inv, &client(), 0.0);
+
+        let mut at = 0;
+        for line in money.lines() {
+            let label = if line.label == "Total" {
+                "Total (USD)".to_string()
+            } else {
+                line.label.to_string()
+            };
+            let found = text[at..]
+                .find(&label)
+                .unwrap_or_else(|| panic!("{label} missing or out of order: {text}"));
+            at += found + label.len();
+        }
+        assert_eq!(
+            money.lines().len(),
+            3,
+            "tax brings the subtotal with it, and nothing was paid"
+        );
+    }
+
+    #[test]
+    fn a_paid_invoice_shows_paid_and_the_balance() {
+        let text = text_of(&invoice(), &client(), 40.0);
+        assert!(text.contains("Paid"), "got: {text}");
+        assert!(text.contains("Balance due"), "got: {text}");
+        assert!(text.contains("$60.00"), "got: {text}");
+    }
+
+    /// The one thing this document deliberately does not carry. An emailed
+    /// attachment cannot be recalled or republished, so a live charge link in it
+    /// would outlive the settlement it was created for.
+    #[test]
+    fn no_live_payment_link_reaches_the_pdf() {
+        let mut inv = invoice();
+        inv.stripe_payment_link_url = Some("https://pay.stripe.test/x".into());
+        let text = text_of(&inv, &client(), 0.0);
+        assert!(!text.contains("pay.stripe.test"), "got: {text}");
+        assert!(!text.contains("Pay online"), "got: {text}");
+    }
+
     #[test]
     fn the_company_name_heads_the_document() {
-        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "Bluepeak LLC").unwrap();
+        let bytes = pdf_of(&invoice(), &client(), "Bluepeak LLC");
         let text = extract_text(&bytes);
 
         let at = |needle: &str| {
@@ -1067,7 +1187,7 @@ mod invoice_pdf_tests {
 
     #[test]
     fn an_unset_company_leaves_a_text_only_header() {
-        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "").unwrap();
+        let bytes = pdf_of(&invoice(), &client(), "");
         let text = extract_text(&bytes);
 
         let at = |needle: &str| {
@@ -1080,13 +1200,13 @@ mod invoice_pdf_tests {
 
     #[test]
     fn the_document_title_carries_the_company() {
-        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "Bluepeak LLC").unwrap();
+        let bytes = pdf_of(&invoice(), &client(), "Bluepeak LLC");
         assert_eq!(document_title_of(&bytes), "Bluepeak LLC - Invoice #1248");
     }
 
     #[test]
     fn produces_nonempty_pdf() {
-        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "").unwrap();
+        let bytes = pdf_of(&invoice(), &client(), "");
         assert!(bytes.len() > 100);
         assert_eq!(&bytes[0..4], b"%PDF");
     }
@@ -1121,7 +1241,8 @@ mod invoice_pdf_tests {
             line_total: 100.0,
             position: 0,
         }];
-        let bytes = render_invoice_pdf(&inv, &client(), &items, "Bluepeak LLC").unwrap();
+        let money = MoneySummary::of(&inv, 0.0);
+        let bytes = render_invoice_pdf(&inv, &client(), &items, "Bluepeak LLC", &money).unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 }
