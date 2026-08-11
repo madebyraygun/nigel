@@ -40,7 +40,7 @@ Importers currently include Bank of America and Gusto, but adding a new importer
 
 ## Install
 
-Download a pre-built binary from [GitHub Releases](https://github.com/madebyraygun/nigel-keeps-your-books/releases), or build from source:
+Download a pre-built binary from [GitHub Releases](https://github.com/madebyraygun/nigel/releases), or build from source:
 
 ```bash
 cargo install --path .

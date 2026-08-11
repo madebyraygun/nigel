@@ -4,7 +4,7 @@ use crate::error::{NigelError, Result};
 use crate::settings::{load_settings, save_settings};
 
 const GITHUB_API_URL: &str =
-    "https://api.github.com/repos/madebyraygun/nigel-keeps-your-books/releases/latest";
+    "https://api.github.com/repos/madebyraygun/nigel/releases/latest";
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
