@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-1'
 created_date: '2026-08-08 08:22'
-updated_date: '2026-08-11 20:39'
+updated_date: '2026-08-11 20:55'
 labels:
   - invoicing
   - bug
@@ -25,5 +25,5 @@ update_invoice passes the invoice's issue date to refresh_status as "today", so 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 refresh_status is always called with the wall-clock today, and a test pins the due-date-edit path
+- [x] #1 refresh_status is always called with the wall-clock today, and a test pins the due-date-edit path
 <!-- AC:END -->

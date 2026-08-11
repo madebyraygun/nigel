@@ -2375,6 +2375,62 @@ fn recategorize_works_on_encrypted_db_via_env_password() {
         .stdout(predicate::str::contains("Recategorized 1 transaction"));
 }
 
+/// TASK-63 AC #1. A read *and* a write: unlocking for a SELECT and unlocking for
+/// an INSERT are the same key, but a read-only regression would slip past a test
+/// that only lists.
+#[test]
+fn invoice_and_client_commands_work_on_encrypted_db_via_env_password() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.encrypt("hunter2");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1248").and(predicate::str::contains("Acme Co")));
+
+    env.cmd()
+        .args(["client", "add", "Globex", "--email", "ap@globex.test"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "list"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Globex").and(predicate::str::contains("Acme Co")));
+}
+
+/// TASK-63 AC #2. The stderr predicate is the assertion that matters: reaching
+/// the prompt with no terminal errors with ENXIO, which satisfies `.failure()` on
+/// its own. The timeout is only a backstop for a run that inherits a tty and
+/// blocks.
+#[test]
+fn invoice_list_fails_fast_on_wrong_env_password() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.encrypt("hunter2");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .env("NIGEL_DB_PASSWORD", "wrong-password")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
+}
+
 #[test]
 fn serve_help_documents_its_flags() {
     let env = TestEnv::new();

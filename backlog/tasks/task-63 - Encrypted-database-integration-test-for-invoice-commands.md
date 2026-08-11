@@ -1,10 +1,11 @@
 ---
 id: TASK-63
 title: Encrypted-database integration test for invoice commands
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-1'
 created_date: '2026-08-07 21:53'
-updated_date: '2026-08-11 19:54'
+updated_date: '2026-08-11 20:55'
 labels:
   - invoicing
   - testing
