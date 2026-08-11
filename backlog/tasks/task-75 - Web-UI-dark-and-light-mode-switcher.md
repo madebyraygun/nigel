@@ -4,12 +4,16 @@ title: 'Web UI: dark and light mode switcher'
 status: To Do
 assignee: []
 created_date: '2026-08-09 00:46'
+updated_date: '2026-08-11 20:02'
 labels:
   - enhancement
   - web
   - ui
   - theme
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-75-mode-switcher-design.md
+  - docs/superpowers/plans/2026-08-11-task-75-mode-switcher.md
 priority: medium
 ---
 

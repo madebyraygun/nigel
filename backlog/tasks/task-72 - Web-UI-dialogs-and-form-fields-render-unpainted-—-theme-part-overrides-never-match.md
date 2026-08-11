@@ -6,12 +6,16 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-09 00:45'
+updated_date: '2026-08-11 20:02'
 labels:
   - bug
   - web
   - ui
   - theme
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-72-theme-shadow-parts-design.md
+  - docs/superpowers/plans/2026-08-11-task-72-theme-shadow-parts.md
 priority: high
 ---
 

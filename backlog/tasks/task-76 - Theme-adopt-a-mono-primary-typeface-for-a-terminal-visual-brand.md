@@ -4,12 +4,16 @@ title: 'Theme: adopt a mono primary typeface for a terminal visual brand'
 status: To Do
 assignee: []
 created_date: '2026-08-09 00:46'
+updated_date: '2026-08-11 20:02'
 labels:
   - enhancement
   - web
   - ui
   - theme
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-76-mono-typeface-design.md
+  - docs/superpowers/plans/2026-08-11-task-76-mono-typeface.md
 priority: low
 ---
 
