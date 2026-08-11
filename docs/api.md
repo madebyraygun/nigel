@@ -741,9 +741,11 @@ before the insert, so an unknown one is a `400` naming the set rather than a
 constraint violation surfacing as a `500`. A zero, negative or non-finite
 `amount` is `400`.
 
-Both answer the refreshed `InvoiceDetail`, as every invoice write does: the
-status is derived by `refresh_status` on almost all of them, so a response
-echoing only the field that was sent would be showing the old one.
+Both answer the refreshed invoice, as every invoice write does: the status is
+derived by `refresh_status` on almost all of them, so a response echoing only
+the field that was sent would be showing the old one. `pay` answers an
+`InvoiceDetail`; `void` answers that same detail flattened inside a
+`VoidResult`, so it reads as one everywhere an `InvoiceDetail` is expected.
 
 Dates on these routes follow the API's own rule, not the CLI's: zero-padded
 `YYYY-MM-DD`, so `2026-4-1` is a `400` here where `nigel invoice pay` accepts it.

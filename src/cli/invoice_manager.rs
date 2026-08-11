@@ -21,7 +21,7 @@ use crate::invoicing::invoices::{
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::send_invoice;
-use crate::invoicing::void::void_invoice_with_teardown;
+use crate::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 use crate::tui::{FOOTER_STYLE, GREEN, HEADER_STYLE};
@@ -291,8 +291,9 @@ impl InvoiceManager {
     }
 
     /// The void counterpart of S7, and only ever painted for an invoice with
-    /// something live behind it — a draft void returns before the frame is
-    /// reached.
+    /// something live behind it: `begin_void` runs a teardown-free void inline
+    /// and never enters this state, so the two calls this frame names are calls
+    /// that are actually about to be made.
     fn draw_voiding(&self, frame: &mut Frame) {
         let (content_area, hints_area) = self.draw_chrome(frame);
         let Some(detail) = &self.detail else {
@@ -646,7 +647,7 @@ impl InvoiceManager {
             Screen::List => self.handle_list_key(code, conn),
             Screen::Detail => self.handle_detail_key(code, conn),
             Screen::PayForm(_) => self.handle_pay_key(code, conn),
-            Screen::ConfirmVoid => self.handle_void_key(code),
+            Screen::ConfirmVoid => self.handle_void_key(code, conn),
             Screen::ConfirmSend => self.handle_confirm_send_key(code),
             // Any key dismisses the result and returns to the reloaded detail.
             Screen::ActionResult { .. } => {
@@ -872,20 +873,39 @@ impl InvoiceManager {
         }
     }
 
-    fn handle_void_key(&mut self, code: KeyCode) -> InvoiceAction {
+    fn handle_void_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
         match code {
-            KeyCode::Char('y') => {
-                self.screen = Screen::Voiding;
-                // Same reasoning as send: the teardown can reach Stripe and R2,
-                // and the frozen frame has to be the one that says so.
-                InvoiceAction::Perform
-            }
+            KeyCode::Char('y') => self.begin_void(conn),
             KeyCode::Char('n') | KeyCode::Esc => {
                 self.screen = Screen::Detail;
                 InvoiceAction::Continue
             }
             _ => InvoiceAction::Continue,
         }
+    }
+
+    /// Run the void the confirmation authorised, or hand it to the controller.
+    ///
+    /// An invoice with nothing published and no payment link reaches no network
+    /// whatever is configured, so it runs here: it is the database write it
+    /// always was, and freezing the terminal behind a frame promising two calls
+    /// it will not make would be a lie told at the user's expense. Anything with
+    /// something live goes the long way round, like send.
+    fn begin_void(&mut self, conn: &Connection) -> InvoiceAction {
+        let Some(detail) = &self.detail else {
+            return InvoiceAction::Continue;
+        };
+        if !has_teardown_work(&detail.invoice) {
+            self.perform_void(
+                conn,
+                &crate::cli::today(),
+                None::<&crate::invoicing::stripe::StripeClient>,
+                None::<&crate::invoicing::r2::R2Publisher>,
+            );
+            return InvoiceAction::Continue;
+        }
+        self.screen = Screen::Voiding;
+        InvoiceAction::Perform
     }
 
     /// The testable half of void: the same orchestration against injected
@@ -1918,20 +1938,29 @@ mod tests {
     /// dispatch that tells a pending void from a pending send is exercised too.
     /// Nothing is configured here, which is the case these tests are about.
     fn confirm_void(mgr: &mut InvoiceManager, conn: &Connection) {
-        assert!(matches!(
-            mgr.handle_key(KeyCode::Char('y'), conn),
-            InvoiceAction::Perform
-        ));
-        assert!(
-            matches!(mgr.screen, Screen::Voiding),
-            "the frame is painted"
-        );
-        mgr.perform_pending_with(
-            conn,
-            &crate::cli::today(),
-            no_config(),
-            std::path::Path::new("/nonexistent"),
-        );
+        match mgr.handle_key(KeyCode::Char('y'), conn) {
+            // Nothing live behind the invoice: the void ran inline, with no
+            // blocking frame to paint.
+            InvoiceAction::Continue => assert!(
+                !matches!(mgr.screen, Screen::Voiding),
+                "an inline void enters no blocking state"
+            ),
+            InvoiceAction::Perform => {
+                assert!(
+                    matches!(mgr.screen, Screen::Voiding),
+                    "the frame is painted"
+                );
+                // Through `perform_pending_with`, so the dispatch that tells a
+                // pending void from a pending send is exercised too.
+                mgr.perform_pending_with(
+                    conn,
+                    &crate::cli::today(),
+                    no_config(),
+                    std::path::Path::new("/nonexistent"),
+                );
+            }
+            InvoiceAction::Close => panic!("void never closes the screen"),
+        }
     }
 
     #[test]
@@ -2417,6 +2446,52 @@ mod tests {
             assert!(screen.contains("Voiding invoice #1248"), "{screen}");
             assert!(screen.contains("not reading keys"), "{screen}");
             assert!(screen.contains("Working"), "{screen}");
+        }
+
+        /// The frame names two network calls, so an invoice that is going to
+        /// make neither must never see it: a draft void is a database write and
+        /// runs inline, on the keypress.
+        #[test]
+        fn a_draft_void_paints_no_blocking_frame_and_needs_no_second_pass() {
+            let (_d, conn) = test_conn();
+            seed_invoice(&conn, "Cedar Systems", 100.0);
+            let mut mgr = manager(&conn);
+            open_void(&mut mgr, &conn);
+
+            assert!(matches!(
+                mgr.handle_key(KeyCode::Char('y'), &conn),
+                InvoiceAction::Continue
+            ));
+
+            // Voided already, without the controller doing anything more.
+            assert_eq!(voided_at(&conn), Some(crate::cli::today()));
+            assert!(matches!(mgr.screen, Screen::Detail));
+            assert_eq!(mgr.status_message.as_deref(), Some("Voided invoice #1248."));
+            let screen = rendered(&mut mgr);
+            assert!(!screen.contains("Voiding invoice"), "{screen}");
+            assert!(!screen.contains("Stripe payment link"), "{screen}");
+        }
+
+        /// Half a reason is reason enough: an unpublished draft that carries a
+        /// link has a call to make, so it takes the long way round.
+        #[test]
+        fn an_unpublished_invoice_with_a_link_still_gets_the_frame() {
+            let (_d, conn) = test_conn();
+            let id = seed_invoice(&conn, "Cedar Systems", 100.0);
+            set_payment_link(&conn, id, "plink_1", "https://buy.stripe.com/x").unwrap();
+            let mut mgr = manager(&conn);
+            open_void(&mut mgr, &conn);
+
+            assert!(matches!(
+                mgr.handle_key(KeyCode::Char('y'), &conn),
+                InvoiceAction::Perform
+            ));
+            assert!(matches!(mgr.screen, Screen::Voiding));
+            assert_eq!(
+                voided_at(&conn),
+                None,
+                "nothing is written until the work runs"
+            );
         }
     }
 

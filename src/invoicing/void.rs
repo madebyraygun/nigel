@@ -119,6 +119,17 @@ impl VoidOutcome {
     }
 }
 
+/// Has this invoice put anything out in the world?
+///
+/// `false` means the teardown is a no-op whatever is configured — no link to
+/// deactivate, no page to replace — and therefore that voiding it reaches no
+/// network. A front end that has to freeze itself around a call it is going to
+/// make asks this first, so an ordinary draft void stays the database write it
+/// always was.
+pub fn has_teardown_work(invoice: &Invoice) -> bool {
+    invoice.stripe_payment_link_id.is_some() || invoice.published_at.is_some()
+}
+
 /// Void an invoice and take down what it published.
 ///
 /// The order is the safe one: `void_invoice` runs first and commits, so a
@@ -360,6 +371,36 @@ mod tests {
         assert!(warnings.contains("SignatureDoesNotMatch"), "{warnings}");
         // Nothing about Stripe: that link is off.
         assert!(!warnings.contains("Stripe"), "{warnings}");
+    }
+
+    /// The predicate a front end freezes itself on has to agree with what the
+    /// teardown actually does, or a screen promises calls that never happen.
+    #[test]
+    fn nothing_to_tear_down_means_both_halves_are_not_applicable() {
+        let (_d, conn) = test_conn();
+        let draft = get_invoice(&conn, seed(&conn)).unwrap();
+        assert!(!has_teardown_work(&draft));
+        let outcome = teardown(&draft, Some(&FakeGw::default()), Some(&FakePub::default()));
+        assert_eq!(outcome.link, TeardownStep::NotApplicable);
+        assert_eq!(outcome.page, TeardownStep::NotApplicable);
+
+        let (_d2, other) = test_conn();
+        let sent = get_invoice(&other, seed_sent(&other)).unwrap();
+        assert!(has_teardown_work(&sent));
+    }
+
+    /// A link with no page, and a page with no link, are each work.
+    #[test]
+    fn either_half_alone_is_teardown_work() {
+        let (_d, conn) = test_conn();
+        let linked = seed(&conn);
+        set_payment_link(&conn, linked, "plink_1", "https://buy.stripe.com/x").unwrap();
+        assert!(has_teardown_work(&get_invoice(&conn, linked).unwrap()));
+
+        let (_d2, other) = test_conn();
+        let published = seed(&other);
+        mark_published(&other, published, "2026-08-04").unwrap();
+        assert!(has_teardown_work(&get_invoice(&other, published).unwrap()));
     }
 
     /// The ordinary void on an installation with nothing configured: an

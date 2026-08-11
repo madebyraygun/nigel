@@ -525,6 +525,35 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('[data-void-warning]')).toBeNull();
   });
 
+  it('dismisses one void warning without losing the other', async () => {
+    // The unconfigured-and-published row of the matrix: a live payment link and
+    // a live page. Killing the link is no reason to lose the page's sentence.
+    await answerConfirm(true);
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, canVoid: true });
+    fake.voidTeardown = {
+      paymentLinkUrl: 'https://buy.stripe.com/x',
+      teardownWarnings: [
+        'Warning: stripe_secret_key is not configured, so the Stripe payment link is still live: https://buy.stripe.com/x — deactivate it in Stripe yourself.',
+        'Warning: this invoice was already published and the R2 publisher is not configured, so its page stays live and still offers to take payment — take it down yourself.',
+      ],
+    };
+    const { el } = await mount('number=1252', fake);
+
+    button(el, '[data-void]').click();
+    await settle(el);
+    expect(el.shadowRoot?.querySelectorAll('[data-void-warning]').length).toBe(2);
+
+    el.shadowRoot
+      ?.querySelectorAll('[data-void-warning]')[0]
+      .dispatchEvent(new CustomEvent('nc-notice-action', { bubbles: true, composed: true }));
+    await settle(el);
+
+    const left = el.shadowRoot?.querySelectorAll('[data-void-warning]');
+    expect(left?.length).toBe(1);
+    expect(left?.[0].getAttribute('message')).toContain('page stays live');
+  });
+
   it('says nothing extra about a void that had nothing to take down', async () => {
     await answerConfirm(true);
     const fake = client();

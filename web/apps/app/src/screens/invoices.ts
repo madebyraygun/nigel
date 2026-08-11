@@ -522,9 +522,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.actionError = null;
   };
 
-  private dismissVoidWarnings = (): void => {
-    this.voidWarnings = [];
-  };
+  /**
+   * One warning, not all of them: the two-warning case — a live payment link
+   * *and* a page still up — is the one this exists for, and dealing with the
+   * link is no reason to lose the sentence about the page.
+   */
+  private dismissVoidWarning(index: number): void {
+    this.voidWarnings = this.voidWarnings.filter((_, i) => i !== index);
+  }
 
   private openPayment = (): void => {
     const detail = this.detail;
@@ -757,13 +762,13 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           ></wc-notice-bar>`
         : nothing}
       ${this.voidWarnings.map(
-        (warning) =>
+        (warning, index) =>
           html`<wc-notice-bar
             variant="warning"
             data-void-warning
             message=${warning}
             action-label="Dismiss"
-            @nc-notice-action=${this.dismissVoidWarnings}
+            @nc-notice-action=${() => this.dismissVoidWarning(index)}
           ></wc-notice-bar>`
       )}
 
