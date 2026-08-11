@@ -410,8 +410,10 @@ and blank names that `add_client` refuses.
   rather than a bare `from`.
 - **Follows PR-3b (TASK-74/73)** in the same worktree, so `Client` already
   carries `archived_at` and `list_clients` already takes a `ClientScope`.
-- **Migration number: v8** under the allocation proposed in the 74/73 spec
-  (Stream 1's TASK-70 index = v6, archive = v7). Confirm before starting.
+- **Migration numbering** follows the merge-order rule in the 74/73 spec: this
+  migration is written as the next free number on its base and renumbered to
+  last on rebase if another stream's landed first. It is always after the
+  archive migration, since they share a worktree and a PR order.
 - **Stream 2's TASK-78** edits `render_html.rs` and `templates/invoice.html`.
   This task deliberately edits neither, so the two should not collide — but if
   78 changes what `{{CLIENT_EMAIL}}` renders, it is the same field this design

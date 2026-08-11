@@ -262,27 +262,34 @@ the non-ignored guard test will fail until it is.
 
 ## Coordination: migration numbers
 
-The latest migration is **v5**. Three of TASK-86's streams may add one:
+The latest migration on `main` is **v5**. Three of TASK-86's PRs add one:
 
-- Stream 1, TASK-70 — a `UNIQUE` index on `clients.name`, if the decision goes
-  that way.
+- Stream 1 — **v6**, normalizing unpadded stored dates (TASK-69). Its spec,
+  `2026-08-11-task-69-71-63-70-invoice-correctness-design.md`, recommends
+  *against* the `clients.name` `UNIQUE` index (TASK-70), so there is no second
+  Stream 1 migration and no index on `clients` to interact with.
 - This PR (3b) — `archived_at` on `clients`.
 - PR-3c, TASK-77 — the `client_contacts` table.
 
-All three touch `clients`, and any two of them appended to `MIGRATIONS`
+Any two of them appended to `MIGRATIONS`
 independently produce the same version number and a guaranteed conflict in the
-same array. The resolution is mechanical (renumber, bump the description) but it
-is silent if two databases have already run the same version number with
-different SQL, which is a corruption class, not a merge annoyance.
+same array. Two failure modes, both worse than the conflict:
 
-**Proposed allocation, for the orchestrator to confirm before any of the three
-starts:** Stream 1 takes **v6**, this PR takes **v7**, PR-3c takes **v8**. Each
-stream hard-codes its number and its plan's first task asserts
-`LATEST_VERSION == <n>`; whoever merges second rebases rather than renumbering
-after the fact. If Stream 1 decides against the index (TASK-70's AC allows
-"document the advisory behaviour as deliberate"), v6 goes unused rather than
-being reclaimed — a gap in the sequence costs nothing and a reused number costs
-a database.
+- **A reused number.** Two databases run "v6" and get different schemas.
+- **A gap.** `apply_migrations` runs everything with `version > current`, so a
+  database stamped v7 will *never* run a v6 that merges afterwards. Reserving v6
+  for Stream 1 and shipping v7 first is therefore not safe — it silently skips
+  Stream 1's migration on every database that upgraded in between.
+
+**The rule, for the orchestrator to confirm before any of the three starts:**
+migration numbers are assigned by **merge order, not by reservation**. Each
+stream writes its migration as the next free number on its branch's base, and
+before merging, rebases onto `main` and renumbers to last if another migration
+landed first. The diff is the version literal and the `LATEST_VERSION`
+assertion in the tests. Within Stream 3 the order is fixed by the PR sequence:
+archive comes before contacts. On today's `main` that makes this migration v6
+and TASK-77's v7; if Stream 1's date migration merges first, they become v7 and
+v8.
 
 ## Open questions for the orchestrator
 
