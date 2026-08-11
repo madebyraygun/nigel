@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@stream-4'
 created_date: '2026-08-09 00:45'
-updated_date: '2026-08-11 20:32'
+updated_date: '2026-08-11 23:17'
 labels:
   - bug
   - web
@@ -82,6 +82,58 @@ demo data. Both need a browser. Everything they would have confirmed is
 asserted in tests except the two things tests cannot reach — that the dialog
 panel is actually opaque (axe under jsdom does not evaluate colour contrast)
 and what a printer does. Those are the review.
+
+REVIEW ROUND 2 — four visual defects and AC #2 not met. One root cause, and it
+was not the part rules.
+
+Web Awesome splits each component into compiled CSS inside the shadow root and
+the --wa-* properties that CSS reads, which ship in the stylesheet this app
+never loads. The theme defined a colour and type vocabulary and never the
+structural one: of the 74 --wa-* tokens the nine primitives we render actually
+read, 68 were undefined. An undefined custom property is not a default — CSS
+discards the declaration referencing it.
+
+  buttons, no padding      padding: 0 var(--wa-form-control-padding-inline)
+                           height: var(--wa-form-control-height)
+  dialog header flush      padding-block-start:
+                             calc(var(--spacing) - var(--wa-form-control-padding-block))
+                           -> invalid calc voids the whole declaration
+  heading at body size     var(--wa-font-size-l), var(--wa-font-weight-heading)
+  inputs, no border        var(--wa-form-control-border-style)
+                           -> a border with no style is not drawn, which is why
+                              controlsCss setting border-color looked inert
+
+--wa-shadow-s/m/l were a third variant: defined only inside print.ts's
+@media print block, so the dialog had no shadow on screen.
+
+Fix is tokens/wa-contract.ts, per the ruling — tokens over per-part rules. It
+inherits to every component at once, dark mode and print follow for free
+because var() resolves at use time, and it carries no hex so contrast.test.ts's
+nth-#rrggbb indexing passes unchanged.
+
+Also removed the wa-input/select/textarea::part(base) and
+::part(form-control-label) blocks from controls.ts. Not only redundant: an
+outer-tree ::part() rule beats the shadow tree's own for the same property
+regardless of specificity — the property this whole task relies on — so those
+unconditional rules were overriding Web Awesome's disabled and
+appearance="filled" treatments too.
+
+wa-contract.test.ts reads the required token list out of the installed package
+rather than a written-down copy, counts only bare var(--x) (var(--x, fallback)
+is WA's per-variant indirection, and defining those at :root would pin every
+button to one variant), and stops scanning at @media print. Confirmed to fail
+naming the token and its five consumers when one is deleted.
+
+Preview coverage needed nothing new: over-a-populated-list already renders the
+dialog with four populated, unfocused fields, and wc-client-form's saving state
+covers the disabled variant the part-rule removal restores.
+
+Spec §8 carries the reasoning as an addendum.
+
+Not verified: no browser here. All four defects are argued from the Web
+Awesome source and asserted in tests, and none has been seen. Body and footer
+dialog padding come from --wa-space-l, which was already defined — if those
+still read flush after this, it is a different cause.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
