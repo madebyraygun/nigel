@@ -100,10 +100,11 @@ pub fn create_invoice(
 ) -> Result<i64> {
     ensure_client_exists(conn, client_id)?;
     validate_items(items)?;
-    validate_date(issue_date, "issue")?;
-    if let Some(due) = due_date {
-        validate_date(due, "due")?;
-    }
+    let issue_date = validate_date(issue_date, "issue")?;
+    let due_date = match due_date {
+        Some(due) => Some(validate_date(due, "due")?),
+        None => None,
+    };
     let currency = validate_currency(currency)?;
     let tx = conn.unchecked_transaction()?;
 
@@ -285,14 +286,19 @@ fn is_overdue(due_date: Option<&str>, today: &str) -> bool {
     }
 }
 
-/// `YYYY-MM-DD`, or an `Invalid` error naming the field.
-pub fn validate_date(value: &str, what: &str) -> Result<()> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+/// `YYYY-MM-DD`, zero-padded, or an `Invalid` error naming the field.
+///
+/// Returns the re-formatted date rather than the caller's string: chrono accepts
+/// `2026-8-7`, and a value stored that way is never `>` its own month in
+/// `is_overdue`'s string comparison. Same shape as `validate_currency` below,
+/// which has always returned the normalized code.
+pub fn validate_date(value: &str, what: &str) -> Result<String> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
         NigelError::Invalid(format!(
             "Invalid {what} date: {value} (expected YYYY-MM-DD)"
         ))
     })?;
-    Ok(())
+    Ok(date.format("%Y-%m-%d").to_string())
 }
 
 /// Normalizes a 3-letter code to uppercase, or an `Invalid` error.
@@ -379,12 +385,15 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
     if let Some(ref items) = update.items {
         validate_items(items)?;
     }
-    if let Some(ref issue_date) = update.issue_date {
-        validate_date(issue_date, "issue")?;
-    }
-    if let Some(Some(ref due_date)) = update.due_date {
-        validate_date(due_date, "due")?;
-    }
+    let issue_date = match update.issue_date {
+        Some(ref d) => Some(validate_date(d, "issue")?),
+        None => None,
+    };
+    let due_date = match update.due_date {
+        Some(Some(ref d)) => Some(Some(validate_date(d, "due")?)),
+        Some(None) => Some(None),
+        None => None,
+    };
     let currency = match update.currency {
         Some(ref code) => Some(validate_currency(code)?),
         None => None,
@@ -394,11 +403,11 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
 
     let mut updates = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    if let Some(ref issue_date) = update.issue_date {
+    if let Some(ref issue_date) = issue_date {
         params.push(Box::new(issue_date.clone()));
         updates.push(format!("issue_date = ?{}", params.len()));
     }
-    if let Some(ref due_date) = update.due_date {
+    if let Some(ref due_date) = due_date {
         params.push(Box::new(due_date.clone()));
         updates.push(format!("due_date = ?{}", params.len()));
     }
@@ -451,11 +460,8 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
     }
 
     tx.commit()?;
-    let issue_date = update
-        .issue_date
-        .clone()
-        .unwrap_or(invoice.issue_date.clone());
-    refresh_status(conn, invoice_id, &issue_date)?;
+    let reference_day = issue_date.unwrap_or(invoice.issue_date.clone());
+    refresh_status(conn, invoice_id, &reference_day)?;
     Ok(())
 }
 
@@ -814,9 +820,9 @@ pub struct AgingReport {
 const AGING_LABELS: [&str; 5] = ["current", "1-30", "31-60", "61-90", "90+"];
 
 pub fn ar_aging_detail(conn: &Connection, today: &str) -> Result<AgingReport> {
-    let as_of = today.to_string();
-    validate_date(today, "as-of")?;
-    let today = NaiveDate::parse_from_str(today, "%Y-%m-%d").expect("validate_date just parsed it");
+    let as_of = validate_date(today, "as-of")?;
+    let today =
+        NaiveDate::parse_from_str(&as_of, "%Y-%m-%d").expect("validate_date just parsed it");
 
     let mut buckets: Vec<AgingBucket> = AGING_LABELS
         .iter()
@@ -2237,8 +2243,8 @@ mod tests {
     #[test]
     fn a_malformed_as_of_date_is_invalid_not_other() {
         let (_d, conn) = test_conn();
-        // Zero-padding is not checked here: chrono's %Y-%m-%d accepts
-        // "2026-3-1" and every other validate_date caller lives with that. The
+        // Zero-padding is not *rejected* here: chrono's %Y-%m-%d accepts
+        // "2026-3-1", which validate_date normalizes rather than refuses. The
         // HTTP layer is where the stricter parse belongs.
         for as_of in ["March", "2026-08-32", ""] {
             let err = ar_aging_detail(&conn, as_of).unwrap_err();
@@ -2460,5 +2466,115 @@ mod tests {
         let (_d, conn) = test_conn();
         let (_cid, ids) = seed_three(&conn);
         assert!(payments(&conn, ids[0]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn validate_date_normalizes_to_zero_padded_iso() {
+        assert_eq!(validate_date("2026-8-7", "issue").unwrap(), "2026-08-07");
+        assert_eq!(validate_date("2026-08-07", "issue").unwrap(), "2026-08-07");
+        assert_eq!(validate_date("2026-12-31", "due").unwrap(), "2026-12-31");
+        for bad in ["March", "2026-13-01", "2026-08-32", "", "2026-08-07extra"] {
+            assert!(validate_date(bad, "issue").is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_unpadded_issue_or_due_date_is_stored_padded() {
+        let (_d, conn) = test_conn();
+        let cid = client_id(&conn, "Acme");
+        let items = vec![NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-8-7",
+            Some("2026-9-1"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let inv = get_invoice(&conn, id).unwrap();
+        assert_eq!(inv.issue_date, "2026-08-07");
+        assert_eq!(inv.due_date.as_deref(), Some("2026-09-01"));
+    }
+
+    #[test]
+    fn an_unpadded_date_edited_onto_a_draft_is_stored_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        update_invoice(
+            &conn,
+            id,
+            &InvoiceUpdate {
+                issue_date: Some("2026-8-7".into()),
+                due_date: Some(Some("2026-9-1".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let inv = get_invoice(&conn, id).unwrap();
+        assert_eq!(inv.issue_date, "2026-08-07");
+        assert_eq!(inv.due_date.as_deref(), Some("2026-09-01"));
+    }
+
+    /// AC #2, the half that is actually broken: `is_overdue` compares strings, and
+    /// "2026-08-20" > "2026-8-7" is false.
+    #[test]
+    fn overdue_derives_the_same_whether_the_due_date_was_typed_padded_or_not() {
+        let (_d, conn) = test_conn();
+        let padded = open_invoice(&conn, "Padded", "2026-07-01", Some("2026-07-05"), 100.0);
+        let unpadded = open_invoice(&conn, "Unpadded", "2026-07-01", Some("2026-7-5"), 100.0);
+
+        assert_eq!(
+            refresh_status(&conn, padded, "2026-08-20").unwrap(),
+            "overdue"
+        );
+        assert_eq!(
+            refresh_status(&conn, unpadded, "2026-08-20").unwrap(),
+            "overdue"
+        );
+    }
+
+    /// AC #2, the other half. Aging already bucketed both correctly (chrono parses
+    /// `2026-7-5`); what it printed was the raw string. This pins both.
+    #[test]
+    fn aging_buckets_and_prints_the_same_whether_the_due_date_was_typed_padded_or_not() {
+        let (_d, conn) = test_conn();
+        open_invoice(&conn, "Padded", "2026-06-01", Some("2026-07-05"), 100.0);
+        open_invoice(&conn, "Unpadded", "2026-06-01", Some("2026-7-5"), 100.0);
+
+        let report = ar_aging_detail(&conn, AGING_TODAY).unwrap();
+        let padded = report
+            .invoices
+            .iter()
+            .find(|i| i.client == "Padded")
+            .unwrap();
+        let unpadded = report
+            .invoices
+            .iter()
+            .find(|i| i.client == "Unpadded")
+            .unwrap();
+        assert_eq!(padded.bucket, unpadded.bucket);
+        assert_eq!(padded.days_past_due, unpadded.days_past_due);
+        assert_eq!(
+            unpadded.due_date, "2026-07-05",
+            "the stored date must already be padded"
+        );
+    }
+
+    #[test]
+    fn an_unpadded_as_of_date_is_reported_padded() {
+        let (_d, conn) = test_conn();
+        assert_eq!(
+            ar_aging_detail(&conn, "2026-8-4").unwrap().as_of,
+            "2026-08-04"
+        );
     }
 }
