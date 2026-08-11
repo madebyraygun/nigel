@@ -27,7 +27,7 @@ pub fn render_invoice(
     // the same order.
     let items = line_items(conn, invoice.id)?;
     let html = render_invoice_html(branding, invoice, client, &items, pay);
-    let pdf = render_pdf(invoice, client, &items)?;
+    let pdf = render_pdf(invoice, client, &items, branding.company)?;
     Ok(RenderedInvoice { html, pdf })
 }
 
@@ -36,8 +36,9 @@ fn render_pdf(
     invoice: &Invoice,
     client: &Client,
     items: &[InvoiceLineItem],
+    company: &str,
 ) -> Result<Option<Vec<u8>>> {
-    crate::pdf::render_invoice_pdf(invoice, client, items).map(Some)
+    crate::pdf::render_invoice_pdf(invoice, client, items, company).map(Some)
 }
 
 #[cfg(not(feature = "pdf"))]
@@ -45,6 +46,7 @@ fn render_pdf(
     _invoice: &Invoice,
     _client: &Client,
     _items: &[InvoiceLineItem],
+    _company: &str,
 ) -> Result<Option<Vec<u8>>> {
     Ok(None)
 }
@@ -203,6 +205,26 @@ mod tests {
         )
         .unwrap();
         assert!(out.pdf.unwrap().starts_with(b"%PDF"));
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_pdf_carries_the_same_company_the_html_does() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let branding = Branding {
+            template: "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            company: "Bluepeak LLC",
+            contact_email: "b@e.test",
+        };
+        let out = render_invoice(&conn, &invoice, &client, PayButton::Omitted, &branding).unwrap();
+
+        assert!(out.html.contains("<h1>Bluepeak LLC</h1>"));
+        let text = crate::pdf::extract_text(&out.pdf.unwrap());
+        assert!(text.contains("Bluepeak LLC"), "got: {text}");
     }
 
     #[cfg(not(feature = "pdf"))]
