@@ -221,6 +221,7 @@ pub fn record_payment(
     stripe_session: Option<&str>,
 ) -> Result<bool> {
     validate_payment_method(method)?;
+    let paid_date = validate_date(paid_date, "payment")?;
     ensure_not_void(&get_invoice(conn, invoice_id)?, "paid")?;
     if let Some(sid) = stripe_session {
         let seen: bool = conn.query_row(
@@ -239,7 +240,7 @@ pub fn record_payment(
     )?;
     // The payment date, not the wall clock, is the reference day so the derived
     // status is deterministic regardless of when the payment is entered.
-    refresh_status(conn, invoice_id, paid_date)?;
+    refresh_status(conn, invoice_id, &paid_date)?;
     Ok(true)
 }
 
@@ -470,12 +471,13 @@ pub fn update_invoice(conn: &Connection, invoice_id: i64, update: &InvoiceUpdate
 pub fn void_invoice(conn: &Connection, invoice_id: i64, voided_on: &str) -> Result<()> {
     let invoice = get_invoice(conn, invoice_id)?;
     ensure_voidable(conn, &invoice)?;
+    let voided_on = validate_date(voided_on, "void")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE invoices SET voided_at = ?1 WHERE id = ?2",
         rusqlite::params![voided_on, invoice_id],
     )?;
-    refresh_status(&tx, invoice_id, voided_on)?;
+    refresh_status(&tx, invoice_id, &voided_on)?;
     tx.commit()?;
     Ok(())
 }
@@ -2575,6 +2577,52 @@ mod tests {
         assert_eq!(
             ar_aging_detail(&conn, "2026-8-4").unwrap().as_of,
             "2026-08-04"
+        );
+    }
+
+    #[test]
+    fn record_payment_stores_an_unpadded_date_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        record_payment(&conn, id, 50.0, "2026-8-9", "ach", None).unwrap();
+
+        let dates: Vec<String> = payments(&conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.paid_date)
+            .collect();
+        assert_eq!(dates, vec!["2026-08-09".to_string()]);
+    }
+
+    /// `nigel invoice pay --date March` wrote "March" into the column and then handed
+    /// it to `refresh_status` as the reference day. The CLI never checked; the TUI did.
+    #[test]
+    fn record_payment_refuses_a_malformed_date_instead_of_storing_it() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+
+        let err = record_payment(&conn, id, 50.0, "March", "ach", None).unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "Invalid payment date: March (expected YYYY-MM-DD)"
+        );
+        assert_eq!(
+            paid_amount(&conn, id).unwrap(),
+            0.0,
+            "a refused payment writes no row"
+        );
+    }
+
+    #[test]
+    fn void_invoice_stores_an_unpadded_date_padded() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        void_invoice(&conn, id, "2026-8-6").unwrap();
+
+        assert_eq!(
+            get_invoice(&conn, id).unwrap().voided_at.as_deref(),
+            Some("2026-08-06")
         );
     }
 }
