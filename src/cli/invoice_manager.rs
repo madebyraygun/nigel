@@ -560,6 +560,9 @@ impl InvoiceManager {
             } else {
                 (Style::default(), Style::default(), "")
             };
+            // The focus anchor is the *last* line of the focused field, its
+            // refusal included — otherwise the message renders one line past
+            // the bottom of the window and Enter looks like it did nothing.
             if focused {
                 focus_line = lines.len();
             }
@@ -567,40 +570,43 @@ impl InvoiceManager {
                 Span::styled(format!("   {label:<12} "), label_style),
                 Span::styled(format!("{value}{cursor}"), value_style),
             ]));
-            lines.extend(error_line(form, idx, FIELD_VALUE_COLUMN));
+            if let Some(message) = error_line(form, idx, FIELD_VALUE_COLUMN) {
+                if focused {
+                    focus_line = lines.len();
+                }
+                lines.push(message);
+            }
         }
 
+        let (table, columns) = item_table(form);
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            item_row_text("#", "Description", "Qty", "Unit", "Amount"),
+            columns.pad(&table[0]).concat(),
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         )));
         for row in 0..form.items.len() {
-            if form.focused_cell().is_some_and(|(r, _)| r == row) {
+            let row_focused = form.focused_cell().is_some_and(|(r, _)| r == row);
+            if row_focused {
                 focus_line = lines.len();
             }
-            lines.push(item_line(form, row));
+            lines.push(item_line(form, row, &columns.pad(&table[row + 1])));
             for cell in [DESC_CELL, QTY_CELL, UNIT_CELL] {
-                lines.extend(error_line(
-                    form,
-                    InvoiceForm::cell_index(row, cell),
-                    ITEM_TEXT_COLUMN,
-                ));
+                let anchor = InvoiceForm::cell_index(row, cell);
+                if let Some(message) = error_line(form, anchor, ITEM_TEXT_COLUMN) {
+                    if row_focused {
+                        focus_line = lines.len();
+                    }
+                    lines.push(message);
+                }
             }
         }
 
         lines.push(Line::from(""));
         // Through the table's own budget, so the running total lands under the
         // Amount column rather than under the detail view's narrower one.
-        lines.push(Line::from(item_row_text(
-            "",
-            "",
-            "",
-            "Total",
-            &money(form.total()),
-        )));
+        lines.push(Line::from(columns.pad(&table[table.len() - 1]).concat()));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("   {DRAFT_HINT}"),
@@ -612,10 +618,16 @@ impl InvoiceManager {
         let end = (start + visible).min(lines.len());
         frame.render_widget(Paragraph::new(lines[start..end].to_vec()), content_area);
 
-        let hint = if form.focused_cell().is_some() {
-            " Tab=field  Ins/F2=add line  Del/F3=remove line  Enter=create  Esc=cancel"
-        } else {
-            " Tab=field  Left/Right=client  Ins/F2=add line  Enter=create  Esc=cancel"
+        // Left/Right does nothing anywhere but the selector, so only the
+        // selector advertises it.
+        let hint = match form.focused {
+            CLIENT_IDX => {
+                " Tab=field  Left/Right=client  Ins/F2=add line  Enter=create  Esc=cancel"
+            }
+            _ if form.focused_cell().is_some() => {
+                " Tab=field  Ins/F2=add line  Del/F3=remove line  Enter=create  Esc=cancel"
+            }
+            _ => " Tab=field  Ins/F2=add line  Enter=create  Esc=cancel",
         };
         frame.render_widget(Paragraph::new(hint).style(FOOTER_STYLE), hints_area);
     }
@@ -1326,7 +1338,16 @@ impl InvoiceManager {
     /// no clients — an invoice needs one, and the client selector would
     /// otherwise have nothing to select.
     fn open_new_form(&mut self, conn: &Connection, today: &str) {
-        let clients = list_clients(conn).unwrap_or_default();
+        // Reported rather than defaulted: an unreadable clients table and an
+        // empty one are opposite problems, and "No clients yet" is advice that
+        // would send someone to add the client they already have.
+        let clients = match list_clients(conn) {
+            Ok(clients) => clients,
+            Err(e) => {
+                self.set_status(e.to_string());
+                return;
+            }
+        };
         if clients.is_empty() {
             self.set_status("No clients yet. Add one on the Clients screen first.".into());
             return;
@@ -1512,19 +1533,85 @@ fn error_line(form: &InvoiceForm, field: usize, indent: usize) -> Option<Line<'s
     )))
 }
 
-/// The line-item table's column budget, shared by the header and every row so
-/// the two cannot drift. 79 columns, one inside an 80-column frame.
-fn item_row_text(number: &str, description: &str, qty: &str, unit: &str, amount: &str) -> String {
-    format!("   {number:>2}  {description:<38} {qty:>8} {unit:>11} {amount:>12}")
+/// The line-item table's column budget, fitted to the **whole** table — the
+/// header, every row and the total — so those three cannot drift apart, and
+/// held to `ROW_WIDTH`.
+///
+/// The **description yields**, which is `list_cells`' call for the invoice
+/// list: an eight-figure unit amount needs a wider figure column, and taking
+/// that width from the description is what keeps the figure itself on screen.
+/// Truncating a number would be the one thing worse than a wrapped row.
+#[derive(Clone, Copy)]
+struct ItemColumns {
+    number: usize,
+    description: usize,
+    quantity: usize,
+    unit: usize,
+    amount: usize,
 }
 
-/// One editable row: the focused cell is cyan and carries the cursor, and the
-/// amount is derived, never typed.
-fn item_line(form: &InvoiceForm, row: usize) -> Line<'static> {
+/// The narrowest a description is allowed to get before the row is simply
+/// allowed to overrun, matching `list_cells`' own floor.
+const MIN_DESCRIPTION: usize = 8;
+
+impl ItemColumns {
+    fn fit(rows: &[[String; 5]]) -> Self {
+        let width = |column: usize, min: usize| {
+            rows.iter()
+                .map(|row| row[column].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(min)
+        };
+        let (number, quantity, unit, amount) =
+            (width(0, 2), width(2, 8), width(3, 11), width(4, 12));
+        // The three-space marker, the two spaces after the row number, and one
+        // space before each of the three figure columns.
+        let fixed = 3 + number + 2 + 3 + quantity + unit + amount;
+        Self {
+            number,
+            description: ROW_WIDTH.saturating_sub(fixed).max(MIN_DESCRIPTION),
+            quantity,
+            unit,
+            amount,
+        }
+    }
+
+    /// One row's five cells, padded to the budget, in column order.
+    fn pad(&self, row: &[String; 5]) -> [String; 5] {
+        [
+            format!("   {:>width$}  ", row[0], width = self.number),
+            format!(
+                "{:<width$}",
+                truncate(&row[1], self.description),
+                width = self.description
+            ),
+            format!(" {:>width$}", row[2], width = self.quantity),
+            format!(" {:>width$}", row[3], width = self.unit),
+            format!(" {:>width$}", row[4], width = self.amount),
+        ]
+    }
+}
+
+fn header_cells() -> [String; 5] {
+    ["#", "Description", "Qty", "Unit", "Amount"].map(str::to_string)
+}
+
+fn total_cells(total: f64) -> [String; 5] {
+    [
+        String::new(),
+        String::new(),
+        String::new(),
+        "Total".to_string(),
+        money(total),
+    ]
+}
+
+/// One row's cell text, cursor included, before any padding. The amount is
+/// derived, never typed.
+fn item_cells(form: &InvoiceForm, row: usize) -> [String; 5] {
     let item = &form.items[row];
-    let focused = form
-        .focused_cell()
-        .and_then(|(r, cell)| (r == row).then_some(cell));
+    let focused = focused_cell_of(form, row);
     let typed = |cell: usize, value: &str| {
         if focused == Some(cell) {
             format!("{value}_")
@@ -1532,6 +1619,33 @@ fn item_line(form: &InvoiceForm, row: usize) -> Line<'static> {
             value.to_string()
         }
     };
+    [
+        (row + 1).to_string(),
+        typed(DESC_CELL, &item.description),
+        typed(QTY_CELL, &item.quantity),
+        typed(UNIT_CELL, &item.unit_amount),
+        item.amount()
+            .map_or_else(|| "\u{2014}".to_string(), |a| format!("{a:.2}")),
+    ]
+}
+
+fn focused_cell_of(form: &InvoiceForm, row: usize) -> Option<usize> {
+    form.focused_cell()
+        .and_then(|(r, cell)| (r == row).then_some(cell))
+}
+
+/// Every cell of the line-item table, plus the widths fitted to all of it.
+fn item_table(form: &InvoiceForm) -> (Vec<[String; 5]>, ItemColumns) {
+    let mut rows = vec![header_cells()];
+    rows.extend((0..form.items.len()).map(|row| item_cells(form, row)));
+    rows.push(total_cells(form.total()));
+    let columns = ItemColumns::fit(&rows);
+    (rows, columns)
+}
+
+/// One editable row: the focused cell is cyan, everything derived is dim.
+fn item_line(form: &InvoiceForm, row: usize, cells: &[String; 5]) -> Line<'static> {
+    let focused = focused_cell_of(form, row);
     let style = |cell: usize| {
         if focused == Some(cell) {
             Style::default().fg(Color::Cyan)
@@ -1539,35 +1653,24 @@ fn item_line(form: &InvoiceForm, row: usize) -> Line<'static> {
             Style::default()
         }
     };
-    let amount = item
-        .amount()
-        .map_or_else(|| "\u{2014}".to_string(), |a| format!("{a:.2}"));
-
+    let dim = Style::default().fg(Color::DarkGray);
     Line::from(vec![
-        Span::styled(
-            format!("   {:>2}  ", row + 1),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::styled(
-            format!("{:<38}", truncate(&typed(DESC_CELL, &item.description), 38)),
-            style(DESC_CELL),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            format!("{:>8}", typed(QTY_CELL, &item.quantity)),
-            style(QTY_CELL),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            format!("{:>11}", typed(UNIT_CELL, &item.unit_amount)),
-            style(UNIT_CELL),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            format!("{amount:>12}"),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(cells[0].clone(), dim),
+        Span::styled(cells[1].clone(), style(DESC_CELL)),
+        Span::styled(cells[2].clone(), style(QTY_CELL)),
+        Span::styled(cells[3].clone(), style(UNIT_CELL)),
+        Span::styled(cells[4].clone(), dim),
     ])
+}
+
+/// The whole table as plain strings. A rendered frame is `ROW_WIDTH` cells wide
+/// by construction, so a row that overruns is invisible in a `TestBackend`
+/// buffer — the budget is checked here, on the string, exactly as `list_row`
+/// checks the invoice list's.
+#[cfg(test)]
+fn item_table_strings(form: &InvoiceForm) -> Vec<String> {
+    let (rows, columns) = item_table(form);
+    rows.iter().map(|row| columns.pad(row).concat()).collect()
 }
 
 /// An absent value reads as an em dash, never as an invented blank.
@@ -3473,6 +3576,115 @@ mod tests {
         assert_eq!(new_form(&mgr).total(), 0.0);
         let screen = rendered(&mut mgr);
         assert!(screen.contains('\u{2014}'), "{screen}");
+    }
+
+    /// A form taller than the terminal scrolls to follow the focus, and the
+    /// refusal renders *below* the field it is about — so a window that stops
+    /// at the focused line clips the very sentence that explains why Enter
+    /// appeared to do nothing.
+    #[test]
+    fn a_refusal_on_a_late_line_item_is_scrolled_into_view() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        for row in 0..15 {
+            if row > 0 {
+                mgr.handle_key(KeyCode::Insert, &conn);
+            }
+            // Only the last row is bad, so validation reaches it.
+            let quantity = if row == 14 { ".." } else { "1" };
+            fill_row(&mut mgr, &conn, row, ("Consulting", quantity, "100"));
+        }
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert_eq!(
+            new_form(&mgr).error.clone().map(|(_, m)| m).unwrap(),
+            "Quantity must be a number"
+        );
+        let screen = rendered(&mut mgr);
+        assert!(
+            screen.contains("Quantity must be a number"),
+            "the refusal is off screen:\n{screen}"
+        );
+        assert_eq!(invoice_rows(&conn), 0);
+    }
+
+    #[test]
+    fn a_line_item_row_fits_eighty_columns_at_eight_figures() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        fill_row(
+            &mut mgr,
+            &conn,
+            0,
+            (
+                &"Wintermute Consolidated retainer ".repeat(3),
+                "999",
+                "99999999.99",
+            ),
+        );
+
+        let rows = item_table_strings(new_form(&mgr));
+        for row in &rows {
+            assert!(
+                row.chars().count() <= ROW_WIDTH,
+                "row is {} cols: {row:?}",
+                row.chars().count()
+            );
+        }
+        // The description is what yields; the figures are never truncated.
+        assert!(rows[1].contains("99899999990.01"), "{rows:#?}");
+        assert!(rows[1].contains("99999999.99"), "{rows:#?}");
+        assert!(rows[1].contains('\u{2026}'), "{rows:#?}");
+        // And the header and the total keep the same columns.
+        assert!(rows[0].ends_with("Amount"), "{:?}", rows[0]);
+        assert_eq!(
+            rows[0].chars().count(),
+            rows[1].chars().count(),
+            "header and row widths drifted"
+        );
+        assert_eq!(
+            rows[0].chars().count(),
+            rows[2].chars().count(),
+            "header and total widths drifted"
+        );
+    }
+
+    #[test]
+    fn only_the_client_field_advertises_left_and_right() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        open_form(&mut mgr, &conn);
+        assert!(rendered(&mut mgr).contains("Left/Right=client"));
+
+        focus_field(&mut mgr, &conn, ISSUE_IDX);
+        let screen = rendered(&mut mgr);
+        assert!(!screen.contains("Left/Right"), "{screen}");
+        assert!(screen.contains("Tab=field  Ins/F2=add line"), "{screen}");
+
+        focus_field(&mut mgr, &conn, InvoiceForm::cell_index(0, DESC_CELL));
+        let screen = rendered(&mut mgr);
+        assert!(!screen.contains("Left/Right"), "{screen}");
+        assert!(screen.contains("Del/F3=remove line"), "{screen}");
+    }
+
+    #[test]
+    fn an_unreadable_clients_table_is_reported_not_read_as_an_empty_book() {
+        let (_d, conn) = test_conn();
+        seed_clients(&conn);
+        let mut mgr = manager(&conn);
+        conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+        conn.execute("DROP TABLE clients", []).unwrap();
+        open_form(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        let message = mgr.status_message.clone().unwrap();
+        assert!(!message.starts_with("No clients yet"), "got: {message}");
+        assert!(message.contains("clients"), "got: {message}");
     }
 
     #[test]

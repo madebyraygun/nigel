@@ -23,7 +23,8 @@ dashboard as well. Run `nigel` and press:
 - `k` — **Clients.** The list, `a` to add one, `e` to edit the selected one.
   There is no delete: a client with invoices must not disappear from under them.
 - `n` — **Invoices.** The list (number, status, client, total, balance, due) with
-  `Enter` to open one and `a` to draft a new one. The actions live on the open
+  `Enter` to open one and `a` — or `n`, if that is the mnemonic that comes to
+  hand — to draft a new one. The actions live on the open
   invoice, not the list: `s` sends it, `p` records a payment against it, `v`
   voids it — each with a confirmation, and each refused in the same words the
   CLI would use.
