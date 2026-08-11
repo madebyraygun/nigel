@@ -133,9 +133,57 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 6,
+        description: "normalize stored invoice dates to zero-padded YYYY-MM-DD",
+        up: |conn| {
+            // `validate_date` pads on the way in; these are the rows written
+            // before it did. Parsing is chrono's, not SQL's, so the rule is
+            // exactly the one the data layer applies — and a value that does
+            // not parse is left untouched rather than guessed at.
+            for (table, column) in [
+                ("invoices", "issue_date"),
+                ("invoices", "due_date"),
+                ("invoices", "published_at"),
+                ("invoices", "voided_at"),
+                ("invoice_payments", "paid_date"),
+            ] {
+                normalize_date_column(conn, table, column)?;
+            }
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// Rewrite every parseable value in a date column to zero-padded `YYYY-MM-DD`.
+///
+/// `table` and `column` are compile-time literals from v6's own list, never user
+/// input, so the `format!` is not an injection seam.
+fn normalize_date_column(conn: &Connection, table: &str, column: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
+    ))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    for (id, value) in rows {
+        let Ok(date) = chrono::NaiveDate::parse_from_str(&value, "%Y-%m-%d") else {
+            continue;
+        };
+        let padded = date.format("%Y-%m-%d").to_string();
+        if padded != value {
+            conn.execute(
+                &format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2"),
+                rusqlite::params![padded, id],
+            )?;
+        }
+    }
+    Ok(())
+}
 
 /// Returns the current schema version, or 0 if no version has been set.
 /// Propagates actual DB errors instead of silently defaulting to 0.
@@ -265,6 +313,77 @@ mod tests {
             )
             .unwrap();
         assert!(!table_exists);
+    }
+
+    #[test]
+    fn v6_pads_stored_invoice_dates_and_leaves_unparseable_ones_alone() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (id, name) VALUES (1, 'Acme');
+             INSERT INTO invoices (id, number, client_id, issue_date, due_date, published_at,
+                                   voided_at, status, currency, total, token)
+                 VALUES (1, 1248, 1, '2026-8-7', '2026-9-1', '2026-8-8', NULL, 'sent', 'USD', 100, 't1'),
+                        (2, 1249, 1, '2026-08-07', NULL, NULL, '2026-8-9', 'void', 'USD', 100, 't2'),
+                        (3, 1250, 1, 'March',     NULL, NULL, NULL,       'draft','USD', 100, 't3');
+             INSERT INTO invoice_payments (invoice_id, amount, paid_date, method)
+                 VALUES (1, 50, '2026-8-10', 'ach');
+             UPDATE metadata SET value = '5' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let date = |sql: &str| {
+            conn.query_row(sql, [], |r| r.get::<_, Option<String>>(0))
+                .unwrap()
+        };
+        assert_eq!(
+            date("SELECT issue_date   FROM invoices WHERE id = 1").as_deref(),
+            Some("2026-08-07")
+        );
+        assert_eq!(
+            date("SELECT due_date     FROM invoices WHERE id = 1").as_deref(),
+            Some("2026-09-01")
+        );
+        assert_eq!(
+            date("SELECT published_at FROM invoices WHERE id = 1").as_deref(),
+            Some("2026-08-08")
+        );
+        assert_eq!(
+            date("SELECT voided_at    FROM invoices WHERE id = 2").as_deref(),
+            Some("2026-08-09")
+        );
+        assert_eq!(
+            date("SELECT paid_date    FROM invoice_payments WHERE invoice_id = 1").as_deref(),
+            Some("2026-08-10")
+        );
+        assert_eq!(
+            date("SELECT issue_date FROM invoices WHERE id = 3").as_deref(),
+            Some("March"),
+            "a migration that rewrites what it cannot parse is guessing"
+        );
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn v6_is_idempotent_on_already_padded_dates() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (id, name) VALUES (1, 'Acme');
+             INSERT INTO invoices (id, number, client_id, issue_date, status, currency, total, token)
+                 VALUES (1, 1248, 1, '2026-08-07', 'draft', 'USD', 100, 't1');
+             UPDATE metadata SET value = '5' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let issue: String = conn
+            .query_row("SELECT issue_date FROM invoices WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(issue, "2026-08-07");
     }
 }
 
