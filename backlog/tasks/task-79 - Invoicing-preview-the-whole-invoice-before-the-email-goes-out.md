@@ -4,12 +4,16 @@ title: 'Invoicing: preview the whole invoice before the email goes out'
 status: To Do
 assignee: []
 created_date: '2026-08-10 21:48'
+updated_date: '2026-08-11 20:06'
 labels:
   - enhancement
   - invoicing
   - cli
   - web
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-11-task-79-send-preview-design.md
+  - docs/superpowers/plans/2026-08-11-task-79-send-preview.md
 priority: high
 ---
 
