@@ -1833,6 +1833,7 @@ mod tests {
     #[derive(Default)]
     struct FakeGw {
         create_calls: RefCell<u32>,
+        deactivated: RefCell<Vec<String>>,
     }
     impl PaymentGateway for FakeGw {
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> NigelResult<PaymentLink> {
@@ -1845,11 +1846,24 @@ mod tests {
         fn paid_sessions(&self, _id: &str) -> NigelResult<Vec<PaidSession>> {
             Ok(vec![])
         }
+        fn deactivate_payment_link(&self, id: &str) -> NigelResult<()> {
+            self.deactivated.borrow_mut().push(id.to_string());
+            Ok(())
+        }
     }
 
-    struct FakePub;
+    #[derive(Default)]
+    struct FakePub {
+        pages: RefCell<Vec<String>>,
+    }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
+            Ok(format!("https://billing.example.test/i/{token}/"))
+        }
+        fn publish_page(&self, token: &str, html: &[u8]) -> NigelResult<String> {
+            self.pages
+                .borrow_mut()
+                .push(String::from_utf8(html.to_vec()).expect("utf-8"));
             Ok(format!("https://billing.example.test/i/{token}/"))
         }
     }
@@ -1858,6 +1872,11 @@ mod tests {
     struct ForbiddenPub;
     impl AssetPublisher for ForbiddenPub {
         fn publish(&self, _t: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
+            Err(NigelError::Other(
+                "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
+            ))
+        }
+        fn publish_page(&self, _t: &str, _h: &[u8]) -> NigelResult<String> {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
@@ -1877,6 +1896,9 @@ mod tests {
 
     struct BrokenLinkGw;
     impl PaymentGateway for BrokenLinkGw {
+        fn deactivate_payment_link(&self, _id: &str) -> NigelResult<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> NigelResult<PaymentLink> {
             unreachable!("no link is created for these invoices")
         }
@@ -1889,6 +1911,9 @@ mod tests {
 
     struct PayingGw;
     impl PaymentGateway for PayingGw {
+        fn deactivate_payment_link(&self, _id: &str) -> NigelResult<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> NigelResult<PaymentLink> {
             unreachable!("no link is created for these invoices")
         }
@@ -2051,7 +2076,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &gateway,
-            &FakePub,
+            &FakePub::default(),
             &mailer,
         )
         .expect_err("a void invoice cannot be sent");
@@ -2082,7 +2107,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &gateway,
-            &FakePub,
+            &FakePub::default(),
             &mailer,
         )
         .expect_err("nowhere to send it");
@@ -2109,7 +2134,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &FakeGw::default(),
-            &FakePub,
+            &FakePub::default(),
             &FakeMail::default(),
         )
         .expect_err("no such invoice");
@@ -2185,7 +2210,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &FakeGw::default(),
-            &FakePub,
+            &FakePub::default(),
             &FakeMail::default(),
         )
         .expect_err("nothing to attach");
@@ -2213,7 +2238,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &gateway,
-            &FakePub,
+            &FakePub::default(),
             &mailer,
         )
         .expect("sends");
@@ -2255,7 +2280,7 @@ mod tests {
             AS_OF,
             "billing@example.test",
             &gateway,
-            &FakePub,
+            &FakePub::default(),
             &mailer,
         )
         .expect("resends");
@@ -2316,6 +2341,9 @@ mod tests {
 
         struct OnlyOneWorks;
         impl PaymentGateway for OnlyOneWorks {
+            fn deactivate_payment_link(&self, _id: &str) -> NigelResult<()> {
+                unreachable!("deactivation belongs to void, not to this path")
+            }
             fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> NigelResult<PaymentLink> {
                 unreachable!()
             }

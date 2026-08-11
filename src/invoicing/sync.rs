@@ -173,6 +173,9 @@ mod tests {
 
     struct Gw(Vec<PaidSession>);
     impl PaymentGateway for Gw {
+        fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
             unreachable!()
         }
@@ -187,6 +190,9 @@ mod tests {
         broken: Vec<&'static str>,
     }
     impl PaymentGateway for FlakyGw {
+        fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
             unreachable!()
         }
@@ -205,6 +211,9 @@ mod tests {
 
     struct PerLinkGw;
     impl PaymentGateway for PerLinkGw {
+        fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
             unreachable!()
         }
@@ -398,6 +407,9 @@ mod tests {
         calls: std::cell::RefCell<u32>,
     }
     impl PaymentGateway for SlowFirstCall {
+        fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+            unreachable!("deactivation belongs to void, not to this path")
+        }
         fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
             unreachable!()
         }

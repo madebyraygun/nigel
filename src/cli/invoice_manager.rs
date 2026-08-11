@@ -2178,6 +2178,9 @@ mod tests {
             create_calls: RefCell<u32>,
         }
         impl PaymentGateway for FakeGw {
+            fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+                unreachable!("deactivation belongs to void, not to this path")
+            }
             fn create_payment_link(&self, _i: &Invoice, _c: &Client) -> Result<PaymentLink> {
                 *self.create_calls.borrow_mut() += 1;
                 Ok(PaymentLink {
@@ -2194,10 +2197,16 @@ mod tests {
             fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
                 Ok(format!("https://billing.example.com/i/{token}/"))
             }
+            fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
+                Ok(format!("https://billing.example.com/i/{token}/"))
+            }
         }
         struct FailPub;
         impl AssetPublisher for FailPub {
             fn publish(&self, _t: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
+                Err(NigelError::Other("upload down".into()))
+            }
+            fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))
             }
         }
