@@ -63,15 +63,18 @@ function labels(rows: { cells: Record<string, unknown> }[], key = 'name'): unkno
 }
 
 describe('the report catalog', () => {
-  it('describes every slug exactly once', () => {
-    expect(reportDefs().map((def) => def.slug)).toEqual([...REPORT_SLUGS]);
-    expect(reportDefs('business').map((def) => def.slug)).toEqual([...REPORT_SLUGS]);
+  it('describes every slug exactly once, plus aging', () => {
+    // Aging is the ninth entry in a catalog of eight routes: it reads like a
+    // report but is served at /api/invoices/aging, so it is not in
+    // REPORT_SLUGS and has no export route.
+    expect(reportDefs().map((def) => def.slug)).toEqual([...REPORT_SLUGS, 'aging']);
+    expect(reportDefs('business').map((def) => def.slug)).toEqual([...REPORT_SLUGS, 'aging']);
   });
 
-  it('drops the K-1 worksheet for personal books', () => {
+  it('drops the K-1 worksheet for personal books, keeping aging', () => {
     const slugs = reportDefs('personal').map((def) => def.slug);
     expect(slugs).not.toContain('k1');
-    expect(slugs).toEqual(REPORT_SLUGS.filter((slug) => slug !== 'k1'));
+    expect(slugs).toEqual([...REPORT_SLUGS.filter((slug) => slug !== 'k1'), 'aging']);
   });
 
   it('recognizes a slug and rejects anything else', () => {

@@ -91,6 +91,7 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
         ),
         ReportCommands::Flagged { .. } => text::flagged(),
         ReportCommands::Balance { .. } => text::balance(),
+        ReportCommands::Aging { .. } => text::aging(&crate::cli::today()),
         ReportCommands::K1 { year, .. } => text::k1(*year),
         ReportCommands::All { .. } => Err(crate::error::NigelError::Other(
             "`report all` is export-only".into(),
@@ -150,6 +151,7 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
         ("register", text::register(None, year, None, None, None)),
         ("flagged", text::flagged()),
         ("balance", text::balance()),
+        ("aging", text::aging(&crate::cli::today())),
     ];
     // The K-1 worksheet only means something under the business chart of
     // accounts; personal books skip it in the bulk export.

@@ -6,6 +6,7 @@ pub mod categories;
 pub mod categorize;
 pub mod category_manager;
 pub mod client;
+pub mod client_manager;
 pub mod dashboard;
 pub mod demo;
 pub mod export;
@@ -14,6 +15,7 @@ pub mod import;
 pub mod import_manager;
 pub mod init;
 pub mod invoice;
+pub mod invoice_manager;
 pub mod load;
 pub mod load_manager;
 pub mod onboarding;
@@ -39,6 +41,12 @@ pub mod update;
 use clap::{Args, Parser, Subcommand};
 
 use crate::reports::ReportKind;
+
+/// Today's local date as `YYYY-MM-DD` — the reference day every date-less
+/// command ages, derives and reports against.
+pub fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
 
 pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
     if let Some(m) = month {
@@ -310,6 +318,28 @@ pub enum ClientCommands {
         #[arg(long)]
         address: Option<String>,
     },
+    /// Show one client: details plus invoice history and open balance.
+    Show {
+        /// Client ID (shown in `nigel client list`)
+        id: i64,
+    },
+    /// Update a client. Changes take effect on the next `invoice send`.
+    Edit {
+        /// Client ID (shown in `nigel client list`)
+        id: i64,
+        /// New client name
+        #[arg(long)]
+        name: Option<String>,
+        /// New billing email
+        #[arg(long)]
+        email: Option<String>,
+        /// New billing address
+        #[arg(long)]
+        address: Option<String>,
+        /// New internal notes (never shown to the client)
+        #[arg(long)]
+        notes: Option<String>,
+    },
     /// List all clients.
     List,
 }
@@ -333,6 +363,46 @@ pub enum InvoiceCommands {
         /// Line item as "desc:qty:unit" (repeatable)
         #[arg(long = "item")]
         items: Vec<String>,
+        /// Notes rendered on the invoice, under a "Notes" heading
+        #[arg(long)]
+        notes: Option<String>,
+        /// Payment terms rendered on the invoice, under a "Terms" heading
+        #[arg(long)]
+        terms: Option<String>,
+    },
+    /// Edit a draft invoice. Published and void invoices refuse edits.
+    Edit {
+        /// Invoice number (shown in `nigel invoice list`)
+        number: i64,
+        /// New issue date: YYYY-MM-DD
+        #[arg(long = "issue")]
+        issue_date: Option<String>,
+        /// New due date: YYYY-MM-DD
+        #[arg(long = "due")]
+        due_date: Option<String>,
+        /// Remove the due date, so the invoice never goes overdue
+        #[arg(long = "clear-due", conflicts_with = "due_date")]
+        clear_due: bool,
+        /// New currency code
+        #[arg(long)]
+        currency: Option<String>,
+        /// Replace the notes rendered on the invoice
+        #[arg(long)]
+        notes: Option<String>,
+        /// Replace the payment terms rendered on the invoice
+        #[arg(long)]
+        terms: Option<String>,
+        /// Line item as "desc:qty:unit" (repeatable); replaces every existing line
+        #[arg(long = "item")]
+        items: Vec<String>,
+    },
+    /// Cancel an invoice. Terminal — a void invoice cannot be sent or paid.
+    Void {
+        /// Invoice number (shown in `nigel invoice list`)
+        number: i64,
+        /// Void without confirmation (required when stdin is not a TTY)
+        #[arg(long)]
+        yes: bool,
     },
     /// List invoices.
     List,
@@ -340,6 +410,14 @@ pub enum InvoiceCommands {
     Show {
         /// Invoice number (shown in `nigel invoice list`)
         number: i64,
+    },
+    /// Render an invoice to local files without sending it.
+    Preview {
+        /// Invoice number (shown in `nigel invoice list`)
+        number: i64,
+        /// Directory to write into (default: <data_dir>/previews)
+        #[arg(long)]
+        output_dir: Option<String>,
     },
     /// Render, publish to R2, and email an invoice.
     Send {
@@ -370,6 +448,26 @@ pub enum InvoiceCommands {
         #[arg(long = "from-invoiceshelf")]
         db: String,
     },
+    /// Manage the invoice page template.
+    Template {
+        #[command(subcommand)]
+        command: InvoiceTemplateCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InvoiceTemplateCommands {
+    /// Write the built-in invoice template out as a starting point.
+    Export {
+        /// Destination (default: <data_dir>/templates/invoice.html)
+        #[arg(long)]
+        output: Option<String>,
+        /// Overwrite an existing file
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show where Nigel looks for a custom invoice template.
+    Path,
 }
 
 #[derive(Subcommand)]
@@ -512,6 +610,11 @@ pub enum ReportCommands {
         #[command(flatten)]
         output: ReportOutputArgs,
     },
+    /// A/R aging — outstanding invoices by age. Always as of today.
+    Aging {
+        #[command(flatten)]
+        output: ReportOutputArgs,
+    },
     /// K-1 preparation worksheet (Form 1120-S).
     K1 {
         #[arg(long)]
@@ -544,6 +647,7 @@ impl ReportCommands {
             Self::Register { output, .. } => output.clone(),
             Self::Flagged { output, .. } => output.clone(),
             Self::Balance { output, .. } => output.clone(),
+            Self::Aging { output, .. } => output.clone(),
             Self::K1 { output, .. } => output.clone(),
             Self::All { format, .. } => ReportOutputArgs {
                 mode: Some("export".to_string()),
@@ -562,6 +666,7 @@ impl ReportCommands {
             Self::Register { .. } => ReportKind::Register,
             Self::Flagged { .. } => ReportKind::Flagged,
             Self::Balance { .. } => ReportKind::Balance,
+            Self::Aging { .. } => ReportKind::Aging,
             Self::K1 { .. } => ReportKind::K1,
             Self::All { .. } => ReportKind::All,
         }

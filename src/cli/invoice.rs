@@ -1,22 +1,30 @@
-use std::path::Path;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
 use comfy_table::{Cell, Table};
 use rusqlite::Connection;
 
 use crate::db::get_connection;
 use crate::error::{NigelError, Result};
+use crate::fmt::money;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use crate::invoicing::invoices::{
-    ar_aging, create_invoice, get_invoice, get_invoice_by_number, line_items, paid_amount,
-    record_payment, NewLineItem,
+    create_invoice, ensure_not_void, ensure_voidable, get_invoice, get_invoice_by_number, is_void,
+    line_items, list_invoices, paid_amount, payment_amount, record_payment, update_invoice,
+    InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::mailgun::MailgunClient;
 use crate::invoicing::r2::R2Publisher;
+use crate::invoicing::render::render_invoice;
+use crate::invoicing::render_html::{
+    load_template, template_path, Branding, PayButton, DEFAULT_TEMPLATE,
+};
 use crate::invoicing::send::send_invoice;
 use crate::invoicing::stripe::StripeClient;
-use crate::invoicing::sync::sync_all;
-use crate::models::{Invoice, InvoiceStatus};
+use crate::invoicing::sync::sync_all_report;
+use crate::invoicing::void::void_invoice_with_teardown;
+use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 
 fn parse_item(s: &str) -> Result<NewLineItem> {
@@ -46,49 +54,37 @@ fn parse_items(items: &[String]) -> Result<Vec<NewLineItem>> {
     items.iter().map(|s| parse_item(s)).collect()
 }
 
+/// `--item` on an edit is all-or-nothing: none supplied leaves the existing
+/// lines alone, any supplied replaces the whole set.
+fn optional_items(items: &[String]) -> Result<Option<Vec<NewLineItem>>> {
+    if items.is_empty() {
+        Ok(None)
+    } else {
+        parse_items(items).map(Some)
+    }
+}
+
+fn void_summary(invoice: &Invoice, client_name: &str) -> String {
+    format!(
+        "Invoice #{} — {client_name}, {:.2} {}, {} {}.",
+        invoice.number, invoice.total, invoice.currency, invoice.status, invoice.issue_date
+    )
+}
+
+/// The data layer already answers an absent invoice as `NotFound`; this only
+/// rewrites the sentence, because a terminal can be told what to run next.
 fn find_invoice(conn: &Connection, number: i64) -> Result<Invoice> {
     get_invoice_by_number(conn, number).map_err(|e| match e {
-        NigelError::Db(rusqlite::Error::QueryReturnedNoRows) => NigelError::Other(format!(
+        NigelError::NotFound(_) => NigelError::NotFound(format!(
             "No invoice #{number}. Run `nigel invoice list` to see invoice numbers."
         )),
         other => other,
     })
 }
 
-fn ensure_not_void(invoice: &Invoice, action: &str) -> Result<()> {
-    if invoice.status == InvoiceStatus::Void.as_str() {
-        return Err(NigelError::Other(format!(
-            "Invoice #{} is void and cannot be {action}.",
-            invoice.number
-        )));
-    }
-    Ok(())
-}
-
-/// Resolve the amount to record: the explicit `--amount`, or the whole
-/// outstanding balance. Rejects amounts that would write a junk payment row.
-fn payment_amount(invoice: &Invoice, paid: f64, requested: Option<f64>) -> Result<f64> {
-    match requested {
-        // Negated positive test, not `amount <= 0.0`: NaN compares false against
-        // every bound, and a NaN payment row poisons every later SUM.
-        Some(amount) if !(amount.is_finite() && amount > 0.0) => Err(NigelError::Other(format!(
-            "--amount must be a finite number greater than zero, got {amount:.2}."
-        ))),
-        Some(amount) => Ok(amount),
-        None => {
-            let outstanding = invoice.total - paid;
-            // Same half-cent slack `refresh_status` settles with: anything under
-            // it is already paid in full, not a balance worth recording.
-            if outstanding < 0.005 {
-                return Err(NigelError::Other(format!(
-                    "Invoice #{} has no outstanding balance (total {:.2}, paid {:.2}). Pass --amount to record a payment anyway.",
-                    invoice.number, invoice.total, paid
-                )));
-            }
-            Ok(outstanding)
-        }
-    }
-}
+/// What voiding a published invoice will do, before it does it — the sentence
+/// the CLI's confirmation and the TUI's dialog both show.
+pub(crate) use crate::invoicing::void::PUBLISHED_VOID_NOTICE;
 
 fn require(value: Option<String>, what: &str) -> Result<String> {
     value.ok_or_else(|| {
@@ -98,13 +94,45 @@ fn require(value: Option<String>, what: &str) -> Result<String> {
     })
 }
 
+/// The business name the settings screen writes, as the invoice page and the
+/// email subject want it: a plain string, empty when nobody has set one.
+pub(crate) fn company_name(conn: &Connection) -> String {
+    crate::db::get_metadata(conn, "company_name").unwrap_or_default()
+}
+
 fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
     Ok(StripeClient {
         secret_key: require(cfg.stripe_secret_key.clone(), "stripe_secret_key")?,
     })
 }
 
-fn build_clients(cfg: InvoicingConfig) -> Result<(StripeClient, R2Publisher, MailgunClient)> {
+/// The gateway if this installation has one, rather than a refusal.
+///
+/// Void is the one invoicing command that has to work on a machine with nothing
+/// configured — an invoice can be drafted and cancelled without Stripe ever
+/// being involved — so its teardown asks what is available instead of demanding
+/// the nine keys `send` needs.
+pub(crate) fn optional_gateway(cfg: &InvoicingConfig) -> Option<StripeClient> {
+    Some(StripeClient {
+        secret_key: cfg.stripe_secret_key.clone()?,
+    })
+}
+
+/// The publisher, when every key it takes is set. All five or none: a publisher
+/// missing its bucket is not a publisher that works for four fifths of a page.
+pub(crate) fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
+    Some(R2Publisher {
+        account_id: cfg.r2_account_id.clone()?,
+        access_key: cfg.r2_access_key.clone()?,
+        secret_key: cfg.r2_secret_key.clone()?,
+        bucket: cfg.r2_bucket.clone()?,
+        public_base_url: cfg.public_base_url.clone()?,
+    })
+}
+
+pub(crate) fn build_clients(
+    cfg: InvoicingConfig,
+) -> Result<(StripeClient, R2Publisher, MailgunClient)> {
     let stripe = build_gateway(&cfg)?;
     let r2 = R2Publisher {
         account_id: require(cfg.r2_account_id, "r2_account_id")?,
@@ -127,11 +155,13 @@ pub fn new(
     due_date: Option<&str>,
     currency: &str,
     items: &[String],
+    notes: Option<&str>,
+    terms: Option<&str>,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let parsed = parse_items(items)?;
     let id = create_invoice(
-        &conn, client_id, issue_date, due_date, currency, &parsed, None, None,
+        &conn, client_id, issue_date, due_date, currency, &parsed, notes, terms,
     )?;
     let invoice = get_invoice(&conn, id)?;
     println!(
@@ -141,31 +171,165 @@ pub fn new(
     Ok(())
 }
 
-pub fn list() -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub fn edit(
+    number: i64,
+    issue_date: Option<String>,
+    due_date: Option<String>,
+    clear_due: bool,
+    currency: Option<String>,
+    notes: Option<String>,
+    terms: Option<String>,
+    items: &[String],
+) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let mut stmt = conn.prepare(
-        "SELECT i.number, i.status, c.name, i.total, COALESCE(i.due_date, '')
-         FROM invoices i JOIN clients c ON c.id = i.client_id
-         ORDER BY i.number DESC",
-    )?;
-    let rows: Vec<(i64, String, String, f64, String)> = stmt
-        .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let invoice = find_invoice(&conn, number)?;
+    let had_link = invoice.stripe_payment_link_id.is_some();
 
+    let update = InvoiceUpdate {
+        issue_date,
+        due_date: if clear_due {
+            Some(None)
+        } else {
+            due_date.map(Some)
+        },
+        currency,
+        notes: notes.map(Some),
+        terms: terms.map(Some),
+        items: optional_items(items)?,
+    };
+    update_invoice(&conn, invoice.id, &update)?;
+
+    let updated = get_invoice(&conn, invoice.id)?;
+    println!(
+        "Updated draft invoice #{number} — {:.2} {}",
+        updated.total, updated.currency
+    );
+    if had_link && updated.stripe_payment_link_id.is_none() {
+        println!(
+            "Cleared the stale Stripe payment link; `nigel invoice send {number}` will create a new one."
+        );
+    }
+    Ok(())
+}
+
+pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let invoice = find_invoice(&conn, number)?;
+    ensure_voidable(&conn, &invoice)?;
+    let client = get_client(&conn, invoice.client_id)?;
+
+    println!("{}", void_summary(&invoice, &client.name));
+    if invoice.published_at.is_some() {
+        println!("{PUBLISHED_VOID_NOTICE}");
+    }
+    if !confirm_void(&invoice, yes)? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Whatever this installation can reach. The teardown is best-effort by
+    // construction, so an unset key is a warning at the end, never a refusal
+    // here — see `invoicing::void`'s matrix.
+    let cfg = invoicing_config();
+    let outcome = void_invoice_with_teardown(
+        &conn,
+        invoice.id,
+        today,
+        optional_gateway(&cfg).as_ref(),
+        optional_publisher(&cfg).as_ref(),
+    )?;
+
+    println!("Voided invoice #{number}.");
+    for warning in outcome.warnings() {
+        println!("{warning}");
+    }
+    Ok(())
+}
+
+fn confirm_void(invoice: &Invoice, yes: bool) -> Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(NigelError::Other(format!(
+            "Refusing to void invoice #{} without confirmation. Pass --yes.",
+            invoice.number
+        )));
+    }
+    print!("Void it? [y/N] ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("y"))
+}
+
+/// `nigel invoice list`, as text. Pure, so the parity fixtures can call it
+/// without a terminal — the same shape `cli/report/text.rs` uses.
+pub fn format_invoice_list(rows: &[InvoiceListRow]) -> String {
     let mut table = Table::new();
     table.set_header(vec!["#", "Status", "Client", "Total", "Due"]);
-    for (number, status, client, total, due) in rows {
+    for row in rows {
         table.add_row(vec![
-            Cell::new(number),
-            Cell::new(status),
-            Cell::new(client),
-            Cell::new(format!("{total:.2}")),
-            Cell::new(due),
+            Cell::new(row.number),
+            Cell::new(&row.status),
+            // An invoice whose client row is gone still belongs on the list.
+            Cell::new(row.client_name.as_deref().unwrap_or("\u{2014}")),
+            Cell::new(money(row.total)),
+            Cell::new(row.due_date.as_deref().unwrap_or_default()),
         ]);
     }
-    println!("Invoices\n{table}");
+    format!("Invoices\n{table}")
+}
+
+/// `nigel invoice show`, as text. Ends in a newline, so callers `print!` it.
+pub fn format_invoice_show(
+    invoice: &Invoice,
+    client: &Client,
+    items: &[InvoiceLineItem],
+    paid: f64,
+) -> String {
+    let mut out = format!(
+        "Invoice #{}  [{}]  {} {}\n",
+        invoice.number,
+        invoice.status,
+        invoice.currency,
+        money(invoice.total)
+    );
+    out.push_str(&format!("Client:   {}\n", client.name));
+    out.push_str(&format!("Issued:   {}\n", invoice.issue_date));
+    out.push_str(&format!(
+        "Due:      {}\n",
+        invoice.due_date.as_deref().unwrap_or("-")
+    ));
+
+    let mut table = Table::new();
+    table.set_header(vec!["Description", "Qty", "Unit", "Amount"]);
+    for item in items {
+        table.add_row(vec![
+            Cell::new(&item.description),
+            // Quantity is a count, not an amount — it keeps its plain decimals.
+            Cell::new(format!("{:.2}", item.quantity)),
+            Cell::new(money(item.unit_amount)),
+            Cell::new(money(item.line_total)),
+        ]);
+    }
+    out.push_str(&format!("{table}\n"));
+
+    out.push_str(&format!("Paid:     {}\n", money(paid)));
+    out.push_str(&format!("Balance:  {}\n", money(invoice.total - paid)));
+    if let Some(url) = invoice.stripe_payment_link_url.as_deref() {
+        out.push_str(&format!("Pay:      {url}\n"));
+    }
+    out
+}
+
+pub fn list() -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    println!(
+        "{}",
+        format_invoice_list(&list_invoices(&conn, None, None)?)
+    );
     Ok(())
 }
 
@@ -173,32 +337,108 @@ pub fn show(number: i64) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     let client = get_client(&conn, invoice.client_id)?;
-
-    println!(
-        "Invoice #{}  [{}]  {} {:.2}",
-        invoice.number, invoice.status, invoice.currency, invoice.total
-    );
-    println!("Client:   {}", client.name);
-    println!("Issued:   {}", invoice.issue_date);
-    println!("Due:      {}", invoice.due_date.as_deref().unwrap_or("-"));
-
-    let mut table = Table::new();
-    table.set_header(vec!["Description", "Qty", "Unit", "Amount"]);
-    for item in line_items(&conn, invoice.id)? {
-        table.add_row(vec![
-            Cell::new(item.description),
-            Cell::new(format!("{:.2}", item.quantity)),
-            Cell::new(format!("{:.2}", item.unit_amount)),
-            Cell::new(format!("{:.2}", item.line_total)),
-        ]);
-    }
-    println!("{table}");
-
+    let items = line_items(&conn, invoice.id)?;
     let paid = paid_amount(&conn, invoice.id)?;
-    println!("Paid:     {paid:.2}");
-    println!("Balance:  {:.2}", invoice.total - paid);
-    if let Some(url) = invoice.stripe_payment_link_url {
-        println!("Pay:      {url}");
+
+    print!("{}", format_invoice_show(&invoice, &client, &items, paid));
+    Ok(())
+}
+
+/// The direct-deposit contact line when `from_email` is not configured. Preview
+/// is the one invoicing command that runs without any configuration, so it
+/// renders a visible stand-in rather than refusing.
+const PREVIEW_CONTACT_PLACEHOLDER: &str = "(from_email not configured)";
+
+fn preview_dir(output_dir: Option<String>) -> (PathBuf, bool) {
+    match output_dir {
+        Some(dir) => (
+            PathBuf::from(crate::settings::shellexpand_path(&dir)),
+            false,
+        ),
+        None => (get_data_dir().join("previews"), true),
+    }
+}
+
+fn preview_paths(dir: &Path, number: i64) -> (PathBuf, PathBuf) {
+    (
+        dir.join(format!("invoice-{number}.html")),
+        dir.join(format!("invoice-{number}.pdf")),
+    )
+}
+
+pub(crate) fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
+    // A voided invoice can still carry a live Stripe URL, and rendering a
+    // working Pay button on a cancelled invoice is the one way this command
+    // could cost someone money.
+    if is_void(invoice) {
+        return PayButton::Omitted;
+    }
+    match invoice.stripe_payment_link_url.as_deref() {
+        Some(url) => PayButton::Link(url),
+        None => PayButton::Placeholder,
+    }
+}
+
+pub(crate) fn contact_email_for_preview(cfg: &InvoicingConfig) -> (String, bool) {
+    match cfg.from_email.as_deref() {
+        Some(email) => (email.to_string(), false),
+        None => (PREVIEW_CONTACT_PLACEHOLDER.to_string(), true),
+    }
+}
+
+pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let invoice = find_invoice(&conn, number)?;
+    let client = get_client(&conn, invoice.client_id)?;
+
+    if is_void(&invoice) {
+        eprintln!("notice: invoice #{number} is void — this preview is for reference only.");
+    }
+    let (contact_email, is_placeholder) = contact_email_for_preview(&invoicing_config());
+    if is_placeholder {
+        eprintln!(
+            "notice: from_email is not configured — the direct-deposit contact line is a placeholder"
+        );
+    }
+
+    let template = load_template(&get_data_dir())?;
+    let company = company_name(&conn);
+    let branding = Branding {
+        template: &template,
+        company: &company,
+        contact_email: &contact_email,
+    };
+
+    // Both artifacts are rendered before either is written, so a PDF failure
+    // cannot leave fresh HTML beside a stale PDF.
+    let rendered = render_invoice(
+        &conn,
+        &invoice,
+        &client,
+        pay_button_for(&invoice),
+        &branding,
+    )?;
+
+    let (dir, is_default) = preview_dir(output_dir);
+    std::fs::create_dir_all(&dir)?;
+    if is_default {
+        // Only the directory Nigel chose. A directory the user named may be
+        // shared on purpose, and tightening it would be a surprise.
+        crate::settings::restrict_dir_permissions(&dir)?;
+    }
+    let (html_path, pdf_path) = preview_paths(&dir, number);
+
+    std::fs::write(&html_path, &rendered.html)?;
+    crate::settings::restrict_file_permissions(&html_path)?;
+    println!("Wrote {}", html_path.display());
+
+    match rendered.pdf {
+        Some(bytes) => {
+            std::fs::write(&pdf_path, &bytes)?;
+            crate::settings::restrict_file_permissions(&pdf_path)?;
+            println!("Wrote {}", pdf_path.display());
+        }
+        None => eprintln!("notice: {}", crate::cli::report::PDF_DISABLED_MESSAGE),
     }
     Ok(())
 }
@@ -207,17 +447,17 @@ pub fn send(number: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "sent")?;
+    // The template is loaded before anything is built or created, so a broken
+    // one fails the send with no Stripe link made and nothing published.
+    let template = load_template(&get_data_dir())?;
     let (stripe, r2, mail) = build_clients(invoicing_config())?;
-    let contact_email = mail.from.clone();
-    let url = send_invoice(
-        &conn,
-        invoice.id,
-        today,
-        &contact_email,
-        &stripe,
-        &r2,
-        &mail,
-    )?;
+    let company = company_name(&conn);
+    let branding = Branding {
+        template: &template,
+        company: &company,
+        contact_email: &mail.from,
+    };
+    let url = send_invoice(&conn, invoice.id, today, &branding, &stripe, &r2, &mail)?;
     println!("Sent invoice #{number}: {url}");
     Ok(())
 }
@@ -225,8 +465,16 @@ pub fn send(number: i64, today: &str) -> Result<()> {
 pub fn sync(today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let stripe = build_gateway(&invoicing_config())?;
-    let recorded = sync_all(&conn, today, &stripe)?;
-    println!("Recorded {recorded} new payment(s)");
+    let report = sync_all_report(&conn, today, &stripe)?;
+    // Printing is the front end's job: the data layer hands back the per-invoice
+    // failures so a browser can render the same ones a terminal prints.
+    for failure in &report.failures {
+        eprintln!(
+            "notice: invoice sync failed for #{}: {}",
+            failure.number, failure.message
+        );
+    }
+    println!("Recorded {} new payment(s)", report.recorded);
     Ok(())
 }
 
@@ -246,11 +494,50 @@ pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result
 }
 
 pub fn aging(today: &str) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    println!("A/R aging as of {today}");
-    for bucket in ar_aging(&conn, today)? {
-        println!("{:>8}: {:.2}", bucket.label, bucket.total);
+    println!("{}", crate::cli::report::text::aging(today)?);
+    Ok(())
+}
+
+pub fn template_export(output: Option<&str>, force: bool) -> Result<()> {
+    let destination = match output {
+        Some(path) => PathBuf::from(crate::settings::shellexpand_path(path)),
+        None => template_path(&get_data_dir()),
+    };
+
+    if destination.exists() && !force {
+        return Err(NigelError::Invalid(format!(
+            "{} already exists. Pass --force to overwrite it.",
+            destination.display()
+        )));
     }
+    let write_error = |e: std::io::Error| {
+        NigelError::Invalid(format!(
+            "Cannot write invoice template to {}: {e}",
+            destination.display()
+        ))
+    };
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(write_error)?;
+    }
+    std::fs::write(&destination, DEFAULT_TEMPLATE).map_err(write_error)?;
+
+    println!("Wrote invoice template to {}", destination.display());
+    println!(
+        "Edit it, then check it with `nigel invoice preview <number>` — see docs/invoicing.md."
+    );
+    Ok(())
+}
+
+pub fn template_show_path() -> Result<()> {
+    let path = template_path(&get_data_dir());
+    println!("{}", path.display());
+
+    if !path.exists() {
+        println!("No custom template — the built-in one is in use.");
+        return Ok(());
+    }
+    load_template(&get_data_dir())?;
+    println!("Custom template in effect.");
     Ok(())
 }
 
@@ -269,7 +556,7 @@ mod tests {
     use super::*;
     use crate::db::init_db;
     use crate::invoicing::clients::add_client;
-    use crate::invoicing::invoices::create_invoice;
+    use crate::invoicing::invoices::{create_invoice, set_payment_link, void_invoice};
     use crate::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
@@ -289,6 +576,141 @@ mod tests {
             unit_amount: 100.0,
         }];
         create_invoice(conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap()
+    }
+
+    fn list_row(
+        number: i64,
+        status: &str,
+        client: &str,
+        total: f64,
+        due: Option<&str>,
+    ) -> InvoiceListRow {
+        InvoiceListRow {
+            id: number - 1000,
+            number,
+            status: status.into(),
+            client_id: 1,
+            client_name: Some(client.into()),
+            issue_date: "2026-03-01".into(),
+            due_date: due.map(str::to_string),
+            currency: "USD".into(),
+            total,
+            paid: 0.0,
+            balance: total,
+        }
+    }
+
+    /// Byte-for-byte what `nigel invoice list` prints. Money goes through
+    /// `fmt::money`, the same format `format_aging` and `wc-money` use.
+    #[test]
+    fn format_invoice_list_prints_money_the_way_every_other_report_does() {
+        let out = format_invoice_list(&[
+            list_row(1250, "partial", "Acme Co", 3200.0, Some("2026-08-20")),
+            list_row(1249, "overdue", "Globex", 960.0, Some("2026-06-30")),
+            list_row(1248, "draft", "Northwind Traders", 1850.5, None),
+        ]);
+        assert_eq!(
+            out,
+            concat!(
+                "Invoices\n",
+                "+------+---------+-------------------+-----------+------------+\n",
+                "| #    | Status  | Client            | Total     | Due        |\n",
+                "+=============================================================+\n",
+                "| 1250 | partial | Acme Co           | $3,200.00 | 2026-08-20 |\n",
+                "|------+---------+-------------------+-----------+------------|\n",
+                "| 1249 | overdue | Globex            | $960.00   | 2026-06-30 |\n",
+                "|------+---------+-------------------+-----------+------------|\n",
+                "| 1248 | draft   | Northwind Traders | $1,850.50 |            |\n",
+                "+------+---------+-------------------+-----------+------------+",
+            )
+        );
+    }
+
+    #[test]
+    fn format_invoice_list_shows_an_orphaned_invoice_rather_than_hiding_it() {
+        let mut row = list_row(1247, "void", "gone", 500.0, None);
+        row.client_name = None;
+        let out = format_invoice_list(&[row]);
+        assert!(out.contains("1247"), "got: {out}");
+        assert!(out.contains('\u{2014}'), "want an em dash, got: {out}");
+    }
+
+    /// Byte-for-byte what `nigel invoice show` prints. Quantity keeps its plain
+    /// decimals — it is a count, not an amount.
+    #[test]
+    fn format_invoice_show_prints_money_the_way_every_other_report_does() {
+        let invoice = Invoice {
+            id: 7,
+            number: 1250,
+            client_id: 3,
+            issue_date: "2026-03-01".into(),
+            due_date: Some("2026-08-20".into()),
+            status: "partial".into(),
+            currency: "USD".into(),
+            subtotal: 3200.0,
+            tax: 0.0,
+            total: 3200.0,
+            notes: None,
+            terms: None,
+            token: "aBc123".into(),
+            stripe_payment_link_id: Some("pl_1".into()),
+            stripe_payment_link_url: Some("https://pay/x".into()),
+            published_at: Some("2026-03-01".into()),
+            voided_at: None,
+        };
+        let client = Client {
+            id: 3,
+            name: "Acme Co".into(),
+            email: Some("ap@acme.test".into()),
+            billing_address: None,
+            notes: None,
+        };
+        let item = |description: &str, quantity: f64, unit_amount: f64| InvoiceLineItem {
+            id: None,
+            invoice_id: Some(7),
+            description: description.into(),
+            quantity,
+            unit_amount,
+            line_total: quantity * unit_amount,
+            position: 0,
+        };
+
+        let out = format_invoice_show(
+            &invoice,
+            &client,
+            &[
+                item("Consulting — August", 10.0, 150.0),
+                item("Hosting", 1.0, 1700.0),
+            ],
+            2000.0,
+        );
+        assert_eq!(
+            out,
+            concat!(
+                "Invoice #1250  [partial]  USD $3,200.00\n",
+                "Client:   Acme Co\n",
+                "Issued:   2026-03-01\n",
+                "Due:      2026-08-20\n",
+                "+---------------------+-------+-----------+-----------+\n",
+                "| Description         | Qty   | Unit      | Amount    |\n",
+                "+=====================================================+\n",
+                "| Consulting — August | 10.00 | $150.00   | $1,500.00 |\n",
+                "|---------------------+-------+-----------+-----------|\n",
+                "| Hosting             | 1.00  | $1,700.00 | $1,700.00 |\n",
+                "+---------------------+-------+-----------+-----------+\n",
+                "Paid:     $2,000.00\n",
+                "Balance:  $1,200.00\n",
+                "Pay:      https://pay/x\n",
+            )
+        );
+
+        // No due date reads as a dash; no payment link prints no Pay line.
+        let mut plain = invoice.clone();
+        plain.due_date = None;
+        plain.stripe_payment_link_url = None;
+        let out = format_invoice_show(&plain, &client, &[], 0.0);
+        assert!(out.contains("Due:      -\n"), "got: {out}");
+        assert!(!out.contains("Pay:"), "got: {out}");
     }
 
     #[test]
@@ -311,6 +733,33 @@ mod tests {
         let err = parse_items(&[]).map(|_| ()).unwrap_err().to_string();
         assert!(err.contains("--item"), "got: {err}");
         assert_eq!(parse_items(&["W:1:10".to_string()]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn parse_items_is_optional_for_an_edit() {
+        assert!(optional_items(&[]).unwrap().is_none());
+
+        let parsed = optional_items(&["Rework:2:250".to_string()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].description, "Rework");
+        assert_eq!(parsed[0].unit_amount, 250.0);
+
+        assert!(optional_items(&["Rework:2".to_string()]).is_err());
+    }
+
+    #[test]
+    fn confirm_prompt_names_the_invoice() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        let line = void_summary(&invoice, "Acme Co");
+        assert!(line.contains("#1248"), "got: {line}");
+        assert!(line.contains("Acme Co"), "got: {line}");
+        assert!(line.contains("100.00 USD"), "got: {line}");
+        assert!(line.contains("draft"), "got: {line}");
     }
 
     fn test_config() -> InvoicingConfig {
@@ -385,11 +834,9 @@ mod tests {
     #[test]
     fn unknown_invoice_number_gets_a_readable_error() {
         let (_d, conn) = test_conn();
-        let err = find_invoice(&conn, 9999)
-            .map(|_| ())
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("No invoice #9999"), "got: {err}");
+        let err = find_invoice(&conn, 9999).map(|_| ()).unwrap_err();
+        assert!(matches!(err, NigelError::NotFound(_)), "got: {err:?}");
+        assert!(err.to_string().contains("No invoice #9999"), "got: {err}");
     }
 
     #[test]
@@ -410,16 +857,45 @@ mod tests {
             .unwrap();
         let invoice = find_invoice(&conn, 1248).unwrap();
 
-        let send_err = ensure_not_void(&invoice, "sent").unwrap_err().to_string();
+        let send_err = ensure_not_void(&invoice, "sent").unwrap_err();
         assert!(
-            send_err.contains("void and cannot be sent"),
+            matches!(send_err, NigelError::Conflict { code: "void", .. }),
+            "got: {send_err:?}"
+        );
+        assert!(
+            send_err.to_string().contains("void and cannot be sent"),
             "got: {send_err}"
         );
-        let pay_err = ensure_not_void(&invoice, "paid").unwrap_err().to_string();
+        let pay_err = ensure_not_void(&invoice, "paid").unwrap_err();
         assert!(
-            pay_err.contains("void and cannot be paid"),
+            matches!(pay_err, NigelError::Conflict { code: "void", .. }),
+            "got: {pay_err:?}"
+        );
+        assert!(
+            pay_err.to_string().contains("void and cannot be paid"),
             "got: {pay_err}"
         );
+    }
+
+    #[test]
+    fn a_voided_at_row_whose_status_is_stale_is_still_refused() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn);
+        // A void whose status write did not land: the timestamp is the fact.
+        conn.execute(
+            "UPDATE invoices SET voided_at='2026-08-06', status='draft' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        for action in ["sent", "paid"] {
+            let err = ensure_not_void(&invoice, action).unwrap_err();
+            assert!(
+                matches!(err, NigelError::Conflict { code: "void", .. }),
+                "got: {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -432,56 +908,146 @@ mod tests {
     }
 
     #[test]
-    fn default_payment_is_the_outstanding_balance() {
-        let (_d, conn) = test_conn();
-        seed_invoice(&conn);
-        let invoice = find_invoice(&conn, 1248).unwrap();
-
-        assert_eq!(payment_amount(&invoice, 0.0, None).unwrap(), 100.0);
-        assert_eq!(payment_amount(&invoice, 40.0, None).unwrap(), 60.0);
+    fn preview_paths_are_stable_and_undated() {
+        let (html, pdf) = preview_paths(Path::new("/tmp/p"), 1248);
+        assert_eq!(html, Path::new("/tmp/p/invoice-1248.html"));
+        assert_eq!(pdf, Path::new("/tmp/p/invoice-1248.pdf"));
     }
 
     #[test]
-    fn settled_invoices_have_nothing_left_to_pay() {
+    fn explicit_output_dir_wins_and_is_not_the_default() {
+        let (dir, is_default) = preview_dir(Some("/tmp/elsewhere".into()));
+        assert_eq!(dir, PathBuf::from("/tmp/elsewhere"));
+        assert!(
+            !is_default,
+            "a directory the user named is not re-permissioned"
+        );
+
+        let (dir, is_default) = preview_dir(None);
+        assert!(is_default && dir.ends_with("previews"), "got: {dir:?}");
+    }
+
+    #[test]
+    fn a_draft_with_no_link_gets_the_placeholder_button() {
         let (_d, conn) = test_conn();
         seed_invoice(&conn);
         let invoice = find_invoice(&conn, 1248).unwrap();
+        assert!(matches!(pay_button_for(&invoice), PayButton::Placeholder));
+    }
 
-        for paid in [100.0, 100.001, 150.0] {
-            let err = payment_amount(&invoice, paid, None)
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("no outstanding balance"), "got: {err}");
+    #[test]
+    fn a_sent_invoice_previews_with_its_real_link() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn);
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        let invoice = find_invoice(&conn, 1248).unwrap();
+        assert!(matches!(
+            pay_button_for(&invoice),
+            PayButton::Link("https://pay/x")
+        ));
+    }
+
+    #[test]
+    fn a_void_invoice_never_renders_a_pay_button_even_with_a_live_link() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn);
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        void_invoice(&conn, id, "2026-08-06").unwrap();
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        assert!(
+            matches!(pay_button_for(&invoice), PayButton::Omitted),
+            "a cancelled invoice must not offer a working payment link"
+        );
+    }
+
+    #[test]
+    fn a_stale_void_status_still_omits_the_pay_button() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn);
+        // A void whose status write did not land: the timestamp is the fact,
+        // the same reading `ensure_not_void` takes.
+        conn.execute(
+            "UPDATE invoices SET voided_at='2026-08-06', status='draft',
+                                 stripe_payment_link_url='https://pay/x' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+        let invoice = find_invoice(&conn, 1248).unwrap();
+        assert!(matches!(pay_button_for(&invoice), PayButton::Omitted));
+    }
+
+    #[test]
+    fn missing_from_email_becomes_a_flagged_placeholder() {
+        let (value, placeholder) = contact_email_for_preview(&test_config());
+        assert!(placeholder && value.contains("from_email"), "got: {value}");
+
+        let cfg = InvoicingConfig {
+            from_email: Some("billing@example.test".into()),
+            ..test_config()
+        };
+        assert_eq!(
+            contact_email_for_preview(&cfg),
+            ("billing@example.test".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn preview_requires_no_invoicing_config_at_all() {
+        assert!(build_clients(test_config()).is_err()); // send cannot run
+        assert!(!contact_email_for_preview(&test_config()).0.is_empty()); // preview can
+    }
+
+    /// Void's teardown asks what is configured instead of demanding everything:
+    /// an installation that never set a key still voids, and the warning it
+    /// prints is `invoicing::void`'s.
+    #[test]
+    fn nothing_configured_yields_no_gateway_and_no_publisher() {
+        let cfg = test_config();
+        assert!(optional_gateway(&cfg).is_none());
+        assert!(optional_publisher(&cfg).is_none());
+    }
+
+    #[test]
+    fn the_stripe_key_alone_yields_a_gateway_but_no_publisher() {
+        let cfg = InvoicingConfig {
+            stripe_secret_key: Some("sk_test".into()),
+            ..test_config()
+        };
+        assert!(optional_gateway(&cfg).is_some());
+        assert!(
+            optional_publisher(&cfg).is_none(),
+            "a bucketless publisher is not a publisher"
+        );
+    }
+
+    /// All five R2 keys or none: four of them cannot upload four fifths of a
+    /// page.
+    #[test]
+    fn the_publisher_needs_every_one_of_its_five_keys() {
+        fn r2_config() -> InvoicingConfig {
+            InvoicingConfig {
+                r2_account_id: Some("acct".into()),
+                r2_access_key: Some("access".into()),
+                r2_secret_key: Some("secret".into()),
+                r2_bucket: Some("billing".into()),
+                public_base_url: Some("https://billing.example.test/i".into()),
+                ..test_config()
+            }
         }
-    }
+        assert!(optional_publisher(&r2_config()).is_some());
 
-    #[test]
-    fn explicit_amount_must_be_positive() {
-        let (_d, conn) = test_conn();
-        seed_invoice(&conn);
-        let invoice = find_invoice(&conn, 1248).unwrap();
-
-        for amount in [0.0, -25.0] {
-            let err = payment_amount(&invoice, 0.0, Some(amount))
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("greater than zero"), "got: {err}");
-        }
-        // An overpayment is a real thing a bank does; only zero and negative are junk.
-        assert_eq!(payment_amount(&invoice, 0.0, Some(250.0)).unwrap(), 250.0);
-    }
-
-    #[test]
-    fn explicit_amount_must_be_finite() {
-        let (_d, conn) = test_conn();
-        seed_invoice(&conn);
-        let invoice = find_invoice(&conn, 1248).unwrap();
-
-        for amount in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let err = payment_amount(&invoice, 0.0, Some(amount))
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("finite number"), "got: {err}");
+        let drops: [fn(&mut InvoicingConfig); 5] = [
+            |c| c.r2_account_id = None,
+            |c| c.r2_access_key = None,
+            |c| c.r2_secret_key = None,
+            |c| c.r2_bucket = None,
+            |c| c.public_base_url = None,
+        ];
+        for drop in drops {
+            let mut cfg = r2_config();
+            drop(&mut cfg);
+            assert!(optional_publisher(&cfg).is_none());
         }
     }
 }

@@ -43,6 +43,25 @@ export interface StatusResponse {
    * status of a run even when an update does exist.
    */
   updateAvailable: string | null;
+  /**
+   * Which invoicing keys are set, by name. Absent while the database is
+   * locked — `/api/status` is ungated, and which integrations an installation
+   * has configured is not something to advertise before the gate.
+   */
+  invoicing?: InvoicingStatus;
+}
+
+/**
+ * `status.invoicing` — key names only. The values never leave the server, so
+ * this says what is missing, never what anything is set to.
+ */
+export interface InvoicingStatus {
+  /** All nine send keys are present. */
+  sendConfigured: boolean;
+  /** `stripe_secret_key` alone, which is all `invoice sync` needs. */
+  syncConfigured: boolean;
+  /** The unset keys, in `docs/invoicing.md`'s order. */
+  missing: string[];
 }
 
 /**
@@ -542,6 +561,15 @@ export const CONFLICT_REASONS = [
   'no_transactions',
   'already_encrypted',
   'not_encrypted',
+  'has_invoices',
+  'void',
+  'not_draft',
+  'has_payments',
+  'already_void',
+  'no_balance',
+  'client_missing_email',
+  'invoice_not_payable',
+  'send_not_configured',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -554,6 +582,16 @@ export interface ConflictDetails {
   /** `no_transactions` names the account and month it found nothing in. */
   account?: string;
   month?: string;
+  /** `not_draft` names the status that blocked the edit. */
+  status?: string;
+  /** `has_payments` and `no_balance` carry the figures behind the refusal. */
+  total?: number;
+  paid?: number;
+  /** `client_missing_email` names the client whose record needs an address. */
+  clientId?: number;
+  clientName?: string;
+  /** `send_not_configured` names the unset settings — never their values. */
+  missing?: string[];
 }
 
 /**
@@ -569,6 +607,8 @@ export const NOT_FOUND_REASONS = [
   'category_not_found',
   'account_not_found',
   'upload_not_found',
+  'invoice_not_found',
+  'client_not_found',
 ] as const;
 
 export type NotFoundReason = (typeof NOT_FOUND_REASONS)[number];
@@ -594,6 +634,7 @@ export const API_ERROR_CODES = [
   'locked',
   'payload_too_large',
   'internal',
+  'upstream_failed',
   'feature_disabled',
 ] as const;
 
@@ -770,4 +811,365 @@ export interface ImportListItem {
 export interface UndoneImport {
   id: number;
   deletedTransactions: number;
+}
+
+// ---------------------------------------------------------------------------
+// Invoicing — read side
+// ---------------------------------------------------------------------------
+
+/**
+ * The six derived statuses. `refresh_status` computes them from `publishedAt`,
+ * the payment total and the due date; nothing sets one by hand.
+ */
+export const INVOICE_STATUSES = [
+  'draft',
+  'sent',
+  'partial',
+  'paid',
+  'overdue',
+  'void',
+] as const;
+
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+/** The `invoice_payments.method` CHECK set. */
+export const PAYMENT_METHODS = ['stripe', 'ach', 'direct_deposit', 'other'] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** `GET /api/clients` */
+export interface Client {
+  id: number;
+  name: string;
+  email: string | null;
+  billingAddress: string | null;
+  notes: string | null;
+}
+
+/** One row of a client's invoice history. */
+export interface ClientInvoiceRow {
+  number: number;
+  status: string;
+  issueDate: string;
+  dueDate: string | null;
+  total: number;
+  paid: number;
+}
+
+/**
+ * `GET /api/clients/{id}` — the client's own fields flattened beside its
+ * history, which is why this extends `Client` rather than nesting one.
+ */
+export interface ClientDetail extends Client {
+  /** Newest number first. */
+  invoices: ClientInvoiceRow[];
+  /** Open invoices only, clamped per invoice so no overpayment leaks across. */
+  outstanding: number;
+}
+
+/**
+ * `GET /api/invoices` — one row per invoice, number descending.
+ *
+ * `status` is `string`, not `InvoiceStatus`: the column has no CHECK
+ * constraint, so a row written by the InvoiceShelf importer or by hand cannot
+ * be assumed to be one of the six. The same deliberate widening
+ * `RuleRow.matchType` documents.
+ */
+export interface InvoiceListRow {
+  id: number;
+  number: number;
+  status: string;
+  clientId: number;
+  /**
+   * Null when the client row is gone — the join is a LEFT JOIN, so an orphaned
+   * invoice shows a dash rather than dropping off the list.
+   */
+  clientName: string | null;
+  issueDate: string;
+  dueDate: string | null;
+  currency: string;
+  total: number;
+  paid: number;
+  balance: number;
+}
+
+export interface InvoiceLineItem {
+  id: number | null;
+  invoiceId: number;
+  description: string;
+  quantity: number;
+  unitAmount: number;
+  lineTotal: number;
+  position: number;
+}
+
+export interface InvoicePayment {
+  id: number | null;
+  invoiceId: number;
+  amount: number;
+  paidDate: string;
+  method: string;
+  stripeCheckoutSessionId: string | null;
+}
+
+/**
+ * `GET /api/invoices/{number}` — the invoice flattened, plus everything a
+ * detail screen prints.
+ *
+ * There is no `token`: it is the only access control on a published invoice and
+ * never crosses the wire. `publicUrl` is the address computed from it.
+ */
+export interface InvoiceDetail {
+  id: number;
+  number: number;
+  clientId: number;
+  status: string;
+  currency: string;
+  issueDate: string;
+  dueDate: string | null;
+  subtotal: number;
+  tax: number;
+  total: number;
+  notes: string | null;
+  terms: string | null;
+  stripePaymentLinkId: string | null;
+  stripePaymentLinkUrl: string | null;
+  publishedAt: string | null;
+  voidedAt: string | null;
+  client: Client;
+  items: InvoiceLineItem[];
+  payments: InvoicePayment[];
+  paid: number;
+  balance: number;
+  /** Null when unpublished or when `public_base_url` is unset — never an error. */
+  publicUrl: string | null;
+  /**
+   * The server's own guards, not a re-derivation from `status`: an edit is
+   * blocked by recorded payments as well as by status. These disable a control;
+   * the 409 is what enforces it.
+   */
+  canEdit: boolean;
+  canSend: boolean;
+  canVoid: boolean;
+  canPay: boolean;
+}
+
+/**
+ * `POST /api/invoices/{number}/void` — the refreshed detail, plus whatever the
+ * void could not take down.
+ *
+ * The detail's own fields are flattened, so this reads as an `InvoiceDetail`
+ * everywhere one is expected. Both extra fields are absent in the ordinary case:
+ * a draft with no payment link and nothing published leaves nothing live.
+ */
+export interface VoidResult extends InvoiceDetail {
+  /**
+   * The Stripe payment link that is **still live** and needs a person —
+   * deactivation was refused, or no `stripe_secret_key` is configured. Absent
+   * when the link was deactivated or there never was one.
+   */
+  paymentLinkUrl?: string;
+  /** The sentences `nigel invoice void` prints, verbatim. */
+  teardownWarnings?: string[];
+}
+
+export interface AgingBucket {
+  label: string;
+  count: number;
+  total: number;
+}
+
+export interface AgingInvoice {
+  number: number;
+  client: string;
+  /** The date the bucket aged from: the due date, or the issue date if none. */
+  dueDate: string;
+  daysPastDue: number;
+  bucket: string;
+  total: number;
+  paid: number;
+  balance: number;
+}
+
+/** `GET /api/invoices/aging` */
+export interface AgingReport {
+  asOf: string;
+  /** Always five, in fixed order. */
+  buckets: AgingBucket[];
+  /** Open invoices, most overdue first. */
+  invoices: AgingInvoice[];
+  outstanding: number;
+}
+
+/**
+ * `GET /api/invoices` filters. An absent one is omitted from the query string
+ * entirely rather than sent empty.
+ */
+export interface InvoiceListParams {
+  /** A status word, or `open` for sent/partial/overdue. */
+  status?: string;
+  clientId?: number;
+}
+
+/** `GET /api/invoices/next-number` — reads the counter, reserves nothing. */
+export interface NextInvoiceNumber {
+  number: number;
+}
+
+// ---------------------------------------------------------------------------
+// Invoicing — write side
+// ---------------------------------------------------------------------------
+
+/** `POST /api/clients` */
+export interface NewClientRequest {
+  name: string;
+  email?: string | null;
+  billingAddress?: string | null;
+  notes?: string | null;
+}
+
+/**
+ * `PATCH /api/clients/{id}` — an omitted field is left alone and an explicit
+ * `null` clears it, so the two must stay distinguishable all the way to the
+ * request body. An all-absent patch is a 400.
+ */
+export interface ClientPatch {
+  name?: string;
+  email?: string | null;
+  billingAddress?: string | null;
+  notes?: string | null;
+}
+
+/**
+ * One line of an invoice as it is sent. No `id` and no `position`: the server
+ * derives positions from the array order, and the whole list is replaced.
+ */
+export interface NewLineItem {
+  description: string;
+  quantity: number;
+  unitAmount: number;
+}
+
+/**
+ * `POST /api/invoices` — answers 201 with the created draft's whole
+ * `InvoiceDetail`. `currency` defaults to `USD` server-side.
+ */
+export interface NewInvoiceRequest {
+  clientId: number;
+  issueDate: string;
+  dueDate?: string | null;
+  currency?: string;
+  items: NewLineItem[];
+  notes?: string | null;
+  terms?: string | null;
+}
+
+/**
+ * `PATCH /api/invoices/{number}` — draft-only, and `items` is a **whole-list
+ * replacement**: sending it at all means "these are the line items now".
+ */
+export interface InvoicePatch {
+  issueDate?: string;
+  dueDate?: string | null;
+  currency?: string;
+  notes?: string | null;
+  terms?: string | null;
+  items?: NewLineItem[];
+}
+
+/**
+ * `POST /api/invoices/{number}/pay`. An omitted `amount` records the whole
+ * outstanding balance, exactly as omitting `--amount` does; `method` defaults
+ * to `direct_deposit`.
+ */
+export interface PayInvoiceRequest {
+  date: string;
+  amount?: number;
+  method?: PaymentMethod;
+}
+
+/**
+ * `POST /api/invoices/{number}/send`.
+ *
+ * The confirmation is part of the contract, not a convention of whichever
+ * screen sends it: without `confirm: true` the server answers 400
+ * `confirmation_required` and nothing happens.
+ */
+export interface SendInvoiceRequest {
+  confirm: true;
+}
+
+/** The stages of a send, in execution order. */
+export const SEND_STEPS = [
+  'config',
+  'load',
+  'precheck',
+  'payment_link',
+  'render',
+  'publish',
+  'email',
+  'record',
+] as const;
+
+export type SendStep = (typeof SEND_STEPS)[number];
+
+/** What a step that did not fail did. `reused` is a resend's Stripe link. */
+export type SendStepOutcome = 'ok' | 'reused';
+
+export interface SendStepResult {
+  step: SendStep;
+  outcome: SendStepOutcome;
+}
+
+/**
+ * What a completed send answers with.
+ *
+ * The invoice is the refreshed detail — the status has just moved — and the
+ * trace is what lets a screen say what happened rather than just "done".
+ */
+export interface SendResult {
+  invoice: InvoiceDetail;
+  publicUrl: string;
+  paymentLinkUrl: string | null;
+  steps: SendStepResult[];
+}
+
+/** One invoice the gateway refused during a sync. */
+export interface SyncFailure {
+  number: number;
+  message: string;
+}
+
+/**
+ * `POST /api/invoices/sync` — pull Stripe payments and record them.
+ *
+ * Per-invoice failures are data, not an error: a deleted payment link 404s
+ * forever and must not hide the payments the run did record. Only a run where
+ * every invoice failed answers with an error.
+ */
+export interface SyncResult {
+  recorded: number;
+  invoicesChecked: number;
+  failures: SyncFailure[];
+}
+
+/**
+ * `error.details` on a send that stopped, whatever status it came back as.
+ *
+ * `emailSent` is the field the wording turns on: every failure before the email
+ * is safe to retry, and one after it is not — the client already has the
+ * invoice. `missing` belongs to `send_not_configured` and is key names only.
+ */
+export interface SendErrorDetails {
+  reason?: ConflictReason | 'send_failed' | 'confirmation_required';
+  step?: SendStep;
+  /** `stripe`, `r2` or `mailgun` — set only on a 502. */
+  service?: string;
+  completed?: SendStep[];
+  emailSent?: boolean;
+  invoiceStatus?: string;
+  /** Unset invoicing settings, by name. */
+  missing?: string[];
+  clientId?: number;
+  clientName?: string;
 }

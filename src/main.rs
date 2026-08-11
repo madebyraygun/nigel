@@ -2,13 +2,9 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    InvoiceCommands, PasswordCommand, RulesCommands,
+    InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
 use nigel::error;
-
-fn today() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
-}
 
 /// Reconcile Stripe payments before a data-bearing command runs. Best-effort:
 /// with no Stripe key configured it does nothing, and any failure prints a
@@ -20,11 +16,23 @@ fn sync_invoice_payments() {
     let gateway = nigel::invoicing::stripe::StripeClient { secret_key };
     let db_path = nigel::settings::get_data_dir().join("nigel.db");
     let result = nigel::db::get_connection(&db_path)
-        .and_then(|conn| nigel::invoicing::sync::sync_all(&conn, &today(), &gateway));
+        .and_then(|conn| nigel::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway));
 
     match result {
-        Ok(0) => {}
-        Ok(n) => eprintln!("notice: recorded {n} new invoice payment(s)"),
+        Ok(report) => {
+            for failure in &report.failures {
+                eprintln!(
+                    "notice: invoice sync failed for #{}: {}",
+                    failure.number, failure.message
+                );
+            }
+            if report.recorded > 0 {
+                eprintln!(
+                    "notice: recorded {} new invoice payment(s)",
+                    report.recorded
+                );
+            }
+        }
         Err(e) => eprintln!("notice: invoice sync skipped: {e}"),
     }
 }
@@ -62,15 +70,23 @@ fn main() {
 
 fn dispatch(command: Commands) -> error::Result<()> {
     // Commands that need an already-initialized database (skip for init/demo which create
-    // new DBs, load which switches directories, and update which needs no DB)
+    // new DBs, load which switches directories, update which needs no DB, and
+    // `invoice template`, which only reads and writes a file in the data directory)
     let needs_existing_db = !matches!(
         command,
-        Commands::Init { .. } | Commands::Demo | Commands::Load { .. } | Commands::Update
+        Commands::Init { .. }
+            | Commands::Demo
+            | Commands::Load { .. }
+            | Commands::Update
+            | Commands::Invoice {
+                command: InvoiceCommands::Template { .. }
+            }
     );
 
     // Commands that need the encryption password up front. `password` does its own
     // prompting as part of set/change/remove, `completions` never touches the DB, and
-    // `serve` has no stdin to prompt on — its clients unlock over HTTP instead.
+    // `serve` has no stdin to prompt on — its clients unlock over HTTP instead, and
+    // `invoice template` never opens the database.
     let needs_password = !matches!(
         command,
         Commands::Init { .. }
@@ -79,6 +95,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
             | Commands::Completions { .. }
             | Commands::Serve { .. }
             | Commands::Update
+            | Commands::Invoice {
+                command: InvoiceCommands::Template { .. }
+            }
     );
 
     let db_path = nigel::settings::get_data_dir().join("nigel.db");
@@ -110,7 +129,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
     // `restore` is excluded because it overwrites the database a sync would
     // write to, `invoice sync` because it does the same work itself, and
     // `serve` because its database may still be locked (no stdin to prompt on)
-    // and its startup shouldn't block on a network poll.
+    // and its startup shouldn't block on a network poll. `invoice preview` is
+    // defined to make no network call at all, and a launch sync would make that
+    // false on any machine with a Stripe key configured.
     if !matches!(
         command,
         Commands::Init { .. }
@@ -123,6 +144,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
             | Commands::Serve { .. }
             | Commands::Invoice {
                 command: InvoiceCommands::Sync
+                    | InvoiceCommands::Preview { .. }
+                    | InvoiceCommands::Template { .. }
             }
     ) {
         sync_invoice_payments();
@@ -181,6 +204,14 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 email,
                 address,
             } => cli::client::add(&name, email.as_deref(), address.as_deref()),
+            ClientCommands::Show { id } => cli::client::show(id),
+            ClientCommands::Edit {
+                id,
+                name,
+                email,
+                address,
+                notes,
+            } => cli::client::edit(id, name, email, address, notes),
             ClientCommands::List => cli::client::list(),
         },
         Commands::Invoice { command } => match command {
@@ -190,19 +221,51 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 due_date,
                 currency,
                 items,
-            } => cli::invoice::new(client, &issue_date, due_date.as_deref(), &currency, &items),
+                notes,
+                terms,
+            } => cli::invoice::new(
+                client,
+                &issue_date,
+                due_date.as_deref(),
+                &currency,
+                &items,
+                notes.as_deref(),
+                terms.as_deref(),
+            ),
+            InvoiceCommands::Edit {
+                number,
+                issue_date,
+                due_date,
+                clear_due,
+                currency,
+                notes,
+                terms,
+                items,
+            } => cli::invoice::edit(
+                number, issue_date, due_date, clear_due, currency, notes, terms, &items,
+            ),
+            InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
             InvoiceCommands::List => cli::invoice::list(),
             InvoiceCommands::Show { number } => cli::invoice::show(number),
-            InvoiceCommands::Send { number } => cli::invoice::send(number, &today()),
-            InvoiceCommands::Sync => cli::invoice::sync(&today()),
+            InvoiceCommands::Preview { number, output_dir } => {
+                cli::invoice::preview(number, output_dir)
+            }
+            InvoiceCommands::Send { number } => cli::invoice::send(number, &cli::today()),
+            InvoiceCommands::Sync => cli::invoice::sync(&cli::today()),
             InvoiceCommands::Pay {
                 number,
                 amount,
                 date,
                 method,
             } => cli::invoice::pay(number, amount, &date, &method),
-            InvoiceCommands::Aging => cli::invoice::aging(&today()),
+            InvoiceCommands::Aging => cli::invoice::aging(&cli::today()),
             InvoiceCommands::Import { db } => cli::invoice::import(&db),
+            InvoiceCommands::Template { command } => match command {
+                InvoiceTemplateCommands::Export { output, force } => {
+                    cli::invoice::template_export(output.as_deref(), force)
+                }
+                InvoiceTemplateCommands::Path => cli::invoice::template_show_path(),
+            },
         },
         Commands::Import {
             file,

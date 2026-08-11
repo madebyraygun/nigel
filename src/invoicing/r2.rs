@@ -40,7 +40,7 @@ impl R2Publisher {
         let action = bucket.put_object(Some(&creds), key);
         let signed = action.sign(Duration::from_secs(300));
 
-        let resp = reqwest::blocking::Client::new()
+        let resp = crate::invoicing::http_client()
             .put(signed)
             .header("content-type", content_type)
             .body(body.to_vec())
@@ -60,6 +60,15 @@ impl AssetPublisher for R2Publisher {
             "text/html; charset=utf-8",
         )?;
         self.put(&object_key(token, "invoice.pdf"), pdf, "application/pdf")?;
+        Ok(public_url(&self.public_base_url, token))
+    }
+
+    fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
+        self.put(
+            &object_key(token, "index.html"),
+            html,
+            "text/html; charset=utf-8",
+        )?;
         Ok(public_url(&self.public_base_url, token))
     }
 }

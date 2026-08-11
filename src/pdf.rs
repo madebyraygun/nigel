@@ -603,6 +603,97 @@ pub fn render_balance(report: &BalanceReport, company: &str) -> Result<Vec<u8>> 
     pdf.into_bytes()
 }
 
+pub fn render_aging(
+    report: &crate::invoicing::invoices::AgingReport,
+    company: &str,
+) -> Result<Vec<u8>> {
+    let mut pdf = PdfWriter::new("A/R Aging")?;
+    pdf.header("A/R Aging", company, &format!("As of {}", report.as_of));
+
+    let summary_cols = &[
+        Col {
+            width: 80.0,
+            align: Align::Left,
+        },
+        Col {
+            width: 50.0,
+            align: Align::Right,
+        },
+        Col {
+            width: 47.8,
+            align: Align::Right,
+        },
+    ];
+    pdf.section_label("Summary");
+    pdf.table_header(summary_cols, &["Bucket", "Invoices", "Amount"]);
+    for b in &report.buckets {
+        let count = b.count.to_string();
+        let total = money(b.total);
+        pdf.table_row(summary_cols, &[b.label, &count, &total], false);
+    }
+    pdf.separator();
+    let count = report
+        .buckets
+        .iter()
+        .map(|b| b.count)
+        .sum::<usize>()
+        .to_string();
+    let outstanding = money(report.outstanding);
+    pdf.table_row(
+        summary_cols,
+        &["Total Outstanding", &count, &outstanding],
+        true,
+    );
+
+    pdf.blank_row();
+    pdf.section_label("Open Invoices");
+
+    if report.invoices.is_empty() {
+        pdf.text("No open invoices.", MARGIN_LEFT, FONT_SIZE, false);
+        return pdf.into_bytes();
+    }
+
+    let cols = &[
+        Col {
+            width: 25.0,
+            align: Align::Left,
+        },
+        Col {
+            width: 62.8,
+            align: Align::Left,
+        },
+        Col {
+            width: 30.0,
+            align: Align::Left,
+        },
+        Col {
+            width: 20.0,
+            align: Align::Right,
+        },
+        Col {
+            width: 40.0,
+            align: Align::Right,
+        },
+    ];
+    pdf.table_header(cols, &["Invoice", "Client", "Due", "Days", "Balance"]);
+    for i in &report.invoices {
+        let number = format!("#{}", i.number);
+        let days = if i.days_past_due > 0 {
+            i.days_past_due.to_string()
+        } else {
+            "\u{2014}".to_string()
+        };
+        let balance = money(i.balance);
+        pdf.table_row(
+            cols,
+            &[&number, &i.client, &i.due_date, &days, &balance],
+            false,
+        );
+    }
+
+    pdf.into_bytes()
+}
+
 pub fn render_k1(report: &K1PrepReport, company: &str, date_range: &str) -> Result<Vec<u8>> {
     let mut pdf = PdfWriter::new("K-1 Preparation Worksheet")?;
     pdf.header(
@@ -784,16 +875,34 @@ pub fn render_k1(report: &K1PrepReport, company: &str, date_range: &str) -> Resu
     pdf.into_bytes()
 }
 
+/// What a PDF viewer shows in its window title and what a saved file is called
+/// by default, so the operator's name belongs in it when there is one.
+fn document_title(title: &str, company: &str) -> String {
+    if company.is_empty() {
+        title.to_string()
+    } else {
+        format!("{company} - {title}")
+    }
+}
+
+/// `company` is the operator's own name — the `company_name` metadata key the
+/// HTML page resolves through `Branding`. Empty means unset, and the document
+/// is headed by the invoice number alone.
 pub fn render_invoice_pdf(
     invoice: &Invoice,
     client: &Client,
     items: &[InvoiceLineItem],
+    company: &str,
 ) -> Result<Vec<u8>> {
     let title = format!("Invoice #{}", invoice.number);
-    let mut pdf = PdfWriter::new(&title)?;
+    let mut pdf = PdfWriter::new(&document_title(&title, company))?;
 
     pdf.text(&title, MARGIN_LEFT, TITLE_SIZE, true);
     pdf.y += 7.0;
+    if !company.is_empty() {
+        pdf.text(company, MARGIN_LEFT, SUBTITLE_SIZE, true);
+        pdf.y += 5.0;
+    }
     pdf.text(
         &format!("Billed to: {}", client.name),
         MARGIN_LEFT,
@@ -875,14 +984,22 @@ pub fn render_invoice_pdf(
     pdf.into_bytes()
 }
 
+/// The text a rendered document's content streams carry, in draw order. Tests
+/// assert on what a PDF *says*, not merely that it parses.
+#[cfg(test)]
+pub(crate) fn extract_text(bytes: &[u8]) -> String {
+    let doc = lopdf::Document::load_mem(bytes).expect("rendered pdf parses");
+    let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
+    doc.extract_text(&pages).expect("rendered pdf carries text")
+}
+
 #[cfg(all(test, feature = "pdf"))]
 mod invoice_pdf_tests {
     use super::*;
     use crate::models::{Client, Invoice, InvoiceLineItem};
 
-    #[test]
-    fn produces_nonempty_pdf() {
-        let inv = Invoice {
+    fn invoice() -> Invoice {
+        Invoice {
             id: 1,
             number: 1248,
             client_id: 1,
@@ -899,15 +1016,22 @@ mod invoice_pdf_tests {
             stripe_payment_link_id: None,
             stripe_payment_link_url: None,
             published_at: None,
-        };
-        let client = Client {
+            voided_at: None,
+        }
+    }
+
+    fn client() -> Client {
+        Client {
             id: 1,
             name: "Acme".into(),
             email: None,
             billing_address: None,
             notes: None,
-        };
-        let items = vec![InvoiceLineItem {
+        }
+    }
+
+    fn items() -> Vec<InvoiceLineItem> {
+        vec![InvoiceLineItem {
             id: None,
             invoice_id: Some(1),
             description: "Work".into(),
@@ -915,8 +1039,54 @@ mod invoice_pdf_tests {
             unit_amount: 100.0,
             line_total: 100.0,
             position: 0,
-        }];
-        let bytes = render_invoice_pdf(&inv, &client, &items).unwrap();
+        }]
+    }
+
+    #[test]
+    fn the_company_name_heads_the_document() {
+        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "Bluepeak LLC").unwrap();
+        let text = extract_text(&bytes);
+
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing: {text}"))
+        };
+        assert!(at("Invoice #1248") < at("Bluepeak LLC"));
+        assert!(at("Bluepeak LLC") < at("Billed to: Acme"));
+    }
+
+    fn document_title_of(bytes: &[u8]) -> String {
+        let doc = lopdf::Document::load_mem(bytes).unwrap();
+        doc.trailer
+            .get(b"Info")
+            .and_then(|info| doc.get_dictionary(info.as_reference().unwrap()))
+            .and_then(|info| info.get(b"Title"))
+            .map(|t| String::from_utf8_lossy(t.as_str().unwrap()).into_owned())
+            .expect("document info carries a title")
+    }
+
+    #[test]
+    fn an_unset_company_leaves_a_text_only_header() {
+        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "").unwrap();
+        let text = extract_text(&bytes);
+
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing: {text}"))
+        };
+        assert!(at("Invoice #1248") < at("Billed to: Acme"));
+        assert_eq!(document_title_of(&bytes), "Invoice #1248");
+    }
+
+    #[test]
+    fn the_document_title_carries_the_company() {
+        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "Bluepeak LLC").unwrap();
+        assert_eq!(document_title_of(&bytes), "Bluepeak LLC - Invoice #1248");
+    }
+
+    #[test]
+    fn produces_nonempty_pdf() {
+        let bytes = render_invoice_pdf(&invoice(), &client(), &items(), "").unwrap();
         assert!(bytes.len() > 100);
         assert_eq!(&bytes[0..4], b"%PDF");
     }
@@ -940,13 +1110,7 @@ mod invoice_pdf_tests {
             stripe_payment_link_id: None,
             stripe_payment_link_url: None,
             published_at: None,
-        };
-        let client = Client {
-            id: 1,
-            name: "Acme".into(),
-            email: None,
-            billing_address: None,
-            notes: None,
+            voided_at: None,
         };
         let items = vec![InvoiceLineItem {
             id: None,
@@ -957,7 +1121,7 @@ mod invoice_pdf_tests {
             line_total: 100.0,
             position: 0,
         }];
-        let bytes = render_invoice_pdf(&inv, &client, &items).unwrap();
+        let bytes = render_invoice_pdf(&inv, &client(), &items, "Bluepeak LLC").unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 }
@@ -1060,6 +1224,39 @@ mod tests {
         seed(&conn);
         let report = get_balance(&conn).unwrap();
         let bytes = render_balance(&report, "Test Corp").unwrap();
+        assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    #[test]
+    fn test_render_aging_produces_pdf() {
+        use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+        let report = AgingReport {
+            as_of: "2026-08-04".into(),
+            buckets: vec![
+                AgingBucket {
+                    label: "current",
+                    count: 0,
+                    total: 0.0,
+                },
+                AgingBucket {
+                    label: "31-60",
+                    count: 1,
+                    total: 100.0,
+                },
+            ],
+            invoices: vec![AgingInvoice {
+                number: 1248,
+                client: "Acme Co".into(),
+                due_date: "2026-06-20".into(),
+                days_past_due: 45,
+                bucket: "31-60",
+                total: 100.0,
+                paid: 0.0,
+                balance: 100.0,
+            }],
+            outstanding: 100.0,
+        };
+        let bytes = render_aging(&report, "Test Corp").unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 

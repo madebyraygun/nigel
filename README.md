@@ -8,11 +8,11 @@ Nigel is designed for humans but works extremely well with AI agents. The repo i
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-Nigel also includes a **demo mode** — `nigel demo` which generates more than a year's worth of sample transactions so you can get a feel for things without entering any real data. Take the full [walkthrough tour](docs/walkthrough.md) and explore the dashboard, register, accounts and rules, review flagged transactions, and run every report.
+Nigel also includes a **demo mode** — `nigel demo` which generates more than a year's worth of sample transactions, plus a few clients and invoices, so you can get a feel for things without entering any real data. Take the full [walkthrough tour](docs/walkthrough.md) and explore the dashboard, register, accounts and rules, review flagged transactions, and run every report.
 
 ## Features
 
-- **Interactive dashboard** — run `nigel` to access your dashboard with YTD financials, account balances, a monthly income/expense chart, and a command menu; browse, review, import, reconcile, manage accounts and categories, view rules, view/export reports, and switch data files.
+- **Interactive dashboard** — run `nigel` to access your dashboard with YTD financials, account balances, a monthly income/expense chart, and a command menu; browse, review, import, reconcile, manage accounts, categories, clients (`k`) and invoices (`n`), view rules, view/export reports, and switch data files.
 - **Bank imports** — CSV/XLSX parsers with format auto-detection; `--dry-run` to preview without writing
 - **Generic CSV** — import any CSV with `--date-col`, `--desc-col`, `--amount-col`; save reusable profiles with `--save-profile`
 - **Payroll import** — XLSX payroll importer with auto-categorization
@@ -22,13 +22,13 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Rules engine** — pattern-based auto-categorization (contains, starts_with, regex) with priority ordering; test patterns with `nigel rules test` before committing
 - **Bulk recategorization** — `nigel recategorize` moves transactions between categories by ID or by filters (category, date range, pattern, account, amount), with `--dry-run` preview and confirmation for filter-based moves
 - **Interactive review** — step through flagged transactions with a pinned category chart, assign categories, and create rules on the fly; press Esc to go back and redo previous transactions
-- **Reports** — Profit & Loss, expense breakdown, tax summary (IRS Schedule C / 1120-S), cash flow, balance, K-1 prep; interactive ratatui views by default with date navigation (Left/Right arrows to page between periods, `m` to toggle month/year), with `--mode export` for PDF or `--format text` for text files
+- **Reports** — Profit & Loss, expense breakdown, tax summary (IRS Schedule C / 1120-S), cash flow, balance, K-1 prep, A/R aging; interactive ratatui views by default with date navigation (Left/Right arrows to page between periods, `m` to toggle month/year), with `--mode export` for PDF or `--format text` for text files
 - **Interactive browser** — paginated register browser showing all transactions, starting at today with full backwards scrolling, keyboard navigation, jump-to-date, and transaction search
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`
-- **Invoicing** — draft invoices for your clients, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`; manual payments, A/R aging, and a one-time InvoiceShelf import are included. See [docs/invoicing.md](docs/invoicing.md)
+- **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`; voiding a sent invoice deactivates that link and replaces its page, so nobody can pay a cancelled invoice. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too — add and edit clients, draft a new invoice with `a` (client, dates, currency and as many line items as you like), then open it to send it, record a payment against it or void it. The client-facing page is yours to restyle — `nigel invoice template export` writes it out to edit, no rebuild required — and the attached PDF is headed by your business name, taken from the same setting. See [docs/invoicing.md](docs/invoicing.md)
 - **Monthly reconciliation** — compare calculated balances against bank statements
 - **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same. Transfers between your own accounts (the `Transfer` category) don't count as income or spending in the P&L, expense breakdown, or cash flow, on either profile — the register, account balances, and tax summary still show them, because there the cash movement itself is the point
-- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link; nothing is exposed to your network. Every report the CLI prints is there too, for any period, with text and PDF downloads and a print-friendly layout
+- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link; nothing is exposed to your network. The eight ledger reports are there too, for any period, with text and PDF downloads and a print-friendly layout, and A/R aging joins them as a ninth. Invoicing is in the browser as well: manage clients, draft and edit invoices, preview the client-facing page, record payments, void, and send — a send names every consequence before it happens and reports the step it stopped at if it does
 - **SQLite storage** — single portable database, no server required
 - **Database encryption** — optional SQLCipher encryption; set a password during onboarding or manage via the Settings screen (`p` from dashboard) or `nigel password set`; returning users enter their password inline on the splash screen, or in the browser when using `nigel serve`; backups preserve encryption state
 - **Auto-updater** — checks GitHub Releases for new versions on launch (once per 24 hours); run `nigel update` to download and install the latest binary in-place; opt out via the Settings screen or `update_check: false` in settings.json
@@ -110,6 +110,7 @@ nigel report tax --year 2025
 nigel report cashflow
 nigel report balance
 nigel report flagged
+nigel report aging                  # A/R aging: buckets and open invoices
 nigel report register --year 2025   # Transaction register
 
 # Export reports
@@ -125,11 +126,17 @@ nigel browse register --account "BofA Checking"
 
 # Invoicing (see docs/invoicing.md for the Stripe/R2/Mailgun setup)
 nigel client add "Acme Co" --email ap@acme.test
+nigel client show 1                                   # Details plus invoice history
+nigel client edit 1 --email billing@acme.test         # Applies on the next send
 nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"
+nigel invoice edit 1248 --due 2026-09-30              # Drafts only
+nigel invoice void 1248                               # Cancel, deactivate its link, void its page
+nigel invoice preview 1248                            # Render it locally first — no network, no config
 nigel invoice send 1248                               # Publish, email, attach a payment link
 nigel invoice sync                                    # Record Stripe payments
 nigel invoice pay 1248 --date 2026-08-20              # Record a payment received directly
 nigel invoice aging                                   # A/R aging
+nigel invoice template export                         # Make the invoice page your own
 
 # Reconcile against a bank statement
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67

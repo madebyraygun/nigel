@@ -330,10 +330,11 @@ fn report_all_text_export() {
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "txt"))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    // Should produce multiple report files (pnl, expenses, tax, cashflow, register, flagged, balance, k1)
-    assert!(
-        names.len() >= 5,
-        "expected at least 5 report files, got {}",
+    // pnl, expenses, tax, cashflow, register, flagged, balance, k1-prep, aging
+    assert_eq!(
+        names.len(),
+        9,
+        "expected 9 report files, got {}: {names:?}",
         names.len()
     );
     // Business books include the K-1 worksheet — the half of the profile
@@ -581,6 +582,858 @@ fn client_add_and_list_roundtrip() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Acme Co").and(predicate::str::contains("a@b.test")));
+}
+
+/// `f64::from_str` accepts "NaN" and "inf", so `--item` could always spell a
+/// figure that poisons every later SUM over the column. The refusal lives in
+/// `invoices::validate_items`, which both front ends call.
+#[test]
+fn a_non_finite_item_is_refused_from_the_cli() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    for item in ["Work:NaN:5", "Work:inf:5", "Work:1:NaN"] {
+        env.cmd()
+            .args([
+                "invoice",
+                "new",
+                "--client",
+                "1",
+                "--issue",
+                "2026-08-04",
+                "--item",
+                item,
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("finite"));
+    }
+
+    // The refused drafts never reserved a number: #1248 is still the only one.
+    env.cmd()
+        .args(["invoice", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1248").and(predicate::str::contains("1249").not()));
+}
+
+#[test]
+fn an_invoice_totalling_zero_is_refused_from_the_cli() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    for item in ["Freebie:0:150", "Credit:-1:150"] {
+        env.cmd()
+            .args([
+                "invoice",
+                "new",
+                "--client",
+                "1",
+                "--issue",
+                "2026-08-04",
+                "--item",
+                item,
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("more than zero"));
+    }
+}
+
+/// Init plus one client and one 1500.00 draft invoice (#1248).
+fn init_with_client_and_invoice(env: &TestEnv) {
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co", "--email", "ap@acme.test"])
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-08-04",
+            "--item",
+            "Consulting:10:150",
+        ])
+        .assert()
+        .success();
+}
+
+/// The three commands whose printing moved into pure formatters, pinned as
+/// whole stdout rather than as substrings. Money reads as `$1,500.00` here,
+/// which is what `nigel invoice aging` and the browser have always printed.
+#[test]
+fn invoice_and_client_listings_print_money_the_way_every_other_report_does() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    let stdout = |args: &[&str]| -> String {
+        let out = env.cmd().args(args).assert().success().get_output().clone();
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    assert_eq!(
+        stdout(&["invoice", "list"]),
+        concat!(
+            "Invoices\n",
+            "+------+--------+---------+-----------+-----+\n",
+            "| #    | Status | Client  | Total     | Due |\n",
+            "+===========================================+\n",
+            "| 1248 | draft  | Acme Co | $1,500.00 |     |\n",
+            "+------+--------+---------+-----------+-----+\n",
+        )
+    );
+
+    assert_eq!(
+        stdout(&["invoice", "show", "1248"]),
+        concat!(
+            "Invoice #1248  [draft]  USD $1,500.00\n",
+            "Client:   Acme Co\n",
+            "Issued:   2026-08-04\n",
+            "Due:      -\n",
+            "+-------------+-------+---------+-----------+\n",
+            "| Description | Qty   | Unit    | Amount    |\n",
+            "+===========================================+\n",
+            "| Consulting  | 10.00 | $150.00 | $1,500.00 |\n",
+            "+-------------+-------+---------+-----------+\n",
+            "Paid:     $0.00\n",
+            "Balance:  $1,500.00\n",
+        )
+    );
+
+    assert_eq!(
+        stdout(&["client", "list"]),
+        concat!(
+            "Clients\n",
+            "+----+---------+--------------+\n",
+            "| ID | Name    | Email        |\n",
+            "+=============================+\n",
+            "| 1  | Acme Co | ap@acme.test |\n",
+            "+----+---------+--------------+\n",
+        )
+    );
+}
+
+#[test]
+fn client_show_prints_details_and_invoice_history() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["client", "show", "1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Acme Co")
+                .and(predicate::str::contains("ap@acme.test"))
+                .and(predicate::str::contains("1248"))
+                .and(predicate::str::contains("Outstanding")),
+        );
+}
+
+#[test]
+fn client_show_for_an_unknown_id_fails_with_not_found() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "show", "99"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Client not found: id 99"));
+}
+
+#[test]
+fn client_edit_changes_the_email() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["client", "edit", "1", "--email", "new@acme.test"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Updated client 1"));
+
+    env.cmd()
+        .args(["client", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("new@acme.test"));
+}
+
+#[test]
+fn client_edit_with_no_flags_fails() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["client", "edit", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Nothing to update"));
+}
+
+#[test]
+fn invoice_new_persists_notes_and_terms() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Acme Co", "--email", "ap@acme.test"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-08-04",
+            "--item",
+            "Consulting:10:150",
+            "--notes",
+            "Thanks for the work",
+            "--terms",
+            "Net 30",
+        ])
+        .assert()
+        .success();
+
+    let (notes, terms): (String, String) = env
+        .db()
+        .query_row(
+            "SELECT notes, terms FROM invoices WHERE number = 1248",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("invoice row missing");
+    assert_eq!(notes, "Thanks for the work");
+    assert_eq!(terms, "Net 30");
+}
+
+#[test]
+fn invoice_edit_updates_a_draft() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "edit",
+            "1248",
+            "--due",
+            "2026-10-01",
+            "--item",
+            "Rework:2:250",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("500.00"));
+
+    env.cmd()
+        .args(["invoice", "show", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("500.00").and(predicate::str::contains("2026-10-01")));
+}
+
+#[test]
+fn invoice_edit_refuses_a_void_invoice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["invoice", "edit", "1248", "--due", "2026-10-01"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is void and cannot be edited"));
+}
+
+#[test]
+fn invoice_void_requires_confirmation_without_a_tty() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "void", "1248"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Pass --yes"));
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+#[test]
+fn invoice_void_with_yes_voids_and_blocks_pay() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Voided invoice #1248"));
+
+    env.cmd()
+        .args(["invoice", "pay", "1248", "--date", "2026-08-20"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("void and cannot be paid"));
+}
+
+/// The default preview directory for a `TestEnv`.
+fn previews_dir(env: &TestEnv) -> PathBuf {
+    env.data_dir().join("previews")
+}
+
+#[test]
+fn invoice_preview_writes_html_to_the_data_dir() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("invoice-1248.html"));
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html"))
+        .expect("preview html missing");
+    assert!(html.contains("Invoice #1248"), "got: {html}");
+    assert!(html.contains("1500.00"), "got: {html}");
+}
+
+#[test]
+fn invoice_preview_of_a_draft_shows_an_inert_pay_placeholder() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(html.contains("pay-placeholder"), "got: {html}");
+    assert!(!html.contains("<a class=\"pay\""), "got: {html}");
+}
+
+#[test]
+fn invoice_preview_needs_no_invoicing_config_and_makes_no_network_call() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // TestEnv clears every NIGEL_* invoicing var, so this runs with no config
+    // at all; anything reaching the network would hang into TEST_TIMEOUT.
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("missing invoicing config").not());
+}
+
+#[test]
+fn invoice_preview_leaves_the_invoice_a_draft() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let (status, published): (String, Option<String>) = env
+        .db()
+        .query_row(
+            "SELECT status, published_at FROM invoices WHERE number = 1248",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+    assert_eq!(published, None);
+}
+
+#[test]
+fn invoice_preview_honors_output_dir() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    let elsewhere = env.data_dir().join("elsewhere");
+
+    env.cmd()
+        .args([
+            "invoice",
+            "preview",
+            "1248",
+            "--output-dir",
+            &elsewhere.to_string_lossy(),
+        ])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            elsewhere.to_string_lossy().to_string(),
+        ));
+
+    assert!(elsewhere.join("invoice-1248.html").exists());
+    assert!(
+        !previews_dir(&env).exists(),
+        "a named output directory must not also seed the default one"
+    );
+}
+
+#[test]
+fn invoice_preview_overwrites_in_place_on_a_second_run() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    for _ in 0..2 {
+        env.cmd()
+            .args(["invoice", "preview", "1248"])
+            .timeout(TEST_TIMEOUT)
+            .assert()
+            .success();
+    }
+
+    let names: Vec<String> = std::fs::read_dir(previews_dir(&env))
+        .expect("previews directory missing")
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    for name in &names {
+        assert!(
+            name == "invoice-1248.html" || name == "invoice-1248.pdf",
+            "unexpected preview artifact: {name}"
+        );
+    }
+    assert_eq!(
+        names.iter().filter(|n| n.ends_with(".html")).count(),
+        1,
+        "re-previewing must overwrite, not accumulate: {names:?}"
+    );
+}
+
+#[test]
+fn invoice_preview_of_an_unknown_number_fails_with_the_shared_message() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "9999"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No invoice #9999"));
+}
+
+#[test]
+fn invoice_preview_of_a_void_invoice_warns_and_omits_the_pay_button() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success();
+    // An invoice voided after it was sent still carries a live Stripe URL.
+    env.db()
+        .execute(
+            "UPDATE invoices SET stripe_payment_link_url = 'https://pay/x' WHERE number = 1248",
+            [],
+        )
+        .unwrap();
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("is void"));
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(
+        !html.contains("https://pay/x"),
+        "a void invoice must not publish a live payment link"
+    );
+    assert!(!html.contains("Pay online"), "got: {html}");
+}
+
+#[test]
+fn invoice_preview_skips_the_launch_stripe_sync() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    // The launch sync only polls invoices that carry a payment link and are
+    // open, so this is the state in which a sync would reach Stripe at all.
+    env.db()
+        .execute(
+            "UPDATE invoices SET stripe_payment_link_id = 'pl_1', status = 'sent'
+             WHERE number = 1248",
+            [],
+        )
+        .unwrap();
+
+    // Preview is in the skip list, so the key is never used and nothing leaves
+    // the machine. Drop that arm and this run reaches Stripe with a bogus key,
+    // which reports itself on stderr.
+    env.cmd()
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_bogus")
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(
+            predicate::str::contains("invoice sync skipped")
+                .not()
+                .and(predicate::str::contains("new invoice payment").not()),
+        );
+}
+
+#[cfg(feature = "pdf")]
+#[test]
+fn invoice_preview_writes_a_real_pdf() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("invoice-1248.pdf"));
+
+    let pdf =
+        std::fs::read(previews_dir(&env).join("invoice-1248.pdf")).expect("preview pdf missing");
+    assert!(pdf.starts_with(b"%PDF"));
+}
+
+#[cfg(not(feature = "pdf"))]
+#[test]
+fn invoice_preview_without_the_pdf_feature_still_writes_html_and_says_why() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Exit 0: "HTML, and PDF when the feature is on" is the documented outcome,
+    // not a failure.
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "PDF export requires the 'pdf' feature",
+        ));
+
+    assert!(previews_dir(&env).join("invoice-1248.html").exists());
+    assert!(!previews_dir(&env).join("invoice-1248.pdf").exists());
+}
+
+/// Where `nigel invoice template export` writes for a `TestEnv`.
+fn template_file(env: &TestEnv) -> PathBuf {
+    env.data_dir().join("templates").join("invoice.html")
+}
+
+fn write_template(env: &TestEnv, source: &str) {
+    let path = template_file(env);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, source).unwrap();
+}
+
+#[test]
+fn template_export_writes_the_default_and_reports_where() {
+    // No `nigel init`: exporting a template to edit must work on a machine that
+    // has never opened the books.
+    let env = TestEnv::new();
+    let expected = env
+        .home
+        .path()
+        .join("Documents/nigel/templates/invoice.html");
+
+    env.cmd()
+        .args(["invoice", "template", "export"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(expected.display().to_string()));
+
+    assert_eq!(
+        std::fs::read_to_string(&expected).expect("exported template missing"),
+        nigel::invoicing::render_html::DEFAULT_TEMPLATE
+    );
+}
+
+#[test]
+fn template_export_refuses_to_clobber_without_force() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "template", "export"])
+        .assert()
+        .success();
+    std::fs::write(template_file(&env), "MINE").unwrap();
+
+    env.cmd()
+        .args(["invoice", "template", "export"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--force"));
+    assert_eq!(
+        std::fs::read_to_string(template_file(&env)).unwrap(),
+        "MINE"
+    );
+
+    env.cmd()
+        .args(["invoice", "template", "export", "--force"])
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(template_file(&env)).unwrap(),
+        nigel::invoicing::render_html::DEFAULT_TEMPLATE
+    );
+}
+
+#[test]
+fn template_export_honors_output() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    let out = env.home.path().join("scratch/custom.html");
+
+    env.cmd()
+        .args([
+            "invoice",
+            "template",
+            "export",
+            "--output",
+            &out.to_string_lossy(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(out.display().to_string()));
+
+    assert!(out.exists());
+    assert!(!template_file(&env).exists());
+}
+
+#[test]
+fn template_path_reports_absent_then_present_then_broken() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "template", "path"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(template_file(&env).display().to_string())
+                .and(predicate::str::contains("No custom template")),
+        );
+
+    write_template(&env, "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>");
+    env.cmd()
+        .args(["invoice", "template", "path"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Custom template in effect"));
+
+    write_template(
+        &env,
+        "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+    );
+    env.cmd()
+        .args(["invoice", "template", "path"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("{{TOTL}}"));
+}
+
+#[test]
+fn invoice_preview_renders_a_custom_template() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<h1>MY OWN PAGE {{NUMBER}}</h1>{{CLIENT}}{{ROWS}}{{TOTAL}}",
+    );
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(html.contains("MY OWN PAGE 1248"), "got: {html}");
+    assert!(!html.contains("Direct deposit"), "got: {html}");
+}
+
+#[test]
+fn a_template_renders_the_company_name_from_the_database() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.db()
+        .execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('company_name', 'Acme LLC')",
+            [],
+        )
+        .expect("failed to set company_name");
+    write_template(
+        &env,
+        "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+    );
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(html.starts_with("<h1>Acme LLC</h1>"), "got: {html}");
+}
+
+#[test]
+fn invoice_preview_with_a_broken_template_fails_and_writes_nothing() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+    );
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(template_file(&env).display().to_string())
+                .and(predicate::str::contains("{{TOTL}}")),
+        );
+
+    assert!(!previews_dir(&env).join("invoice-1248.html").exists());
+}
+
+#[test]
+fn send_with_a_broken_template_fails_before_touching_stripe() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(&env, "<p>no placeholders here</p>");
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(template_file(&env).display().to_string())
+                .and(predicate::str::contains("{{NUMBER}}")),
+        );
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+#[test]
+fn invoice_aging_prints_bucket_labels() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "aging"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("current")
+                .and(predicate::str::contains("1-30"))
+                .and(predicate::str::contains("90+"))
+                .and(predicate::str::contains("Total Outstanding")),
+        );
+}
+
+#[test]
+fn report_aging_text_export_writes_a_file() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    let output_path = env.home.path().join("aging.txt");
+    env.cmd()
+        .args([
+            "report",
+            "aging",
+            "--mode",
+            "export",
+            "--format",
+            "text",
+            "--output",
+            &output_path.to_string_lossy(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wrote"));
+
+    let content = std::fs::read_to_string(&output_path).unwrap();
+    assert!(content.contains("A/R Aging"), "got: {content}");
+}
+
+#[test]
+fn invoice_new_with_an_unknown_client_reports_not_found() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "99",
+            "--issue",
+            "2026-08-04",
+            "--item",
+            "X:1:1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Client not found: id 99"));
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .expect("invoices table missing");
+    assert_eq!(count, 0);
 }
 
 #[test]

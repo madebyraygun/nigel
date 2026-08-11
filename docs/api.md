@@ -83,6 +83,7 @@ structured context to give:
 | `payload_too_large` | 413 | An upload exceeded the size limit |
 | `locked` | 423 | The database is encrypted and not yet unlocked |
 | `internal` | 500 | Unexpected server-side failure |
+| `upstream_failed` | 502 | Stripe, R2 or Mailgun refused or could not be reached |
 | `feature_disabled` | 501 | The build lacks the required cargo feature |
 
 ## Endpoints
@@ -116,7 +117,12 @@ uninitialized, so the SPA can decide which screen to show before it has data.
   "version": "1.0.1",
   "dataDir": "/home/you/Documents/nigel",
   "pdfExport": true,
-  "updateAvailable": "1.0.2"
+  "updateAvailable": "1.0.2",
+  "invoicing": {
+    "sendConfigured": false,
+    "syncConfigured": true,
+    "missing": ["r2_bucket", "public_base_url"]
+  }
 }
 ```
 
@@ -142,6 +148,17 @@ background task started with the server rather than inside the handler, so it is
 client that wants to catch it re-reads status rather than expecting it on the
 first fetch. A platform with no release asset reports `null`, matching what
 `nigel update` could actually install.
+
+`invoicing` reports which of the nine invoicing keys are set, **by name only** —
+the values never leave the process, and the names are already published in
+[`invoicing.md`](invoicing.md). `sendConfigured` is all nine present;
+`syncConfigured` is `stripe_secret_key` alone, which is all `invoice sync`
+needs. `missing` lists the unset ones in that document's order. A client uses it
+to disable Send and to say which keys are in the way.
+
+The whole object is **absent while the database is locked**. `/api/status` is
+one of the three ungated paths, and which integrations an installation has
+configured is not something to tell a caller who has not passed the gate.
 
 ### `POST /api/unlock`
 
@@ -213,6 +230,12 @@ table is what `report` holds. The list routes below it answer with a bare array.
 | `/api/imports` | — | `ImportListItem[]` |
 | `/api/imports/formats` | — | `ImporterFormat[]` |
 | `/api/csv-profiles` | — | `CsvProfile[]` |
+| `/api/clients` | — | `Client[]` |
+| `/api/clients/{id}` | — | `ClientDetail` |
+| `/api/invoices` | `status`, `clientId` | `InvoiceListRow[]` |
+| `/api/invoices/{number}` | — | `InvoiceDetail` |
+| `/api/invoices/aging` | `asOf` | `AgingReport` |
+| `/api/invoices/next-number` | — | `{ number }` |
 
 ### Date parameters
 
@@ -255,7 +278,7 @@ of `year` and `month` that route will accept.
 
 ### List responses
 
-The six list endpoints answer with a bare JSON array — no envelope, no
+The eight list endpoints answer with a bare JSON array — no envelope, no
 pagination.
 
 - `/api/accounts` — every account, by name.
@@ -276,6 +299,175 @@ pagination.
   }
 ]
 ```
+
+- `/api/clients` — every invoicing client, by name. `email`,
+  `billingAddress` and `notes` are `null` when unset.
+- `/api/invoices` — every invoice, number descending.
+
+### Invoicing
+
+`{number}` throughout is the **invoice number** — what the CLI takes, what a
+person reads off the invoice, and what `#/invoices?number=1248` carries. Row ids
+stay internal.
+
+#### `GET /api/clients/{id}`
+
+One client's own fields, flattened, plus its invoice history and open balance —
+the same round trip `nigel client show` makes:
+
+```json
+{
+  "id": 1, "name": "Acme Co", "email": "ap@acme.test",
+  "billingAddress": "1 Main St, Portland OR", "notes": null,
+  "invoices": [
+    { "number": 1251, "status": "sent", "issueDate": "2026-03-06",
+      "dueDate": "2026-04-06", "total": 1850.0, "paid": 0.0 }
+  ],
+  "outstanding": 3050.0
+}
+```
+
+`outstanding` counts open invoices only — `sent`, `partial`, `overdue` — clamped
+per invoice, so an overpayment on one cannot pay down another's balance. An
+unknown id is `404` with `details.reason` = `client_not_found`.
+
+#### `GET /api/invoices`
+
+Number descending, each row carrying its client and paid-to-date so a list
+screen needs no second request:
+
+```json
+[
+  { "id": 5, "number": 1250, "status": "partial", "clientId": 1,
+    "clientName": "Acme Co", "issueDate": "2026-02-20", "dueDate": "2026-03-20",
+    "currency": "USD", "total": 3200.0, "paid": 2000.0, "balance": 1200.0 }
+]
+```
+
+`clientName` is `string | null`: the join is a LEFT JOIN, so an invoice whose
+client row is gone appears with a dash rather than vanishing from the list.
+
+`status` accepts the six status words plus `open`, which is the
+`sent,partial,overdue` set `sync` and the aging report already work in. Anything
+else is `400` naming the legal set. `clientId` narrows to one client; an id no
+client has is `404` `client_not_found`, not an empty array — filtering by
+something that does not exist is a wrong question, the same reasoning
+`/api/reports/register` applies to an unknown `account`.
+
+#### `GET /api/invoices/{number}`
+
+The invoice's own fields flattened, plus everything a detail screen prints:
+
+```json
+{
+  "id": 5, "number": 1250, "status": "partial", "currency": "USD",
+  "subtotal": 3200.0, "tax": 0.0, "total": 3200.0,
+  "issueDate": "2026-02-20", "dueDate": "2026-03-20",
+  "notes": null, "terms": "Net 30",
+  "stripePaymentLinkId": null, "stripePaymentLinkUrl": null,
+  "publishedAt": "2026-02-20", "voidedAt": null,
+  "client": { "id": 1, "name": "Acme Co", "email": "ap@acme.test" },
+  "items": [], "payments": [],
+  "paid": 2000.0, "balance": 1200.0,
+  "publicUrl": "https://billing.example.com/i/aBc123.../",
+  "canEdit": false, "canSend": true, "canVoid": false, "canPay": true
+}
+```
+
+The invoice's `token` is **never** on the wire: it is the only access control on
+a published invoice, and a response carrying one would put it into devtools
+history and any future cache. What a client needs is the address, so the route
+computes `publicUrl` from the token and `public_base_url` instead. It is `null`
+— never an error — when the invoice was never published or `public_base_url` is
+unset.
+
+The four `can*` flags are the data layer's own guards, called rather than
+re-derived: `canEdit` is `ensure_editable`, `canVoid` is `ensure_voidable`, and
+`canSend`/`canPay` are `ensure_not_void` plus the email, total and balance
+checks. **A client must not re-derive them from `status`** — an edit is blocked
+by recorded payments as well as by status, and a second copy of that rule is a
+second copy of the guardrails. The flags disable a control; the `409` is what
+enforces it.
+
+An unknown number is `404` with `details.reason` = `invoice_not_found`.
+
+#### `GET /api/invoices/aging`
+
+The A/R aging report: five buckets in fixed order, the open invoices behind
+them sorted by days past due, and the outstanding total.
+
+```json
+{
+  "asOf": "2026-03-15",
+  "buckets": [{ "label": "current", "count": 2, "total": 3050.0 }],
+  "invoices": [
+    { "number": 1249, "client": "Globex", "dueDate": "2026-01-30",
+      "daysPastDue": 44, "bucket": "31-60",
+      "total": 960.0, "paid": 0.0, "balance": 960.0 }
+  ],
+  "outstanding": 4010.0
+}
+```
+
+`asOf` is optional and defaults to the server's local today, which is what
+`nigel invoice aging` uses. Where the CLI takes no date at all, the route does,
+because a committed parity fixture cannot survive a bucket boundary being
+crossed overnight. It is validated as strictly as every other date on this API:
+zero-padded `YYYY-MM-DD`, and `2026-3-1` is a `400`.
+
+This is the only aging route. `/api/reports` and `/api/exports` still carry
+eight reports where the CLI has nine.
+
+#### `GET /api/invoices/next-number`
+
+`{ "number": 1253 }` — the number the next draft will take. It reads the counter
+and **reserves nothing**, so a new-invoice form can show the number without
+committing anyone to creating one.
+
+#### Preview
+
+| Route | Response |
+|---|---|
+| `GET /api/invoices/{number}/preview` | `text/html; charset=utf-8` |
+| `GET /api/invoices/{number}/preview.pdf` | `application/pdf` |
+
+Along with the report exports, these are the only responses on the API that are
+not JSON — on success. Errors keep the envelope.
+
+Both render through the same `render_invoice` seam `invoice send` publishes
+through, so a preview cannot disagree with what a client receives, and neither
+takes a gateway: no network call is possible from either route. Preview needs no
+invoicing config at all; with `from_email` unset the direct-deposit contact line
+renders the same visible placeholder the CLI prints a notice about.
+
+The HTML response also carries `Content-Security-Policy: sandbox`, which covers
+the case of the route being opened directly in a tab rather than framed. It is
+the one response on this server that answers `X-Frame-Options: SAMEORIGIN`
+instead of the blanket `DENY`: the SPA renders the preview in an
+`<iframe sandbox>` with no `allow-same-origin`, and `DENY` blocks same-origin
+framing too, so the frame would otherwise be blank. Everything else — including
+`preview.pdf` and this route's own error responses — keeps `DENY`.
+`X-Content-Type-Options: nosniff` is on every response this server sends.
+
+The PDF response is a download named `invoice-{number}.pdf`. Without the `pdf`
+feature it is `501 feature_disabled`, carrying the same sentence the CLI prints,
+while the HTML route keeps working — the `/api/exports` treatment exactly. A
+custom invoice template that does not validate is `400` naming the file, never a
+silent fallback to the stock page.
+
+### Not-found reasons
+
+A `404` carries `details.reason` wherever one route can be answering about more
+than one thing, so a client is not left branching on the status alone:
+
+| Reason | Raised by |
+|---|---|
+| `account_not_found` | An account name no account has |
+| `category_not_found` | A category id that is gone or deactivated |
+| `transaction_not_found` | A transaction id that is gone |
+| `upload_not_found` | An `uploadId` that expired or never existed |
+| `invoice_not_found` | An invoice number no invoice has |
+| `client_not_found` | A client id no client has, including as a filter |
 
 ## Changing data
 
@@ -305,6 +497,15 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/reconcile` | `POST` | `account`, `month`, `statementBalance` | `ReconcileResult` |
 | `/api/reconciliations` | `GET` | `account` (query) | `ReconciliationRecord[]` |
 | `/api/imports/:id` | `DELETE` | — | `{ id, deletedTransactions }` |
+| `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?` | `Client` (`201`) |
+| `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?` | `Client` |
+| `/api/clients/:id` | `DELETE` | — | `{ id, deleted }` |
+| `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
+| `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
+| `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
+| `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `InvoiceDetail` |
+| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` |
+| `/api/invoices/sync` | `POST` | — | `SyncResult` |
 
 ### Write conventions
 
@@ -317,9 +518,10 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
   work. A `PATCH` with no recognized field is `400` — an empty edit is more
   likely a bug than an intention.
 - **`null` clears a field**, where clearing makes sense: `vendor` on a
-  transaction or a rule, `taxLine` and `formLine` on a category. `categoryId` is
-  the exception — `null` there is `400`, because uncategorizing is what
-  `/api/review/:id/undo` is for.
+  transaction or a rule, `taxLine` and `formLine` on a category, `email`,
+  `billingAddress` and `notes` on a client, `dueDate`, `notes` and `terms` on an
+  invoice. `categoryId` is the exception — `null` there is `400`, because
+  uncategorizing is what `/api/review/:id/undo` is for.
 - Unknown fields in a body are ignored, except on `/api/imports/preview` and
   `/api/imports/confirm`, where an unrecognized key is a `400`: those two carry
   the column mapping, and a misspelled field there would silently import the
@@ -432,6 +634,249 @@ an optional `?account=`, returns that history newest month first.
 record — the way `nigel undo` rolls back the most recent one. It answers with
 `{ "id": 3, "deletedTransactions": 42 }`. An import that is already gone is
 `404`, not a successful undo of nothing.
+
+### Invoicing
+
+`{number}` is the invoice number, as it is on the read routes.
+
+#### Clients
+
+```json
+{ "name": "Initech", "email": "ap@initech.test", "billingAddress": "9 Cubicle Way" }
+```
+
+`POST /api/clients` answers `201` with the created `Client`. An empty or
+whitespace-only `name` is `400`; a name another client already has is `409`
+`duplicate_name` carrying the `name`. `PATCH` takes the same four fields, all
+optional, with `email`, `billingAddress` and `notes` clearable by `null`; an
+all-absent body is `400`.
+
+`DELETE /api/clients/:id` is a hard delete, and is refused while the client has
+**any** invoice — void and paid included, because those invoices still name the
+client on a page that has already gone out:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "message": "Cannot delete: client has 2 invoices",
+    "details": { "reason": "has_invoices", "count": 2 }
+  }
+}
+```
+
+There is no CLI equivalent: `nigel client` has no `delete`, and the TUI's client
+manager offers none for the same reason this route guards it.
+
+#### Creating and editing an invoice
+
+```json
+{
+  "clientId": 1,
+  "issueDate": "2026-04-01",
+  "dueDate": "2026-05-01",
+  "currency": "USD",
+  "items": [{ "description": "Consulting: April", "quantity": 10, "unitAmount": 150 }],
+  "notes": "Thanks",
+  "terms": "Net 30"
+}
+```
+
+`currency` defaults to `USD`. The response is the whole `InvoiceDetail` at
+`201`, carrying the number the counter handed out — a refused create reserves
+nothing, since `create_invoice` advances the counter in the same transaction it
+inserts the row.
+
+The line-item rules apply to `POST` and to `PATCH` alike, and are the data
+layer's own, so `nigel invoice new` refuses exactly the same items: at least one
+item, a finite `quantity` and `unitAmount` on each, a finite line total and sum,
+and a total above zero. All of them are `400`.
+
+A non-finite figure is rejected for `payment_amount`'s reason — it would poison
+every later `SUM` over the column. JSON cannot spell `NaN`, but it does not have
+to: an overflowing literal deserializes to infinity, `1e308 × 1e308` is infinity
+from two finite factors, and two opposite-sign overflows sum to `NaN`, which
+serde would then render as `"total": null` against a field a client has typed as
+a number. The check therefore runs **after** the arithmetic, on each line total
+and on the sum, not only on the figures that went into them.
+
+Descriptions may contain anything, including a colon: the CLI's `desc:qty:unit`
+restriction is an artifact of parsing one argv string.
+
+`PATCH /api/invoices/:number` is **draft-only**, and `items` is a whole-list
+replacement rather than a per-row edit — present means "these are the line items
+now", positions are re-derived, and `subtotal`/`total` are recomputed. An edit
+that moves the total or the currency **clears a stale Stripe payment link**, so
+the next send creates one at the right amount.
+
+The draft-only rule is read from the current row inside the write's own
+transaction, never from anything the client sent, and it is more than a status
+comparison — see the conflict table below.
+
+#### Voiding and paying
+
+`POST /api/invoices/:number/void` takes no body. It writes `voidedAt` and lets
+the status derive from it; `void` is terminal, so the returned detail has all
+four `can*` flags false.
+
+It also **tears down what the invoice published** — deactivating the Stripe
+payment link and replacing the published page with a voided notice — which makes
+it a blocking request like `send`, bounded by the same per-call timeouts. The
+teardown is best-effort and cannot change the answer: the invoice is void
+whatever Stripe and R2 say. What a failure adds is data. `VoidResult` is the
+detail flattened, exactly as before, plus two fields that are **absent** when
+there is nothing to report:
+
+| Field | Meaning |
+| --- | --- |
+| `paymentLinkUrl` | A Stripe payment link that is *still live* — deactivation was refused, or no `stripe_secret_key` is configured. Deactivate it by hand |
+| `teardownWarnings` | The sentences `nigel invoice void` prints, verbatim, naming everything still live |
+
+A void that could not reach Stripe is therefore a `200`, not a `502`: the
+cancellation happened, and a failed request would both misdescribe it and
+withhold the URL somebody has to open. Which half runs depends on what is
+configured — see the matrix in `docs/invoicing.md`.
+
+```json
+{ "date": "2026-03-14", "amount": 500.0, "method": "ach" }
+```
+
+`amount` omitted records the **whole outstanding balance**, exactly as omitting
+`--amount` does. `method` defaults to `direct_deposit` and is validated against
+the `invoice_payments` CHECK set — `stripe`, `ach`, `direct_deposit`, `other` —
+before the insert, so an unknown one is a `400` naming the set rather than a
+constraint violation surfacing as a `500`. A zero, negative or non-finite
+`amount` is `400`.
+
+Both answer the refreshed invoice, as every invoice write does: the status is
+derived by `refresh_status` on almost all of them, so a response echoing only
+the field that was sent would be showing the old one. `pay` answers an
+`InvoiceDetail`; `void` answers that same detail flattened inside a
+`VoidResult`, so it reads as one everywhere an `InvoiceDetail` is expected.
+
+Dates on these routes follow the API's own rule, not the CLI's: zero-padded
+`YYYY-MM-DD`, so `2026-4-1` is a `400` here where `nigel invoice pay` accepts it.
+
+#### Sending an invoice
+
+`POST /api/invoices/:number/send` requires a body, and the body must say so:
+
+```json
+{ "confirm": true }
+```
+
+An empty object or `"confirm": false` is `400` `confirmation_required`, and
+nothing happens. (A request with no body at all, or one that is not JSON, is
+also `400` — that one from the body extractor, before this route is reached.) The screen's confirm dialog is a
+convention the next screen can forget; the flag makes the dialog the only way to
+reach the endpoint and an accidental `curl` a no-op. `pay` and `sync` do not
+require it: one writes a row a person typed, and the other is idempotent.
+
+**The request blocks until the send is done.** It creates the Stripe payment
+link, renders the HTML and PDF, uploads both to R2, emails the client and marks
+the invoice published, then answers. There is no job id and no polling endpoint:
+the invoice row is already the job record — `publishedAt` and
+`stripePaymentLinkUrl` are the durable state a job store would duplicate — and
+two sources of truth for "did this go out" is how they drift.
+
+A send makes **five** outbound calls: two to Stripe (the price, then the payment
+link), two to R2 (the HTML, then the PDF), and one to Mailgun. Each is bounded
+at 10s to connect and 30s in total, so a send that hangs everywhere it can is a
+request of about **150 seconds** plus rendering — long, but bounded, where
+before it was an open socket. There is no deadline over the orchestration as a
+whole: the per-call timeouts and the step trace are the design, and a run cut
+off part-way would leave a client unable to tell which steps had happened.
+
+A completed send answers with the refreshed invoice and what each step did:
+
+```json
+{
+  "invoice": { "number": 1252, "status": "sent", "...": "the whole InvoiceDetail" },
+  "publicUrl": "https://billing.example.com/i/2f9c…/",
+  "paymentLinkUrl": "https://buy.stripe.com/…",
+  "steps": [
+    { "step": "load", "outcome": "ok" },
+    { "step": "precheck", "outcome": "ok" },
+    { "step": "payment_link", "outcome": "reused" },
+    { "step": "render", "outcome": "ok" },
+    { "step": "publish", "outcome": "ok" },
+    { "step": "email", "outcome": "ok" },
+    { "step": "record", "outcome": "ok" }
+  ]
+}
+```
+
+`payment_link` is `reused` on a resend: the link the client was already given is
+priced in the amount they were quoted, so a second one is never created.
+
+A failure says where it stopped, and answers with the status that step's failure
+calls for:
+
+| Step | What it does | A failure is |
+|---|---|---|
+| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys |
+| `load` | The invoice, its client and its line items | `404 invoice_not_found` / `client_not_found` |
+| `precheck` | Not void; the client has an address; there is something to charge | `409 void` / `client_missing_email` / `invoice_not_payable` |
+| `payment_link` | Create the Stripe link, unless one exists | `502 upstream_failed`, `service: "stripe"` |
+| `render` | The HTML and the PDF | `501 feature_disabled` on a build without `pdf`, otherwise `500` |
+| `publish` | Upload both to R2 | `502 upstream_failed`, `service: "r2"` |
+| `email` | Send the mail with the PDF attached | `502 upstream_failed`, `service: "mailgun"` |
+| `record` | Mark it published and re-derive the status | `500`, with `emailSent: true` |
+
+```json
+{ "error": {
+  "code": "upstream_failed",
+  "message": "r2 403: SignatureDoesNotMatch",
+  "details": {
+    "reason": "send_failed",
+    "step": "publish",
+    "service": "r2",
+    "completed": ["load", "precheck", "payment_link", "render"],
+    "emailSent": false,
+    "invoiceStatus": "draft"
+  } } }
+```
+
+The `message` is the upstream's own: `r2 403: SignatureDoesNotMatch` is the only
+information anyone has about why R2 refused, and a sentence we invented instead
+would be a worse bug report. `details` never carries a setting's value — only
+key names, in `missing`.
+
+`emailSent` is the field the wording turns on. Every failure before the email is
+safe to retry; a failure at `record` after it is not, because the client already
+has the invoice. **The server never retries by itself**, and a screen must not
+either: a retry is a fresh confirmation.
+
+A database failure inside a send is `500`, whichever step it lands on — a `502`
+would send the operator to Cloudflare's status page for a problem on their own
+disk.
+
+#### Syncing payments
+
+`POST /api/invoices/sync` takes no body. It pulls paid Stripe checkout sessions
+for every open invoice that carries a payment link and records the ones it has
+not seen, keyed by session id, so running it twice records nothing twice. It is
+the same reconciliation the CLI runs at launch.
+
+```json
+{ "recorded": 1, "invoicesChecked": 3, "failures": [
+  { "number": 1249, "message": "stripe 404: no such payment link plink_…" }
+] }
+```
+
+Per-invoice failures are **data, not an error**: a deleted payment link 404s
+forever, and one of those must not hide the payments the run did record. Only a
+run where every invoice failed answers with an error — `502 upstream_failed`,
+`service: "stripe"`. With no `stripe_secret_key` set it is `409`
+`send_not_configured` naming that one key.
+
+The whole run is bounded at **60 seconds**, checked before each invoice — one
+invoice is bounded by the same 30s call timeout a send uses, so without a
+deadline N open invoices would be N × 30s of a request holding the database
+against an encrypt, a decrypt or a data-directory switch. Invoices the budget
+did not reach come back in `failures` saying so, never silently dropped, so the
+count still accounts for every invoice in `invoicesChecked` and calling it again
+picks up where it stopped.
 
 ## Running an import
 
@@ -571,6 +1016,23 @@ its own words instead of parsing ours:
 | `no_transactions` | `account`, `month` | Reconciling a month with nothing in it |
 | `already_encrypted` | — | Setting a password on an encrypted database |
 | `not_encrypted` | — | Changing or removing the password on a plaintext one |
+| `has_invoices` | `count` | Deleting a client that has invoices, any status |
+| `void` | — | Editing or paying a void invoice |
+| `not_draft` | `status` | Editing an invoice that has been sent |
+| `has_payments` | `total`, `paid` | Editing or voiding an invoice with payments |
+| `already_void` | — | Voiding an invoice that is already void |
+| `no_balance` | `total`, `paid` | Paying an invoice with nothing outstanding |
+| `client_missing_email` | `clientId`, `clientName`, `step` | Sending to a client with no address |
+| `invoice_not_payable` | `step` | Sending an invoice with nothing to charge |
+| `send_not_configured` | `missing`, `step` | Sending or syncing with settings unset |
+
+The invoice-state reasons are the data layer's own, raised by
+`ensure_editable`, `ensure_voidable`, `ensure_not_void` and `payment_amount`, so
+the CLI, the TUI and the API refuse the same things in the same words. **A
+client must not re-derive them from `status`:** an edit is blocked by recorded
+payments as well as by status, which is why a draft that has been part-paid
+answers `has_payments` rather than anything about being a draft. The route adds
+the figures beside them; the code and the sentence are the data layer's.
 
 ```json
 {
@@ -647,8 +1109,13 @@ such a build — otherwise the saved `.pdf` file is that JSON.
 
 ### Not on the API
 
-- **Bulk export.** `nigel report all` writes eight files into a directory; a
+- **Bulk export.** `nigel report all` writes nine files into a directory; a
   browser downloads one file at a time. There is no `/api/exports/all`.
+- **A/R aging as a report.** Aging is served at
+  [`/api/invoices/aging`](#get-apiinvoicesaging), not in `/api/reports` or
+  `/api/exports`: `ReportKind` has no variant for it, and giving it one would
+  mean touching the report vocabulary eight endpoints and two front ends share.
+  There is no aging download.
 - **Writing files.** The CLI's `--output` and `--output-dir` choose a path on
   disk. The server only streams bytes back; where they land is the browser's
   business.

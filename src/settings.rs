@@ -79,17 +79,49 @@ pub fn set_config_dir_for_tests(dir: Option<PathBuf>) -> Option<PathBuf> {
     std::mem::replace(&mut *CONFIG_DIR_OVERRIDE.lock().unwrap(), dir)
 }
 
-/// Redirect `~/.config/nigel` at a temporary directory for the life of the
-/// guard.
+/// Test-only suppression of the `NIGEL_*` layer of [`invoicing_config`].
 ///
-/// Lives here rather than in the server's test helpers because the config
-/// directory is this module's, and tests outside the `serve` feature need it
-/// too: anything that reads [`load_settings`] otherwise answers from whatever
-/// the developer's own settings.json happens to say.
+/// The environment wins over settings.json, which is a documented production
+/// feature — and it is how this repository's own operator configures invoicing,
+/// so on their machine "nothing is configured" would resolve nine real
+/// credentials and a test that expects a refusal would instead send an invoice
+/// through Stripe, R2 and Mailgun. The suite is offline unconditionally, not
+/// offline-if-your-shell-happens-to-be-empty, so the guard below takes the
+/// environment out of the resolution entirely rather than trusting it to be
+/// unset. An in-crate override is used rather than unsetting the variables:
+/// mutating the process environment is global, unsafe in newer editions, and
+/// would have to be undone even on a panicking test.
+#[cfg(test)]
+static SUPPRESS_INVOICING_ENV: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+/// Turn the environment layer off (or back on) and hand back what it was, so a
+/// guard restores rather than clears — the [`set_config_dir_for_tests`] rule.
+#[cfg(test)]
+pub fn suppress_invoicing_env_for_tests(suppress: bool) -> bool {
+    // unwrap: poisoned mutex means a thread panicked — unrecoverable
+    std::mem::replace(&mut *SUPPRESS_INVOICING_ENV.lock().unwrap(), suppress)
+}
+
+#[cfg(test)]
+fn invoicing_env_is_suppressed() -> bool {
+    // unwrap: poisoned mutex means a thread panicked — unrecoverable
+    *SUPPRESS_INVOICING_ENV.lock().unwrap()
+}
+
+/// Resolve settings from a temporary directory alone, for the life of the
+/// guard: `~/.config/nigel` is redirected and the `NIGEL_*` environment layer
+/// is switched off, so everything this module answers comes from the temporary
+/// file and nothing else.
+///
+/// Lives here rather than in the server's test helpers because the config is
+/// this module's, and tests outside the `serve` feature need it too: anything
+/// that reads [`load_settings`] otherwise answers from whatever the developer's
+/// own settings.json — or shell — happens to say.
 #[cfg(test)]
 pub struct TempConfigDir {
     _dir: tempfile::TempDir,
     previous: Option<PathBuf>,
+    previously_suppressed: bool,
 }
 
 #[cfg(test)]
@@ -97,9 +129,11 @@ impl TempConfigDir {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let previous = set_config_dir_for_tests(Some(dir.path().to_path_buf()));
+        let previously_suppressed = suppress_invoicing_env_for_tests(true);
         Self {
             _dir: dir,
             previous,
+            previously_suppressed,
         }
     }
 }
@@ -118,6 +152,7 @@ impl Drop for TempConfigDir {
     /// that is still writing.
     fn drop(&mut self) {
         set_config_dir_for_tests(self.previous.take());
+        suppress_invoicing_env_for_tests(self.previously_suppressed);
     }
 }
 
@@ -203,6 +238,13 @@ pub struct InvoicingConfig {
 }
 
 pub fn invoicing_config_from(s: &Settings) -> InvoicingConfig {
+    // Under a `TempConfigDir` the environment is not consulted at all — see
+    // `SUPPRESS_INVOICING_ENV`, which exists so that a machine with the nine
+    // `NIGEL_*` variables exported cannot turn an offline test into a real send.
+    #[cfg(test)]
+    if invoicing_env_is_suppressed() {
+        return invoicing_config_with(s, |_| None);
+    }
     invoicing_config_with(s, |name| std::env::var(name).ok())
 }
 
@@ -225,6 +267,46 @@ fn invoicing_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
 
 pub fn invoicing_config() -> InvoicingConfig {
     invoicing_config_from(&load_settings())
+}
+
+/// Which invoicing keys are set, by name.
+///
+/// Key names only, never values: three of the nine are plaintext secrets, and
+/// the names are already published in `docs/invoicing.md`. It is what greys out
+/// a Send button and what an empty state points at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvoicingStatus {
+    pub send_configured: bool,
+    pub sync_configured: bool,
+    pub missing: Vec<&'static str>,
+}
+
+pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
+    // `docs/invoicing.md`'s order, which is also `build_clients`' requirement
+    // list: every one of the nine is needed to send.
+    let keys: [(&'static str, &Option<String>); 9] = [
+        ("stripe_secret_key", &cfg.stripe_secret_key),
+        ("mailgun_api_key", &cfg.mailgun_api_key),
+        ("mailgun_domain", &cfg.mailgun_domain),
+        ("from_email", &cfg.from_email),
+        ("r2_account_id", &cfg.r2_account_id),
+        ("r2_access_key", &cfg.r2_access_key),
+        ("r2_secret_key", &cfg.r2_secret_key),
+        ("r2_bucket", &cfg.r2_bucket),
+        ("public_base_url", &cfg.public_base_url),
+    ];
+    let missing: Vec<&'static str> = keys
+        .iter()
+        .filter(|(_, value)| value.is_none())
+        .map(|(name, _)| *name)
+        .collect();
+
+    InvoicingStatus {
+        send_configured: missing.is_empty(),
+        sync_configured: cfg.stripe_secret_key.is_some(),
+        missing,
+    }
 }
 
 pub fn get_data_dir() -> PathBuf {
@@ -276,6 +358,59 @@ pub fn restrict_dir_permissions(path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fully_configured() -> InvoicingConfig {
+        InvoicingConfig {
+            stripe_secret_key: Some("sk_live_secret".into()),
+            mailgun_api_key: Some("key-secret".into()),
+            mailgun_domain: Some("mg.example.com".into()),
+            from_email: Some("billing@example.com".into()),
+            r2_account_id: Some("acct-secret".into()),
+            r2_access_key: Some("access-secret".into()),
+            r2_secret_key: Some("secret-secret".into()),
+            r2_bucket: Some("billing".into()),
+            public_base_url: Some("https://billing.example.com/i".into()),
+        }
+    }
+
+    #[test]
+    fn the_invoicing_status_never_carries_a_value() {
+        let status = invoicing_status(&fully_configured());
+        assert!(status.send_configured);
+        assert!(status.sync_configured);
+        assert!(status.missing.is_empty());
+
+        let rendered = serde_json::to_string(&status).expect("serializes");
+        for value in [
+            "sk_live_secret",
+            "key-secret",
+            "mg.example.com",
+            "billing@example.com",
+            "acct-secret",
+            "access-secret",
+            "secret-secret",
+            "billing",
+            "https://billing.example.com/i",
+        ] {
+            assert!(!rendered.contains(value), "{value} leaked into {rendered}");
+        }
+    }
+
+    #[test]
+    fn invoicing_status_names_the_missing_keys_in_the_documented_order() {
+        let mut cfg = fully_configured();
+        cfg.r2_bucket = None;
+        cfg.stripe_secret_key = None;
+        cfg.public_base_url = None;
+
+        let status = invoicing_status(&cfg);
+        assert!(!status.send_configured);
+        assert!(!status.sync_configured, "sync is stripe_secret_key alone");
+        assert_eq!(
+            status.missing,
+            vec!["stripe_secret_key", "r2_bucket", "public_base_url"]
+        );
+    }
 
     #[test]
     fn test_save_and_load_roundtrip() {
@@ -352,6 +487,36 @@ mod tests {
             loaded.last_update_check.as_deref(),
             Some("2025-06-15T10:30:00")
         );
+    }
+
+    /// The suite must be offline whatever the developer's shell says, and the
+    /// operator of this repository does export these variables.
+    #[test]
+    fn a_temp_config_dir_takes_the_environment_out_of_the_invoicing_config() {
+        let _guard = TempConfigDir::new();
+        // Safe here and only here: the suite runs on one thread (see `db.rs`),
+        // this is the process's own variable, and it is removed below.
+        std::env::set_var("NIGEL_STRIPE_SECRET_KEY", "sk_live_not_a_real_key");
+
+        let cfg = invoicing_config();
+        assert!(
+            cfg.stripe_secret_key.is_none(),
+            "the environment reached a test that expects nothing configured"
+        );
+        assert!(!invoicing_status(&cfg).sync_configured);
+
+        std::env::remove_var("NIGEL_STRIPE_SECRET_KEY");
+    }
+
+    /// And the suppression is the guard's, not a permanent change: production
+    /// resolution still reads the environment first.
+    #[test]
+    fn the_environment_layer_comes_back_when_the_guard_is_dropped() {
+        {
+            let _guard = TempConfigDir::new();
+            assert!(invoicing_env_is_suppressed());
+        }
+        assert!(!invoicing_env_is_suppressed());
     }
 
     #[test]
