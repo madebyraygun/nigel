@@ -214,6 +214,14 @@ export class WcSendDialog extends LitElement {
   publicUrl = '';
 
   /**
+   * Configuration worth a second look, from a send that succeeded. Beside the
+   * outcome rather than inside a failure: the invoice went out, and what is
+   * wrong with the settings is somebody's next task.
+   */
+  @property({ attribute: false })
+  configWarnings: string[] = [];
+
+  /**
    * Why this invoice cannot be sent at all — a missing client email, an unset
    * setting. Present means the confirm button is inert.
    */
@@ -323,6 +331,9 @@ export class WcSendDialog extends LitElement {
         ${this.publicUrl
           ? html`<p class="caveat public-url" data-public-url>${this.publicUrl}</p>`
           : nothing}
+        ${this.configWarnings.map(
+          (warning) => html`<p class="caveat" data-config-warning>${warning}</p>`,
+        )}
       `;
     }
 

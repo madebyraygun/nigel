@@ -922,6 +922,8 @@ export class FakeApiClient implements ApiClient {
   aging: AgingReport = EMPTY_AGING;
   nextInvoiceNumber = 1253;
   sendResult: SendResult | null = null;
+  /** Configuration warnings a successful send comes back with. */
+  sendConfigWarnings: string[] = [];
   syncResult: SyncResult = { recorded: 0, invoicesChecked: 0, failures: [] };
 
   /** Names a create or rename would collide with, as `add_client` sees them. */
@@ -1220,6 +1222,7 @@ export class FakeApiClient implements ApiClient {
         { step: 'email', outcome: 'ok' },
         { step: 'record', outcome: 'ok' },
       ],
+      configWarnings: this.sendConfigWarnings,
     };
   }
 

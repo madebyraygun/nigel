@@ -56,6 +56,9 @@ Secrets and endpoints resolve from the environment first, then from
 | `mailgun_api_key` | `NIGEL_MAILGUN_API_KEY` | `send` | — |
 | `mailgun_domain` | `NIGEL_MAILGUN_DOMAIN` | `send` | — |
 | `from_email` | `NIGEL_FROM_EMAIL` | `send` | — |
+| `from_name` | `NIGEL_FROM_NAME` | — | the business name |
+| `reply_to_email` | `NIGEL_REPLY_TO_EMAIL` | — | no Reply-To header |
+| `contact_email` | `NIGEL_CONTACT_EMAIL` | — | `from_email` |
 | `r2_account_id` | `NIGEL_R2_ACCOUNT_ID` | `send` | — |
 | `r2_access_key` | `NIGEL_R2_ACCESS_KEY` | `send` | — |
 | `r2_secret_key` | `NIGEL_R2_SECRET_KEY` | `send` | — |
@@ -75,7 +78,10 @@ permissions on Unix. Use Stripe test keys (`sk_test_…`) while trying things ou
   "stripe_secret_key": "sk_test_...",
   "mailgun_api_key": "...",
   "mailgun_domain": "mg.example.com",
-  "from_email": "billing@example.com",
+  "from_email": "billing@mg.example.com",
+  "from_name": "Acme LLC",
+  "reply_to_email": "sam@example.com",
+  "contact_email": "accounts@example.com",
   "r2_account_id": "...",
   "r2_access_key": "...",
   "r2_secret_key": "...",
@@ -199,9 +205,9 @@ it is not, which is why the button is dropped even when the Stripe URL is still
 in the row.
 
 Preview is the one invoicing command that works on a fresh install: it needs no
-Stripe, R2, or Mailgun configuration and makes no network call. With `from_email`
-unset the direct-deposit contact line renders `(from_email not configured)` and
-the command says so on stderr — the page is still complete enough to check the
+Stripe, R2, or Mailgun configuration and makes no network call. With neither
+`contact_email` nor `from_email` set the direct-deposit contact line renders
+`(contact_email not configured)` and the command says so on stderr — the page is still complete enough to check the
 figures and the layout.
 
 In a build without the `pdf` feature the HTML is written, no PDF is, and the exit
@@ -325,7 +331,8 @@ One command does the whole publish:
 4. Emails the client through Mailgun — HTML body, PDF attached, subject
    `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
    is set. The name comes from the same setting the dashboard's settings screen
-   edits.
+   edits. The From carries a display name and, when one is configured, a
+   Reply-To — see "Who the email is from" below.
 5. Marks the invoice published, which moves it from `draft` to `sent` (or straight
    to `overdue` if its due date has already passed).
 
@@ -335,8 +342,47 @@ send is safe to retry. The command prints the public URL on success:
 
 The published page shows the line items, the total, any notes and terms, a Pay
 button linking to Stripe, and bank-transfer instructions. The direct-deposit line
-tells the client to get in touch at `from_email`, the same address the invoice is
-sent from.
+tells the client to get in touch at `contact_email`, which falls back to
+`from_email` when it is not set.
+
+### Who the email is from
+
+Four settings decide what a client sees at the top of the message, and they are
+four different jobs:
+
+| Setting | What it is |
+|---|---|
+| `from_email` | the address Mailgun sends from |
+| `from_name` | the display name beside it; unset means the business name |
+| `reply_to_email` | the `Reply-To`; unset means the message carries no such header |
+| `contact_email` | the address the published page's direct-deposit line prints |
+
+```
+From: Acme LLC <billing@mg.example.com>
+Reply-To: sam@example.com
+To: ap@acme.test
+Subject: Invoice #1248 from Acme LLC
+```
+
+`from_email` should be on `mailgun_domain`. When it is not, the send reports a
+warning and goes ahead: a Mailgun domain of `mg.example.com` sending for
+`billing@example.com` is a common, deliverable setup, and only your Mailgun
+account knows which senders it has verified. The warning appears on stderr from
+the CLI, on the status line in the dashboard, and as `configWarnings` on the
+send response. The reply-to is not checked at all — Mailgun constrains what a
+message is sent *from*, not where a human replies to it.
+
+`from_email` must be a **bare address**. Putting the display name in it —
+`Acme LLC <billing@mg.example.com>`, which is how you would have had to do it
+before `from_name` existed — is refused, because the name goes in `from_name`
+now and composing both would produce a header Mailgun rejects.
+
+A display name containing a comma or a quote is encoded for you
+(`"Carter, Sam" <billing@mg.example.com>`); you never quote it yourself. A
+control character in `from_email`, `from_name`, the business name or
+`reply_to_email` is refused by naming where it came from, and the send stops
+before any network call: a header carrying a newline can add recipients nobody
+chose.
 
 ### From the web UI
 
@@ -452,7 +498,7 @@ nothing to say.
 | `{{TERMS}}` | fragment | Terms block, empty when unset |
 | `{{PAY_URL}}` | text | Stripe payment link, empty when there is none |
 | `{{PAY}}` | fragment | The Pay button, empty when there is no link |
-| `{{CONTACT}}` | text | Direct-deposit contact address (`from_email`) |
+| `{{CONTACT}}` | text | Direct-deposit contact address (`contact_email`, or `from_email`) |
 
 **Text** placeholders are HTML-escaped values you can put in element content or
 inside a quoted attribute value. **Fragment**

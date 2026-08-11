@@ -9,7 +9,8 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::invoice::{
-    build_clients, company_name, optional_gateway, optional_publisher, PUBLISHED_VOID_NOTICE,
+    build_clients, company_name, contact_email_for_preview, optional_gateway, optional_publisher,
+    PUBLISHED_VOID_NOTICE,
 };
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
@@ -1025,6 +1026,7 @@ impl InvoiceManager {
     /// network.
     pub(crate) fn begin_send(
         &mut self,
+        conn: &Connection,
         cfg: InvoicingConfig,
         data_dir: &std::path::Path,
     ) -> InvoiceAction {
@@ -1045,7 +1047,7 @@ impl InvoiceManager {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
-        if let Err(e) = build_clients(cfg) {
+        if let Err(e) = build_clients(cfg, &company_name(conn)) {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
@@ -1103,19 +1105,34 @@ impl InvoiceManager {
         cfg: InvoicingConfig,
         data_dir: &std::path::Path,
     ) {
+        let company = company_name(conn);
+        let contact_email = contact_email_for_preview(&cfg).0;
         let prepared = load_template(data_dir).and_then(|template| {
-            let clients = build_clients(cfg)?;
+            let clients = build_clients(cfg, &company)?;
             Ok((template, clients))
         });
         match prepared {
-            Ok((template, (stripe, r2, mail))) => {
-                let company = company_name(conn);
+            Ok((template, clients)) => {
+                // The one place a send's config warnings are surfaced on this
+                // screen: `begin_send` builds clients too, and printing there
+                // as well would say it twice. Never `eprintln!` — ratatui owns
+                // the alternate screen this is drawn into.
+                for warning in &clients.warnings {
+                    self.set_status(warning.clone());
+                }
                 let branding = Branding {
                     template: &template,
                     company: &company,
-                    contact_email: &mail.from,
+                    contact_email: &contact_email,
                 };
-                self.perform_send(conn, today, &branding, &stripe, &r2, &mail);
+                self.perform_send(
+                    conn,
+                    today,
+                    &branding,
+                    &clients.stripe,
+                    &clients.r2,
+                    &clients.mail,
+                );
             }
             Err(e) => self.finish_send(conn, Err(e)),
         }
@@ -1430,7 +1447,9 @@ impl InvoiceManager {
             KeyCode::PageDown => self.detail_scroll += 10,
             KeyCode::Char('p') => self.open_pay_form(&crate::cli::today()),
             KeyCode::Char('v') => self.open_void_confirmation(conn),
-            KeyCode::Char('s') => return self.begin_send(invoicing_config(), &get_data_dir()),
+            KeyCode::Char('s') => {
+                return self.begin_send(conn, invoicing_config(), &get_data_dir())
+            }
             KeyCode::Esc => self.close_detail(),
             KeyCode::Char('q') => return InvoiceAction::Close,
             _ => {}
@@ -2667,7 +2686,7 @@ mod tests {
 
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
-        mgr.begin_send(full_config(), dir.path());
+        mgr.begin_send(&conn, full_config(), dir.path());
 
         let screen = rendered(&mut mgr);
         assert!(screen.contains("Send invoice #1248"), "{screen}");
@@ -2744,6 +2763,9 @@ mod tests {
             mailgun_api_key: None,
             mailgun_domain: None,
             from_email: None,
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: None,
             r2_access_key: None,
             r2_secret_key: None,
@@ -2757,7 +2779,10 @@ mod tests {
             stripe_secret_key: Some("sk_test".into()),
             mailgun_api_key: Some("key".into()),
             mailgun_domain: Some("mail.example.test".into()),
-            from_email: Some("billing@example.test".into()),
+            from_email: Some("billing@mail.example.test".into()),
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: Some("acct".into()),
             r2_access_key: Some("ak".into()),
             r2_secret_key: Some("sk".into()),
@@ -2775,7 +2800,7 @@ mod tests {
         data_dir: &std::path::Path,
     ) -> InvoiceAction {
         mgr.handle_key(KeyCode::Enter, conn);
-        mgr.begin_send(cfg, data_dir)
+        mgr.begin_send(conn, cfg, data_dir)
     }
 
     #[test]
@@ -3446,7 +3471,7 @@ mod tests {
         mgr.handle_key(KeyCode::Char('p'), &conn);
         draw(&mut mgr); // payment form
         mgr.handle_key(KeyCode::Esc, &conn);
-        mgr.begin_send(full_config(), dir.path());
+        mgr.begin_send(&conn, full_config(), dir.path());
         draw(&mut mgr); // confirm send
         mgr.handle_key(KeyCode::Char('y'), &conn);
         draw(&mut mgr); // sending
