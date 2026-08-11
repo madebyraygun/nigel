@@ -2,7 +2,7 @@ use chrono::Datelike;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use rand::seq::SliceRandom;
 use ratatui::{
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Bar, BarChart, BarGroup, Paragraph},
@@ -58,8 +58,7 @@ const MENU_ITEMS: &[(&str, char)] = &[
     ("[z] Undo last import", 'z'),
     ("[n] Invoices", 'n'),
     ("[k] Clients", 'k'),
-    ("[v] View a report", 'v'),
-    ("[e] Export a report", 'e'),
+    ("[v] View Reports", 'v'),
     ("[l] Load a different data file", 'l'),
     ("[p] Settings", 'p'),
     ("[s] Snake", 's'),
@@ -78,22 +77,10 @@ const REPORT_TYPES: &[&str] = &[
     "Cash Position",
     "K-1 Prep (1120-S)",
     "A/R Aging",
+    "Export All Reports",
 ];
 
-const EXPORT_TYPES: &[&str] = &[
-    "Profit & Loss",
-    "Expense Breakdown",
-    "Tax Summary",
-    "Cash Flow",
-    "Transaction Register",
-    "Flagged Transactions",
-    "Cash Position",
-    "K-1 Prep (1120-S)",
-    "A/R Aging",
-    "All Reports",
-];
-
-/// The pickers for personal books: the business lists without the K-1 prep
+/// The picker for personal books: `REPORT_TYPES` without the K-1 prep
 /// worksheet, which only means something under the business chart of accounts.
 const PERSONAL_REPORT_TYPES: &[&str] = &[
     "Profit & Loss",
@@ -104,64 +91,45 @@ const PERSONAL_REPORT_TYPES: &[&str] = &[
     "Flagged Transactions",
     "Cash Position",
     "A/R Aging",
+    "Export All Reports",
 ];
 
-const PERSONAL_EXPORT_TYPES: &[&str] = &[
-    "Profit & Loss",
-    "Expense Breakdown",
-    "Tax Summary",
-    "Cash Flow",
-    "Transaction Register",
-    "Flagged Transactions",
-    "Cash Position",
-    "A/R Aging",
-    "All Reports",
-];
-
-/// The report slug behind each picker index. `REPORT_TYPES`, `EXPORT_TYPES`,
-/// `enter_report_view_with_date`, `do_export` and `do_text_export` are all keyed
-/// by that bare index; this is what the guard test holds them to.
+/// The report slug behind each canonical picker index. `REPORT_TYPES`,
+/// `enter_report_view_with_date`, `do_export` and `do_text_export` are all
+/// keyed by that bare index; this is what the guard test holds them to.
 const REPORT_SLUGS: &[&str] = &[
     "pnl", "expenses", "tax", "cashflow", "register", "flagged", "balance", "k1-prep", "aging",
 ];
 
-#[derive(Clone, Copy)]
-enum ReportPickerMode {
-    View,
-    Export,
-}
+/// Canonical index of the picker's Export All Reports row — one past the
+/// report slugs, the "all reports" index `do_export`/`do_text_export`
+/// understand.
+const EXPORT_ALL_IDX: usize = REPORT_SLUGS.len();
 
-/// The rows a report picker shows for the given profile. Personal books drop
+/// Picker and export index of the transaction register.
+const REGISTER_IDX: usize = 4;
+
+/// The rows the report picker shows for the given profile. Personal books drop
 /// the K-1 worksheet; every dispatch index below stays keyed to the business
-/// lists, with `canonical_report_idx` translating a picker selection back.
-fn report_picker_items(
-    profile: crate::db::Profile,
-    mode: ReportPickerMode,
-) -> &'static [&'static str] {
-    use crate::db::Profile;
-    match (mode, profile) {
-        (ReportPickerMode::View, Profile::Business) => REPORT_TYPES,
-        (ReportPickerMode::View, Profile::Personal) => PERSONAL_REPORT_TYPES,
-        (ReportPickerMode::Export, Profile::Business) => EXPORT_TYPES,
-        (ReportPickerMode::Export, Profile::Personal) => PERSONAL_EXPORT_TYPES,
+/// list, with `canonical_report_idx` translating a picker selection back.
+fn report_picker_items(profile: crate::db::Profile) -> &'static [&'static str] {
+    match profile {
+        crate::db::Profile::Business => REPORT_TYPES,
+        crate::db::Profile::Personal => PERSONAL_REPORT_TYPES,
     }
 }
 
 /// Translate a picker selection into the canonical report index the dispatch
-/// functions match on. The personal lists drop K-1 (canonical 7), so every
-/// personal selection at or past that row sits one short of its canonical
-/// index; business selections are already canonical.
+/// functions match on. The personal list drops K-1 (canonical 7), so every
+/// personal selection at or past that row — the Export All row included —
+/// sits one short of its canonical index; business selections are already
+/// canonical.
 fn canonical_report_idx(profile: crate::db::Profile, selection: usize) -> usize {
     match profile {
         crate::db::Profile::Personal if selection >= 7 => selection + 1,
         _ => selection,
     }
 }
-
-#[cfg(feature = "pdf")]
-const EXPORT_FORMATS: &[&str] = &["PDF", "Text"];
-#[cfg(not(feature = "pdf"))]
-const EXPORT_FORMATS: &[&str] = &["Text"];
 
 enum DashboardScreen {
     Home,
@@ -175,14 +143,7 @@ enum DashboardScreen {
     Rules(RulesManager),
     Reconcile(ReconcileScreen),
     Load(LoadScreen),
-    ReportPicker {
-        selection: usize,
-        mode: ReportPickerMode,
-    },
-    ExportFormatPicker {
-        report_idx: usize,
-        selection: usize,
-    },
+    ReportPicker { selection: usize },
     ReportView(Box<dyn ReportView>),
     Undo(UndoScreen),
     Settings(SettingsManager),
@@ -433,19 +394,33 @@ impl Dashboard {
         }
         if let DashboardScreen::ReportView(ref mut view) = self.screen {
             view.draw(frame);
+            if let Some(msg) = &self.status_message {
+                let area = frame.area();
+                if area.height > 0 {
+                    let status_area = Rect {
+                        x: area.x,
+                        y: area.y + area.height - 1,
+                        width: area.width,
+                        height: 1,
+                    };
+                    frame.render_widget(
+                        Paragraph::new(format!(" {msg}")).style(Style::default().fg(Color::Yellow)),
+                        status_area,
+                    );
+                }
+            }
             return;
         }
-        if let DashboardScreen::ReportPicker { selection, mode } = self.screen {
-            let title = match mode {
-                ReportPickerMode::View => "Select a report to view",
-                ReportPickerMode::Export => "Select a report to export",
+        if let DashboardScreen::ReportPicker { selection } = self.screen {
+            let footer = if canonical_report_idx(self.profile, selection) != EXPORT_ALL_IDX {
+                " Up/Down=navigate  Enter=select  Esc/q=back"
+            } else if cfg!(feature = "pdf") {
+                " Up/Down=navigate  Enter=export all as PDF  t=export all as text  Esc/q=back"
+            } else {
+                " Up/Down=navigate  Enter/t=export all as text  Esc/q=back"
             };
-            let items = report_picker_items(self.profile, mode);
-            self.draw_picker(frame, title, items, selection);
-            return;
-        }
-        if let DashboardScreen::ExportFormatPicker { selection, .. } = self.screen {
-            self.draw_picker(frame, "Select export format", EXPORT_FORMATS, selection);
+            let items = report_picker_items(self.profile);
+            self.draw_picker(frame, "View Reports", items, selection, footer);
             return;
         }
         if let DashboardScreen::Undo(ref undo) = self.screen {
@@ -718,7 +693,14 @@ impl Dashboard {
         }
     }
 
-    fn draw_picker(&self, frame: &mut Frame, title: &str, items: &[&str], selection: usize) {
+    fn draw_picker(
+        &self,
+        frame: &mut Frame,
+        title: &str,
+        items: &[&str],
+        selection: usize,
+        footer: &str,
+    ) {
         let area = frame.area();
         let border_style = Style::default().fg(Color::DarkGray);
 
@@ -757,10 +739,7 @@ impl Dashboard {
         }
         frame.render_widget(Paragraph::new(lines), content_area);
 
-        frame.render_widget(
-            Paragraph::new(" Up/Down=navigate  Enter=select  Esc/q=back").style(FOOTER_STYLE),
-            hints_area,
-        );
+        frame.render_widget(Paragraph::new(footer).style(FOOTER_STYLE), hints_area);
     }
 
     fn menu_item_line(&self, i: usize, flagged_count: usize) -> Line<'static> {
@@ -803,24 +782,13 @@ impl Dashboard {
             },
             8 => self.screen = DashboardScreen::Invoices(InvoiceManager::new(conn, &self.greeting)),
             9 => self.screen = DashboardScreen::Clients(ClientManager::new(conn, &self.greeting)),
-            10 => {
-                self.screen = DashboardScreen::ReportPicker {
-                    selection: 0,
-                    mode: ReportPickerMode::View,
-                }
-            }
-            11 => {
-                self.screen = DashboardScreen::ReportPicker {
-                    selection: 0,
-                    mode: ReportPickerMode::Export,
-                }
-            }
-            12 => self.screen = DashboardScreen::Load(LoadScreen::new(&self.greeting)),
-            13 => match SettingsManager::new(conn, &self.greeting) {
+            10 => self.screen = DashboardScreen::ReportPicker { selection: 0 },
+            11 => self.screen = DashboardScreen::Load(LoadScreen::new(&self.greeting)),
+            12 => match SettingsManager::new(conn, &self.greeting) {
                 Ok(mgr) => self.screen = DashboardScreen::Settings(mgr),
                 Err(e) => self.status_message = Some(format!("Error: {e}")),
             },
-            14 => self.screen = DashboardScreen::Snake(SnakeGame::new()),
+            13 => self.screen = DashboardScreen::Snake(SnakeGame::new()),
             _ => {}
         }
     }
@@ -846,16 +814,21 @@ impl Dashboard {
         false
     }
 
+    /// Open the register browser on the full, unfiltered register. The browser
+    /// is not a `ReportView`, so no report index is current while it is up.
     fn enter_browse(&mut self, conn: &rusqlite::Connection) -> DashboardScreen {
+        self.current_report_idx = None;
         match reports::get_register(conn, None, None, None, None, &Default::default()) {
             Ok(data) => {
-                let categories = match get_categories(conn) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        self.status_message =
-                            Some(format!("Warning: could not load categories: {e}"));
-                        vec![]
-                    }
+                // The dashboard's status line is never drawn while the browser
+                // is up, so a category-load warning has to ride the browser's
+                // own status line to be seen.
+                let (categories, warning) = match get_categories(conn) {
+                    Ok(c) => (c, None),
+                    Err(e) => (
+                        vec![],
+                        Some(format!("Warning: could not load categories: {e}")),
+                    ),
                 };
                 self.status_message = None;
                 let mut browser = RegisterBrowser::new(
@@ -865,6 +838,10 @@ impl Dashboard {
                     categories,
                 );
                 browser.scroll_to_today();
+                browser.set_export_hints(true);
+                if let Some(warning) = warning {
+                    browser.set_status(warning);
+                }
                 DashboardScreen::Browse(browser)
             }
             Err(e) => {
@@ -908,10 +885,11 @@ impl Dashboard {
         year: Option<i32>,
         month: Option<String>,
     ) -> DashboardScreen {
-        // Register (idx 4) delegates to the interactive browser
-        if idx == 4 {
+        // The register delegates to the interactive browser
+        if idx == REGISTER_IDX {
             return self.enter_browse(conn);
         }
+        self.current_report_idx = None;
         let year = year.or_else(|| Some(chrono::Local::now().year()));
         let result = match idx {
             0 => super::report::view::build_pnl(month.clone(), year, None, None),
@@ -925,8 +903,10 @@ impl Dashboard {
             _ => return DashboardScreen::Home,
         };
         match result {
-            Ok(view) => {
+            Ok(mut view) => {
+                view.set_export_hints(true);
                 self.status_message = None;
+                self.current_report_idx = Some(idx);
                 DashboardScreen::ReportView(view)
             }
             Err(e) => {
@@ -974,6 +954,48 @@ fn format_k(val: f64) -> String {
     }
 }
 
+/// An export requested from inside the report viewer.
+#[derive(Debug, Clone, Copy)]
+enum ExportAction {
+    #[cfg(feature = "pdf")]
+    Pdf,
+    Text,
+}
+
+/// Map a key press to the export it triggers, or `None` if the key is not an
+/// export key and should be handled normally.
+fn viewer_export_action(code: KeyCode) -> Option<ExportAction> {
+    match code {
+        #[cfg(feature = "pdf")]
+        KeyCode::Char('e') => Some(ExportAction::Pdf),
+        KeyCode::Char('t') => Some(ExportAction::Text),
+        _ => None,
+    }
+}
+
+/// Map a key press to the export it triggers inside the register browser, or
+/// `None` if the key should be handled by the browser instead. The browser
+/// binds `e` to inline category editing, so PDF export answers to `x` here.
+fn browser_export_action(code: KeyCode) -> Option<ExportAction> {
+    match code {
+        #[cfg(feature = "pdf")]
+        KeyCode::Char('x') => Some(ExportAction::Pdf),
+        KeyCode::Char('t') => Some(ExportAction::Text),
+        _ => None,
+    }
+}
+
+/// The year an export should cover. The register is browsable and exportable
+/// over an open date range; every other report needs a year and falls back to
+/// the current one.
+fn effective_year(idx: usize, year: Option<i32>) -> Option<i32> {
+    if idx == REGISTER_IDX {
+        year
+    } else {
+        year.or_else(|| Some(chrono::Local::now().year()))
+    }
+}
+
 fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<String> {
     #[cfg(not(feature = "pdf"))]
     {
@@ -984,7 +1006,7 @@ fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<Str
     }
     #[cfg(feature = "pdf")]
     {
-        let year = year.or_else(|| Some(chrono::Local::now().year()));
+        let year = effective_year(idx, year);
         let path = match idx {
             0 => super::export::pnl(month.clone(), year, None, None, None)?,
             1 => super::export::expenses(month.clone(), year, None)?,
@@ -1018,7 +1040,7 @@ fn do_text_export(
     month: Option<String>,
     profile: crate::db::Profile,
 ) -> Result<String> {
-    let year = year.or_else(|| Some(chrono::Local::now().year()));
+    let year = effective_year(idx, year);
 
     if idx == REPORT_SLUGS.len() {
         // "All Reports" text export
@@ -1252,6 +1274,12 @@ pub fn run() -> Result<()> {
                     let mut return_home = false;
                     let mut pending_invoice_work = false;
                     let mut pending_reload: Option<(usize, Option<i32>, Option<String>)> = None;
+                    let mut pending_viewer_export: Option<(
+                        ExportAction,
+                        usize,
+                        Option<i32>,
+                        Option<String>,
+                    )> = None;
                     let should_quit = match &mut dashboard.screen {
                         DashboardScreen::Home => {
                             if key.code == KeyCode::F(5) {
@@ -1271,21 +1299,36 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::Browse(browser) => {
-                            match browser.handle_key_event(key.code) {
-                                BrowseAction::Close => {
-                                    return_home = true;
+                            let export = if browser.export_hints_enabled()
+                                && !browser.is_capturing_input()
+                            {
+                                browser_export_action(key.code)
+                            } else {
+                                None
+                            };
+                            match export {
+                                // The dashboard's browser shows the whole register,
+                                // so the export takes an open date range too.
+                                Some(action) => {
+                                    pending_viewer_export =
+                                        Some((action, REGISTER_IDX, None, None));
                                 }
-                                BrowseAction::Continue => {}
-                                BrowseAction::CommitEdit => {
-                                    if let Err(e) = browser.commit_edit(&conn) {
-                                        browser.set_status(format!("Edit failed: {e}"));
+                                None => match browser.handle_key_event(key.code) {
+                                    BrowseAction::Close => {
+                                        return_home = true;
                                     }
-                                }
-                                BrowseAction::ToggleFlag => {
-                                    if let Err(e) = browser.toggle_flag(&conn) {
-                                        browser.set_status(format!("Flag toggle failed: {e}"));
+                                    BrowseAction::Continue => {}
+                                    BrowseAction::CommitEdit => {
+                                        if let Err(e) = browser.commit_edit(&conn) {
+                                            browser.set_status(format!("Edit failed: {e}"));
+                                        }
                                     }
-                                }
+                                    BrowseAction::ToggleFlag => {
+                                        if let Err(e) = browser.toggle_flag(&conn) {
+                                            browser.set_status(format!("Flag toggle failed: {e}"));
+                                        }
+                                    }
+                                },
                             }
                             false
                         }
@@ -1388,71 +1431,63 @@ pub fn run() -> Result<()> {
                             false
                         }
                         DashboardScreen::ReportView(ref mut view) => {
-                            let action = view.handle_key(key.code);
-                            match action {
-                                ReportViewAction::Close => {
-                                    dashboard.current_report_idx = None;
-                                    return_home = true;
+                            // The status line paints over the footer hints, so
+                            // an "Exported …" message lasts exactly one
+                            // keypress — the browser's own status behaves the
+                            // same way.
+                            dashboard.status_message = None;
+                            match (viewer_export_action(key.code), dashboard.current_report_idx) {
+                                (Some(action), Some(idx)) => {
+                                    // Stash the export; handled below after borrow ends
+                                    let (year, month) = view.date_params();
+                                    pending_viewer_export = Some((action, idx, year, month));
                                 }
-                                ReportViewAction::Continue => {}
-                                ReportViewAction::Reload => {
-                                    // Stash reload info; handled below after borrow ends
-                                    if let Some(idx) = dashboard.current_report_idx {
-                                        let (year, month) = view.date_params();
-                                        pending_reload = Some((idx, year, month));
+                                (Some(_), None) => {
+                                    // Unreachable while every ReportView entry
+                                    // point sets current_report_idx, but an
+                                    // advertised key must never silently do
+                                    // nothing.
+                                    dashboard.status_message =
+                                        Some("Nothing to export".to_string());
+                                }
+                                _ => match view.handle_key(key.code) {
+                                    ReportViewAction::Close => {
+                                        return_home = true;
                                     }
-                                }
+                                    ReportViewAction::Continue => {}
+                                    ReportViewAction::Reload => {
+                                        // Stash reload info; handled below after borrow ends
+                                        if let Some(idx) = dashboard.current_report_idx {
+                                            let (year, month) = view.date_params();
+                                            pending_reload = Some((idx, year, month));
+                                        }
+                                    }
+                                },
                             }
                             false
                         }
-                        DashboardScreen::ReportPicker { selection, mode } => {
-                            let max_idx = report_picker_items(dashboard.profile, *mode).len() - 1;
+                        DashboardScreen::ReportPicker { selection } => {
+                            let max_idx = report_picker_items(dashboard.profile).len() - 1;
+                            let canonical = canonical_report_idx(dashboard.profile, *selection);
                             match key.code {
                                 KeyCode::Up => *selection = selection.saturating_sub(1),
                                 KeyCode::Down => *selection = (*selection + 1).min(max_idx),
                                 KeyCode::Esc | KeyCode::Char('q') => return_home = true,
-                                KeyCode::Enter => match mode {
-                                    ReportPickerMode::View => {
-                                        dashboard.pending_report_view = Some(canonical_report_idx(
-                                            dashboard.profile,
-                                            *selection,
-                                        ));
+                                KeyCode::Enter if canonical == EXPORT_ALL_IDX => {
+                                    #[cfg(feature = "pdf")]
+                                    {
+                                        dashboard.pending_export = Some(EXPORT_ALL_IDX);
                                     }
-                                    ReportPickerMode::Export => {
-                                        // Keep the picker index here so Esc from
-                                        // the format picker restores the row.
-                                        dashboard.screen = DashboardScreen::ExportFormatPicker {
-                                            report_idx: *selection,
-                                            selection: 0,
-                                        };
+                                    #[cfg(not(feature = "pdf"))]
+                                    {
+                                        dashboard.pending_text_export = Some(EXPORT_ALL_IDX);
                                     }
-                                },
-                                _ => {}
-                            }
-                            false
-                        }
-                        DashboardScreen::ExportFormatPicker {
-                            report_idx,
-                            selection,
-                        } => {
-                            let max_idx = EXPORT_FORMATS.len() - 1;
-                            match key.code {
-                                KeyCode::Up => *selection = selection.saturating_sub(1),
-                                KeyCode::Down => *selection = (*selection + 1).min(max_idx),
-                                KeyCode::Esc | KeyCode::Char('q') => {
-                                    dashboard.screen = DashboardScreen::ReportPicker {
-                                        selection: *report_idx,
-                                        mode: ReportPickerMode::Export,
-                                    };
                                 }
                                 KeyCode::Enter => {
-                                    let format = EXPORT_FORMATS[*selection];
-                                    let idx = canonical_report_idx(dashboard.profile, *report_idx);
-                                    if format == "Text" {
-                                        dashboard.pending_text_export = Some(idx);
-                                    } else {
-                                        dashboard.pending_export = Some(idx);
-                                    }
+                                    dashboard.pending_report_view = Some(canonical);
+                                }
+                                KeyCode::Char('t') if canonical == EXPORT_ALL_IDX => {
+                                    dashboard.pending_text_export = Some(EXPORT_ALL_IDX);
                                 }
                                 _ => {}
                             }
@@ -1494,45 +1529,72 @@ pub fn run() -> Result<()> {
                             dashboard.enter_report_view_with_date(idx, &conn, year, month);
                     }
 
+                    if let Some((action, idx, year, month)) = pending_viewer_export {
+                        // The export runs on this thread; paint the frozen
+                        // frame first so it is the one that says it is frozen
+                        // — the invoicing screens' own pattern.
+                        match dashboard.screen {
+                            DashboardScreen::Browse(ref mut browser) => {
+                                browser.set_status("Exporting…".to_string())
+                            }
+                            _ => dashboard.status_message = Some("Exporting…".to_string()),
+                        }
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
+                        let result = match action {
+                            #[cfg(feature = "pdf")]
+                            ExportAction::Pdf => do_export(idx, year, month),
+                            ExportAction::Text => {
+                                do_text_export(idx, year, month, dashboard.profile)
+                            }
+                        };
+                        let msg = match result {
+                            Ok(msg) => msg,
+                            Err(e) => format!("Export failed: {e}"),
+                        };
+                        // The browser draws its own status line; every other screen
+                        // reports through the dashboard's.
+                        match dashboard.screen {
+                            DashboardScreen::Browse(ref mut browser) => browser.set_status(msg),
+                            _ => dashboard.status_message = Some(msg),
+                        }
+                        // PDF export writes a confirmation line to stdout, which lands
+                        // on top of the report. Repaint the whole screen to erase it.
+                        let _ = terminal.clear();
+                    }
+
                     if return_home {
                         dashboard.screen = DashboardScreen::Home;
+                        dashboard.current_report_idx = None;
                         let _ = dashboard.load_data(&conn);
                     }
 
                     if let Some(idx) = dashboard.pending_report_view.take() {
-                        dashboard.current_report_idx = Some(idx);
                         dashboard.screen = dashboard.enter_report_view(idx, &conn);
                     }
 
                     if let Some(idx) = dashboard.pending_export.take() {
-                        let (year, month) =
-                            if let DashboardScreen::ReportView(ref view) = dashboard.screen {
-                                view.date_params()
-                            } else {
-                                (None, None)
-                            };
-                        match do_export(idx, year, month) {
-                            Ok(msg) => dashboard.status_message = Some(msg),
-                            Err(e) => {
-                                dashboard.status_message = Some(format!("Export failed: {e}"))
-                            }
-                        }
+                        // Export All renders every report before answering;
+                        // paint the frozen frame first.
+                        dashboard.status_message = Some("Exporting…".to_string());
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
+                        dashboard.status_message = Some(match do_export(idx, None, None) {
+                            Ok(msg) => msg,
+                            Err(e) => format!("Export failed: {e}"),
+                        });
                         dashboard.screen = DashboardScreen::Home;
+                        // PDF export writes a confirmation line to stdout, which lands
+                        // on top of the TUI. Repaint the whole screen to erase it.
+                        let _ = terminal.clear();
                     }
 
                     if let Some(idx) = dashboard.pending_text_export.take() {
-                        let (year, month) =
-                            if let DashboardScreen::ReportView(ref view) = dashboard.screen {
-                                view.date_params()
-                            } else {
-                                (None, None)
-                            };
-                        match do_text_export(idx, year, month, dashboard.profile) {
-                            Ok(msg) => dashboard.status_message = Some(msg),
-                            Err(e) => {
-                                dashboard.status_message = Some(format!("Export failed: {e}"))
-                            }
-                        }
+                        dashboard.status_message = Some("Exporting…".to_string());
+                        let _ = terminal.draw(|frame| dashboard.draw(frame));
+                        dashboard.status_message =
+                            Some(match do_text_export(idx, None, None, dashboard.profile) {
+                                Ok(msg) => msg,
+                                Err(e) => format!("Export failed: {e}"),
+                            });
                         dashboard.screen = DashboardScreen::Home;
                     }
 
@@ -1563,39 +1625,116 @@ pub fn run() -> Result<()> {
 }
 
 #[cfg(test)]
+mod viewer_export_tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    #[test]
+    fn export_keys_map_to_actions() {
+        #[cfg(feature = "pdf")]
+        assert!(matches!(
+            viewer_export_action(KeyCode::Char('e')),
+            Some(ExportAction::Pdf)
+        ));
+        #[cfg(not(feature = "pdf"))]
+        assert!(viewer_export_action(KeyCode::Char('e')).is_none());
+        assert!(matches!(
+            viewer_export_action(KeyCode::Char('t')),
+            Some(ExportAction::Text)
+        ));
+        assert!(viewer_export_action(KeyCode::Char('m')).is_none());
+        assert!(viewer_export_action(KeyCode::Esc).is_none());
+    }
+
+    #[test]
+    fn browser_export_keys_avoid_browser_bindings() {
+        #[cfg(feature = "pdf")]
+        assert!(matches!(
+            browser_export_action(KeyCode::Char('x')),
+            Some(ExportAction::Pdf)
+        ));
+        #[cfg(not(feature = "pdf"))]
+        assert!(browser_export_action(KeyCode::Char('x')).is_none());
+        assert!(matches!(
+            browser_export_action(KeyCode::Char('t')),
+            Some(ExportAction::Text)
+        ));
+        // Keys the browser owns must reach it untouched.
+        for code in [
+            KeyCode::Char('e'),
+            KeyCode::Char('f'),
+            KeyCode::Char('g'),
+            KeyCode::Char('d'),
+            KeyCode::Char('i'),
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+            KeyCode::Char('/'),
+            KeyCode::Char('q'),
+            KeyCode::Enter,
+            KeyCode::Esc,
+        ] {
+            assert!(
+                browser_export_action(code).is_none(),
+                "{code:?} must stay with the browser"
+            );
+        }
+    }
+
+    #[test]
+    fn register_exports_keep_an_open_date_range() {
+        assert_eq!(effective_year(REGISTER_IDX, None), None);
+        assert_eq!(effective_year(REGISTER_IDX, Some(2020)), Some(2020));
+    }
+
+    #[test]
+    fn other_reports_default_to_the_current_year() {
+        let this_year = chrono::Local::now().year();
+        assert_eq!(effective_year(0, None), Some(this_year));
+        assert_eq!(effective_year(EXPORT_ALL_IDX, None), Some(this_year));
+        assert_eq!(effective_year(0, Some(2020)), Some(2020));
+    }
+
+    #[test]
+    fn picker_last_entry_is_export_all() {
+        assert_eq!(REPORT_TYPES.last(), Some(&"Export All Reports"));
+        assert_eq!(PERSONAL_REPORT_TYPES.last(), Some(&"Export All Reports"));
+        assert_eq!(REPORT_TYPES[REGISTER_IDX], "Transaction Register");
+        // The export helpers' index contract: one past the slugs == all reports.
+        assert_eq!(EXPORT_ALL_IDX, REPORT_SLUGS.len());
+        // The personal picker's own last row still lands on the canonical
+        // export-all index once translated.
+        assert_eq!(
+            canonical_report_idx(
+                crate::db::Profile::Personal,
+                PERSONAL_REPORT_TYPES.len() - 1
+            ),
+            EXPORT_ALL_IDX
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Profile;
     use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
 
     #[test]
-    fn business_pickers_show_every_report() {
-        assert_eq!(
-            report_picker_items(Profile::Business, ReportPickerMode::View),
-            REPORT_TYPES
-        );
-        assert_eq!(
-            report_picker_items(Profile::Business, ReportPickerMode::Export),
-            EXPORT_TYPES
-        );
+    fn business_picker_shows_every_report() {
+        assert_eq!(report_picker_items(Profile::Business), REPORT_TYPES);
     }
 
     #[test]
-    fn personal_pickers_drop_only_the_k1_row() {
-        let view = report_picker_items(Profile::Personal, ReportPickerMode::View);
-        assert!(!view.contains(&"K-1 Prep (1120-S)"));
-        assert_eq!(view, [&REPORT_TYPES[..7], &REPORT_TYPES[8..]].concat());
-
-        let export = report_picker_items(Profile::Personal, ReportPickerMode::Export);
-        assert!(!export.contains(&"K-1 Prep (1120-S)"));
-        assert_eq!(export, [&EXPORT_TYPES[..7], &EXPORT_TYPES[8..]].concat());
+    fn personal_picker_drops_only_the_k1_row() {
+        let items = report_picker_items(Profile::Personal);
+        assert!(!items.contains(&"K-1 Prep (1120-S)"));
+        assert_eq!(items, [&REPORT_TYPES[..7], &REPORT_TYPES[8..]].concat());
     }
 
-    /// `canonical_report_idx` hard-codes 7 as the row the personal lists drop.
+    /// `canonical_report_idx` hard-codes 7 as the row the personal list drops.
     #[test]
     fn k1_sits_at_canonical_row_seven() {
         assert_eq!(REPORT_TYPES[7], "K-1 Prep (1120-S)");
-        assert_eq!(EXPORT_TYPES[7], "K-1 Prep (1120-S)");
         assert_eq!(REPORT_SLUGS[7], "k1-prep");
     }
 
@@ -1611,8 +1750,8 @@ mod tests {
             );
         }
         assert_eq!(canonical_report_idx(Profile::Personal, 7), 8); // A/R Aging
-        assert_eq!(canonical_report_idx(Profile::Personal, 8), 9); // All Reports
-        for selection in 0..EXPORT_TYPES.len() {
+        assert_eq!(canonical_report_idx(Profile::Personal, 8), 9); // Export All Reports
+        for selection in 0..REPORT_TYPES.len() {
             assert_eq!(
                 canonical_report_idx(Profile::Business, selection),
                 selection
@@ -1824,7 +1963,6 @@ mod tests {
             DashboardScreen::Reconcile(_) => "Reconcile",
             DashboardScreen::Load(_) => "Load",
             DashboardScreen::ReportPicker { .. } => "ReportPicker",
-            DashboardScreen::ExportFormatPicker { .. } => "ExportFormatPicker",
             DashboardScreen::ReportView(_) => "ReportView",
             DashboardScreen::Undo(_) => "Undo",
             DashboardScreen::Settings(_) => "Settings",
@@ -1851,7 +1989,7 @@ mod tests {
         // renumbers every arm after it. `None` is a screen whose constructor
         // depends on data this database does not have — those arms still run,
         // and prove it by leaving a status message behind.
-        let expected: [Option<&str>; 15] = [
+        let expected: [Option<&str>; 14] = [
             Some("Browse"),
             Some("Import"),
             None, // Review — nothing flagged in an empty book
@@ -1862,7 +2000,6 @@ mod tests {
             Some("Undo"),
             Some("Invoices"),
             Some("Clients"),
-            Some("ReportPicker"),
             Some("ReportPicker"),
             Some("Load"),
             None, // Settings — reads the machine's own data directory
@@ -1896,12 +2033,11 @@ mod tests {
 
     #[test]
     fn report_picker_indices_match_report_slugs() {
-        assert_eq!(REPORT_TYPES.len(), REPORT_SLUGS.len());
-        assert_eq!(EXPORT_TYPES.len(), REPORT_SLUGS.len() + 1);
+        // One row per slug, plus the Export All row past the end.
+        assert_eq!(REPORT_TYPES.len(), REPORT_SLUGS.len() + 1);
         assert_eq!(REPORT_TYPES[8], "A/R Aging");
-        assert_eq!(EXPORT_TYPES[8], "A/R Aging");
         assert_eq!(REPORT_SLUGS[8], "aging");
-        assert_eq!(EXPORT_TYPES[REPORT_SLUGS.len()], "All Reports");
+        assert_eq!(REPORT_TYPES[EXPORT_ALL_IDX], "Export All Reports");
     }
 
     #[test]
@@ -1914,5 +2050,86 @@ mod tests {
         for (slug, kind) in REPORT_SLUGS.iter().zip(kinds) {
             assert_eq!(*slug, kind.as_str());
         }
+    }
+
+    /// An isolated data directory the view builders and export helpers (which
+    /// open their own connections through `get_data_dir`) resolve to, instead
+    /// of the developer's real books.
+    fn temp_books() -> (
+        crate::settings::TempConfigDir,
+        tempfile::TempDir,
+        rusqlite::Connection,
+    ) {
+        let guard = crate::settings::TempConfigDir::new();
+        let data = tempfile::tempdir().unwrap();
+        let mut settings = crate::settings::load_settings();
+        settings.data_dir = data.path().to_string_lossy().into_owned();
+        crate::settings::save_settings(&settings).unwrap();
+        let conn = crate::db::get_connection(&data.path().join("nigel.db")).unwrap();
+        crate::db::init_db(&conn).unwrap();
+        crate::migrations::run_migrations(&conn).unwrap();
+        (guard, data, conn)
+    }
+
+    /// The canonical idx → screen dispatch, end to end. `current_report_idx`
+    /// is the idx a later `e`/`t` keypress exports, so a transposed arm here
+    /// is a viewer export writing the wrong report.
+    #[test]
+    fn every_report_slug_opens_its_own_viewer() {
+        let (_guard, _data, conn) = temp_books();
+        for (idx, slug) in REPORT_SLUGS.iter().enumerate() {
+            let mut dash = Dashboard::new(Some("Sam".into()), None);
+            dash.screen = dash.enter_report_view_with_date(idx, &conn, None, None);
+            if idx == REGISTER_IDX {
+                match dash.screen {
+                    DashboardScreen::Browse(ref browser) => {
+                        assert!(browser.export_hints_enabled())
+                    }
+                    ref other => panic!(
+                        "the register (idx {idx}) should open the browser, got {}",
+                        screen_name(other)
+                    ),
+                }
+                assert_eq!(dash.current_report_idx, None);
+            } else {
+                assert!(
+                    matches!(dash.screen, DashboardScreen::ReportView(_)),
+                    "idx {idx} ({slug}) did not open a viewer: {:?}",
+                    dash.status_message
+                );
+                assert_eq!(dash.current_report_idx, Some(idx), "for {slug}");
+            }
+        }
+    }
+
+    /// The dashboard's Export All text path duplicates the CLI's profile
+    /// gating rather than sharing it, so the CLI integration test cannot fail
+    /// for this code path.
+    #[test]
+    fn export_all_text_writes_the_profile_matrix() {
+        let (_guard, data, _conn) = temp_books();
+        let exported = |dir: &std::path::Path| -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        let exports = data.path().join("exports");
+
+        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Business).unwrap();
+        let business = exported(&exports);
+        assert_eq!(business.len(), 9, "{business:?}");
+        assert!(business.iter().any(|n| n.starts_with("k1-prep")));
+        assert!(business.iter().any(|n| n.starts_with("aging")));
+
+        std::fs::remove_dir_all(&exports).unwrap();
+        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Personal).unwrap();
+        let personal = exported(&exports);
+        assert_eq!(personal.len(), 8, "{personal:?}");
+        assert!(!personal.iter().any(|n| n.starts_with("k1-prep")));
+        assert!(personal.iter().any(|n| n.starts_with("aging")));
     }
 }

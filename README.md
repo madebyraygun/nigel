@@ -12,7 +12,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 
 ## Features
 
-- **Interactive dashboard** — run `nigel` to access your dashboard with YTD financials, account balances, a monthly income/expense chart, and a command menu; browse, review, import, reconcile, manage accounts, categories, clients (`k`) and invoices (`n`), view rules, view/export reports, and switch data files.
+- **Interactive dashboard** — run `nigel` to access your dashboard with YTD financials, account balances, a monthly income/expense chart, and a command menu; browse, review, import, reconcile, manage accounts, categories, clients (`k`) and invoices (`n`), view rules, view and export reports, and switch data files.
 - **Bank imports** — CSV/XLSX parsers with format auto-detection; `--dry-run` to preview without writing
 - **Generic CSV** — import any CSV with `--date-col`, `--desc-col`, `--amount-col`; save reusable profiles with `--save-profile`
 - **Payroll import** — XLSX payroll importer with auto-categorization
@@ -22,7 +22,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Rules engine** — pattern-based auto-categorization (contains, starts_with, regex) with priority ordering; test patterns with `nigel rules test` before committing
 - **Bulk recategorization** — `nigel recategorize` moves transactions between categories by ID or by filters (category, date range, pattern, account, amount), with `--dry-run` preview and confirmation for filter-based moves
 - **Interactive review** — step through flagged transactions with a pinned category chart, assign categories, and create rules on the fly; press Esc to go back and redo previous transactions
-- **Reports** — Profit & Loss, expense breakdown, tax summary (IRS Schedule C / 1120-S), cash flow, balance, K-1 prep, A/R aging; interactive ratatui views by default with date navigation (Left/Right arrows to page between periods, `m` to toggle month/year), with `--mode export` for PDF or `--format text` for text files
+- **Reports** — Profit & Loss, expense breakdown, tax summary (IRS Schedule C / 1120-S), cash flow, balance, K-1 prep, A/R aging; interactive ratatui views by default with date navigation (Left/Right arrows to page between periods, `m` to toggle month/year), with `--mode export` for PDF or `--format text` for text files. In the dashboard, `v` opens the View Reports picker; picking a report opens the viewer, where `e` exports the period you are looking at as a PDF and `t` exports it as text. "Transaction Register" opens the interactive browser instead, which exports the transactions it is showing with `x` (PDF) and `t` (text) — `e` is inline editing there. The picker's last entry, "Export All Reports", exports every report at once (Enter for PDF, `t` for text)
 - **Register filters** — narrow `nigel report register` and `nigel browse register` by `--account`, `--category`, or `--uncategorized`, composed with any date range; active filters appear in the report header and in the default export filename
 - **Interactive browser** — paginated register browser showing all transactions, starting at today with full backwards scrolling, keyboard navigation, jump-to-date, and transaction search
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`

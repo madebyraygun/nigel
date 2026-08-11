@@ -1,9 +1,11 @@
 ---
 id: TASK-26
 title: Report exports move into the viewer; remove export screens
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-05 22:19'
+updated_date: '2026-08-11 15:57'
 labels:
   - reports
   - ux
@@ -19,8 +21,20 @@ From the dashboard there is no way to set a time period when exporting — e.g. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 From the View Reports screen, any report can be exported (PDF or text) for the exact period currently displayed, including past years (e.g. 2025 K-1 prep)
-- [ ] #2 The standalone export picker and export-format screens are removed; the dashboard menu entry is renamed 'View Reports'
-- [ ] #3 Export All is reachable as a secondary function of the View Reports screen
-- [ ] #4 CLI report flags (--mode export, --format, --output, report all) are unchanged
+- [x] #1 From the View Reports screen, any report can be exported (PDF or text) for the exact period currently displayed, including past years (e.g. 2025 K-1 prep)
+- [x] #2 The standalone export picker and export-format screens are removed; the dashboard menu entry is renamed 'View Reports'
+- [x] #3 Export All is reachable as a secondary function of the View Reports screen
+- [x] #4 CLI report flags (--mode export, --format, --output, report all) are unchanged
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Per docs/superpowers/plans/2026-08-05-viewer-export.md: 1. Viewer export keys (e=PDF, t=text) using date_params + existing do_export helpers 2. Remove export picker/format screens, rename picker View Reports, append Export All entry 3. Docs + changelog
+<!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Exports moved into the viewers: report viewer exports the exact displayed period via e (PDF) / t (text); the dashboard-hosted register browser exports the full register via x (PDF — e is inline-edit there) / t, gated off during search/edit input; standalone CLI viewers unaffected. Standalone export picker and format screens deleted; single View Reports picker (renamed) with an Export All Reports entry (Enter=PDF, t=text). CLI flags untouched. Manual pty verification both feature configs; tests green. Follow-ups filed: task-84 period-stamped filenames (high, renumbered from 27 after a merge collision), task-85 ANSI stripping (renumbered from 28); the footer-hint restore follow-up (task-29) was fixed during the PR's review round instead.
+<!-- SECTION:FINAL_SUMMARY:END -->

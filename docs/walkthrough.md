@@ -38,7 +38,7 @@ Running `nigel` with no arguments launches the interactive dashboard — your ma
 
 ![Dashboard](screenshots/dashboard.png)
 
-The dashboard shows YTD financials, account balances, a monthly cash flow chart, and a menu to browse, review, import, reconcile, manage accounts and rules, view or export reports, and switch data files.
+The dashboard shows YTD financials, account balances, a monthly cash flow chart, and a menu to browse, review, import, reconcile, manage accounts and rules, view and export reports, and switch data files.
 
 ## 2. Explore what's there
 
@@ -160,7 +160,7 @@ $ nigel browse register
 
 ![Register](screenshots/register.png)
 
-The register starts at today and scrolls backwards through all transactions. Use arrow keys to navigate, `e` to edit a transaction's category or vendor inline, `f` to toggle flags, `d` to jump to a date, `g` to jump to a page, and `/` to search by ID.
+The register starts at today and scrolls backwards through all transactions. Use arrow keys to navigate, `e` to edit a transaction's category or vendor inline, `f` to toggle flags, `d` to jump to a date, `g` to jump to a page, `i` to find a transaction by ID, and `/` to search.
 
 Other reports to try:
 
