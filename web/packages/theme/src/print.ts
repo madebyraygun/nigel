@@ -27,7 +27,12 @@ export const printCss = css`
   }
 
   @media print {
-    :root {
+    /* :root:root, not :root. The dark palette is selected by
+       :root:not(.light-mode) and :root.dark-mode, both (0,2,0); a bare :root is
+       (0,1,0) and loses to them wherever it sits in the sheet, which is why a
+       dark OS printed dark pages. Doubling the selector ties the specificity,
+       and this sheet composes last, so print wins. Do not simplify it back. */
+    :root:root {
       color-scheme: light;
 
       --wa-color-bg: #ffffff;

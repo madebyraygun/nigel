@@ -60,9 +60,21 @@ describe('printCss', () => {
     expect(print).toMatch(/break-inside:\s*avoid/);
   });
 
+  it('outranks both mode selectors rather than relying on source order', () => {
+    // The two dark selectors are :root:not(.light-mode) and :root.dark-mode,
+    // both (0,2,0). A bare :root is (0,1,0) and loses wherever it appears in
+    // the sheet, so on a dark OS the paper came out dark. :root:root ties on
+    // specificity and print is composed last, which is what settles it.
+    expect(print).toMatch(/:root:root\s*{[^}]*--wa-color-bg:\s*#ffffff/);
+    // And no *bare* :root token block left behind to be the one that loses.
+    // The lookbehind is what keeps :root:root itself from matching.
+    expect(print).not.toMatch(/(?<!:root):root\s*{[^}]*--wa-color-bg/);
+  });
+
   it('ships inside the composed theme, after the dark overrides', () => {
     expect(composed).toContain(print);
-    // Last wins in a flat cascade, and dark mode must not survive onto paper.
+    // Order still matters — it is what breaks the specificity tie above — but
+    // it is no longer the whole argument.
     expect(composed.indexOf('@media print')).toBeGreaterThan(
       composed.indexOf('--wa-color-bg: #17171d'),
     );
