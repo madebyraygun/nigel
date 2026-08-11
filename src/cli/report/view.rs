@@ -959,7 +959,7 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
         year,
         from_date,
         to_date,
-        account,
+        filters,
         ..
     } = cmd
     else {
@@ -969,28 +969,39 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
+    let filters = filters.resolve(&conn)?;
     let data = reports::get_register(
         &conn,
         y,
         mm,
         from_date.as_deref(),
         to_date.as_deref(),
-        account.as_deref(),
+        &filters,
     )?;
 
+    let mut parts = Vec::new();
+    if let Some(y) = y {
+        parts.push(format!("year: {y}"));
+    }
+    parts.extend(filters.labels());
+    let filter_desc = if parts.is_empty() {
+        "all".to_string()
+    } else {
+        parts.join(", ")
+    };
+
     if data.rows.is_empty() {
-        println!("No transactions found.");
+        // Name the filters, so an empty selection reads as "nothing matched
+        // this" rather than "the books are empty".
+        if parts.is_empty() {
+            println!("No transactions found.");
+        } else {
+            println!("No transactions found ({filter_desc}).");
+        }
         return Ok(());
     }
 
     let categories = crate::reviewer::get_categories(&conn).unwrap_or_default();
-    let filter_desc = if let Some(ref a) = account {
-        format!("account: {a}")
-    } else if let Some(y) = y {
-        format!("year: {y}")
-    } else {
-        "all".to_string()
-    };
 
     let mut browser =
         crate::browser::RegisterBrowser::new(data.rows, data.total, filter_desc, categories);

@@ -69,6 +69,11 @@ pub(super) struct RawQuery {
     from: Option<String>,
     to: Option<String>,
     account: Option<String>,
+    // The CLI's register filters, named here only to refuse them: serde would
+    // otherwise drop an unknown parameter silently, and answering a filtered
+    // request with the whole register is a silently widened selection.
+    category: Option<String>,
+    uncategorized: Option<String>,
 }
 
 /// Which parameters a route accepts, mirroring the clap arguments of the
@@ -144,6 +149,13 @@ impl ReportParams {
         }
         if raw.account.is_some() && !spec.account {
             return Err(unsupported(report, "account"));
+        }
+        // No route takes the register's category filters — they are CLI-only.
+        if raw.category.is_some() {
+            return Err(unsupported(report, "category"));
+        }
+        if raw.uncategorized.is_some() {
+            return Err(unsupported(report, "uncategorized"));
         }
 
         let explicit_year = raw.year.as_deref().map(parse_year).transpose()?;
@@ -324,13 +336,19 @@ async fn register(
         if let Some(account) = params.account.as_deref() {
             ensure_account_exists(conn, account)?;
         }
+        // The route's only filter is the account; the category filters are
+        // CLI-only, and `ReportParams::parse` refuses them by name.
+        let filters = reports::RegisterFilters {
+            account: params.account.clone(),
+            category: None,
+        };
         reports::get_register(
             conn,
             params.year,
             params.month,
             params.from.as_deref(),
             params.to.as_deref(),
-            params.account.as_deref(),
+            &filters,
         )
     })
     .await?;
@@ -523,7 +541,10 @@ mod tests {
             (
                 "/api/reports/register",
                 ReportKind::Register,
-                value(reports::get_register(&conn, None, None, None, None, None).unwrap()),
+                value(
+                    reports::get_register(&conn, None, None, None, None, &Default::default())
+                        .unwrap(),
+                ),
             ),
             (
                 "/api/reports/k1",
@@ -692,5 +713,27 @@ mod tests {
         assert!(rows
             .iter()
             .all(|row| row["accountName"] == "BofA Credit Card"));
+    }
+
+    #[tokio::test]
+    async fn the_register_refuses_the_cli_only_category_filters() {
+        // The CLI teaches `--category`/`--uncategorized`; the route must answer
+        // a filtered request with a 400, never the whole register — serde would
+        // otherwise drop the unknown parameter and silently widen the selection.
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = get_json(&app, "/api/reports/register?category=Travel", &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("category"),
+            "message should name the parameter: {body}"
+        );
+
+        let (status, _) = get_json(&app, "/api/reports/register?uncategorized=true", &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

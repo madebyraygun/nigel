@@ -441,21 +441,144 @@ pub struct RegisterReport {
     pub total: f64,
 }
 
+/// Which categories a register selection covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategorySelection {
+    /// `name` is the display name of the category row `id` refers to;
+    /// construct via `RegisterFilters::resolve` so the pair cannot drift.
+    Named {
+        id: i64,
+        name: String,
+    },
+    Uncategorized,
+}
+
+/// Non-date filters applied to a register selection. Carries the display names
+/// so report headers can describe the selection. The category was validated at
+/// construction; the account deliberately was not — an unknown account is an
+/// empty register, matching what `--account` has always done.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RegisterFilters {
+    pub account: Option<String>,
+    pub category: Option<CategorySelection>,
+}
+
+impl RegisterFilters {
+    /// Resolve raw CLI arguments, validating the category name against the
+    /// database and resolving it to an id; the account passes through
+    /// unvalidated. Only active categories match: an inactive one has zero
+    /// transactions by construction (`delete_blocker` refuses otherwise), and
+    /// its name may since have been reused by a live category — binding to the
+    /// dead row would silently answer an empty register for a name with data.
+    pub fn resolve(
+        conn: &Connection,
+        account: Option<String>,
+        category: Option<String>,
+        uncategorized: bool,
+    ) -> Result<Self> {
+        let category = match (category, uncategorized) {
+            (Some(_), true) => {
+                // Clap refuses this combination at the CLI; a programmatic
+                // caller gets the same answer rather than a silent preference.
+                return Err(crate::error::NigelError::Invalid(
+                    "--category and --uncategorized are mutually exclusive".into(),
+                ));
+            }
+            (Some(name), false) => {
+                let id = match conn.query_row(
+                    "SELECT id FROM categories WHERE name = ?1 AND is_active = 1",
+                    [&name],
+                    |row| row.get(0),
+                ) {
+                    Ok(id) => id,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => {
+                        return Err(crate::error::NigelError::UnknownCategory(name))
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                Some(CategorySelection::Named { id, name })
+            }
+            (None, true) => Some(CategorySelection::Uncategorized),
+            (None, false) => None,
+        };
+        Ok(Self { account, category })
+    }
+
+    /// Human-readable filter labels for report headers: `["account: BofA Checking"]`
+    pub fn labels(&self) -> Vec<String> {
+        let mut labels = Vec::new();
+        if let Some(ref account) = self.account {
+            labels.push(format!("account: {account}"));
+        }
+        match self.category {
+            Some(CategorySelection::Named { ref name, .. }) => {
+                labels.push(format!("category: {name}"))
+            }
+            Some(CategorySelection::Uncategorized) => labels.push("uncategorized".to_string()),
+            None => {}
+        }
+        labels
+    }
+}
+
+/// Filename-safe fragments describing a register selection, used to name default
+/// exports. Takes the raw arguments so callers can name the file without first
+/// opening the database to validate them.
+///
+/// A filter whose name slugs to nothing (all punctuation, a non-Latin script)
+/// still contributes a `filtered` fragment: dropping it would give a filtered
+/// export the unfiltered register's default filename, silently overwriting a
+/// same-day unfiltered export.
+pub fn register_slug_parts(
+    account: Option<&str>,
+    category: Option<&str>,
+    uncategorized: bool,
+) -> Vec<String> {
+    let slug_or_placeholder = |name: &str| {
+        let slug = crate::fmt::slugify(name);
+        if slug.is_empty() {
+            "filtered".to_string()
+        } else {
+            slug
+        }
+    };
+    let mut parts = Vec::new();
+    if let Some(account) = account {
+        parts.push(slug_or_placeholder(account));
+    }
+    if let Some(category) = category {
+        parts.push(slug_or_placeholder(category));
+    }
+    if uncategorized {
+        parts.push("uncategorized".to_string());
+    }
+    parts
+}
+
 pub fn get_register(
     conn: &Connection,
     year: Option<i32>,
     month: Option<u32>,
     from_date: Option<&str>,
     to_date: Option<&str>,
-    account: Option<&str>,
+    filters: &RegisterFilters,
 ) -> Result<RegisterReport> {
     let (clause, mut params) = date_filter(year, month, from_date, to_date)?;
 
-    let account_clause = if let Some(acc) = account {
-        params.push(acc.to_string());
+    let account_clause = if let Some(ref acc) = filters.account {
+        params.push(acc.clone());
         format!(" AND a.name = ?{}", params.len())
     } else {
         String::new()
+    };
+
+    let category_clause = match filters.category {
+        Some(CategorySelection::Named { id, .. }) => {
+            params.push(id.to_string());
+            format!(" AND t.category_id = ?{}", params.len())
+        }
+        Some(CategorySelection::Uncategorized) => " AND t.category_id IS NULL".to_string(),
+        None => String::new(),
     };
 
     let sql = format!(
@@ -463,7 +586,7 @@ pub fn get_register(
          FROM transactions t \
          JOIN accounts a ON t.account_id = a.id \
          LEFT JOIN categories c ON t.category_id = c.id \
-         WHERE {clause}{account_clause} \
+         WHERE {clause}{account_clause}{category_clause} \
          ORDER BY t.date, t.id"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -829,6 +952,13 @@ mod tests {
         (dir, conn)
     }
 
+    fn account_filter(name: &str) -> RegisterFilters {
+        RegisterFilters {
+            account: Some(name.to_string()),
+            category: None,
+        }
+    }
+
     #[test]
     fn a_month_labels_itself_and_outranks_the_year() {
         assert_eq!(date_range_label(Some("2025-03"), None), "2025-03");
@@ -871,7 +1001,8 @@ mod tests {
         let id = conn.last_insert_rowid();
 
         let row = get_register_row(&conn, id).unwrap();
-        let from_report = get_register(&conn, None, None, None, None, None).unwrap();
+        let from_report =
+            get_register(&conn, None, None, None, None, &RegisterFilters::default()).unwrap();
         let expected = &from_report.rows[0];
         assert_eq!(row.id, expected.id);
         assert_eq!(row.category, expected.category);
@@ -1266,7 +1397,15 @@ mod tests {
     fn test_register_returns_all_transactions() {
         let (_dir, conn) = test_db();
         seed_transactions(&conn);
-        let report = get_register(&conn, Some(2025), None, None, None, None).unwrap();
+        let report = get_register(
+            &conn,
+            Some(2025),
+            None,
+            None,
+            None,
+            &RegisterFilters::default(),
+        )
+        .unwrap();
         assert_eq!(report.rows.len(), 3);
         // First two are categorized, all should appear
         assert!(report.rows.iter().all(|r| r.category.is_some()));
@@ -1296,7 +1435,8 @@ mod tests {
         )
         .unwrap();
         // No date filters — should return all 4 transactions across both years
-        let report = get_register(&conn, None, None, None, None, None).unwrap();
+        let report =
+            get_register(&conn, None, None, None, None, &RegisterFilters::default()).unwrap();
         assert_eq!(report.rows.len(), 4);
         assert_eq!(report.rows[0].date, "2024-06-15"); // oldest first
     }
@@ -1316,7 +1456,15 @@ mod tests {
             rusqlite::params![acct],
         )
         .unwrap();
-        let report = get_register(&conn, Some(2025), None, None, None, None).unwrap();
+        let report = get_register(
+            &conn,
+            Some(2025),
+            None,
+            None,
+            None,
+            &RegisterFilters::default(),
+        )
+        .unwrap();
         assert_eq!(report.rows.len(), 1);
         assert!(report.rows[0].category.is_none());
     }
@@ -1325,11 +1473,245 @@ mod tests {
     fn test_register_account_filter() {
         let (_dir, conn) = test_db();
         seed_transactions(&conn);
-        let report = get_register(&conn, Some(2025), None, None, None, Some("Test")).unwrap();
-        assert_eq!(report.rows.len(), 3);
         let report =
-            get_register(&conn, Some(2025), None, None, None, Some("Nonexistent")).unwrap();
+            get_register(&conn, Some(2025), None, None, None, &account_filter("Test")).unwrap();
+        assert_eq!(report.rows.len(), 3);
+        let report = get_register(
+            &conn,
+            Some(2025),
+            None,
+            None,
+            None,
+            &account_filter("Nonexistent"),
+        )
+        .unwrap();
         assert_eq!(report.rows.len(), 0);
+    }
+
+    #[test]
+    fn test_register_category_filter() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        let filters =
+            RegisterFilters::resolve(&conn, None, Some("Software & Subscriptions".into()), false)
+                .unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 2);
+        assert!(report
+            .rows
+            .iter()
+            .all(|r| r.category.as_deref() == Some("Software & Subscriptions")));
+    }
+
+    #[test]
+    fn test_register_category_filter_composes_with_account_and_dates() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        let filters = RegisterFilters::resolve(
+            &conn,
+            Some("Test".into()),
+            Some("Software & Subscriptions".into()),
+            false,
+        )
+        .unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 2);
+
+        // Same category on a different account selects nothing.
+        let filters = RegisterFilters::resolve(
+            &conn,
+            Some("Nonexistent".into()),
+            Some("Software & Subscriptions".into()),
+            false,
+        )
+        .unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 0);
+
+        // Same category in a year with no transactions selects nothing.
+        let filters =
+            RegisterFilters::resolve(&conn, None, Some("Software & Subscriptions".into()), false)
+                .unwrap();
+        let report = get_register(&conn, Some(2019), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 0);
+    }
+
+    #[test]
+    fn test_register_uncategorized_filter() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        let acct: i64 = conn
+            .query_row("SELECT id FROM accounts WHERE name = 'Test'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-01', 'UNKNOWN VENDOR', -12.0)",
+            rusqlite::params![acct],
+        )
+        .unwrap();
+
+        let filters = RegisterFilters::resolve(&conn, None, None, true).unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].description, "UNKNOWN VENDOR");
+        assert!(report.rows[0].category.is_none());
+    }
+
+    #[test]
+    fn test_register_filters_reject_unknown_category() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        let err = RegisterFilters::resolve(&conn, None, Some("Nope".into()), false).unwrap_err();
+        assert!(
+            matches!(err, crate::error::NigelError::UnknownCategory(ref name) if name == "Nope"),
+            "expected UnknownCategory, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_register_filters_propagate_real_db_errors() {
+        let (_dir, conn) = test_db();
+        conn.execute("DROP TABLE categories", []).unwrap();
+        let err =
+            RegisterFilters::resolve(&conn, None, Some("Anything".into()), false).unwrap_err();
+        assert!(
+            !matches!(err, crate::error::NigelError::UnknownCategory(_)),
+            "a missing table must not be reported as an unknown category name"
+        );
+    }
+
+    #[test]
+    fn test_register_filter_labels_and_slugs() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        let filters = RegisterFilters::resolve(
+            &conn,
+            Some("BofA Checking".into()),
+            Some("Software & Subscriptions".into()),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            filters.labels(),
+            vec![
+                "account: BofA Checking".to_string(),
+                "category: Software & Subscriptions".to_string()
+            ]
+        );
+
+        let uncategorized = RegisterFilters::resolve(&conn, None, None, true).unwrap();
+        assert_eq!(uncategorized.labels(), vec!["uncategorized".to_string()]);
+        assert!(RegisterFilters::default().labels().is_empty());
+
+        assert_eq!(
+            register_slug_parts(Some("BofA Checking"), Some("Taxes & Licenses"), false),
+            vec!["bofa-checking".to_string(), "taxes-licenses".to_string()]
+        );
+        assert_eq!(
+            register_slug_parts(None, None, true),
+            vec!["uncategorized".to_string()]
+        );
+        assert!(register_slug_parts(None, None, false).is_empty());
+        // A name that slugifies to nothing still marks the export as filtered:
+        // dropping it would hand this export the unfiltered register's default
+        // filename, silently overwriting a same-day unfiltered export.
+        assert_eq!(
+            register_slug_parts(Some("!!!"), None, false),
+            vec!["filtered".to_string()]
+        );
+        assert_eq!(
+            register_slug_parts(Some("現金"), Some("Rent"), false),
+            vec!["filtered".to_string(), "rent".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_register_uncategorized_filter_composes_with_account() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        conn.execute(
+            "INSERT INTO accounts (name, account_type) VALUES ('Other', 'checking')",
+            [],
+        )
+        .unwrap();
+        let other = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-01', 'OTHER MYSTERY', -5.0)",
+            rusqlite::params![other],
+        )
+        .unwrap();
+        let acct: i64 = conn
+            .query_row("SELECT id FROM accounts WHERE name = 'Test'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-02', 'TEST MYSTERY', -7.0)",
+            rusqlite::params![acct],
+        )
+        .unwrap();
+
+        let filters = RegisterFilters::resolve(&conn, Some("Test".into()), None, true).unwrap();
+        let report = get_register(&conn, Some(2025), None, None, None, &filters).unwrap();
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].description, "TEST MYSTERY");
+    }
+
+    #[test]
+    fn test_register_filters_reject_category_and_uncategorized_together() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+        // Clap refuses this combination at the CLI; the data layer must give a
+        // programmatic caller the same answer, not silently prefer one filter.
+        let err = RegisterFilters::resolve(&conn, None, Some("Rent".into()), true).unwrap_err();
+        assert!(
+            matches!(err, crate::error::NigelError::Invalid(_)),
+            "expected Invalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_register_filters_match_exact_case_and_only_active_categories() {
+        let (_dir, conn) = test_db();
+        seed_transactions(&conn);
+
+        // The name match is exact, like account matching.
+        let err =
+            RegisterFilters::resolve(&conn, None, Some("software & subscriptions".into()), false)
+                .unwrap_err();
+        assert!(matches!(err, crate::error::NigelError::UnknownCategory(_)));
+
+        // An inactive category no longer matches: it has zero transactions by
+        // construction, and its name may since have been reused. With a dead
+        // row shadowing a live one, the filter must bind to the live id.
+        conn.execute(
+            "INSERT INTO categories (name, category_type, is_active) \
+             VALUES ('Ghost', 'expense', 0)",
+            [],
+        )
+        .unwrap();
+        let err = RegisterFilters::resolve(&conn, None, Some("Ghost".into()), false).unwrap_err();
+        assert!(matches!(err, crate::error::NigelError::UnknownCategory(_)));
+
+        conn.execute(
+            "INSERT INTO categories (name, category_type, is_active) \
+             VALUES ('Ghost', 'expense', 1)",
+            [],
+        )
+        .unwrap();
+        let live = conn.last_insert_rowid();
+        let filters = RegisterFilters::resolve(&conn, None, Some("Ghost".into()), false).unwrap();
+        assert_eq!(
+            filters.category,
+            Some(CategorySelection::Named {
+                id: live,
+                name: "Ghost".into()
+            })
+        );
     }
 
     #[test]

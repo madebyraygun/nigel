@@ -23,6 +23,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Bulk recategorization** — `nigel recategorize` moves transactions between categories by ID or by filters (category, date range, pattern, account, amount), with `--dry-run` preview and confirmation for filter-based moves
 - **Interactive review** — step through flagged transactions with a pinned category chart, assign categories, and create rules on the fly; press Esc to go back and redo previous transactions
 - **Reports** — Profit & Loss, expense breakdown, tax summary (IRS Schedule C / 1120-S), cash flow, balance, K-1 prep, A/R aging; interactive ratatui views by default with date navigation (Left/Right arrows to page between periods, `m` to toggle month/year), with `--mode export` for PDF or `--format text` for text files
+- **Register filters** — narrow `nigel report register` and `nigel browse register` by `--account`, `--category`, or `--uncategorized`, composed with any date range; active filters appear in the report header and in the default export filename
 - **Interactive browser** — paginated register browser showing all transactions, starting at today with full backwards scrolling, keyboard navigation, jump-to-date, and transaction search
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`
 - **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`; voiding a sent invoice deactivates that link and replaces its page, so nobody can pay a cancelled invoice. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too — add and edit clients, draft a new invoice with `a` (client, dates, currency and as many line items as you like), then open it to send it, record a payment against it or void it. The client-facing page is yours to restyle — `nigel invoice template export` writes it out to edit, no rebuild required — and the attached PDF is headed by your business name, taken from the same setting. See [docs/invoicing.md](docs/invoicing.md)
@@ -112,6 +113,9 @@ nigel report balance
 nigel report flagged
 nigel report aging                  # A/R aging: buckets and open invoices
 nigel report register --year 2025   # Transaction register
+nigel report register --year 2025 --account "BofA Checking"
+nigel report register --year 2025 --category "Taxes & Licenses"
+nigel report register --uncategorized                 # Transactions with no category
 
 # Export reports
 nigel report pnl --year 2025 --mode export            # PDF
@@ -123,6 +127,8 @@ nigel report all --year 2025 --output-dir ~/exports/   # Custom directory
 nigel browse register
 nigel browse register --year 2025                     # Filter to a specific year
 nigel browse register --account "BofA Checking"
+nigel browse register --category "Taxes & Licenses"
+nigel browse register --uncategorized
 
 # Invoicing (see docs/invoicing.md for the Stripe/R2/Mailgun setup)
 nigel client add "Acme Co" --email ap@acme.test

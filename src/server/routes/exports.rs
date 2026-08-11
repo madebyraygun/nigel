@@ -325,13 +325,17 @@ async fn register(
         if let Some(account) = request.params.account.as_deref() {
             ensure_account_exists(conn, account)?;
         }
+        let filters = reports::RegisterFilters {
+            account: request.params.account.clone(),
+            category: None,
+        };
         let report = reports::get_register(
             conn,
             request.params.year,
             request.params.month,
             request.params.from.as_deref(),
             request.params.to.as_deref(),
-            request.params.account.as_deref(),
+            &filters,
         )?;
         render(conn, ReportPayload::Register(&report), &request)
     })
@@ -426,7 +430,8 @@ mod tests {
             (
                 "/api/exports/register?format=text",
                 text::format_register(
-                    &reports::get_register(&conn, None, None, None, None, None).unwrap(),
+                    &reports::get_register(&conn, None, None, None, None, &Default::default())
+                        .unwrap(),
                 ),
             ),
             (
@@ -591,6 +596,37 @@ mod tests {
         .await;
         assert!(known.contains("BofA Credit Card"), "{known}");
         assert!(!known.contains("BofA Checking"), "{known}");
+    }
+
+    #[tokio::test]
+    async fn the_register_export_refuses_the_cli_only_category_filters() {
+        // A download the caller believes is filtered must not quietly carry the
+        // whole register; the parameter is refused, matching /api/reports.
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = get_json(
+            &app,
+            "/api/exports/register?format=text&category=Travel",
+            &token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("category"),
+            "message should name the parameter: {body}"
+        );
+
+        let (status, _) = get_json(
+            &app,
+            "/api/exports/register?format=text&uncategorized=true",
+            &token,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

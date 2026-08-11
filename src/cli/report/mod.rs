@@ -9,6 +9,31 @@ use crate::error::Result;
 
 use super::ReportCommands;
 
+/// The period label for a register: "2026-03", "FY 2026", or "All dates" when
+/// no date filter was given. An unfiltered register shows every transaction,
+/// so its label must say so — `reports::date_range_label` instead labels a
+/// missing year as the current FY, matching the other report views'
+/// current-year default. Built from the parsed values `get_register` is
+/// actually asked with, so a `--month` that failed to parse (and therefore
+/// filtered nothing) is labelled "All dates", never echoed as a period.
+pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
+    match (year, month) {
+        (Some(y), Some(m)) => format!("{y}-{m:02}"),
+        (Some(y), None) => format!("FY {y}"),
+        (None, _) => "All dates".to_string(),
+    }
+}
+
+/// Subtitle for a register report: the period followed by any active non-date filters.
+pub(crate) fn register_subtitle(range: &str, filters: &crate::reports::RegisterFilters) -> String {
+    let labels = filters.labels();
+    if labels.is_empty() {
+        range.to_string()
+    } else {
+        format!("{range} — {}", labels.join(", "))
+    }
+}
+
 /// What a build without the `pdf` feature says when asked for a PDF. Shared
 /// with the HTTP export endpoints so the CLI and the API explain the same
 /// missing feature the same way.
@@ -80,14 +105,14 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
             year,
             from_date,
             to_date,
-            account,
+            filters,
             ..
         } => text::register(
             month.clone(),
             *year,
             from_date.clone(),
             to_date.clone(),
-            account.clone(),
+            filters,
         ),
         ReportCommands::Flagged { .. } => text::flagged(),
         ReportCommands::Balance { .. } => text::balance(),
@@ -118,9 +143,9 @@ fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
         return export_all_text(year, output_dir);
     }
 
-    let name = cmd.report_name();
+    let name = cmd.export_basename();
     let s = dispatch_text(&cmd)?;
-    let path = output.unwrap_or_else(|| default_text_path(name));
+    let path = output.unwrap_or_else(|| default_text_path(&name));
     let p = PathBuf::from(&path);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
@@ -148,7 +173,10 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
         ("expenses", text::expenses(None, year)),
         ("tax", text::tax(year)),
         ("cashflow", text::cashflow(None, year)),
-        ("register", text::register(None, year, None, None, None)),
+        (
+            "register",
+            text::register(None, year, None, None, &Default::default()),
+        ),
         ("flagged", text::flagged()),
         ("balance", text::balance()),
         ("aging", text::aging(&crate::cli::today())),
@@ -195,4 +223,51 @@ fn default_text_path(name: &str) -> String {
         .join(format!("{}.txt", export_file_stem(name)))
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reports::{CategorySelection, RegisterFilters};
+
+    #[test]
+    fn register_range_label_variants() {
+        assert_eq!(register_range_label(Some(2025), Some(3)), "2025-03");
+        assert_eq!(register_range_label(Some(2025), None), "FY 2025");
+        // No date filter — including a `--month` that failed to parse and so
+        // filtered nothing — labels the selection the query actually ran.
+        assert_eq!(register_range_label(None, None), "All dates");
+        assert_eq!(register_range_label(None, Some(3)), "All dates");
+    }
+
+    #[test]
+    fn register_subtitle_appends_active_filters() {
+        assert_eq!(
+            register_subtitle("FY 2025", &RegisterFilters::default()),
+            "FY 2025"
+        );
+        assert_eq!(
+            register_subtitle(
+                "FY 2025",
+                &RegisterFilters {
+                    account: Some("BofA Checking".into()),
+                    category: Some(CategorySelection::Named {
+                        id: 1,
+                        name: "Taxes & Licenses".into(),
+                    }),
+                }
+            ),
+            "FY 2025 — account: BofA Checking, category: Taxes & Licenses"
+        );
+        assert_eq!(
+            register_subtitle(
+                "All dates",
+                &RegisterFilters {
+                    account: None,
+                    category: Some(CategorySelection::Uncategorized),
+                }
+            ),
+            "All dates — uncategorized"
+        );
+    }
 }
