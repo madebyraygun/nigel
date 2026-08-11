@@ -98,6 +98,14 @@ A name is required and must be unique: an empty one and a name another client
 already has are both refused, on `client add` and on a `client edit` that
 renames. Renaming a client to the name it already has is not a collision.
 
+That rule lives in the data layer (`add_client`/`update_client`), not in the
+schema: `clients.name` carries no `UNIQUE` index, matching `accounts.name` and
+`categories.name`. Two requests racing each other in the web UI can therefore
+both pass the check and both insert; the result is two clients with one name,
+which nothing resolves by name and which you can fix by renaming one on the
+clients screen. The InvoiceShelf import deliberately does not apply the rule at
+all — it copies your old customer list as it stands.
+
 ### Inspecting and editing a client
 
 ```bash

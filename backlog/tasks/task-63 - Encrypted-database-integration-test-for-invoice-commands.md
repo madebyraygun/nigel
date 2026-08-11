@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-1'
 created_date: '2026-08-07 21:53'
-updated_date: '2026-08-11 20:55'
+updated_date: '2026-08-11 20:58'
 labels:
   - invoicing
   - testing
@@ -27,6 +27,6 @@ Invoice and client commands unlock encrypted databases through the shared prompt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An integration test runs at least one invoice/client command against an encrypted database unlocked via NIGEL_DB_PASSWORD
-- [ ] #2 A wrong NIGEL_DB_PASSWORD on an invoice command fails with the documented error rather than hanging on a prompt
+- [x] #1 An integration test runs at least one invoice/client command against an encrypted database unlocked via NIGEL_DB_PASSWORD
+- [x] #2 A wrong NIGEL_DB_PASSWORD on an invoice command fails with the documented error rather than hanging on a prompt
 <!-- AC:END -->

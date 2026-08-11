@@ -327,4 +327,38 @@ mod tests {
         assert_eq!(summary.next_number, 1248);
         assert_eq!(get_metadata(&dest, "next_invoice_number").unwrap(), "1248");
     }
+
+    /// The InvoiceShelf import inserts customers with raw SQL, deliberately
+    /// bypassing `add_client`'s duplicate-name check: it is a faithful copy of
+    /// another system's customer table, and that system does not guarantee unique
+    /// names. This is the test a `UNIQUE` index on `clients.name` would break,
+    /// which is why it is here — see the `clients.name` note in CLAUDE.md.
+    #[test]
+    fn two_source_customers_with_the_same_name_import_as_two_clients() {
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        {
+            let c = empty_source(&src_path);
+            c.execute_batch(
+                "INSERT INTO customers VALUES (1,'Acme Co','ap@acme.test');
+                 INSERT INTO customers VALUES (2,'Acme Co','billing@acme.test');",
+            )
+            .unwrap();
+        }
+
+        let summary = import(&dest, &src_path).unwrap();
+        assert_eq!(summary.clients, 2);
+        let same_name: i64 = dest
+            .query_row(
+                "SELECT COUNT(*) FROM clients WHERE name = 'Acme Co'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            same_name, 2,
+            "the import mirrors its source; it does not merge or rename"
+        );
+    }
 }
