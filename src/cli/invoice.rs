@@ -549,6 +549,13 @@ pub fn import(db: &str) -> Result<()> {
         "Imported {} clients, {} invoices, {} payments. Next invoice number: {}",
         summary.clients, summary.invoices, summary.payments, summary.next_number
     );
+    if summary.unparsed_dates > 0 {
+        eprintln!(
+            "Warning: {} date(s) were not in YYYY-MM-DD form and were copied as they stand. \
+             They will not sort or bucket as dates until corrected.",
+            summary.unparsed_dates
+        );
+    }
     Ok(())
 }
 

@@ -2470,8 +2470,8 @@ fn serve_without_the_feature_reports_a_clear_error() {
         .stderr(predicate::str::contains("requires the 'serve' feature"));
 }
 
-/// TASK-69 AC #1 through the binary: nothing between clap and the column pads
-/// these but the data layer.
+/// Padding through the real binary: nothing between clap and the column applies
+/// it but the data layer.
 #[test]
 fn unpadded_dates_round_trip_through_new_edit_and_pay_as_padded() {
     let env = TestEnv::new();
@@ -2535,8 +2535,8 @@ fn unpadded_dates_round_trip_through_new_edit_and_pay_as_padded() {
         );
 }
 
-/// `invoice pay` never checked its date; the column took whatever was typed and
-/// `refresh_status` used it as the reference day.
+/// The refusal comes from the data layer, through clap's plain `String` flag, and
+/// leaves no payment row behind.
 #[test]
 fn invoice_pay_refuses_a_malformed_date() {
     let env = TestEnv::new();

@@ -1,7 +1,10 @@
-use rusqlite::Connection;
+use std::collections::BTreeSet;
+
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::set_metadata;
 use crate::error::Result;
+use crate::invoicing::invoices::{refresh_status, validate_date};
 
 struct Migration {
     version: u32,
@@ -137,50 +140,79 @@ const MIGRATIONS: &[Migration] = &[
         version: 6,
         description: "normalize stored invoice dates to zero-padded YYYY-MM-DD",
         up: |conn| {
-            // `validate_date` pads on the way in; these are the rows written
-            // before it did. Parsing is chrono's, not SQL's, so the rule is
-            // exactly the one the data layer applies — and a value that does
-            // not parse is left untouched rather than guessed at.
-            for (table, column) in [
-                ("invoices", "issue_date"),
-                ("invoices", "due_date"),
-                ("invoices", "published_at"),
-                ("invoices", "voided_at"),
-                ("invoice_payments", "paid_date"),
-            ] {
-                normalize_date_column(conn, table, column)?;
+            // A stored date is padded through `validate_date` itself, so the
+            // migration and the writers cannot disagree about what a date is; a
+            // value that rule rejects is left untouched rather than guessed at.
+            let mut touched = BTreeSet::new();
+            for column in ["issue_date", "due_date", "published_at", "voided_at"] {
+                touched.extend(normalize_date_column(conn, "invoices", column)?);
             }
-            Ok(())
+            for payment_id in normalize_date_column(conn, "invoice_payments", "paid_date")? {
+                let invoice_id: Option<i64> = conn
+                    .query_row(
+                        "SELECT invoice_id FROM invoice_payments WHERE id = ?1",
+                        [payment_id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                touched.extend(invoice_id);
+            }
+            re_derive_status(conn, &touched)
         },
     },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
 
-/// Rewrite every parseable value in a date column to zero-padded `YYYY-MM-DD`.
+/// Rewrite every value a date column holds that `validate_date` accepts to its
+/// zero-padded form, answering the ids of the rows that moved.
 ///
 /// `table` and `column` are compile-time literals from v6's own list, never user
 /// input, so the `format!` is not an injection seam.
-fn normalize_date_column(conn: &Connection, table: &str, column: &str) -> Result<()> {
-    let mut stmt = conn.prepare(&format!(
+fn normalize_date_column(conn: &Connection, table: &str, column: &str) -> Result<Vec<i64>> {
+    let mut select = conn.prepare(&format!(
         "SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
     ))?;
-    let rows = stmt
+    let rows = select
         .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    drop(stmt);
+    drop(select);
 
+    let mut update = conn.prepare(&format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2"))?;
+    let mut changed = Vec::new();
     for (id, value) in rows {
-        let Ok(date) = chrono::NaiveDate::parse_from_str(&value, "%Y-%m-%d") else {
+        let Ok(padded) = validate_date(&value, column) else {
             continue;
         };
-        let padded = date.format("%Y-%m-%d").to_string();
         if padded != value {
-            conn.execute(
-                &format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2"),
-                rusqlite::params![padded, id],
-            )?;
+            update.execute(rusqlite::params![padded, id])?;
+            changed.push(id);
         }
+    }
+    Ok(changed)
+}
+
+/// Re-derive the status of every invoice whose stored dates moved.
+///
+/// Padding a due date changes what `is_overdue`'s string comparison answers, so
+/// a status derived from the unpadded value no longer follows from the row it
+/// sits in. Void invoices are skipped: their status comes from `voided_at`, and
+/// nothing about a date rewrite may take an invoice out of that terminal state.
+/// The wall clock is the reference day: migrations run inside a command, which is
+/// the same context every other `refresh_status` caller derives from.
+fn re_derive_status(conn: &Connection, invoice_ids: &BTreeSet<i64>) -> Result<()> {
+    let mut live = Vec::new();
+    {
+        let mut stmt = conn.prepare("SELECT voided_at IS NULL FROM invoices WHERE id = ?1")?;
+        for id in invoice_ids {
+            if stmt.query_row([id], |r| r.get::<_, bool>(0)).optional()? == Some(true) {
+                live.push(*id);
+            }
+        }
+    }
+    let today = crate::cli::today();
+    for id in live {
+        refresh_status(conn, id, &today)?;
     }
     Ok(())
 }
@@ -384,6 +416,86 @@ mod tests {
             })
             .unwrap();
         assert_eq!(issue, "2026-08-07");
+    }
+
+    /// Padding a due date changes what `is_overdue`'s string comparison answers, so
+    /// a status derived from the unpadded value is stale the moment v6 runs. v6
+    /// re-derives it rather than leaving the row disagreeing with its own dates.
+    #[test]
+    fn v6_re_derives_a_status_the_unpadded_due_date_had_wrong() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (id, name) VALUES (1, 'Acme');
+             INSERT INTO invoices (id, number, client_id, issue_date, due_date, published_at,
+                                   status, currency, total, token)
+                 VALUES (1, 1248, 1, '2020-01-05', '2020-1-5', '2020-01-05', 'sent', 'USD', 100, 't1');
+             UPDATE metadata SET value = '5' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let row = |col: &str| -> String {
+            conn.query_row(
+                &format!("SELECT {col} FROM invoices WHERE id = 1"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(row("due_date"), "2020-01-05");
+        assert_eq!(row("status"), "overdue");
+    }
+
+    /// A void invoice's status is derived from `voided_at`, not from its dates, and
+    /// v6 must not walk it back to something else.
+    #[test]
+    fn v6_leaves_a_void_invoice_void() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (id, name) VALUES (1, 'Acme');
+             INSERT INTO invoices (id, number, client_id, issue_date, due_date, published_at,
+                                   voided_at, status, currency, total, token)
+                 VALUES (1, 1248, 1, '2020-01-05', '2020-1-5', '2020-01-05', '2020-2-1',
+                         'void', 'USD', 100, 't1');
+             UPDATE metadata SET value = '5' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let status: String = conn
+            .query_row("SELECT status FROM invoices WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "void");
+    }
+
+    /// A payment date that moves does not change what the invoice is owed, but the
+    /// row still gets re-derived, so a status stale for any reason settles.
+    #[test]
+    fn v6_re_derives_from_a_changed_payment_date_too() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (id, name) VALUES (1, 'Acme');
+             INSERT INTO invoices (id, number, client_id, issue_date, published_at,
+                                   status, currency, total, token)
+                 VALUES (1, 1248, 1, '2020-01-05', '2020-01-05', 'sent', 'USD', 100, 't1');
+             INSERT INTO invoice_payments (invoice_id, amount, paid_date, method)
+                 VALUES (1, 100, '2020-1-9', 'ach');
+             UPDATE metadata SET value = '5' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let paid: String = conn
+            .query_row("SELECT paid_date FROM invoice_payments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(paid, "2020-01-09");
+        let status: String = conn
+            .query_row("SELECT status FROM invoices WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "paid");
     }
 }
 

@@ -619,11 +619,18 @@ whenever it is published or paid:
 | `paid` | Paid in full (settled to within half a cent) |
 | `void` | Cancelled; cannot be sent, paid, or edited |
 
-`overdue` is derived against the day the command runs, so an invoice that passes
-its due date reads as overdue the next time anything touches it — a send, a
-payment, an edit, or a sync. Recording a payment derives against the payment's
-own date instead, so entering last month's cheque today does not backdate or
-advance anything else.
+Status is **stored**, not computed when you read it. It is re-derived only by a
+write to the invoice, and each write names the day it derives against: `invoice
+send` uses the publish date, a payment uses the payment's own date (so entering
+last month's cheque today does not advance anything else), and an edit or a void
+uses the day the command runs. `invoice sync` re-derives only for an invoice it
+records a new Stripe payment against.
+
+An invoice that simply passes its due date with nothing else happening to it
+therefore keeps the status it was last written with — nothing recomputes it in
+the background, and reading the list does not recompute it either. **A/R aging is
+the report to trust for how late something is**: it measures every open invoice
+against today's date directly rather than reading the stored word.
 
 ## A/R aging
 
