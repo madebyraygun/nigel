@@ -84,8 +84,13 @@ export class WcInvoiceSummary extends LitElement {
   @property({ type: Number })
   total = 0;
 
+  /**
+   * Outstanding. Null renders as an em dash, which is what a void invoice
+   * gets: it owes nothing and never will, and its total under "Outstanding"
+   * would report a receivable that no longer exists.
+   */
   @property({ type: Number })
-  balance = 0;
+  balance: number | null = 0;
 
   @property({ type: String })
   currency = 'USD';
@@ -120,12 +125,14 @@ export class WcInvoiceSummary extends LitElement {
         <div class="pair">
           <dt>Outstanding</dt>
           <dd class="figure">
-            <wc-money
-              .amount=${this.balance}
-              .currency=${this.currency}
-              variant="plain"
-              data-balance
-            ></wc-money>
+            ${this.balance === null
+              ? html`<span data-balance>—</span>`
+              : html`<wc-money
+                  .amount=${this.balance}
+                  .currency=${this.currency}
+                  variant="plain"
+                  data-balance
+                ></wc-money>`}
           </dd>
         </div>
         <div class="pair">

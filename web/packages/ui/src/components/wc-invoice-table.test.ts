@@ -93,6 +93,22 @@ describe('wc-invoice-table', () => {
       'No invoices yet.',
     );
   });
+
+  it('renders each row in its own currency', async () => {
+    // A list spans clients and need not be in one currency, so the symbol is
+    // the row's, not the table's.
+    const el = await mount({
+      rows: [
+        { ...ROWS[0], currency: 'EUR' },
+        { ...ROWS[0], number: 1251, currency: 'USD' },
+      ],
+    });
+    const currencies = [...(el.shadowRoot?.querySelectorAll('wc-money') ?? [])].map(
+      (money) => (money as HTMLElement & { currency: string }).currency,
+    );
+    // total + balance for each of the two rows.
+    expect(currencies).toEqual(['EUR', 'EUR', 'USD', 'USD']);
+  });
 });
 
 describePreviewA11y(preview);

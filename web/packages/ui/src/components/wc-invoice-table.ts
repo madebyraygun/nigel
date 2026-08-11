@@ -17,6 +17,11 @@ export interface InvoiceTableRow {
    */
   balance: number | null;
   dueDate: string | null;
+  /**
+   * The row's own currency, since a list spans clients and need not be in one.
+   * Absent falls back to `wc-money`'s default.
+   */
+  currency?: string;
   /** Where the row links. Empty makes the row inert text. */
   href?: string;
 }
@@ -170,13 +175,19 @@ export class WcInvoiceTable extends LitElement {
           ${row.clientName ?? '—'}
         </td>
         <td class="end">
-          <wc-money .amount=${row.total} variant="plain" align="end"></wc-money>
+          <wc-money
+            .amount=${row.total}
+            .currency=${row.currency ?? 'USD'}
+            variant="plain"
+            align="end"
+          ></wc-money>
         </td>
         <td class="end ${row.balance === null ? 'muted' : ''}" data-balance>
           ${row.balance === null
             ? '—'
             : html`<wc-money
                 .amount=${row.balance}
+                .currency=${row.currency ?? 'USD'}
                 variant="plain"
                 align="end"
               ></wc-money>`}

@@ -15,6 +15,15 @@ export interface LineItemValue {
   description: string;
   quantity: string;
   unitAmount: string;
+  /**
+   * The row's total as the server states it, for rows nobody is editing.
+   *
+   * The editor omits it: there, the amount is whatever the two typed figures
+   * currently multiply to. A read-only row supplies it because `quantity` is
+   * rendered to two decimals and re-multiplying a rounded quantity is not the
+   * figure the invoice was billed at.
+   */
+  amount?: string;
 }
 
 export interface LineItemErrors {
@@ -41,8 +50,14 @@ export function parseLineNumber(raw: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** What a row comes to, or null when either figure is missing or unreadable. */
+/**
+ * What a row comes to, or null when either figure is missing or unreadable.
+ *
+ * A stated `amount` wins over the product: the quantity column is rounded for
+ * display, so recomputing would contradict the figure the row was billed at.
+ */
 export function lineItemAmount(item: LineItemValue): number | null {
+  if (item.amount !== undefined) return parseLineNumber(item.amount);
   const quantity = parseLineNumber(item.quantity);
   const unit = parseLineNumber(item.unitAmount);
   if (quantity === null || unit === null) return null;
@@ -234,6 +249,10 @@ export class WcLineItems extends LitElement {
   @property({ attribute: false })
   total: number | null = null;
 
+  /** The invoice's currency, so every figure in the table reads in it. */
+  @property({ type: String })
+  currency = 'USD';
+
   @property({ type: String })
   caption = 'Line items';
 
@@ -301,7 +320,12 @@ export class WcLineItems extends LitElement {
             <tr data-emphasis="subtotal">
               <td colspan="3">Subtotal</td>
               <td class="end">
-                <wc-money .amount=${subtotal} variant="plain" align="end"></wc-money>
+                <wc-money
+                  .amount=${subtotal}
+                  .currency=${this.currency}
+                  variant="plain"
+                  align="end"
+                ></wc-money>
               </td>
               ${this.readonly ? nothing : html`<td></td>`}
             </tr>
@@ -313,6 +337,7 @@ export class WcLineItems extends LitElement {
                     <td class="end">
                       <wc-money
                         .amount=${this.total}
+                        .currency=${this.currency}
                         variant="plain"
                         align="end"
                       ></wc-money>
@@ -359,12 +384,18 @@ export class WcLineItems extends LitElement {
           <td class="end">
             <wc-money
               .amount=${parseLineNumber(item.unitAmount) ?? 0}
+              .currency=${this.currency}
               variant="plain"
               align="end"
             ></wc-money>
           </td>
           <td class="end">
-            <wc-money .amount=${amount ?? 0} variant="plain" align="end"></wc-money>
+            <wc-money
+              .amount=${amount ?? 0}
+              .currency=${this.currency}
+              variant="plain"
+              align="end"
+            ></wc-money>
           </td>
         </tr>
       `;
@@ -422,7 +453,12 @@ export class WcLineItems extends LitElement {
         <td class="end">
           ${amount === null
             ? html`<span class="prefix">—</span>`
-            : html`<wc-money .amount=${amount} variant="plain" align="end"></wc-money>`}
+            : html`<wc-money
+                .amount=${amount}
+                .currency=${this.currency}
+                variant="plain"
+                align="end"
+              ></wc-money>`}
         </td>
         <td>
           <div class="row-actions">

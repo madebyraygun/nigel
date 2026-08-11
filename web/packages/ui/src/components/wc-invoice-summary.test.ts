@@ -68,6 +68,15 @@ describe('wc-invoice-summary', () => {
     };
     expect(money.currency).toBe('EUR');
   });
+
+  it('renders a null balance as an em dash, not as a figure', async () => {
+    // A void invoice owes nothing and never will; its total under
+    // "Outstanding" would report a receivable the aging report excludes.
+    const el = await mount({ status: 'void', total: 500, balance: null });
+    const balance = el.shadowRoot?.querySelector('[data-balance]');
+    expect(balance?.textContent?.trim()).toBe('\u2014');
+    expect(balance?.tagName.toLowerCase()).not.toBe('wc-money');
+  });
 });
 
 describePreviewA11y(preview);

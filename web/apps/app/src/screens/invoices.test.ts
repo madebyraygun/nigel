@@ -399,6 +399,84 @@ describe('nigel-invoices-screen', () => {
     );
   });
 
+  it('drops an open payment dialog when the route moves to another invoice', async () => {
+    // The dialog held #1250's $1,200 balance. Carried into #1251, whose balance
+    // is $500, saving it records a payment neither the user nor that invoice
+    // asked for.
+    const fake = client();
+    fake.invoiceDetails[1251] = detail({
+      id: 5,
+      number: 1251,
+      status: 'sent',
+      total: 500,
+      subtotal: 500,
+      paid: 0,
+      balance: 500,
+      payments: [],
+    });
+    const { el, go } = await mount('number=1250', fake);
+
+    button(el, '[data-pay]').click();
+    await settle(el);
+    const seeded = el.shadowRoot
+      ?.querySelector('wc-manager-dialog')
+      ?.querySelector('wc-payment-form') as HTMLElement & { value: { amount: string } };
+    expect(seeded.value.amount).toBe('1,200.00');
+
+    await go('');
+    await go('number=1251');
+
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('wc-manager-dialog')).toBeNull();
+    expect(fake.calls.some((call) => call.startsWith('payInvoice'))).toBe(false);
+  });
+
+  it('drops an open send dialog when the route moves to another invoice', async () => {
+    // Detail to detail, not detail to list: the dialogs only render inside the
+    // detail view, so a hop through the list would pass either way.
+    const fake = client();
+    fake.invoiceDetails[1251] = detail({ id: 5, number: 1251, status: 'sent' });
+    const { el, go } = await mount('number=1250', fake);
+
+    button(el, '[data-send]').click();
+    await settle(el);
+    expect(sendDialog(el)?.phase).toBe('confirm');
+
+    await go('number=1251');
+
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+    const dialog = sendDialog(el);
+    expect(dialog === null || dialog.open === false).toBe(true);
+  });
+
+  it('refuses a number no invoice could have instead of showing the last one', async () => {
+    const { el, fake, go } = await mount('number=1250');
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+
+    await go('number=0');
+
+    // No stale detail, no blank screen, and nothing fetched for a number the
+    // loader could never parse.
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeNull();
+    expect(el.shadowRoot?.textContent).toContain('not an invoice number');
+    expect(el.shadowRoot?.querySelector('[data-reset]')).toBeTruthy();
+    expect(fake.calls.some((call) => call === 'getInvoice:0')).toBe(false);
+
+    await go('number=abc');
+    expect(el.shadowRoot?.textContent).toContain('not an invoice number');
+  });
+
+  it('hides the account-wide aging strip above a filtered list', async () => {
+    const unfiltered = await mount('');
+    expect(unfiltered.el.shadowRoot?.querySelector('wc-aging-bars')).toBeTruthy();
+
+    const filtered = await mount('clientId=2');
+    expect(filtered.el.shadowRoot?.querySelector('wc-aging-bars')).toBeNull();
+    expect(filtered.el.shadowRoot?.querySelector('[data-aging-filtered]')).toBeTruthy();
+    // And it is not even asked for, since it could not describe this list.
+    expect(filtered.fake.calls.some((call) => call.startsWith('getAging'))).toBe(false);
+  });
+
   it('voids an invoice behind a confirm dialog, and does nothing when declined', async () => {
     const fake = client();
     fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canVoid: true });

@@ -415,7 +415,13 @@ export class NigelReportsScreen extends SignalWatcher(LitElement) {
           this.renderTable(agingTable(report), 'A/R aging summary'),
         )}
         ${report.invoices.length === 0
-          ? nothing
+          ? this.renderPanel(
+              'Open invoices',
+              // `format_aging` prints this sentence rather than dropping the
+              // section, and a page of zeros with no statement reads as not
+              // loaded rather than as nothing outstanding.
+              html`<p class="note" data-aging-empty>No open invoices.</p>`,
+            )
           : this.renderPanel(
               'Open invoices',
               this.renderTable(agingInvoicesTable(report), 'Open invoices'),
@@ -583,7 +589,8 @@ export class NigelReportsScreen extends SignalWatcher(LitElement) {
       <div class="heading">
         <h2>Reports</h2>
         <p class="lede">
-          Every report the CLI prints, for any period. Each one exports as text or PDF.
+          Every report the CLI prints, for any period. All but A/R aging export as
+          text or PDF.
         </p>
       </div>
       <wc-link-grid

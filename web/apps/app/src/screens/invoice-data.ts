@@ -41,13 +41,15 @@ export const STATUS_FILTERS = [
  *
  * An absent filter is omitted rather than sent empty: the server rejects a
  * `status` it does not know instead of ignoring it, so `all` — which is not
- * one of its words — must never reach the query string.
+ * one of its words — must never reach the query string. A status outside the
+ * chips is dropped for the same reason, so a stale or hand-typed hash reads as
+ * the unfiltered list rather than as the 400 the server would answer.
  */
 export function invoiceListParams(params: URLSearchParams): InvoiceListParams {
   const request: InvoiceListParams = {};
 
   const status = params.get('status');
-  if (status && status !== 'all') request.status = status;
+  if (status && status !== 'all' && isStatusFilter(status)) request.status = status;
 
   const clientId = Number(params.get('clientId'));
   if (Number.isInteger(clientId) && clientId > 0) request.clientId = clientId;
@@ -55,9 +57,20 @@ export function invoiceListParams(params: URLSearchParams): InvoiceListParams {
   return request;
 }
 
-/** Which filter chip is on, for a route that names none. */
+/** Whether a route's `status` is one the list actually offers. */
+export function isStatusFilter(value: string): boolean {
+  return STATUS_FILTERS.some((filter) => filter.value === value);
+}
+
+/**
+ * Which filter chip is on, for a route that names none.
+ *
+ * An unrecognised status highlights `all`, matching what `invoiceListParams`
+ * asked the server for — the chips may not claim a filter that is not applied.
+ */
 export function activeStatusFilter(params: URLSearchParams): string {
-  return params.get('status') ?? 'all';
+  const status = params.get('status');
+  return status !== null && isStatusFilter(status) ? status : 'all';
 }
 
 /** A `YYYY-MM-DD` for the local day, which is what the server calls today. */
@@ -243,6 +256,13 @@ export const SEND_STEP_LABELS: Record<SendStep, string> = {
  * Every step is shown, not only the ones that ran: the trace is most useful
  * exactly when it stopped early, and a list that grows as it goes cannot show
  * what did not happen.
+ *
+ * `config` is inferred rather than reported. It belongs to the caller — the
+ * settings are resolved and the three clients built before the orchestration is
+ * reachable — so the server never lists it as completed and names it only as
+ * the step that *failed*. Any other step having an outcome therefore means
+ * config succeeded, and reading it off the wire literally would show it as
+ * never-run on every send that worked.
  */
 export function sendStepViews(options: {
   completed?: SendStepResult[] | SendStep[];
@@ -253,6 +273,11 @@ export function sendStepViews(options: {
   for (const entry of options.completed ?? []) {
     if (typeof entry === 'string') outcomes.set(entry, 'ok');
     else outcomes.set(entry.step, entry.outcome === 'reused' ? 'reused' : 'ok');
+  }
+
+  const reachedOrchestration = outcomes.size > 0 || (options.failed ?? null) !== null;
+  if (reachedOrchestration && options.failed !== 'config' && !outcomes.has('config')) {
+    outcomes.set('config', 'ok');
   }
 
   return SEND_STEPS.map((step) => ({
@@ -267,6 +292,23 @@ export function sendStepViews(options: {
   }));
 }
 
+/**
+ * Outstanding as a reader should see it, or null for nothing outstanding ever.
+ *
+ * A void invoice owes nothing and never will, so it reports an em dash rather
+ * than a figure: `$0.00` would read as settled, and its own total would report
+ * a receivable the aging report has already excluded. One function so the list
+ * and the detail view cannot answer this differently for the same invoice.
+ */
+export function outstandingOrNull(invoice: { status: string; balance: number }): number | null {
+  return invoice.status === 'void' ? null : invoice.balance;
+}
+
+/** The detail view's outstanding figure. */
+export function detailBalance(detail: InvoiceDetail): number | null {
+  return outstandingOrNull(detail);
+}
+
 /** What the invoice table needs, from what the list route answers with. */
 export function invoiceTableRows(rows: InvoiceListRow[]) {
   return rows.map((row) => ({
@@ -274,10 +316,9 @@ export function invoiceTableRows(rows: InvoiceListRow[]) {
     status: row.status,
     clientName: row.clientName,
     total: row.total,
-    // A void invoice owes nothing and never will; the table renders null as an
-    // em dash, where `$0.00` would read as settled.
-    balance: row.status === 'void' ? null : row.balance,
+    balance: outstandingOrNull(row),
     dueDate: row.dueDate,
+    currency: row.currency,
     href: `#/invoices?number=${row.number}`,
   }));
 }
@@ -289,5 +330,9 @@ export function detailLineItems(detail: InvoiceDetail): LineItemValue[] {
     // Two decimals, matching `format_invoice_show`'s quantity column.
     quantity: item.quantity.toFixed(2),
     unitAmount: String(item.unitAmount),
+    // The row's own total, not the product of the rounded quantity above it —
+    // 1.755 hours at $200.00 was billed at $351.00, and a table that recomputed
+    // it would print $350.00 under a Total of $351.00.
+    amount: String(item.lineTotal),
   }));
 }

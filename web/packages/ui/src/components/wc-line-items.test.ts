@@ -175,6 +175,31 @@ describe('wc-line-items', () => {
       true,
     );
   });
+
+  it('renders a stated amount rather than re-multiplying a rounded quantity', async () => {
+    // 1.755 h at $200.00 was billed at $351.00. The quantity column is rounded
+    // for display, so the product of what is shown is not what was charged.
+    const el = await mount({
+      readonly: true,
+      items: [
+        { description: 'Consulting', quantity: '1.76', unitAmount: '200', amount: '351' },
+      ],
+    });
+    const monies = [...(el.shadowRoot?.querySelectorAll('wc-money') ?? [])].map(
+      (money) => (money as HTMLElement & { amount: number }).amount,
+    );
+    // unit, row amount, subtotal — the row and the subtotal are the stated 351.
+    expect(monies).toEqual([200, 351, 351]);
+  });
+
+  it('renders every figure in the given currency', async () => {
+    const el = await mount({ currency: 'EUR' });
+    const currencies = [...(el.shadowRoot?.querySelectorAll('wc-money') ?? [])].map(
+      (money) => (money as HTMLElement & { currency: string }).currency,
+    );
+    expect(currencies.length).toBeGreaterThan(0);
+    expect(currencies.every((currency) => currency === 'EUR')).toBe(true);
+  });
 });
 
 describePreviewA11y(preview);

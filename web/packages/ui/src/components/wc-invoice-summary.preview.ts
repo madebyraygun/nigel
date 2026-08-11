@@ -7,7 +7,7 @@ interface SummaryProps {
   status: string;
   clientName: string | null;
   total: number;
-  balance: number;
+  balance: number | null;
   issueDate: string;
   dueDate: string | null;
 }
@@ -64,7 +64,7 @@ const preview: Preview = {
     {
       name: 'void',
       render: () =>
-        summary({ number: 1247, status: 'void', total: 500, balance: 0, dueDate: null }),
+        summary({ number: 1247, status: 'void', total: 500, balance: null, dueDate: null }),
     },
     { name: 'no-due-date', render: () => summary({ dueDate: null }) },
     { name: 'orphaned-client', render: () => summary({ clientName: null }) },

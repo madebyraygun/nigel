@@ -93,6 +93,10 @@ export class WcPaymentList extends LitElement {
   @property({ attribute: false })
   payments: PaymentRow[] = [];
 
+  /** The invoice's currency — a payment is recorded in the amount billed. */
+  @property({ type: String })
+  currency = 'USD';
+
   @property({ type: String })
   caption = 'Payments';
 
@@ -131,6 +135,7 @@ export class WcPaymentList extends LitElement {
                   <td class="end">
                     <wc-money
                       .amount=${payment.amount}
+                      .currency=${this.currency}
                       variant="plain"
                       align="end"
                     ></wc-money>

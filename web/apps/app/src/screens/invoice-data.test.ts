@@ -5,6 +5,7 @@ import {
   activeStatusFilter,
   clientFormFrom,
   clientPatch,
+  detailBalance,
   detailLineItems,
   invoiceFormFrom,
   invoiceListParams,
@@ -99,6 +100,19 @@ describe('invoiceListParams', () => {
   it('reports which chip is on for a route that names none', () => {
     expect(activeStatusFilter(new URLSearchParams())).toBe('all');
     expect(activeStatusFilter(new URLSearchParams('status=paid'))).toBe('paid');
+  });
+
+  it('drops a status the list does not offer rather than sending it', () => {
+    // The server answers 400 for a status it does not know, and the screen's
+    // error state has no filter chips in it — so an unfiltered list beats a
+    // dead end for a stale or hand-typed hash.
+    expect(invoiceListParams(new URLSearchParams('status=pending'))).toEqual({});
+    expect(invoiceListParams(new URLSearchParams('status=Open'))).toEqual({});
+  });
+
+  it('highlights the chip that matches what was actually requested', () => {
+    expect(activeStatusFilter(new URLSearchParams('status=pending'))).toBe('all');
+    expect(activeStatusFilter(new URLSearchParams('status=Open'))).toBe('all');
   });
 });
 
@@ -310,6 +324,40 @@ describe('detailLineItems', () => {
   it('prints quantities to two decimals, as format_invoice_show does', () => {
     expect(detailLineItems(DETAIL).map((item) => item.quantity)).toEqual(['16.00', '1.00']);
   });
+
+  it('carries the row total the response states, not the rounded product', () => {
+    // 1.755 h at $200.00 is billed at $351.00. Rounding the quantity for the
+    // column and re-multiplying it would print $350.00.
+    const detail: InvoiceDetail = {
+      ...DETAIL,
+      items: [
+        {
+          ...DETAIL.items[0],
+          quantity: 1.755,
+          unitAmount: 200,
+          lineTotal: 351,
+        },
+      ],
+    };
+    const [row] = detailLineItems(detail);
+    // The column shows 1.75, whose product with the unit is 350 — one cent
+    // short of what the row was billed at, which is the whole point.
+    expect(row.quantity).toBe('1.75');
+    expect(Number(row.quantity) * detail.items[0].unitAmount).toBe(350);
+    expect(row.amount).toBe('351');
+  });
+});
+
+describe('detailBalance', () => {
+  it('reports a void invoice as owing nothing, matching the list', () => {
+    expect(detailBalance({ ...DETAIL, status: 'void', total: 3200, balance: 3200 })).toBe(
+      null,
+    );
+  });
+
+  it('reports a live invoice at its balance', () => {
+    expect(detailBalance({ ...DETAIL, status: 'sent', balance: 1200 })).toBe(1200);
+  });
 });
 
 describe('sendStepViews', () => {
@@ -326,6 +374,35 @@ describe('sendStepViews', () => {
       'pending',
       'pending',
     ]);
+  });
+
+  it('infers config from the step list the server actually sends', () => {
+    // `config` belongs to the caller — the settings are resolved before the
+    // orchestration is reachable — so the server never lists it as completed.
+    // Reading the wire literally showed it as never-run on a send that worked.
+    const views = sendStepViews({
+      completed: [
+        'load',
+        'precheck',
+        'payment_link',
+        'render',
+        'publish',
+        'email',
+        'record',
+      ],
+    });
+    expect(views.every((view) => view.state === 'ok')).toBe(true);
+  });
+
+  it('still reports config as the failure when it is the one that failed', () => {
+    const views = sendStepViews({ completed: [], failed: 'config' });
+    expect(views.find((view) => view.step === 'config')?.state).toBe('failed');
+  });
+
+  it('leaves config pending before the request goes out', () => {
+    const views = sendStepViews({ running: 'config' });
+    expect(views.find((view) => view.step === 'config')?.state).toBe('running');
+    expect(views.filter((view) => view.state === 'pending')).toHaveLength(7);
   });
 
   it('marks a reused payment link as reused rather than as fresh work', () => {

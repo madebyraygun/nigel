@@ -83,6 +83,15 @@ describe('wc-payment-list', () => {
       'No payments recorded',
     );
   });
+
+  it('renders payment amounts in the invoice currency', async () => {
+    const el = await mount({ currency: 'EUR' });
+    const monies = [...(el.shadowRoot?.querySelectorAll('wc-money') ?? [])].map(
+      (money) => (money as HTMLElement & { currency: string }).currency,
+    );
+    expect(monies.length).toBeGreaterThan(0);
+    expect(monies.every((currency) => currency === 'EUR')).toBe(true);
+  });
 });
 
 describePreviewA11y(preview);

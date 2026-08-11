@@ -38,6 +38,7 @@ import type {
 import {
   STATUS_FILTERS,
   activeStatusFilter,
+  detailBalance,
   detailLineItems,
   invoiceFormFrom,
   invoiceListParams,
@@ -60,15 +61,42 @@ import type { ScreenId } from './registry.js';
 /** Which of the screen's four views the route is asking for. */
 type View = 'list' | 'detail' | 'edit' | 'new';
 
+/**
+ * The invoice a route names, or null when it names none it could fetch.
+ *
+ * `viewOf` is expressed in terms of this rather than in terms of the raw
+ * parameter: a `number` the loader cannot parse must not select a view that
+ * needs one, or the screen renders the previous invoice's detail — with live
+ * Send, Void and Record-payment actions — under a URL asking for another.
+ */
+function numberOf(params: URLSearchParams): number | null {
+  const raw = params.get('number');
+  if (raw === null || raw.trim() === '') return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function viewOf(params: URLSearchParams): View {
   if (params.get('new') === '1') return 'new';
-  if (params.get('number')) return params.get('edit') === '1' ? 'edit' : 'detail';
+  if (numberOf(params) !== null) return params.get('edit') === '1' ? 'edit' : 'detail';
   return 'list';
 }
 
-function numberOf(params: URLSearchParams): number | null {
-  const parsed = Number(params.get('number'));
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+/** A `number` was asked for and is not one an invoice could have. */
+function hasUnusableNumber(params: URLSearchParams): boolean {
+  const raw = params.get('number');
+  return raw !== null && raw.trim() !== '' && numberOf(params) === null;
+}
+
+/**
+ * Whether the list is showing a subset.
+ *
+ * The aging strip is account-wide — `/api/invoices/aging` takes no client or
+ * status — so it may only sit above a list of the same invoices it describes.
+ * Above a filtered list its total reads as that subset's balance.
+ */
+function isFilteredList(params: URLSearchParams): boolean {
+  return activeStatusFilter(params) !== 'all' || invoiceListParams(params).clientId !== undefined;
 }
 
 /**
@@ -267,7 +295,24 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     if (!changed.has('params')) return;
     const key = this.params.toString();
     if (key === this.loadedKey) return;
+    // The route is moving, so any open dialog belongs to the invoice being
+    // left behind. `refresh()` calls `load` directly and deliberately does not
+    // come through here, which is what lets the send dialog outlive its own
+    // request.
+    this.closeDialogs();
     void this.load(key);
+  }
+
+  /** Drop every dialog and its half-filled form. */
+  private closeDialogs(): void {
+    this.payment = null;
+    this.paymentErrors = {};
+    this.paymentError = null;
+    this.sendOpen = false;
+    this.sendPhase = 'confirm';
+    this.sendSteps = [];
+    this.sendFailure = null;
+    this.sentUrl = '';
   }
 
   private async load(key: string, keepActionError = false): Promise<void> {
@@ -280,11 +325,22 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     // drops it, because it was about the invoice being left behind.
     if (!keepActionError) this.actionError = null;
 
+    // Answered before anything is fetched, rather than left to fall through the
+    // view branches: the fall-through marked the route loaded and kept the
+    // previous invoice — and its actions — on screen under the new URL.
+    if (hasUnusableNumber(this.params)) {
+      this.detail = null;
+      this.error = `“${this.params.get('number')}” is not an invoice number.`;
+      this.loadedKey = null;
+      this.loading = false;
+      return;
+    }
+
     try {
       if (view === 'list') {
         const [rows, aging] = await Promise.all([
           this.client.getInvoices(invoiceListParams(this.params)),
-          this.agingOrNull(),
+          isFilteredList(this.params) ? Promise.resolve(null) : this.agingOrNull(),
         ]);
         if (seq !== this.loadSeq) return;
         this.rows = rows;
@@ -560,9 +616,18 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
   render() {
     if (this.error) {
+      // The filters, the New-invoice button and the aging strip all live inside
+      // `renderList`, so a failed load leaves no control on screen. The way back
+      // to the unfiltered list has to be here, or the only exit is the sidebar.
       return html`
         <wc-empty-state icon="wc-icon-invoice" heading="That did not load">
           <p class="error">${this.error}</p>
+          <a
+            class="chip"
+            data-reset
+            href=${'#/invoices'}
+            >All invoices</a
+          >
         </wc-empty-state>
       `;
     }
@@ -621,6 +686,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
             href="#/reports?report=aging"
           ></wc-aging-bars>`
         : nothing}
+      ${isFilteredList(this.params)
+        ? html`<p class="note" data-aging-filtered>
+            A/R aging covers every open invoice, so it is hidden while the list is
+            filtered. <a href="#/reports?report=aging">View the aging report →</a>
+          </p>`
+        : nothing}
 
       <div class="filters">
         <span class="label">Status</span>
@@ -672,7 +743,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         status=${detail.status}
         .clientName=${detail.client?.name ?? null}
         .total=${detail.total}
-        .balance=${detail.balance}
+        .balance=${detailBalance(detail)}
         .currency=${detail.currency}
         .issueDate=${detail.issueDate}
         .dueDate=${detail.dueDate}
@@ -728,12 +799,16 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           caption-hidden
           .items=${detailLineItems(detail)}
           .total=${detail.total}
+          .currency=${detail.currency}
         ></wc-line-items>
       </wc-panel>
 
       <div class="columns">
         <wc-panel heading="Payments">
-          <wc-payment-list .payments=${detail.payments}></wc-payment-list>
+          <wc-payment-list
+            .payments=${detail.payments}
+            .currency=${detail.currency}
+          ></wc-payment-list>
         </wc-panel>
         <wc-panel heading="Published">${this.renderPublished(detail)}</wc-panel>
       </div>

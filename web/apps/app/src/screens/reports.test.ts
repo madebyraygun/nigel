@@ -174,6 +174,32 @@ describe('the reports screen', () => {
       expect(panels).toEqual(['Summary — as of 2026-03-15', 'Open invoices']);
     });
 
+    it('says so when nothing is outstanding, as format_aging does', async () => {
+      // `format_aging` prints "No open invoices." rather than dropping the
+      // section. Five $0.00 rows with no such statement reads as a report that
+      // did not load.
+      const client = seeded();
+      client.aging = {
+        asOf: '2026-03-15',
+        buckets: [
+          { label: 'current', count: 0, total: 0 },
+          { label: '1-30', count: 0, total: 0 },
+          { label: '31-60', count: 0, total: 0 },
+          { label: '61-90', count: 0, total: 0 },
+          { label: '90+', count: 0, total: 0 },
+        ],
+        invoices: [],
+        outstanding: 0,
+      };
+
+      const { el } = await mount('report=aging', client);
+      const panels = [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].map(
+        (panel) => panel.getAttribute('heading'),
+      );
+      expect(panels).toEqual(['Summary — as of 2026-03-15', 'Open invoices']);
+      expect(query(el, '[data-aging-empty]')?.textContent).toContain('No open invoices.');
+    });
+
     it('falls back to the landing page for a slug that does not exist', async () => {
       const { el, client } = await mount('report=nonsense');
       expect(query(el, 'wc-link-grid')).not.toBeNull();
