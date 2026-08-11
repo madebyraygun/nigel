@@ -4,12 +4,17 @@ title: Encrypted-database integration test for invoice commands
 status: To Do
 assignee: []
 created_date: '2026-08-07 21:53'
+updated_date: '2026-08-11 19:54'
 labels:
   - invoicing
   - testing
 dependencies: []
 references:
   - 'https://github.com/madebyraygun/nigel-keeps-your-books/pull/172'
+documentation:
+  - >-
+    docs/superpowers/specs/2026-08-11-task-69-71-63-70-invoice-correctness-design.md
+  - docs/superpowers/plans/2026-08-11-task-69-71-63-70-invoice-correctness.md
 priority: low
 ---
 

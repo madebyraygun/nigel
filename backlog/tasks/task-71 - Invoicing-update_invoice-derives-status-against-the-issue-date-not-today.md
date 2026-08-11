@@ -4,10 +4,15 @@ title: 'Invoicing: update_invoice derives status against the issue date, not tod
 status: To Do
 assignee: []
 created_date: '2026-08-08 08:22'
+updated_date: '2026-08-11 19:54'
 labels:
   - invoicing
   - bug
 dependencies: []
+documentation:
+  - >-
+    docs/superpowers/specs/2026-08-11-task-69-71-63-70-invoice-correctness-design.md
+  - docs/superpowers/plans/2026-08-11-task-69-71-63-70-invoice-correctness.md
 priority: low
 ---
 
