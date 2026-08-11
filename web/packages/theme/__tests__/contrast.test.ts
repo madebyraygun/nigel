@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
+import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
 
 /**
  * The brand palette is pastel, which is exactly the failure mode this guards:
@@ -83,5 +84,28 @@ describe.each([
     ['text on selected row', '--wa-color-text', '--nc-color-selected-bg'],
   ])('%s', (_label, fg, bg) => {
     expect(contrast(t(fg), t(bg))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+});
+
+/**
+ * The gradient is the one background that is not a token pair: it is seven
+ * pastel stops, identical in both modes, and a primary button's label sits on
+ * whichever one it happens to land on. So the label is checked against all of
+ * them, and it is checked once rather than per mode — a foreground that flips
+ * with the mode cannot clear a background that does not, which is why
+ * `--nc-color-on-gradient` exists instead of reusing `--wa-color-text`.
+ */
+describe('the brand gradient carries readable text', () => {
+  const onGradient = light('--nc-color-on-gradient');
+
+  it('is declared once, with no dark override', () => {
+    const declarations = [
+      ...nigelTheme.cssText.matchAll(/--nc-color-on-gradient:\s*#[0-9a-fA-F]{6}/g),
+    ];
+    expect(declarations).toHaveLength(1);
+  });
+
+  it.each(NIGEL_PALETTE)('clears AA on the %s stop', (stop) => {
+    expect(contrast(onGradient, stop)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });

@@ -11,6 +11,7 @@ import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
 import type { AppSettings } from '../api/types.js';
 import type { ScreenContext } from './context.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * Settings: business name, auto-update check, data directory, and the database
@@ -22,48 +23,51 @@ import type { ScreenContext } from './context.js';
  */
 @customElement('nigel-settings-screen')
 export class NigelSettingsScreen extends SignalWatcher(LitElement) {
-  static styles = css`
-    :host {
-      display: grid;
-      gap: var(--wa-space-l, 16px);
-      max-width: 48rem;
-      padding: var(--wa-space-l, 16px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: grid;
+        gap: var(--wa-space-l, 16px);
+        max-width: 48rem;
+        padding: var(--wa-space-l, 16px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .row {
-      display: flex;
-      gap: var(--wa-space-s, 8px);
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
+      .row {
+        display: flex;
+        gap: var(--wa-space-s, 8px);
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
 
-    .row wa-input {
-      flex: 1 1 18rem;
-    }
+      .row wa-input {
+        flex: 1 1 18rem;
+      }
 
-    .path {
-      font-family: var(--wa-font-family-mono, monospace);
-      font-size: var(--wa-font-size-s, 13px);
-      background: var(--wa-color-surface-alt);
-      border-radius: var(--wa-radius-s, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      overflow-wrap: anywhere;
-    }
+      .path {
+        font-family: var(--wa-font-family-mono, monospace);
+        font-size: var(--wa-font-size-s, 13px);
+        background: var(--wa-color-surface-alt);
+        border-radius: var(--wa-radius-s, 6px);
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        overflow-wrap: anywhere;
+      }
 
-    .note {
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-    }
+      .note {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs, 6px) 0 0;
+      }
 
-    .error {
-      color: var(--wa-color-danger);
-      font-size: var(--wa-font-size-s, 13px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-    }
-  `;
+      .error {
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs, 6px) 0 0;
+      }
+    `,
+  ];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })

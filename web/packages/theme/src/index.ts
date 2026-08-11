@@ -9,5 +9,5 @@ export { spacingCss } from './tokens/spacing.js';
 export { radiusCss } from './tokens/radius.js';
 export { shadowCss } from './tokens/shadow.js';
 export { motionCss } from './tokens/motion.js';
-export { globalCss } from './global.js';
+export { controlsCss } from './controls.js';
 export { printCss } from './print.js';

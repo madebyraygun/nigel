@@ -6,6 +6,7 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
 import './wc-period-nav.js';
 import type { NcDateGranularity, NcPeriod } from './wc-period-nav.js';
+import { controlsCss } from '@nigel/theme';
 
 /** An account the register can be filtered to. */
 export interface AccountOption {
@@ -35,32 +36,35 @@ const ALL_ACCOUNTS = '__all__';
  */
 @customElement('wc-register-toolbar')
 export class WcRegisterToolbar extends LitElement {
-  static styles = css`
-    :host {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: end;
-      gap: var(--wa-space-m, 12px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        gap: var(--wa-space-m, 12px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    wa-select {
-      min-width: 14rem;
-    }
+      wa-select {
+        min-width: 14rem;
+      }
 
-    .search {
-      min-width: 16rem;
-      flex: 1 1 16rem;
-    }
+      .search {
+        min-width: 16rem;
+        flex: 1 1 16rem;
+      }
 
-    .status {
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-      padding-bottom: var(--wa-space-2xs, 4px);
-      white-space: nowrap;
-    }
-  `;
+      .status {
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+        padding-bottom: var(--wa-space-2xs, 4px);
+        white-space: nowrap;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   accounts: AccountOption[] = [];

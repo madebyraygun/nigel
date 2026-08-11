@@ -65,22 +65,14 @@ describe('nigelTheme', () => {
     expect(text).toMatch(/prefers-reduced-motion:\s*reduce/);
   });
 
-  it('carries the global wa-* shadow-part overrides', () => {
-    expect(text).toContain('wa-button');
-    expect(text).toContain('wa-dialog');
-    expect(text).toContain('::part(base)');
-    expect(text).toContain('::part(label)');
-    expect(text).toContain('::part(form-control-label)');
-  });
-
-  it('orders light tokens before dark overrides before the part overrides', () => {
+  it('orders light tokens before dark overrides before print', () => {
     // Specificity alone does not settle this: the dark block and the light
     // block both target :root, so the later one wins. Order is the contract.
     const light = text.indexOf('--wa-color-bg: #fdfcfb');
     const dark = text.indexOf('.dark-mode');
-    const parts = text.indexOf('::part(base)');
+    const print = text.indexOf('@media print');
     expect(light).toBeGreaterThan(-1);
     expect(light).toBeLessThan(dark);
-    expect(dark).toBeLessThan(parts);
+    expect(dark).toBeLessThan(print);
   });
 });

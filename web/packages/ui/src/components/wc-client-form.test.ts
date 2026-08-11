@@ -5,9 +5,10 @@ import {
   validateClientForm,
   type ClientFormValue,
   type NcClientFormChangeDetail,
-  type WcClientForm,
+  WcClientForm,
 } from './wc-client-form.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-client-form.preview.js';
 
 const filled: ClientFormValue = {
@@ -91,3 +92,5 @@ describe('wc-client-form', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(WcClientForm, 'wa-input::part(base)', 'wa-textarea::part(base)');

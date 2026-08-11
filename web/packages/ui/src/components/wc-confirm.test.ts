@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-confirm.js';
-import { confirmDialog, type WcConfirm } from './wc-confirm.js';
+import { confirmDialog, WcConfirm } from './wc-confirm.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-confirm.preview.js';
 
 async function mount(props: Partial<WcConfirm> = {}): Promise<WcConfirm> {
@@ -128,3 +129,5 @@ describe('wc-confirm', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(WcConfirm, 'wa-dialog::part(body)');

@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
+import { controlsCss } from '@nigel/theme';
 import {
   formatStatementBalance,
   parseStatementBalance,
@@ -99,46 +100,49 @@ export function validatePaymentForm(value: PaymentFormValue): PaymentFormErrors 
  */
 @customElement('wc-payment-form')
 export class WcPaymentForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      min-width: 18rem;
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        min-width: 18rem;
+      }
 
-    .money {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-2xs, 4px);
-    }
+      .money {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs, 4px);
+      }
 
-    .prefix {
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-m, 15px);
-    }
+      .prefix {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-m, 15px);
+      }
 
-    .money wa-input {
-      flex: 1 1 auto;
-    }
+      .money wa-input {
+        flex: 1 1 auto;
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
-  `;
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   value: PaymentFormValue = EMPTY_PAYMENT_FORM;

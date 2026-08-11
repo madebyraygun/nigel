@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
+import { controlsCss } from '@nigel/theme';
 
 /** An account a statement can be imported into. */
 export interface ImportAccountOption {
@@ -79,69 +80,72 @@ export const EMPTY_IMPORT_FORM: ImportFormValue = {
  */
 @customElement('wc-import-form')
 export class WcImportForm extends LitElement {
-  static styles = css`
-    :host {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--wa-space-m, 12px);
-    }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .row > * {
-      flex: 1 1 16rem;
-      min-width: 0;
-    }
+      .row > * {
+        flex: 1 1 16rem;
+        min-width: 0;
+      }
 
-    .mapping {
-      display: grid;
-      gap: var(--wa-space-s, 8px);
-      padding: var(--wa-space-m, 12px);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-surface);
-    }
+      .mapping {
+        display: grid;
+        gap: var(--wa-space-s, 8px);
+        padding: var(--wa-space-m, 12px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-surface);
+      }
 
-    .mapping-heading {
-      margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-semibold, 600);
-    }
+      .mapping-heading {
+        margin: 0;
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-semibold, 600);
+      }
 
-    .mapping-hint {
-      margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-    }
+      .mapping-hint {
+        margin: 0;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+      }
 
-    .columns {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--wa-space-s, 8px);
-    }
+      .columns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--wa-space-s, 8px);
+      }
 
-    .columns > * {
-      flex: 1 1 7rem;
-      min-width: 0;
-    }
+      .columns > * {
+        flex: 1 1 7rem;
+        min-width: 0;
+      }
 
-    .hint {
-      margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-    }
+      .hint {
+        margin: 0;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+      }
 
-    .error {
-      margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-danger);
-    }
-  `;
+      .error {
+        margin: 0;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-danger);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   accounts: ImportAccountOption[] = [];

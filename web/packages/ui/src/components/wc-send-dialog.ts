@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-money.js';
 import './wc-spinner.js';
+import { controlsCss } from '@nigel/theme';
 
 /** Where a send is in its life. */
 export type SendPhase = 'confirm' | 'sending' | 'sent' | 'failed';
@@ -71,110 +72,113 @@ const STATE_WORDS: Record<SendStepState, string> = {
  */
 @customElement('wc-send-dialog')
 export class WcSendDialog extends LitElement {
-  static styles = css`
-    :host {
-      font-family: var(--wa-font-family-sans);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        font-family: var(--wa-font-family-sans);
+      }
 
-    ul {
-      margin: 0 0 var(--wa-space-m, 12px);
-      padding-inline-start: var(--wa-space-l, 16px);
-    }
+      ul {
+        margin: 0 0 var(--wa-space-m, 12px);
+        padding-inline-start: var(--wa-space-l, 16px);
+      }
 
-    li {
-      margin-bottom: var(--wa-space-2xs, 4px);
-    }
+      li {
+        margin-bottom: var(--wa-space-2xs, 4px);
+      }
 
-    .steps {
-      list-style: none;
-      padding: 0;
-      margin: 0 0 var(--wa-space-m, 12px);
-    }
+      .steps {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 var(--wa-space-m, 12px);
+      }
 
-    .steps li {
-      display: flex;
-      align-items: baseline;
-      gap: var(--wa-space-xs, 6px);
-    }
+      .steps li {
+        display: flex;
+        align-items: baseline;
+        gap: var(--wa-space-xs, 6px);
+      }
 
-    .glyph {
-      width: 1em;
-      text-align: center;
-    }
+      .glyph {
+        width: 1em;
+        text-align: center;
+      }
 
-    .steps li[data-state='pending'] {
-      color: var(--wa-color-muted);
-    }
+      .steps li[data-state='pending'] {
+        color: var(--wa-color-muted);
+      }
 
-    .steps li[data-state='ok'] .glyph,
-    .steps li[data-state='reused'] .glyph {
-      color: var(--nc-color-income, #1a7f5a);
-    }
+      .steps li[data-state='ok'] .glyph,
+      .steps li[data-state='reused'] .glyph {
+        color: var(--nc-color-income, #1a7f5a);
+      }
 
-    .steps li[data-state='failed'] {
-      color: var(--wa-color-danger, #b3261e);
-    }
+      .steps li[data-state='failed'] {
+        color: var(--wa-color-danger, #b3261e);
+      }
 
-    .outcome {
-      margin: 0 0 var(--wa-space-s, 8px);
-    }
+      .outcome {
+        margin: 0 0 var(--wa-space-s, 8px);
+      }
 
-    .failure {
-      margin: 0 0 var(--wa-space-m, 12px);
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
-    }
+      .failure {
+        margin: 0 0 var(--wa-space-m, 12px);
+        padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+      }
 
-    .failure h3 {
-      margin: 0 0 var(--wa-space-2xs, 4px);
-      font-size: var(--wa-font-size-m, 15px);
-      color: var(--wa-color-danger, #b3261e);
-    }
+      .failure h3 {
+        margin: 0 0 var(--wa-space-2xs, 4px);
+        font-size: var(--wa-font-size-m, 15px);
+        color: var(--wa-color-danger, #b3261e);
+      }
 
-    .upstream {
-      margin: 0;
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-      font-size: var(--wa-font-size-s, 13px);
-      overflow-wrap: anywhere;
-    }
+      .upstream {
+        margin: 0;
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        font-size: var(--wa-font-size-s, 13px);
+        overflow-wrap: anywhere;
+      }
 
-    .note {
-      margin: var(--wa-space-xs, 6px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .note {
+        margin: var(--wa-space-xs, 6px) 0 0;
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .blocked {
-      margin: 0 0 var(--wa-space-m, 12px);
-      color: var(--wa-color-danger, #b3261e);
-    }
+      .blocked {
+        margin: 0 0 var(--wa-space-m, 12px);
+        color: var(--wa-color-danger, #b3261e);
+      }
 
-    .caveat {
-      margin: 0 0 var(--wa-space-m, 12px);
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .caveat {
+        margin: 0 0 var(--wa-space-m, 12px);
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .public-url {
-      overflow-wrap: anywhere;
-    }
+      .public-url {
+        overflow-wrap: anywhere;
+      }
 
-    .footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--wa-space-s, 8px);
-    }
+      .footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--wa-space-s, 8px);
+      }
 
-    /* The glyph beside a step is decoration; this is what says what it means. */
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
-  `;
+      /* The glyph beside a step is decoration; this is what says what it means. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+    `,
+  ];
 
   @property({ type: Boolean, reflect: true })
   open = false;

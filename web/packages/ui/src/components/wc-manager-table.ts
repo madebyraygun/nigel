@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
+import { controlsCss } from '@nigel/theme';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
 export interface ManagerColumn {
@@ -47,72 +48,75 @@ export interface NcManagerActionDetail {
  */
 @customElement('wc-manager-table')
 export class WcManagerTable extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      overflow-x: auto;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        overflow-x: auto;
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-text);
-    }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-text);
+      }
 
-    caption {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      caption {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    th,
-    td {
-      text-align: start;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-bottom: 1px solid var(--wa-color-border);
-      vertical-align: top;
-    }
+      th,
+      td {
+        text-align: start;
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-bottom: 1px solid var(--wa-color-border);
+        vertical-align: top;
+      }
 
-    th {
-      font-weight: var(--wa-font-weight-medium, 500);
-      color: var(--wa-color-muted);
-      white-space: nowrap;
-    }
+      th {
+        font-weight: var(--wa-font-weight-medium, 500);
+        color: var(--wa-color-muted);
+        white-space: nowrap;
+      }
 
-    td.end,
-    th.end {
-      text-align: end;
-      font-variant-numeric: tabular-nums;
-    }
+      td.end,
+      th.end {
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+      }
 
-    td.mono {
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-      overflow-wrap: anywhere;
-    }
+      td.mono {
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        overflow-wrap: anywhere;
+      }
 
-    .muted {
-      color: var(--wa-color-muted);
-    }
+      .muted {
+        color: var(--wa-color-muted);
+      }
 
-    tr[aria-busy='true'] {
-      opacity: 0.6;
-    }
+      tr[aria-busy='true'] {
+        opacity: 0.6;
+      }
 
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--wa-space-2xs, 4px);
-      white-space: nowrap;
-    }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--wa-space-2xs, 4px);
+        white-space: nowrap;
+      }
 
-    th.actions-header {
-      text-align: end;
-    }
-  `;
+      th.actions-header {
+        text-align: end;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   columns: ManagerColumn[] = [];

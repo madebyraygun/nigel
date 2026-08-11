@@ -39,5 +39,11 @@ export const gradientCss = css`
       rgb(255 179 222 / 18%)
     );
     --nc-grad-brand-hover: linear-gradient(90deg, ${ramp});
+
+    /* Text drawn on the gradient itself. Deliberately not mode-dependent and
+       deliberately not --wa-color-text: the ramp above is the same pastel in
+       light and dark, so a foreground that flips with the mode is unreadable
+       in one of them. Held against every stop by contrast.test.ts. */
+    --nc-color-on-gradient: #2b2b33;
   }
 `;
