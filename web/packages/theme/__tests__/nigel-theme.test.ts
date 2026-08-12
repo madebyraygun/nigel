@@ -76,7 +76,7 @@ describe('nigelTheme', () => {
   it('orders light tokens before dark overrides before print', () => {
     // Specificity alone does not settle this: the dark block and the light
     // block both target :root, so the later one wins. Order is the contract.
-    const light = text.indexOf('--wa-color-bg: #fdfcfb');
+    const light = text.indexOf('--wa-color-bg: #f3f2f7');
     const dark = text.indexOf('.dark-mode');
     const print = text.indexOf('@media print');
     expect(light).toBeGreaterThan(-1);

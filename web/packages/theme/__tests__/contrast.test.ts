@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
-import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
+import { NIGEL_PALETTE, NIGEL_PALETTE_INK } from '../src/tokens/gradient.js';
 
 /**
  * The brand palette is pastel, which is exactly the failure mode this guards:
@@ -10,6 +10,8 @@ import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
  */
 
 const AA_NORMAL = 4.5;
+/** WCAG 1.4.11: non-text content — a chart bar, a swatch, an icon. */
+const AA_GRAPHIC = 3;
 
 function channel(hex: string): [number, number, number] {
   const v = hex.replace('#', '');
@@ -82,8 +84,26 @@ describe.each([
     ['expense on surface', '--nc-color-expense', '--wa-color-surface'],
     ['flagged on surface', '--nc-color-flagged', '--wa-color-surface'],
     ['text on selected row', '--wa-color-text', '--nc-color-selected-bg'],
+    ['text on sidebar', '--wa-color-text', '--nc-color-sidebar-bg'],
+    ['muted on sidebar', '--wa-color-muted', '--nc-color-sidebar-bg'],
+    ['brand on sidebar', '--wa-color-brand', '--nc-color-sidebar-bg'],
   ])('%s', (_label, fg, bg) => {
     expect(contrast(t(fg), t(bg))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  /**
+   * A chart bar is a large block rather than a glyph, so WCAG asks 3:1 of it
+   * instead of 4.5:1. That headroom is the whole reason the fills are separate
+   * tokens from the figures: it lets the bars sit much lighter on a white card
+   * without touching the contrast of a number printed in the same hue.
+   */
+  it.each([
+    ['income fill on surface', '--nc-color-income-fill', '--wa-color-surface'],
+    ['expense fill on surface', '--nc-color-expense-fill', '--wa-color-surface'],
+    ['income fill on bg', '--nc-color-income-fill', '--wa-color-bg'],
+    ['expense fill on bg', '--nc-color-expense-fill', '--wa-color-bg'],
+  ])('%s clears the graphic threshold', (_label, fg, bg) => {
+    expect(contrast(t(fg), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
   });
 });
 
@@ -107,5 +127,33 @@ describe('the brand gradient carries readable text', () => {
 
   it.each(NIGEL_PALETTE)('clears AA on the %s stop', (stop) => {
     expect(contrast(onGradient, stop)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+});
+
+/**
+ * The wordmark is gradient-filled text, so every stop of the ramp is a
+ * foreground colour and each one has to clear AA on its own. The pastels do
+ * that on a dark surface and nowhere near it on a light one, which is why
+ * light mode gets its own ramp.
+ */
+describe('the wordmark ramp is legible on the surface it is drawn on', () => {
+  it.each(NIGEL_PALETTE_INK)('light: %s clears AA on the sidebar', (stop) => {
+    expect(contrast(stop, light('--nc-color-sidebar-bg'))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each(NIGEL_PALETTE)('dark: %s clears AA on the sidebar', (stop) => {
+    expect(contrast(stop, dark('--nc-color-sidebar-bg'))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('keeps the two ramps the same length, one hue per stop', () => {
+    expect(NIGEL_PALETTE_INK).toHaveLength(NIGEL_PALETTE.length);
+  });
+
+  it('leaves the shared palette alone, so effects.rs parity is untouched', () => {
+    // palette-parity.test.ts pins NIGEL_PALETTE to GRADIENT in src/effects.rs.
+    // The light ramp is additive precisely so that stays true.
+    for (const stop of NIGEL_PALETTE_INK) {
+      expect(NIGEL_PALETTE).not.toContain(stop);
+    }
   });
 });

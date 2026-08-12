@@ -1,23 +1,27 @@
 import { css } from 'lit';
 
 /**
- * Light surfaces reuse the values the pre-SPA placeholder page used, so the
- * built application is visually continuous with the shell it replaced.
- *
  * The brand, danger, success, warning and info entries are darkened
  * derivations of the `effects.rs` pastels (lavender, pink, mint, yellow,
  * cyan). `__tests__/contrast.test.ts` holds every pairing to WCAG AA.
+ *
+ * Light mode is deliberately **not** paper-white with near-black text. The
+ * canvas carries a slight lavender-grey tint and the text is a soft charcoal,
+ * which puts text-on-surface at about 11.6:1 — still well above AAA, and a
+ * good deal less stark than the 14:1 it used to be. Three planes are meant to
+ * be distinguishable at a glance: the sidebar sits lowest, the app canvas
+ * above it, and cards are the only true white.
  */
 export const colorCss = css`
   :root {
     color-scheme: light dark;
 
-    --wa-color-bg: #fdfcfb;
+    --wa-color-bg: #f3f2f7;
     --wa-color-surface: #ffffff;
     --wa-color-surface-alt: #f6f4fb;
-    --wa-color-border: #e6e3f0;
-    --wa-color-border-soft: #f0eef7;
-    --wa-color-text: #2b2b33;
+    --wa-color-border: #dedaeb;
+    --wa-color-border-soft: #ebe8f3;
+    --wa-color-text: #383843;
     --wa-color-muted: #63636f;
     --wa-color-brand: #5a3fd6;
     --wa-color-brand-hover: #4a32b8;
@@ -35,6 +39,19 @@ export const colorCss = css`
     --nc-color-expense: #b3283f;
     --nc-color-flagged: #855508;
     --nc-color-selected-bg: #f1edff;
+
+    /* The sidebar is its own plane. It used to be --wa-color-surface, which is
+       the same white the cards use, so the navigation and the content it
+       navigates read as one continuous sheet. */
+    --nc-color-sidebar-bg: #e8e6f0;
+
+    /* Bar fills, separate from the text tokens above on purpose. A chart bar
+       is a large block of colour and only has to clear the 3:1 that WCAG asks
+       of a graphic, so it can be much lighter than a figure printed in the
+       same hue — which has to clear 4.5:1 and stays where it was. Direction is
+       never carried by hue alone anyway: wc-money always renders the sign. */
+    --nc-color-income-fill: #5a9473;
+    --nc-color-expense-fill: #cb6b7b;
   }
 `;
 
@@ -59,6 +76,16 @@ const darkTokens = css`
   --nc-color-expense: #ff9fa8;
   --nc-color-flagged: #ffe0a3;
   --nc-color-selected-bg: #2a2740;
+
+  /* Dark mode keeps exactly what it rendered before these three tokens
+     existed: the sidebar was --wa-color-surface, and the bars were drawn in
+     the same colours as the figures. Dark was not the problem being solved. */
+  --nc-color-sidebar-bg: #1f1f28;
+  --nc-color-income-fill: #7fe0a0;
+  --nc-color-expense-fill: #ff9fa8;
+
+  /* The pastel ramp is legible on a dark surface, so the wordmark keeps it. */
+  --nc-grad-brand-text: var(--nc-grad-brand);
 `;
 
 /**
