@@ -27,4 +27,31 @@ describe('build-css', () => {
     expect(css).toContain('Nigel theme tokens');
     expect(css).toContain(nigelTheme.cssText);
   });
+
+  it('copies every declared face into dist/fonts', () => {
+    // A @font-face pointing at a file that is not there fails silently: the
+    // browser falls back and the whole UI renders in a system face while every
+    // other test passes. This is the assertion that catches that.
+    const declared = [
+      ...nigelTheme.cssText.matchAll(/url\(['"]\.\.\/fonts\/(.*?)['"]\)/g),
+    ].map((m) => m[1]);
+
+    expect(declared.length).toBeGreaterThan(0);
+    for (const file of declared) {
+      expect(existsSync(resolve(pkgRoot, 'dist/fonts', file)), file).toBe(true);
+    }
+  });
+
+  it('resolves those relative urls from where the stylesheet lands', () => {
+    // The urls are relative to dist/css/nigel.css, so ../fonts/ is dist/fonts/.
+    // Vite rewrites them at build time from that anchor; if the css moved and
+    // the fonts did not, the paths would still look right and resolve nowhere.
+    const declared = [
+      ...readFileSync(cssPath, 'utf8').matchAll(/url\(['"]\.\.\/fonts\/(.*?)['"]\)/g),
+    ].map((m) => m[1]);
+
+    for (const file of declared) {
+      expect(existsSync(resolve(cssPath, '..', '../fonts', file)), file).toBe(true);
+    }
+  });
 });
