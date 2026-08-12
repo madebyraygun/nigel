@@ -3,11 +3,11 @@ id: TASK-78
 title: >-
   Invoicing: the stock invoice page and the PDF each omit fields they already
   hold
-status: In Progress
+status: Done
 assignee:
   - '@stream-2'
 created_date: '2026-08-10 21:48'
-updated_date: '2026-08-11 21:29'
+updated_date: '2026-08-12 00:54'
 labels:
   - enhancement
   - invoicing
