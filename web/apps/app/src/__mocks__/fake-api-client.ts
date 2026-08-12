@@ -936,6 +936,7 @@ export class FakeApiClient implements ApiClient {
   createClientError: Error | null = null;
   updateClientError: Error | null = null;
   deleteClientError: Error | null = null;
+  archiveClientError: Error | null = null;
 
   invoicesError: Error | null = null;
   invoiceError: Error | null = null;
@@ -952,10 +953,32 @@ export class FakeApiClient implements ApiClient {
 
   private nextClientId = 900;
 
-  async getClients(): Promise<Client[]> {
-    this.calls.push('getClients');
+  async getClients(includeArchived = false): Promise<Client[]> {
+    this.calls.push(includeArchived ? 'getClients:all' : 'getClients');
     if (this.clientsError) throw this.clientsError;
-    return [...this.clients].sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.clients]
+      .filter((client) => includeArchived || client.archivedAt === null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async archiveClient(id: number): Promise<Client> {
+    this.calls.push(`archiveClient:${id}`);
+    if (this.archiveClientError) throw this.archiveClientError;
+    return this.setArchived(id, '2026-08-11');
+  }
+
+  async unarchiveClient(id: number): Promise<Client> {
+    this.calls.push(`unarchiveClient:${id}`);
+    if (this.archiveClientError) throw this.archiveClientError;
+    return this.setArchived(id, null);
+  }
+
+  private setArchived(id: number, archivedAt: string | null): Client {
+    const current = this.clients.find((candidate) => candidate.id === id);
+    if (!current) throw notFoundError(`No client with ID ${id}`);
+    const updated: Client = { ...current, archivedAt };
+    this.clients = this.clients.map((c) => (c.id === id ? updated : c));
+    return updated;
   }
 
   async getClient(id: number): Promise<ClientDetail> {
@@ -977,6 +1000,7 @@ export class FakeApiClient implements ApiClient {
       email: input.email ?? null,
       billingAddress: input.billingAddress ?? null,
       notes: input.notes ?? null,
+      archivedAt: null,
     };
     this.clients = [...this.clients, created];
     return created;

@@ -1160,7 +1160,9 @@ fn invoice_void_requires_confirmation_without_a_tty() {
         .args(["invoice", "void", "1248"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Pass --yes"));
+        .stderr(predicate::str::contains(
+            "Refusing to void invoice #1248 without confirmation. Pass --yes.",
+        ));
 
     let status: String = env
         .db()
@@ -1187,6 +1189,150 @@ fn invoice_void_with_yes_voids_and_blocks_pay() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("void and cannot be paid"));
+}
+
+#[test]
+fn client_delete_removes_a_client_with_no_invoices() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Globex"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "delete", "1", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deleted client 1: Globex"));
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn client_delete_refuses_a_client_with_invoices_and_points_at_them() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["client", "delete", "1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Cannot delete: client has 1 invoice",
+        ))
+        .stderr(predicate::str::contains("nigel client show 1"));
+}
+
+#[test]
+fn client_delete_without_yes_on_a_pipe_refuses_rather_than_guessing() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["client", "add", "Globex"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "delete", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Refusing to delete client #1 without confirmation. Pass --yes.",
+        ));
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn archived_clients_are_hidden_from_client_list_and_shown_by_all() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.cmd()
+        .args(["client", "add", "Globex"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "archive", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Archived client 2: Globex"));
+
+    env.cmd()
+        .args(["client", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Globex").not())
+        .stdout(predicate::str::contains("Archived").not());
+
+    env.cmd()
+        .args(["client", "list", "--all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Globex"))
+        .stdout(predicate::str::contains("Archived"));
+
+    env.cmd()
+        .args(["client", "unarchive", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Restored client 2: Globex"));
+
+    env.cmd()
+        .args(["client", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Globex"));
+}
+
+#[test]
+fn a_new_invoice_for_an_archived_client_is_refused_on_the_cli() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["client", "archive", "1"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-08-20",
+            "--item",
+            "Consulting:1:100",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is archived"))
+        .stderr(predicate::str::contains("Acme Co"));
+
+    // An archived client keeps every invoice it already had.
+    env.cmd()
+        .args(["client", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Archived:"))
+        .stdout(predicate::str::contains("1248"));
 }
 
 /// The default preview directory for a `TestEnv`.

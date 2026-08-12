@@ -1,9 +1,10 @@
 use comfy_table::{Cell, Table};
 
 use crate::db::get_connection;
-use crate::error::Result;
+use crate::error::{NigelError, Result};
 use crate::invoicing::clients::{
-    add_client, client_summary, get_client, list_clients, update_client, ClientUpdate,
+    add_client, archive_client, client_summary, delete_blocker, delete_client, get_client,
+    list_clients, unarchive_client, update_client, ClientScope, ClientUpdate,
 };
 use crate::models::Client;
 use crate::settings::get_data_dir;
@@ -27,6 +28,9 @@ pub fn show(id: i64) -> Result<()> {
         client.billing_address.as_deref().unwrap_or("-")
     );
     println!("Notes:    {}", client.notes.as_deref().unwrap_or("-"));
+    if let Some(on) = &client.archived_at {
+        println!("Archived: {on}");
+    }
 
     if summary.invoices.is_empty() {
         println!("No invoices.");
@@ -71,24 +75,91 @@ pub fn edit(
 
 /// `nigel client list`, as text. Pure, so the parity fixtures can call it
 /// without a terminal — the same shape `cli/report/text.rs` uses.
+///
+/// The Archived column appears only when the slice carries an archived client,
+/// so the default list prints exactly the three columns it always has.
 pub fn format_client_list(clients: &[Client]) -> String {
+    let show_archived = clients.iter().any(|c| c.archived_at.is_some());
+
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Name", "Email"]);
+    let mut header = vec!["ID", "Name", "Email"];
+    if show_archived {
+        header.push("Archived");
+    }
+    table.set_header(header);
     for c in clients {
-        table.add_row(vec![
+        let mut row = vec![
             Cell::new(c.id),
             Cell::new(&c.name),
             // A client with no email reads as an em dash, never an empty cell —
             // the missing address is the reason a send will refuse.
             Cell::new(c.email.as_deref().unwrap_or("\u{2014}")),
-        ]);
+        ];
+        if show_archived {
+            row.push(Cell::new(c.archived_at.as_deref().unwrap_or("\u{2014}")));
+        }
+        table.add_row(row);
     }
     format!("Clients\n{table}")
 }
 
-pub fn list() -> Result<()> {
+pub fn list(all: bool) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    println!("{}", format_client_list(&list_clients(&conn)?));
+    let scope = if all {
+        ClientScope::All
+    } else {
+        ClientScope::Active
+    };
+    println!("{}", format_client_list(&list_clients(&conn, scope)?));
+    Ok(())
+}
+
+pub fn delete(id: i64, yes: bool) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let client = get_client(&conn, id)?;
+
+    // Asked before the prompt: a client that cannot be deleted is never offered
+    // a confirmation, because there is nothing to confirm.
+    //
+    // Returned rather than printed, so `main` writes it once — the block's own
+    // sentence, with the pointer on the line below it.
+    if let Some(block) = delete_blocker(&conn, id)? {
+        return Err(NigelError::Other(format!(
+            "{}\nRun `nigel client show {id}` to see them.",
+            NigelError::Blocked(block)
+        )));
+    }
+
+    println!(
+        "Delete client #{id} {}? This cannot be undone.",
+        client.name
+    );
+    if !crate::cli::confirm_or_refuse(
+        "Delete it? [y/N]",
+        &format!("Refusing to delete client #{id} without confirmation. Pass --yes."),
+        yes,
+    )? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    delete_client(&conn, id)?;
+    println!("Deleted client {id}: {}", client.name);
+    Ok(())
+}
+
+pub fn archive(id: i64, today: &str) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    archive_client(&conn, id, today)?;
+    let client = get_client(&conn, id)?;
+    println!("Archived client {id}: {}", client.name);
+    Ok(())
+}
+
+pub fn unarchive(id: i64) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    unarchive_client(&conn, id)?;
+    let client = get_client(&conn, id)?;
+    println!("Restored client {id}: {}", client.name);
     Ok(())
 }
 
@@ -103,6 +174,14 @@ mod tests {
             email: email.map(str::to_string),
             billing_address: None,
             notes: None,
+            archived_at: None,
+        }
+    }
+
+    fn archived(id: i64, name: &str, on: &str) -> Client {
+        Client {
+            archived_at: Some(on.into()),
+            ..client(id, name, None)
         }
     }
 
@@ -126,6 +205,16 @@ mod tests {
                 "+----+---------+--------------+",
             )
         );
+    }
+
+    #[test]
+    fn format_client_list_grows_an_archived_column_when_a_row_is_archived() {
+        let out = format_client_list(&[
+            client(1, "Acme Co", Some("ap@acme.test")),
+            archived(2, "Globex", "2026-08-11"),
+        ]);
+        assert!(out.contains("Archived"), "got:\n{out}");
+        assert!(out.contains("2026-08-11"), "got:\n{out}");
     }
 
     #[test]

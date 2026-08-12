@@ -9,13 +9,13 @@
 //! `delete_client` owns the has-invoices guardrail, so this module shapes
 //! requests and narrows 404s and does no rule-keeping of its own.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::invoicing::clients::{self, ClientInvoiceRow, ClientUpdate};
+use crate::invoicing::clients::{self, ClientInvoiceRow, ClientScope, ClientUpdate};
 use crate::models::Client;
 
 use super::super::error::{ApiError, ApiResult};
@@ -27,6 +27,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/clients", get(list).post(create))
         .route("/clients/{id}", get(detail).patch(update).delete(remove))
+        // A state transition with a timestamp the server writes, so it gets its
+        // own verb rather than a `ClientPatch` field — `POST …/void`'s
+        // precedent.
+        .route("/clients/{id}/archive", post(archive))
+        .route("/clients/{id}/unarchive", post(unarchive))
 }
 
 /// A client's own fields flattened alongside its history, rather than nested
@@ -41,8 +46,57 @@ struct ClientDetail {
     outstanding: f64,
 }
 
-async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<Client>>> {
-    Ok(Json(with_conn(&state, clients::list_clients).await?))
+/// Taken as a string so an unrecognised value lands in the error envelope
+/// instead of axum's plain-text `Query` rejection — `invoices.rs`'s reasoning.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListQuery {
+    include_archived: Option<String>,
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
+) -> ApiResult<Json<Vec<Client>>> {
+    let scope = match query.include_archived.as_deref() {
+        None | Some("false") => ClientScope::Active,
+        Some("true") => ClientScope::All,
+        Some(value) => {
+            return Err(ApiError::bad_request(format!(
+                "Invalid `includeArchived`: expected true or false, got \"{value}\"."
+            )))
+        }
+    };
+    Ok(Json(
+        with_conn(&state, move |conn| clients::list_clients(conn, scope)).await?,
+    ))
+}
+
+async fn archive(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<Client>> {
+    let today = crate::cli::today();
+    let client = with_conn_api(&state, move |conn| {
+        clients::archive_client(conn, id, &today)
+            .map_err(|e| not_found_because(e, "client_not_found"))?;
+        Ok(clients::get_client(conn, id)?)
+    })
+    .await?;
+    Ok(Json(client))
+}
+
+async fn unarchive(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<Client>> {
+    let client = with_conn_api(&state, move |conn| {
+        clients::unarchive_client(conn, id)
+            .map_err(|e| not_found_because(e, "client_not_found"))?;
+        Ok(clients::get_client(conn, id)?)
+    })
+    .await?;
+    Ok(Json(client))
 }
 
 async fn detail(
@@ -161,8 +215,14 @@ mod tests {
         let conn = crate::db::open_connection(&db_path, None).expect("open db");
 
         let body = ok_json(&app, "/api/clients", &token).await;
-        let expected =
-            serde_json::to_value(crate::invoicing::clients::list_clients(&conn).unwrap()).unwrap();
+        let expected = serde_json::to_value(
+            crate::invoicing::clients::list_clients(
+                &conn,
+                crate::invoicing::clients::ClientScope::Active,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(body, expected);
 
         let rows = body.as_array().expect("a bare array");
@@ -173,6 +233,137 @@ mod tests {
         // The client with no email carries an explicit null, not an absent key.
         assert_eq!(rows[1]["name"], "Globex");
         assert!(rows[1]["email"].is_null(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_client_list_hides_archived_clients_by_default() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/clients", &token).await;
+        let names: Vec<&str> = body
+            .as_array()
+            .expect("a bare array")
+            .iter()
+            .map(|c| c["name"].as_str().expect("name"))
+            .collect();
+        assert_eq!(names, vec!["Acme Co", "Globex", "Northwind Traders"]);
+    }
+
+    #[tokio::test]
+    async fn include_archived_shows_them_with_the_timestamp() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/clients?includeArchived=true", &token).await;
+        let rows = body.as_array().expect("a bare array");
+        assert_eq!(rows.len(), 4);
+        let umbrella = rows.last().expect("the archived client");
+        assert_eq!(umbrella["name"], "Umbrella Corp");
+        assert_eq!(umbrella["archivedAt"], "2026-03-01");
+        // An active row carries an explicit null, not an absent key.
+        assert!(rows[0]["archivedAt"].is_null(), "{body}");
+    }
+
+    /// `false` is the default spelled out, which is what `docs/api.md` says.
+    #[tokio::test]
+    async fn include_archived_false_is_the_default_spelled_out() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let explicit = ok_json(&app, "/api/clients?includeArchived=false", &token).await;
+        let default = ok_json(&app, "/api/clients", &token).await;
+        assert_eq!(explicit, default);
+    }
+
+    #[tokio::test]
+    async fn an_unrecognised_include_archived_value_is_a_400() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = get_json(&app, "/api/clients?includeArchived=maybe", &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .expect("a message")
+                .contains("includeArchived"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_and_unarchive_answer_the_refreshed_client() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, archived) = post_json(
+            &app,
+            "/api/clients/2/archive",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{archived}");
+        assert_eq!(archived["name"], "Globex");
+        assert!(!archived["archivedAt"].is_null(), "{archived}");
+
+        // Gone from the default list, still there with the flag.
+        let body = ok_json(&app, "/api/clients", &token).await;
+        assert_eq!(body.as_array().expect("array").len(), 2);
+
+        let (status, restored) = post_json(
+            &app,
+            "/api/clients/2/unarchive",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{restored}");
+        assert!(restored["archivedAt"].is_null(), "{restored}");
+    }
+
+    #[tokio::test]
+    async fn archiving_an_unknown_client_is_404_with_a_reason() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for path in [
+            "/api/clients/999999/archive",
+            "/api/clients/999999/unarchive",
+        ] {
+            let (status, body) = post_json(&app, path, &token, &serde_json::json!({})).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(body["error"]["details"]["reason"], "client_not_found");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_archived_client_cannot_be_given_a_new_invoice() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_json(
+            &app,
+            "/api/invoices",
+            &token,
+            &serde_json::json!({
+                "clientId": 4,
+                "issueDate": "2026-03-20",
+                "currency": "USD",
+                "items": [{ "description": "Work", "quantity": 1.0, "unitAmount": 100.0 }],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "client_archived");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .expect("a message")
+                .contains("Umbrella Corp"),
+            "{body}"
+        );
     }
 
     #[tokio::test]

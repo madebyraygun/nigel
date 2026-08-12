@@ -160,6 +160,24 @@ const MIGRATIONS: &[Migration] = &[
             re_derive_status(conn, &touched)
         },
     },
+    Migration {
+        version: 7,
+        description: "add archived_at to clients so a finished client can leave the list",
+        up: |conn| {
+            // v5's probe, for v5's reason: SQLite has no ADD COLUMN IF NOT
+            // EXISTS, and a replay must be harmless.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('clients') WHERE name = 'archived_at'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                conn.execute_batch("ALTER TABLE clients ADD COLUMN archived_at TEXT")?;
+            }
+            // No backfill: every existing client is active, which NULL says.
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -398,6 +416,21 @@ mod tests {
     }
 
     #[test]
+    fn clients_gain_an_archived_at_column() {
+        let (_dir, conn) = test_db();
+        run_migrations(&conn).unwrap();
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('clients') WHERE name = 'archived_at'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has);
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
     fn v6_is_idempotent_on_already_padded_dates() {
         let (_dir, conn) = test_db();
         conn.execute_batch(
@@ -496,6 +529,35 @@ mod tests {
             .query_row("SELECT status FROM invoices WHERE id = 1", [], |r| r.get(0))
             .unwrap();
         assert_eq!(status, "paid");
+    }
+
+    #[test]
+    fn every_existing_client_starts_active() {
+        let (_dir, conn) = test_db();
+        // Rewind to the schema as it stood before the archive column, so the
+        // migration runs against a database that really predates it.
+        conn.execute_batch(
+            "ALTER TABLE clients DROP COLUMN archived_at;
+             UPDATE metadata SET value = '6' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme Co')", [])
+            .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let archived: Option<String> = conn
+            .query_row("SELECT archived_at FROM clients", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(archived, None);
+    }
+
+    #[test]
+    fn the_archive_migration_is_replayable() {
+        let (_dir, conn) = test_db();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
 }
 

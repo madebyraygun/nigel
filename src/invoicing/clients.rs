@@ -42,19 +42,44 @@ pub fn add_client(
     Ok(conn.last_insert_rowid())
 }
 
+/// Which clients a list wants.
+///
+/// An enum rather than a bool so a call site says what it means:
+/// `list_clients(&conn, ClientScope::Active)`. There is no default — every
+/// surface states the scope it is asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientScope {
+    Active,
+    All,
+}
+
+impl ClientScope {
+    fn where_clause(self) -> &'static str {
+        match self {
+            ClientScope::Active => "WHERE archived_at IS NULL",
+            ClientScope::All => "",
+        }
+    }
+}
+
+const CLIENT_COLUMNS: &str = "id, name, email, billing_address, notes, archived_at";
+
+fn client_from_row(r: &rusqlite::Row) -> rusqlite::Result<Client> {
+    Ok(Client {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        email: r.get(2)?,
+        billing_address: r.get(3)?,
+        notes: r.get(4)?,
+        archived_at: r.get(5)?,
+    })
+}
+
 pub fn get_client(conn: &Connection, id: i64) -> Result<Client> {
     conn.query_row(
-        "SELECT id, name, email, billing_address, notes FROM clients WHERE id = ?1",
+        &format!("SELECT {CLIENT_COLUMNS} FROM clients WHERE id = ?1"),
         [id],
-        |r| {
-            Ok(Client {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                email: r.get(2)?,
-                billing_address: r.get(3)?,
-                notes: r.get(4)?,
-            })
-        },
+        client_from_row,
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => {
@@ -183,21 +208,61 @@ pub fn delete_client(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn list_clients(conn: &Connection) -> Result<Vec<Client>> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, email, billing_address, notes FROM clients ORDER BY name")?;
+/// Every client in scope, by name.
+///
+/// The order is `name` in both scopes and an archived row does not sink to the
+/// bottom: every surface marks them instead, because a list that re-sorts
+/// itself depending on a filter feels unstable.
+pub fn list_clients(conn: &Connection, scope: ClientScope) -> Result<Vec<Client>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {CLIENT_COLUMNS} FROM clients {} ORDER BY name",
+        scope.where_clause()
+    ))?;
     let rows = stmt
-        .query_map([], |r| {
-            Ok(Client {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                email: r.get(2)?,
-                billing_address: r.get(3)?,
-                notes: r.get(4)?,
-            })
-        })?
+        .query_map([], client_from_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Take a client out of the working list without touching a single invoice.
+///
+/// Idempotent by `AND archived_at IS NULL`: archiving twice keeps the date the
+/// client actually stopped being billed rather than the date somebody pressed
+/// the key again. `on` is the caller's today — the data layer never reads the
+/// clock, the way `void_invoice` does not.
+pub fn archive_client(conn: &Connection, id: i64, on: &str) -> Result<()> {
+    ensure_client_exists(conn, id)?;
+    conn.execute(
+        "UPDATE clients SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL",
+        rusqlite::params![id, on],
+    )?;
+    Ok(())
+}
+
+/// Bring an archived client back to the working list.
+pub fn unarchive_client(conn: &Connection, id: i64) -> Result<()> {
+    ensure_client_exists(conn, id)?;
+    conn.execute("UPDATE clients SET archived_at = NULL WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// A client that is not archived, or the refusal a new invoice gets.
+///
+/// A `Conflict` rather than an `Invalid`, for `client_missing_email`'s reason:
+/// it is a fact about the client record a screen can act on, so over HTTP it is
+/// a 409 naming the client and carrying a reason a button can be built from.
+pub fn ensure_client_active(conn: &Connection, id: i64) -> Result<()> {
+    let client = get_client(conn, id)?;
+    if client.archived_at.is_none() {
+        return Ok(());
+    }
+    Err(NigelError::Conflict {
+        code: "client_archived",
+        message: format!(
+            "client '{}' is archived — unarchive it before invoicing",
+            client.name
+        ),
+    })
 }
 
 /// One row of a client's invoice history, for `client show`.
@@ -301,7 +366,7 @@ mod tests {
         let c = get_client(&conn, id).unwrap();
         assert_eq!(c.name, "Acme Co");
         assert_eq!(c.email.as_deref(), Some("ap@acme.test"));
-        assert_eq!(list_clients(&conn).unwrap().len(), 1);
+        assert_eq!(list_clients(&conn, ClientScope::Active).unwrap().len(), 1);
     }
 
     fn seed_client(conn: &Connection) -> i64 {
@@ -479,7 +544,7 @@ mod tests {
 
         assert!(delete_blocker(&conn, id).unwrap().is_none());
         delete_client(&conn, id).unwrap();
-        assert!(list_clients(&conn).unwrap().is_empty());
+        assert!(list_clients(&conn, ClientScope::Active).unwrap().is_empty());
     }
 
     #[test]
@@ -497,7 +562,7 @@ mod tests {
         assert!(matches!(err, NigelError::Blocked(_)), "got: {err:?}");
         assert_eq!(err.to_string(), "Cannot delete: client has 2 invoices");
         // Refused means refused: the client is still there.
-        assert_eq!(list_clients(&conn).unwrap().len(), 1);
+        assert_eq!(list_clients(&conn, ClientScope::Active).unwrap().len(), 1);
     }
 
     /// Every status counts, not just the open ones. A void or settled invoice
@@ -549,7 +614,7 @@ mod tests {
             "got: {err:?}"
         );
         assert_eq!(err.to_string(), "Client name already exists: Acme Co");
-        assert_eq!(list_clients(&conn).unwrap().len(), 1);
+        assert_eq!(list_clients(&conn, ClientScope::Active).unwrap().len(), 1);
     }
 
     #[test]
@@ -596,6 +661,128 @@ mod tests {
             get_client(&conn, acme).unwrap().email.as_deref(),
             Some("ap@acme.test")
         );
+    }
+
+    #[test]
+    fn the_default_scope_hides_archived_clients_and_all_shows_them() {
+        let (_d, conn) = test_conn();
+        let acme = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        add_client(&conn, "Globex", None, None, None).unwrap();
+        archive_client(&conn, acme, "2026-08-11").unwrap();
+
+        let active = list_clients(&conn, ClientScope::Active).unwrap();
+        assert_eq!(
+            active.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            vec!["Globex"]
+        );
+
+        let all = list_clients(&conn, ClientScope::All).unwrap();
+        assert_eq!(all.len(), 2);
+        // Order is by name in both scopes: an archived row does not move.
+        assert_eq!(all[0].name, "Acme Co");
+        assert_eq!(all[0].archived_at.as_deref(), Some("2026-08-11"));
+        assert!(all[1].archived_at.is_none());
+    }
+
+    /// Archive is not a soft delete: nothing stops reading the row.
+    #[test]
+    fn get_client_answers_an_archived_client_normally() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        archive_client(&conn, id, "2026-08-11").unwrap();
+
+        let c = get_client(&conn, id).unwrap();
+        assert_eq!(c.name, "Acme Co");
+        assert_eq!(c.archived_at.as_deref(), Some("2026-08-11"));
+    }
+
+    #[test]
+    fn archiving_is_idempotent_and_keeps_the_first_timestamp() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        archive_client(&conn, id, "2026-08-11").unwrap();
+        archive_client(&conn, id, "2026-09-01").unwrap();
+
+        assert_eq!(
+            get_client(&conn, id).unwrap().archived_at.as_deref(),
+            Some("2026-08-11")
+        );
+    }
+
+    #[test]
+    fn unarchiving_clears_the_timestamp() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        archive_client(&conn, id, "2026-08-11").unwrap();
+        unarchive_client(&conn, id).unwrap();
+
+        assert_eq!(get_client(&conn, id).unwrap().archived_at, None);
+        assert_eq!(list_clients(&conn, ClientScope::Active).unwrap().len(), 1);
+    }
+
+    /// AC #4 in one test: archiving is the one `UPDATE`, and nothing else moves.
+    #[test]
+    fn archiving_touches_nothing_but_the_flag() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        let open = seed_invoice(&conn, id, "2026-06-01", 100.0);
+        publish(&conn, open, "2026-06-01");
+        crate::invoicing::invoices::record_payment(&conn, open, 30.0, "2026-06-10", "ach", None)
+            .unwrap();
+        seed_invoice(&conn, id, "2026-07-01", 200.0);
+
+        let before = client_summary(&conn, id).unwrap();
+        archive_client(&conn, id, "2026-08-11").unwrap();
+        let after = client_summary(&conn, id).unwrap();
+
+        assert_eq!(after.outstanding, before.outstanding);
+        assert_eq!(after.invoices.len(), before.invoices.len());
+        assert_eq!(
+            crate::invoicing::invoices::list_invoices(&conn, None, None)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            delete_blocker(&conn, id).unwrap().expect("blocked").count,
+            2
+        );
+    }
+
+    #[test]
+    fn archiving_a_missing_client_is_not_found() {
+        let (_d, conn) = test_conn();
+        assert_eq!(
+            archive_client(&conn, 99, "2026-08-11")
+                .unwrap_err()
+                .to_string(),
+            "Client not found: id 99"
+        );
+        assert_eq!(
+            unarchive_client(&conn, 99).unwrap_err().to_string(),
+            "Client not found: id 99"
+        );
+    }
+
+    #[test]
+    fn ensure_client_active_refuses_an_archived_client_by_name() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        assert!(ensure_client_active(&conn, id).is_ok());
+
+        archive_client(&conn, id, "2026-08-11").unwrap();
+        let err = ensure_client_active(&conn, id).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NigelError::Conflict {
+                    code: "client_archived",
+                    ..
+                }
+            ),
+            "got: {err:?}"
+        );
+        assert!(err.to_string().contains("Acme Co"), "got: {err}");
     }
 
     #[test]

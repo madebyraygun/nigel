@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import { controlsCss } from '@nigel/theme';
+import './wc-row-badge.js';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
 export interface ManagerColumn {
@@ -26,6 +27,18 @@ export interface ManagerRow {
   id: number;
   /** One per column, in column order. `null` renders as an em dash. */
   cells: (string | number | null)[];
+  /**
+   * A state worth marking but not worth a column — "Archived" on a client.
+   * Rendered beside the first cell, because that is the one every list keys
+   * its rows by.
+   */
+  badge?: string;
+  /**
+   * This row's buttons, replacing the table's own. For a list where the verb
+   * depends on the row's state — Archive on an active client, Unarchive on an
+   * archived one — which one array for the whole table cannot express.
+   */
+  actions?: ManagerAction[];
   /**
    * What this row is called, for the action buttons' labels. A column of
    * buttons that all read "Delete" is unusable with a screen reader.
@@ -146,6 +159,12 @@ export class WcManagerTable extends LitElement {
   }
 
   render() {
+    // Whether there is an Actions column at all: this table's own buttons, or
+    // any row's. Computed once and passed down, because a getter that walks
+    // every row from inside every row is quadratic.
+    const hasActions =
+      this.actions.length > 0 || this.rows.some((row) => (row.actions?.length ?? 0) > 0);
+
     return html`
       <table>
         ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
@@ -158,20 +177,21 @@ export class WcManagerTable extends LitElement {
                 </th>
               `,
             )}
-            ${this.actions.length > 0
+            ${hasActions
               ? html`<th scope="col" class="actions-header">Actions</th>`
               : nothing}
           </tr>
         </thead>
         <tbody>
-          ${this.rows.map((row) => this.renderRow(row))}
+          ${this.rows.map((row) => this.renderRow(row, hasActions))}
         </tbody>
       </table>
     `;
   }
 
-  private renderRow(row: ManagerRow) {
+  private renderRow(row: ManagerRow, hasActions: boolean) {
     const busy = this.busyId === row.id;
+    const actions = row.actions ?? this.actions;
 
     return html`
       <tr data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
@@ -184,13 +204,18 @@ export class WcManagerTable extends LitElement {
           ]
             .filter(Boolean)
             .join(' ');
-          return html`<td class=${classes}>${value === null ? '—' : value}</td>`;
+          return html`<td class=${classes}>
+            ${value === null ? '—' : value}
+            ${index === 0 && row.badge
+              ? html`<wc-row-badge label=${row.badge}></wc-row-badge>`
+              : nothing}
+          </td>`;
         })}
-        ${this.actions.length > 0
+        ${hasActions
           ? html`
               <td>
                 <div class="actions">
-                  ${this.actions.map(
+                  ${actions.map(
                     (action) => html`
                       <wa-button
                         data-action=${action.name}

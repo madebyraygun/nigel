@@ -212,7 +212,10 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 address,
                 notes,
             } => cli::client::edit(id, name, email, address, notes),
-            ClientCommands::List => cli::client::list(),
+            ClientCommands::Delete { id, yes } => cli::client::delete(id, yes),
+            ClientCommands::Archive { id } => cli::client::archive(id, &cli::today()),
+            ClientCommands::Unarchive { id } => cli::client::unarchive(id),
+            ClientCommands::List { all } => cli::client::list(all),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

@@ -571,6 +571,7 @@ export const CONFLICT_REASONS = [
   'invoice_not_payable',
   'send_not_configured',
   'send_misconfigured',
+  'client_archived',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -845,6 +846,8 @@ export interface Client {
   email: string | null;
   billingAddress: string | null;
   notes: string | null;
+  /** When the client was archived, or `null` while they are active. */
+  archivedAt: string | null;
 }
 
 /** One row of a client's invoice history. */

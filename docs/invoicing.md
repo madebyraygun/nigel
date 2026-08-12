@@ -153,6 +153,55 @@ R2, so a corrected address reaches the client when the invoice is next sent —
 including a re-send of the same invoice, which overwrites the same URL. Emails
 already delivered keep the old details.
 
+### Deleting a client
+
+```bash
+nigel client delete 1
+nigel client delete 1 --yes        # skip the confirmation
+```
+
+Refused while **any** invoice bills the client, of any status:
+
+```
+Cannot delete: client has 8 invoices
+Run `nigel client show 1` to see them.
+```
+
+Void and fully paid invoices count too. Each one names the client on a page
+that has already been sent, and an invoice whose client row is gone is a state
+nothing in Nigel is allowed to create. For a client you have finished with but
+have billed, archive is the operation you want.
+
+Delete asks first. Without a terminal and without `--yes` it refuses rather
+than guessing, exactly as `invoice void` does.
+
+### Archiving a client
+
+```bash
+nigel client archive 7             # Archived client 7: Globex
+nigel client unarchive 7           # Restored client 7: Globex
+nigel client list                  # active clients only
+nigel client list --all            # with the archived ones, and the date
+```
+
+Archiving is **not** deletion. It writes one timestamp on the client row and
+touches nothing else: every invoice, payment and history row stays exactly
+where it was, and no figure anywhere changes. An archived client keeps
+appearing wherever its invoices do — the invoice list, the A/R aging report,
+every total.
+
+What archiving does is take the client out of the working list. It is hidden
+from `nigel client list`, from the dashboard's Clients screen (`A` shows them
+again) and from `GET /api/clients`, and a **new invoice for an archived client
+is refused**:
+
+```
+client 'Globex' is archived — unarchive it before invoicing
+```
+
+Unarchiving is one command and makes the client invoiceable again. There is no
+confirmation on either, because both are reversible in a keystroke.
+
 ## Creating an invoice
 
 ```bash

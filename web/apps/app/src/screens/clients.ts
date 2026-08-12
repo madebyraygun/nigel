@@ -1,5 +1,14 @@
-import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
+import {
+  LitElement,
+  html,
+  css,
+  nothing,
+  type PropertyValues,
+  type TemplateResult,
+} from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
+import { controlsCss } from '@nigel/theme';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -30,11 +39,26 @@ const COLUMNS: ManagerColumn[] = [
   { key: 'billingAddress', label: 'Billing address' },
 ];
 
-const ACTIONS: ManagerAction[] = [
-  { name: 'invoices', label: 'Invoices' },
-  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
-  { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
-];
+/**
+ * The row buttons. Archive and Unarchive are the same button with the verb the
+ * row's own state calls for, which is why they are per-row rather than one
+ * array for the whole table.
+ */
+function actionsFor(client: Client): ManagerAction[] {
+  return [
+    { name: 'invoices', label: 'Invoices' },
+    { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
+    client.archivedAt === null
+      ? { name: 'archive', label: 'Archive' }
+      : { name: 'unarchive', label: 'Unarchive' },
+    { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
+  ];
+}
+
+/** `#/clients?archived=1` is the filtered list — a filter is a URL. */
+export function showsArchived(params: URLSearchParams): boolean {
+  return params.get('archived') === '1';
+}
 
 interface Editor {
   mode: 'create' | 'edit';
@@ -58,14 +82,22 @@ interface Editor {
  */
 @customElement('nigel-clients-screen')
 export class NigelClientsScreen extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-    }
-  `;
+  // `controlsCss` because the screen renders a `wa-switch` of its own: a
+  // document-level ::part() rule cannot reach into a component's shadow root.
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   client!: ApiClient;
+
+  @property({ attribute: false })
+  params: URLSearchParams = new URLSearchParams();
 
   @property({ attribute: false })
   navigate?: (screen: ScreenId, params?: URLSearchParams) => void;
@@ -79,15 +111,23 @@ export class NigelClientsScreen extends LitElement {
   @state() private saving = false;
   @state() private dialogError: string | null = null;
   @state() private busyId: number | null = null;
+  /** The route the current list was fetched for. */
+  private loadedKey: string | null = null;
 
-  firstUpdated(): void {
+  /// The first render counts as a route change, so the initial load and every
+  /// later one come through the same door — `invoices.ts`'s arrangement.
+  willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has('params')) return;
+    const key = this.params.toString();
+    if (key === this.loadedKey) return;
+    this.loadedKey = key;
     void this.load();
   }
 
   private async load(): Promise<void> {
     this.loading = true;
     try {
-      this.clients = await this.client.getClients();
+      this.clients = await this.client.getClients(showsArchived(this.params));
       this.error = null;
       this.errorAction = null;
     } catch (error) {
@@ -105,6 +145,8 @@ export class NigelClientsScreen extends LitElement {
       id: client.id,
       label: client.name,
       cells: [client.name, client.email, client.billingAddress],
+      badge: client.archivedAt === null ? undefined : 'Archived',
+      actions: actionsFor(client),
     }));
   }
 
@@ -143,7 +185,46 @@ export class NigelClientsScreen extends LitElement {
       this.dialogError = null;
       return;
     }
+    if (action === 'archive' || action === 'unarchive') {
+      void this.setArchived(client, action === 'archive');
+      return;
+    }
     if (action === 'delete') void this.confirmDelete(client);
+  };
+
+  /**
+   * Archive is not confirmed: it is reversible in one click, and the
+   * confirmations in this app are for the things that are not. The list is
+   * refetched rather than spliced — the managers' rule, and here it is what
+   * makes the row disappear from the unfiltered list.
+   */
+  private async setArchived(client: Client, archive: boolean): Promise<void> {
+    this.busyId = client.id;
+    try {
+      if (archive) {
+        await this.client.archiveClient(client.id);
+      } else {
+        await this.client.unarchiveClient(client.id);
+      }
+      this.error = null;
+      this.errorAction = null;
+      await this.load();
+    } catch (error) {
+      this.error = invoicingGuardrailMessage(error, 'client');
+      this.errorAction = null;
+    } finally {
+      this.busyId = null;
+    }
+  }
+
+  private toggleArchivedFilter = (): void => {
+    const params = new URLSearchParams(this.params);
+    if (showsArchived(this.params)) {
+      params.delete('archived');
+    } else {
+      params.set('archived', '1');
+    }
+    this.navigate?.('clients', params);
   };
 
   private handleSave = async (): Promise<void> => {
@@ -237,11 +318,17 @@ export class NigelClientsScreen extends LitElement {
         @nc-manager-error-action=${this.handleErrorAction}
         @nc-manager-error-dismiss=${this.handleErrorDismiss}
       >
+        <wa-switch
+          data-archived-toggle
+          ?checked=${showsArchived(this.params)}
+          @change=${this.toggleArchivedFilter}
+          >Show archived</wa-switch
+        >
+
         <wc-manager-table
           caption="Clients"
           .columns=${COLUMNS}
           .rows=${this.rows}
-          .actions=${ACTIONS}
           .busyId=${this.busyId}
           @nc-manager-action=${this.handleAction}
         ></wc-manager-table>
@@ -290,6 +377,7 @@ export function renderClients(ctx: ScreenContext): TemplateResult {
   return html`
     <nigel-clients-screen
       .client=${ctx.client}
+      .params=${ctx.params}
       .navigate=${ctx.navigate}
     ></nigel-clients-screen>
   `;
