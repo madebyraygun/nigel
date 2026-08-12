@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::error::{NigelError, Result};
-use crate::invoicing::document::{address_lines, MoneySummary};
+use crate::invoicing::document::{address_lines, email_line, MoneySummary};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 
 /// The page Nigel renders when the data directory holds no template of its own.
@@ -45,11 +45,9 @@ const REQUIRED: &[&str] = &["NUMBER", "CLIENT", "ROWS", "TOTAL"];
 
 /// A required key another key stands in for.
 ///
-/// `{{TOTALS}}` is the money block the total is now one line of, so a page that
-/// prints the block says what is owed just as `{{TOTAL}}` alone did — which is
-/// the whole of what `REQUIRED` asks. Accepting either is what let the stock
-/// page move its total into the block without demanding anything new of a
-/// template written before the block existed.
+/// `{{TOTALS}}` is the money block, and the total is one line of it, so a
+/// template printing the block says what is owed just as `{{TOTAL}}` alone
+/// does — which is the whole of what `REQUIRED` asks for.
 const REQUIRED_ALTERNATIVES: &[(&str, &str)] = &[("TOTAL", "TOTALS")];
 
 fn satisfies(found: &[&str], key: &str) -> bool {
@@ -336,9 +334,9 @@ pub fn render_invoice_html(
                 .collect()
         })
         .unwrap_or_default();
-    let email_block = match client.email.as_deref().map(str::trim) {
-        Some(email) if !email.is_empty() => format!("<br>{}", esc(email)),
-        _ => String::new(),
+    let email_block = match email_line(client.email.as_deref()) {
+        Some(email) => format!("<br>{}", esc(email)),
+        None => String::new(),
     };
 
     // The money block, from the one function that decides which lines exist.
@@ -982,6 +980,55 @@ mod tests {
         assert!(
             totals.contains("<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>"),
             "Paid is not the line the eye lands on: {totals}"
+        );
+    }
+
+    #[test]
+    fn an_overpaid_invoice_shows_a_credit_and_never_a_negative_balance() {
+        let (inv, client, items) = sample();
+        let summary = MoneySummary::of(&inv, 300.0);
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &summary,
+            PayButton::Omitted,
+        );
+        assert!(html.contains("Balance due</td><td>USD 0.00"), "got: {html}");
+        assert!(html.contains("Credit</td><td>USD 50.00"), "got: {html}");
+        assert!(!html.contains("USD -"), "no negative figure: {html}");
+    }
+
+    #[test]
+    fn a_very_long_address_block_is_clamped_the_way_the_pdf_clamps_it() {
+        let (inv, mut client, items) = sample();
+        client.billing_address = Some(
+            (1..=12)
+                .map(|n| format!("Line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+
+        assert!(html.contains("<br>Line 1<br>"), "got: {html}");
+        assert!(!html.contains("Line 12"), "clamped: {html}");
+        let block = html.split("][").nth(1).expect("the address fragment");
+        assert_eq!(
+            block.matches("<br>").count(),
+            crate::invoicing::document::MAX_ADDRESS_LINES,
+            "one break per drawn line, and no more: {block}"
+        );
+        assert!(
+            html.contains(crate::invoicing::document::ADDRESS_TRUNCATED),
+            "the cut is shown: {html}"
         );
     }
 

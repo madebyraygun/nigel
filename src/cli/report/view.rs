@@ -903,7 +903,8 @@ fn aging_view(data: &crate::invoicing::invoices::AgingReport) -> TableReportView
     let mut rows = vec![section_row("SUMMARY", 5)];
     for b in &data.buckets {
         let label = format!("  {} ({})", b.label, b.count);
-        let label_cell = if b.label != "current" && b.total > 0.005 {
+        let label_cell = if b.label != "current" && b.total > crate::invoicing::invoices::CENT_SLACK
+        {
             Cell::from(Span::styled(label, Style::default().fg(Color::Yellow)))
         } else {
             text_cell(label)

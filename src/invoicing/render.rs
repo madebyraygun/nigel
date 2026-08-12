@@ -223,6 +223,38 @@ mod tests {
         }
     }
 
+    /// Not just the same labels — the same strings. These rows exist on both
+    /// documents for the first time in this change, so nothing forces them
+    /// apart and a client comparing the two sees one figure.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_pdf_and_the_page_render_the_payment_rows_identically() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
+            .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        for figure in ["USD 40.00", "USD 60.00"] {
+            assert!(out.html.contains(figure), "{figure} missing from the page");
+            assert!(
+                text.contains(figure),
+                "{figure} missing from the pdf: {text}"
+            );
+        }
+    }
+
     #[test]
     fn rendering_writes_nothing_to_the_invoice() {
         let (_d, conn) = test_conn();

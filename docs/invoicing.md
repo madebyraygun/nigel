@@ -538,9 +538,15 @@ escaped value for an author who would rather place it themselves. `{{DUE_DATE}}`
 250.00</td></tr>` per line, the emphasised ones carrying `class="total"`. Which
 lines exist is decided in one place for both documents — Subtotal and Tax only
 when there is tax, Total always, Paid and Balance due once anything has been
-paid — so the page and the PDF cannot disagree about the same invoice. The stock
-page puts it in a `<tfoot>` of the line-item table, which is what lines the
-amounts up under the Amount column.
+paid, and Credit when someone has paid more than the invoice asked for — so the
+page and the PDF cannot disagree about the same invoice. The stock page puts it
+in a `<tfoot>` of the line-item table, which is what lines the amounts up under
+the Amount column.
+
+A balance is never negative. An invoice settled to within half a cent is settled
+— the same test `refresh_status` uses to call it `paid`, so a page can never
+print a balance under a status that says otherwise — and anything paid beyond
+the total is a **Credit** line rather than a minus sign on the amount owed.
 
 `{{TOTAL}}` remains available and remains what a template must carry, except
 that a template using `{{TOTALS}}` satisfies that requirement too: the block is
@@ -604,9 +610,17 @@ Due: 2026-09-03
 
 Each of those client lines is drawn only when there is one, so a client with a
 name and nothing else gets `Issued:` directly under the name — no empty row and
-no label with nothing after it. Below the line items the PDF prints the same
-money block the page does, from the same rule: Subtotal and Tax only when there
-is tax, Total always, Paid and Balance due once anything has been paid.
+no label with nothing after it. A billing address is drawn at most six lines
+deep, with `...` for the rest: this document has no page-break logic under that
+block, and a client block that runs off the bottom margin is never what anyone
+wanted. Both documents clamp identically, so the two still agree.
+
+Below the line items the PDF prints the same money block the page does, from the
+same rule: Subtotal and Tax only when there is tax, Total always, Paid and
+Balance due once anything has been paid, and Credit on an overpayment. Those
+last three name the currency — `USD 60.00` — exactly as the page does, because
+they are new to both documents and a bare `$` cannot say which currency it
+means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
 
 The PDF carries **no payment link**, deliberately. An emailed attachment cannot
 be recalled or republished, so a live charge link inside one would outlive the

@@ -4,7 +4,7 @@ use printpdf::*;
 
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
-use crate::invoicing::document::{address_lines, MoneySummary};
+use crate::invoicing::document::{address_lines, email_line, MoneySummary};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::reports::*;
 
@@ -925,11 +925,9 @@ pub fn render_invoice_pdf(
         pdf.text(line, MARGIN_LEFT, SUBTITLE_SIZE, false);
         pdf.y += 5.0;
     }
-    if let Some(email) = client.email.as_deref().map(str::trim) {
-        if !email.is_empty() {
-            pdf.text(email, MARGIN_LEFT, SUBTITLE_SIZE, false);
-            pdf.y += 5.0;
-        }
+    if let Some(email) = email_line(client.email.as_deref()) {
+        pdf.text(email, MARGIN_LEFT, SUBTITLE_SIZE, false);
+        pdf.y += 5.0;
     }
     pdf.text(
         &format!("Issued: {}", invoice.issue_date),
@@ -987,7 +985,15 @@ pub fn render_invoice_pdf(
         } else {
             line.label.to_string()
         };
-        let amount = money(line.amount);
+        // The rows the payment block introduced are new to both documents, so
+        // they read the same on both — `USD 60.00`, the page's own form. The
+        // older rows keep this document's `$` convention; reconciling those is
+        // TASK-87's, and widening it here would restyle every invoice ever sent.
+        let amount = if line.payment_row {
+            format!("{} {:.2}", invoice.currency, line.amount)
+        } else {
+            money(line.amount)
+        };
         pdf.table_row(cols, &[&label, "", "", &amount], line.emphasis);
     }
 
@@ -1147,7 +1153,71 @@ mod invoice_pdf_tests {
         let text = text_of(&invoice(), &client(), 40.0);
         assert!(text.contains("Paid"), "got: {text}");
         assert!(text.contains("Balance due"), "got: {text}");
-        assert!(text.contains("$60.00"), "got: {text}");
+        assert!(text.contains("USD 60.00"), "got: {text}");
+    }
+
+    /// The rows the payment block introduced are new to both documents, so
+    /// they read identically on both — `USD 60.00` — rather than this one
+    /// keeping a `$` that cannot say which currency it means.
+    #[test]
+    fn the_payment_rows_name_the_currency_the_way_the_page_does() {
+        let text = text_of(&invoice(), &client(), 40.0);
+        assert!(text.contains("USD 40.00"), "paid: {text}");
+        assert!(text.contains("USD 60.00"), "balance: {text}");
+        assert!(
+            !text.contains("$40.00"),
+            "no dollar-only payment row: {text}"
+        );
+        assert!(
+            !text.contains("$60.00"),
+            "no dollar-only payment row: {text}"
+        );
+    }
+
+    /// A non-USD invoice is the case a bare `$` gets wrong.
+    #[test]
+    fn a_non_usd_payment_row_says_which_currency_it_means() {
+        let mut inv = invoice();
+        inv.currency = "EUR".into();
+        let text = text_of(&inv, &client(), 40.0);
+        assert!(text.contains("EUR 60.00"), "got: {text}");
+    }
+
+    #[test]
+    fn an_overpayment_draws_a_credit_row_and_no_negative_balance() {
+        let text = text_of(&invoice(), &client(), 130.0);
+        assert!(text.contains("Credit"), "got: {text}");
+        assert!(text.contains("USD 30.00"), "got: {text}");
+        assert!(text.contains("USD 0.00"), "the balance is zero: {text}");
+        // The dates carry hyphens; what may never appear is a negative amount.
+        assert!(!text.contains("USD -"), "no negative figure: {text}");
+        assert!(!text.contains("$-"), "no negative figure: {text}");
+    }
+
+    /// A pasted-in address may not run off the bottom margin.
+    #[test]
+    fn a_very_long_address_is_clamped_to_what_the_page_can_hold() {
+        let mut c = client();
+        c.billing_address = Some(
+            (1..=12)
+                .map(|n| format!("Address line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let text = text_of(&invoice(), &c, 0.0);
+
+        assert!(text.contains("Address line 1"), "got: {text}");
+        assert!(!text.contains("Address line 12"), "clamped: {text}");
+        assert!(
+            text.contains(crate::invoicing::document::ADDRESS_TRUNCATED),
+            "the cut is shown: {text}"
+        );
+        // The block still ends where it should, with the dates after it.
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("Address line 1") < at("Issued:"));
     }
 
     /// The one thing this document deliberately does not carry. An emailed
