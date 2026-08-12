@@ -136,9 +136,15 @@ fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
 /// The published page's address, built from the token the response never
 /// carries. `None` rather than an error when nothing has been configured — a
 /// missing setting is a fact about the installation, not a failed request.
+///
+/// A base URL that cannot produce a working link is `None` for the same reason:
+/// an absent address is a screen with no link on it, where a composed one is a
+/// button that goes nowhere. The check is `build_clients`'s, so the read path
+/// and the send path agree about which addresses are real.
 fn public_url(invoice: &Invoice) -> Option<String> {
     invoice.published_at.as_ref()?;
     let base = crate::settings::invoicing_config().public_base_url?;
+    crate::invoicing::r2::validate_public_base_url(&base).ok()?;
     Some(crate::invoicing::r2::public_url(&base, &invoice.token))
 }
 
@@ -267,9 +273,11 @@ fn default_currency() -> String {
 /// Every date on this API is zero-padded `YYYY-MM-DD`.
 ///
 /// This is the same parser `/api/reports` and the aging route use, not a second
-/// one: the data layer's `validate_date` goes through chrono, which accepts
-/// `2026-4-1`, and the HTTP API is deliberately stricter with dates than the
-/// CLI is. `create_invoice` and `record_payment` validate again on the way in.
+/// one: the data layer's `validate_date` goes through chrono, which accepts and
+/// normalizes `2026-4-1`, and the HTTP API is deliberately stricter with dates
+/// than the CLI is — a terminal user typing a date deserves the padding done for
+/// them; a JSON client sending one has a bug. `create_invoice` and
+/// `record_payment` validate again on the way in.
 fn checked_date(param: &str, value: &str) -> ApiResult<()> {
     super::reports::parse_date(param, value).map(|_| ())
 }
@@ -368,6 +376,7 @@ async fn update(
         ));
     }
 
+    let today = crate::cli::today();
     let detail = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
         let paid = inv::paid_amount(conn, invoice.id)?;
@@ -375,7 +384,7 @@ async fn update(
         // its own transaction, so draft-only is enforced against the current
         // status rather than anything the client sent — and this route must not
         // open a transaction of its own around it.
-        inv::update_invoice(conn, invoice.id, &update)
+        inv::update_invoice(conn, invoice.id, &update, &today)
             .map_err(|e| enrich_conflict(e, &invoice, paid))?;
         detail_for(conn, find_invoice(conn, number)?)
     })
@@ -530,6 +539,11 @@ struct SendResult {
     public_url: String,
     payment_link_url: Option<String>,
     steps: Vec<SendStepResult>,
+    /// Configuration the send went ahead with but the operator should look at
+    /// — a from address off the Mailgun domain. Data rather than a log line,
+    /// the way a void's `teardownWarnings` are, because the server's stderr is
+    /// not somewhere a browser can read.
+    config_warnings: Vec<String>,
 }
 
 /// The refusal a request that never named the invoicing settings gets.
@@ -548,6 +562,23 @@ fn not_configured(what: &str, missing: &[&'static str]) -> ApiError {
             "missing": missing,
         }),
     )
+}
+
+/// `build_clients` can refuse a *set but wrong* value — a display name or a
+/// reply-to carrying a line break, which is header injection. That is a
+/// different thing to say than "you have not set a key", so it gets its own
+/// reason word beside `send_not_configured`, at the same step.
+fn misconfigured(err: NigelError) -> ApiError {
+    match err {
+        NigelError::Invalid(message) => ApiError::conflict(
+            message,
+            serde_json::json!({
+                "reason": "send_misconfigured",
+                "step": SendStep::Config.as_str(),
+            }),
+        ),
+        other => other.into(),
+    }
 }
 
 /// `POST /api/invoices/{number}/send` — the whole publish, inside the request.
@@ -585,14 +616,32 @@ async fn send(
     if !status.send_configured {
         return Err(not_configured("Sending invoices", &status.missing));
     }
-    // Every one of the nine keys is present, so this cannot fail — it is the
-    // same constructor `nigel invoice send` uses, kept rather than reimplemented
-    // so the two front ends build the same clients.
-    let (stripe, r2, mail) = crate::cli::invoice::build_clients(config)?;
-    let contact_email = mail.from.clone();
+    let contact_email = crate::cli::invoice::contact_email_for_preview(&config).0;
+    // `build_clients` refuses an unusable `public_base_url` too, but its
+    // sentence quotes the value for the terminal that is answering whoever
+    // typed the command. No response carries a configured setting, so the same
+    // refusal is answered here in the key-and-defect wording instead.
+    if let Some(base) = config.public_base_url.as_deref() {
+        if crate::invoicing::r2::validate_public_base_url(base).is_err() {
+            return Err(ApiError::conflict(
+                crate::invoicing::r2::PUBLIC_BASE_URL_DEFECT,
+                serde_json::json!({
+                    "reason": "invalid_public_base_url",
+                    "step": SendStep::Config.as_str(),
+                }),
+            ));
+        }
+    }
+    // One extra connection open on a request about to make five network calls,
+    // and it keeps `build_clients` — and its 409 — outside the database work
+    // below. It is the same constructor `nigel invoice send` uses, kept rather
+    // than reimplemented so the two front ends build the same clients.
+    let company = with_conn(&state, |conn| Ok(crate::cli::invoice::company_name(conn))).await?;
+    let clients = crate::cli::invoice::build_clients(config, &company).map_err(misconfigured)?;
     let today = crate::cli::today();
+    let warnings = clients.warnings.clone();
 
-    let result = with_conn_api(&state, {
+    let mut result = with_conn_api(&state, {
         let state = state.clone();
         move |conn| {
             send_with(
@@ -601,13 +650,14 @@ async fn send(
                 number,
                 &today,
                 &contact_email,
-                &stripe,
-                &r2,
-                &mail,
+                &clients.stripe,
+                &clients.r2,
+                &clients.mail,
             )
         }
     })
     .await?;
+    result.config_warnings = warnings;
     Ok(Json(result))
 }
 
@@ -655,6 +705,8 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
             .into_iter()
             .map(|(step, outcome)| SendStepResult { step, outcome })
             .collect(),
+        // Filled in by the handler, which is where the configuration was read.
+        config_warnings: Vec::new(),
     })
 }
 
@@ -996,7 +1048,7 @@ mod tests {
         let body = ok_json(&app, "/api/invoices/1251", &token).await;
         assert_eq!(
             body["publicUrl"],
-            format!("https://billing.example.test/i/{}/", seeded.token)
+            format!("https://billing.example.test/i/{}/index.html", seeded.token)
         );
         // The address, never the secret it is built from.
         assert!(body.get("token").is_none(), "{body}");
@@ -1904,7 +1956,7 @@ mod tests {
         let body = body_string(response).await;
         // The contact line renders the same visible placeholder the CLI notices
         // about, rather than an empty address or a 500.
-        assert!(body.contains("(from_email not configured)"), "{body}");
+        assert!(body.contains("(contact_email not configured)"), "{body}");
     }
 
     /// A byte route still answers its failures as JSON — the `exports.rs`
@@ -2024,13 +2076,13 @@ mod tests {
     }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, html: &[u8]) -> NigelResult<String> {
             self.pages
                 .borrow_mut()
                 .push(String::from_utf8(html.to_vec()).expect("utf-8"));
-            Ok(format!("https://billing.example.test/i/{token}/"))
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
     }
 
@@ -2151,6 +2203,139 @@ mod tests {
             missing.contains(&serde_json::json!("public_base_url")),
             "{json}"
         );
+    }
+
+    /// All nine keys set, one of them unusable: the refusal belongs to the
+    /// config step, not to a 502 from R2 after the upload was attempted — and
+    /// it names the key and the defect without echoing the address.
+    #[tokio::test]
+    async fn a_send_with_an_unusable_public_base_url_fails_at_config() {
+        let _config = TempConfig::new();
+        let mut settings = crate::settings::load_settings();
+        settings.stripe_secret_key = Some("sk_test".into());
+        settings.mailgun_api_key = Some("key".into());
+        settings.mailgun_domain = Some("mail.example.test".into());
+        settings.from_email = Some("billing@mail.example.test".into());
+        settings.r2_account_id = Some("acct".into());
+        settings.r2_access_key = Some("access".into());
+        settings.r2_secret_key = Some("secret".into());
+        settings.r2_bucket = Some("billing".into());
+        settings.public_base_url = Some("books.example.test".into());
+        crate::settings::save_settings(&settings).expect("settings");
+
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/invoices/1252/send",
+            &token,
+            &serde_json::json!({ "confirm": true }),
+        )
+        .await;
+
+        assert!(status.is_client_error(), "{status}: {json}");
+        assert_eq!(json["error"]["details"]["step"], "config", "{json}");
+        assert_eq!(
+            json["error"]["details"]["reason"], "invalid_public_base_url",
+            "{json}"
+        );
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("public_base_url"),
+            "{json}"
+        );
+        // The key and the defect, never the value.
+        assert!(
+            !json.to_string().contains("books.example.test"),
+            "the configured value leaked: {json}"
+        );
+
+        // Refused at config, so nothing reached Stripe, R2 or Mailgun.
+        let invoice = ok_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(invoice["status"], "draft");
+    }
+
+    /// Every key set, one of them carrying a line break: a different refusal
+    /// from "you have not set a key", and it must not echo the value.
+    #[tokio::test]
+    async fn a_display_name_with_a_line_break_is_a_409_naming_the_key() {
+        let _config = TempConfig::new();
+        crate::settings::save_settings(&crate::settings::Settings {
+            stripe_secret_key: Some("sk_test".into()),
+            mailgun_api_key: Some("key".into()),
+            mailgun_domain: Some("mg.example.test".into()),
+            from_email: Some("billing@mg.example.test".into()),
+            from_name: Some("Bluepeak\r\nBcc: someone@else.test".into()),
+            r2_account_id: Some("acct".into()),
+            r2_access_key: Some("ak".into()),
+            r2_secret_key: Some("sk".into()),
+            r2_bucket: Some("billing".into()),
+            public_base_url: Some("https://billing.example.test/i".into()),
+            ..crate::settings::Settings::default()
+        })
+        .expect("settings written");
+
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/invoices/1252/send",
+            &token,
+            &serde_json::json!({ "confirm": true }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{json}");
+        assert_eq!(json["error"]["details"]["reason"], "send_misconfigured");
+        assert_eq!(json["error"]["details"]["step"], "config");
+        let body = json.to_string();
+        assert!(body.contains("from_name"), "{body}");
+        assert!(!body.contains("someone@else.test"), "{body}");
+
+        // Refused at config, so nothing reached Stripe, R2 or Mailgun.
+        let invoice = ok_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(invoice["status"], "draft");
+    }
+
+    /// The same guard on the address itself, which is the one an attacker
+    /// controls through `NIGEL_FROM_EMAIL`.
+    #[tokio::test]
+    async fn a_from_address_with_a_line_break_is_a_409_naming_the_key() {
+        let _config = TempConfig::new();
+        crate::settings::save_settings(&crate::settings::Settings {
+            stripe_secret_key: Some("sk_test".into()),
+            mailgun_api_key: Some("key".into()),
+            mailgun_domain: Some("mg.example.test".into()),
+            from_email: Some("billing@mg.example.test\r\nBcc: attacker@evil.test".into()),
+            r2_account_id: Some("acct".into()),
+            r2_access_key: Some("ak".into()),
+            r2_secret_key: Some("sk".into()),
+            r2_bucket: Some("billing".into()),
+            public_base_url: Some("https://billing.example.test/i".into()),
+            ..crate::settings::Settings::default()
+        })
+        .expect("settings written");
+
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/invoices/1252/send",
+            &token,
+            &serde_json::json!({ "confirm": true }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{json}");
+        assert_eq!(json["error"]["details"]["reason"], "send_misconfigured");
+        let body = json.to_string();
+        assert!(body.contains("from_email"), "{body}");
+        assert!(!body.contains("attacker@evil.test"), "{body}");
     }
 
     #[tokio::test]

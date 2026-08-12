@@ -87,6 +87,11 @@ function sentenceFor(details: ConflictDetails): string | null {
       return 'This invoice has nothing to bill for, so there is nothing to send.';
     case 'send_not_configured':
       return missingKeysSentence(details.missing ?? []);
+    // A key that is set but unusable, which is a different thing to say than
+    // "you have not set a key". No value is interpolated: the server's own
+    // message names the key beside this sentence.
+    case 'send_misconfigured':
+      return 'Nigel cannot send with the current email settings.';
     default:
       return null;
   }

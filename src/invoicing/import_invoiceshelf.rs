@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::db::set_metadata;
 use crate::error::{NigelError, Result};
-use crate::invoicing::invoices::gen_token;
+use crate::invoicing::invoices::{gen_token, validate_date};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +22,26 @@ pub struct ImportSummary {
     pub invoices: u32,
     pub payments: u32,
     pub next_number: i64,
+    /// Source dates copied verbatim because Nigel's own rule could not read them.
+    pub unparsed_dates: u32,
+}
+
+/// A source date in Nigel's stored form, or the source's own text when that rule
+/// cannot read it.
+///
+/// The importer writes with raw SQL and is the one path into the invoicing tables
+/// that bypasses a writer, so it applies the rule itself rather than letting
+/// another system's shapes through. It never *rejects*: a one-time mirror of
+/// somebody's old books must not fail on a date, and inventing a day is worse
+/// than keeping theirs.
+fn normalized_date(value: &str, counter: &mut u32) -> String {
+    match validate_date(value, "imported") {
+        Ok(padded) => padded,
+        Err(_) => {
+            *counter += 1;
+            value.to_string()
+        }
+    }
 }
 
 /// Numbering never rewinds below the sequence Nigel already assumes
@@ -40,6 +60,7 @@ pub fn import(dest: &Connection, invoiceshelf_db: &Path) -> Result<ImportSummary
         invoices: 0,
         payments: 0,
         next_number: NEXT_NUMBER_FLOOR + 1,
+        unparsed_dates: 0,
     };
     let mut max_number: i64 = NEXT_NUMBER_FLOOR;
 
@@ -108,6 +129,7 @@ pub fn import(dest: &Connection, invoiceshelf_db: &Path) -> Result<ImportSummary
                 ))
             })?;
             let total = cents_to_dollars(total_cents);
+            let due = due.map(|d| normalized_date(&d, &mut summary.unparsed_dates));
             let status = if paid_status.eq_ignore_ascii_case("PAID") {
                 "paid"
             } else {
@@ -174,6 +196,7 @@ pub fn import(dest: &Connection, invoiceshelf_db: &Path) -> Result<ImportSummary
             .collect::<std::result::Result<Vec<_>, _>>()?;
         for (src_invoice, amount_cents, date) in rows {
             if let Some(dest_id) = invoice_map.get(&src_invoice) {
+                let date = normalized_date(&date, &mut summary.unparsed_dates);
                 dest.execute(
                     "INSERT INTO invoice_payments (invoice_id, amount, paid_date, method)
                      VALUES (?1, ?2, ?3, 'other')",
@@ -326,5 +349,113 @@ mod tests {
         assert_eq!(summary.invoices, 0);
         assert_eq!(summary.next_number, 1248);
         assert_eq!(get_metadata(&dest, "next_invoice_number").unwrap(), "1248");
+    }
+
+    /// The InvoiceShelf import inserts customers with raw SQL, deliberately
+    /// bypassing `add_client`'s duplicate-name check: it is a faithful copy of
+    /// another system's customer table, and that system does not guarantee unique
+    /// names. This is the test a `UNIQUE` index on `clients.name` would break,
+    /// which is why it is here — see the `clients.name` note in CLAUDE.md.
+    #[test]
+    fn two_source_customers_with_the_same_name_import_as_two_clients() {
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        {
+            let c = empty_source(&src_path);
+            c.execute_batch(
+                "INSERT INTO customers VALUES (1,'Acme Co','ap@acme.test');
+                 INSERT INTO customers VALUES (2,'Acme Co','billing@acme.test');",
+            )
+            .unwrap();
+        }
+
+        let summary = import(&dest, &src_path).unwrap();
+        assert_eq!(summary.clients, 2);
+        let same_name: i64 = dest
+            .query_row(
+                "SELECT COUNT(*) FROM clients WHERE name = 'Acme Co'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            same_name, 2,
+            "the import mirrors its source; it does not merge or rename"
+        );
+    }
+
+    /// The importer writes with raw SQL, so it is the one path into the invoicing
+    /// tables that does not go through a writer. Without normalizing here it would
+    /// reintroduce exactly the unpadded dates v6 exists to remove.
+    #[test]
+    fn imported_due_and_payment_dates_are_stored_padded() {
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        {
+            let c = empty_source(&src_path);
+            c.execute_batch(
+                "INSERT INTO customers VALUES (1,'Acme','a@b.test');
+                 INSERT INTO currencies VALUES (4,'USD');
+                 INSERT INTO invoices VALUES (1,'1247',1,'2026-07-01','2026-8-3',10000,'UNPAID',4);
+                 INSERT INTO payments VALUES (1,1,5000,'2026-7-9');",
+            )
+            .unwrap();
+        }
+
+        let summary = import(&dest, &src_path).unwrap();
+        assert_eq!(summary.unparsed_dates, 0);
+
+        let due: Option<String> = dest
+            .query_row(
+                "SELECT due_date FROM invoices WHERE number = 1247",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(due.as_deref(), Some("2026-08-03"));
+
+        let paid: String = dest
+            .query_row("SELECT paid_date FROM invoice_payments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(paid, "2026-07-09");
+    }
+
+    /// A source date Nigel's rule cannot read is copied as it stands — the import
+    /// is a faithful mirror and refuses to invent a day — but it is counted so the
+    /// operator hears about it rather than discovering it in a report.
+    #[test]
+    fn an_unreadable_source_date_is_kept_verbatim_and_counted() {
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        {
+            let c = empty_source(&src_path);
+            c.execute_batch(
+                "INSERT INTO customers VALUES (1,'Acme','a@b.test');
+                 INSERT INTO currencies VALUES (4,'USD');
+                 INSERT INTO invoices VALUES (1,'1247',1,'2026-07-01','whenever',10000,'UNPAID',4);
+                 INSERT INTO payments VALUES (1,1,5000,'2026-07-09 00:00:00');",
+            )
+            .unwrap();
+        }
+
+        let summary = import(&dest, &src_path).unwrap();
+        assert_eq!(summary.unparsed_dates, 2);
+
+        let due: Option<String> = dest
+            .query_row(
+                "SELECT due_date FROM invoices WHERE number = 1247",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(due.as_deref(), Some("whenever"));
+
+        let paid: String = dest
+            .query_row("SELECT paid_date FROM invoice_payments", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(paid, "2026-07-09 00:00:00");
     }
 }

@@ -273,6 +273,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   @state() private sendOpen = false;
   @state() private sendPhase: 'confirm' | 'sending' | 'sent' | 'failed' = 'confirm';
   @state() private sendSteps: SendStepView[] = [];
+  @state() private sendWarnings: string[] = [];
   @state() private sendFailure: SendFailureView | null = null;
   @state() private sentUrl = '';
 
@@ -590,12 +591,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     if (!detail) return;
 
     this.sendPhase = 'sending';
+    this.sendWarnings = [];
     this.sendFailure = null;
     this.sendSteps = sendStepViews({ running: 'config' });
 
     try {
       const result = await this.client.sendInvoice(detail.number);
       this.sendSteps = sendStepViews({ completed: result.steps });
+      this.sendWarnings = result.configWarnings ?? [];
       this.sentUrl = result.publicUrl;
       this.sendPhase = 'sent';
       this.detail = result.invoice;
@@ -951,6 +954,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .steps=${this.sendSteps}
         .failure=${this.sendFailure}
         .publicUrl=${this.sentUrl}
+        .configWarnings=${this.sendWarnings}
         .blocked=${blocked}
         @nc-send-confirm=${this.handleSend}
         @nc-send-close=${this.closeSend}

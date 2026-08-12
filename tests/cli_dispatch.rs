@@ -7,11 +7,14 @@ use tempfile::TempDir;
 
 /// Every `NIGEL_*` key `settings::invoicing_config()` reads. Env vars win over the
 /// settings file, and the temp HOME cannot mask them, so they are cleared per command.
-const INVOICING_ENV_VARS: [&str; 9] = [
+const INVOICING_ENV_VARS: [&str; 12] = [
     "NIGEL_STRIPE_SECRET_KEY",
     "NIGEL_MAILGUN_API_KEY",
     "NIGEL_MAILGUN_DOMAIN",
     "NIGEL_FROM_EMAIL",
+    "NIGEL_FROM_NAME",
+    "NIGEL_REPLY_TO_EMAIL",
+    "NIGEL_CONTACT_EMAIL",
     "NIGEL_R2_ACCOUNT_ID",
     "NIGEL_R2_ACCESS_KEY",
     "NIGEL_R2_SECRET_KEY",
@@ -1240,6 +1243,118 @@ fn invoice_preview_needs_no_invoicing_config_and_makes_no_network_call() {
         .stderr(predicate::str::contains("missing invoicing config").not());
 }
 
+/// Nine keys set and a display name carrying a line break: header injection, a
+/// hard refusal, and it happens before any client is built — so no Stripe link
+/// is made and the invoice is still a draft.
+#[test]
+fn invoice_send_refuses_a_display_name_carrying_a_line_break() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
+        .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
+        .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
+        .env("NIGEL_FROM_EMAIL", "billing@mg.example.test")
+        .env("NIGEL_FROM_NAME", "Bluepeak\r\nBcc: someone@else.test")
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "ak")
+        .env("NIGEL_R2_SECRET_KEY", "sk")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "https://billing.example.test/i")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("from_name"))
+        .stderr(predicate::str::contains("someone@else.test").not());
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+/// Header injection through `NIGEL_FROM_EMAIL`, refused before any client is
+/// built — so no Stripe link, no upload, no email.
+#[test]
+fn invoice_send_refuses_a_from_address_carrying_a_line_break() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
+        .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
+        .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
+        .env(
+            "NIGEL_FROM_EMAIL",
+            "billing@mg.example.test\r\nBcc: attacker@evil.test",
+        )
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "ak")
+        .env("NIGEL_R2_SECRET_KEY", "sk")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "https://billing.example.test/i")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("from_email"))
+        .stderr(predicate::str::contains("attacker@evil.test").not());
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+#[test]
+fn invoice_preview_names_contact_email_when_neither_key_is_set() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "neither contact_email nor from_email",
+        ));
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(
+        html.contains("(contact_email not configured)"),
+        "got: {html}"
+    );
+}
+
+/// AC #3 end to end: the page's direct-deposit line is `contact_email`, not the
+/// address the email is sent from.
+#[test]
+fn contact_email_is_what_the_page_prints_not_from_email() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .env("NIGEL_FROM_EMAIL", "billing@mg.example.test")
+        .env("NIGEL_CONTACT_EMAIL", "accounts@example.test")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(html.contains("accounts@example.test"), "got: {html}");
+    assert!(!html.contains("billing@mg.example.test"), "got: {html}");
+}
+
 #[test]
 fn invoice_preview_leaves_the_invoice_a_draft() {
     let env = TestEnv::new();
@@ -1643,6 +1758,62 @@ fn send_with_a_broken_template_fails_before_touching_stripe() {
         })
         .expect("invoice row missing");
     assert_eq!(status, "draft");
+}
+
+/// A configured-but-unusable installation: all nine keys set, one of them an
+/// address that cannot produce a working link. Nothing reaches the network,
+/// because the refusal happens while the clients are being built.
+#[test]
+fn invoice_send_refuses_a_public_base_url_with_no_scheme() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_bogus")
+        .env("NIGEL_MAILGUN_API_KEY", "key")
+        .env("NIGEL_MAILGUN_DOMAIN", "mail.example.test")
+        .env("NIGEL_FROM_EMAIL", "billing@example.test")
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "access")
+        .env("NIGEL_R2_SECRET_KEY", "secret")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "billing.example.com")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("public_base_url")
+                .and(predicate::str::contains("billing.example.com")),
+        );
+
+    let (status, published): (String, Option<String>) = env
+        .db()
+        .query_row(
+            "SELECT status, published_at FROM invoices WHERE number = 1248",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+    assert_eq!(published, None);
+}
+
+#[test]
+fn invoice_preview_is_unaffected_by_a_broken_public_base_url() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Preview needs no invoicing config at all and must not have grown a
+    // dependency on one being well-formed.
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .env("NIGEL_PUBLIC_BASE_URL", "billing.example.com")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    assert!(previews_dir(&env).join("invoice-1248.html").exists());
 }
 
 #[test]
@@ -2375,6 +2546,62 @@ fn recategorize_works_on_encrypted_db_via_env_password() {
         .stdout(predicate::str::contains("Recategorized 1 transaction"));
 }
 
+/// TASK-63 AC #1. A read *and* a write: unlocking for a SELECT and unlocking for
+/// an INSERT are the same key, but a read-only regression would slip past a test
+/// that only lists.
+#[test]
+fn invoice_and_client_commands_work_on_encrypted_db_via_env_password() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.encrypt("hunter2");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1248").and(predicate::str::contains("Acme Co")));
+
+    env.cmd()
+        .args(["client", "add", "Globex", "--email", "ap@globex.test"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["client", "list"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Globex").and(predicate::str::contains("Acme Co")));
+}
+
+/// TASK-63 AC #2. The stderr predicate is the assertion that matters: reaching
+/// the prompt with no terminal errors with ENXIO, which satisfies `.failure()` on
+/// its own. The timeout is only a backstop for a run that inherits a tty and
+/// blocks.
+#[test]
+fn invoice_list_fails_fast_on_wrong_env_password() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.encrypt("hunter2");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .env("NIGEL_DB_PASSWORD", "wrong-password")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
+}
+
 #[test]
 fn serve_help_documents_its_flags() {
     let env = TestEnv::new();
@@ -2412,4 +2639,91 @@ fn serve_without_the_feature_reports_a_clear_error() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("requires the 'serve' feature"));
+}
+
+/// Padding through the real binary: nothing between clap and the column applies
+/// it but the data layer.
+#[test]
+fn unpadded_dates_round_trip_through_new_edit_and_pay_as_padded() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-8-7",
+            "--due",
+            "2026-9-1",
+            "--item",
+            "Consulting:1:100",
+        ])
+        .assert()
+        .success();
+
+    let row = |sql: &str| -> Option<String> { env.db().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(
+        row("SELECT issue_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-08-07")
+    );
+    assert_eq!(
+        row("SELECT due_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-09-01")
+    );
+
+    env.cmd()
+        .args(["invoice", "edit", "1249", "--due", "2026-9-30"])
+        .assert()
+        .success();
+    assert_eq!(
+        row("SELECT due_date FROM invoices WHERE number = 1249").as_deref(),
+        Some("2026-09-30")
+    );
+
+    env.cmd()
+        .args([
+            "invoice", "pay", "1249", "--amount", "25", "--date", "2026-9-2",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        row("SELECT paid_date FROM invoice_payments WHERE invoice_id =
+             (SELECT id FROM invoices WHERE number = 1249)")
+        .as_deref(),
+        Some("2026-09-02")
+    );
+
+    // And it reads back padded everywhere a user looks.
+    env.cmd()
+        .args(["invoice", "show", "1249"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("2026-08-07").and(predicate::str::contains("2026-8-7").not()),
+        );
+}
+
+/// The refusal comes from the data layer, through clap's plain `String` flag, and
+/// leaves no payment row behind.
+#[test]
+fn invoice_pay_refuses_a_malformed_date() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice", "pay", "1248", "--amount", "10", "--date", "March",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid payment date"));
+
+    let payments: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoice_payments", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(payments, 0);
 }

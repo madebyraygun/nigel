@@ -244,6 +244,20 @@ describe('sendFailureMessage', () => {
     expect(view.retryable).toBe(false);
   });
 
+  it('separates a key that is set but unusable from a key that is unset', () => {
+    const view = sendFailureMessage(
+      conflict(
+        'send_misconfigured',
+        { step: 'config' },
+        'from_name may not contain a line break',
+      ),
+      1251,
+    );
+    expect(view.headline).toBe('Nigel cannot send with the current email settings.');
+    expect(view.message).toContain('from_name');
+    expect(view.retryable).toBe(false);
+  });
+
   it('carries no setting value, only its name', () => {
     const view = sendFailureMessage(
       conflict('send_not_configured', { missing: ['stripe_secret_key'] }),

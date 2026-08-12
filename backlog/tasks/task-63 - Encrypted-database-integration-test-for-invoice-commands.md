@@ -1,10 +1,11 @@
 ---
 id: TASK-63
 title: Encrypted-database integration test for invoice commands
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@stream-1'
 created_date: '2026-08-07 21:53'
-updated_date: '2026-08-11 19:54'
+updated_date: '2026-08-11 22:12'
 labels:
   - invoicing
   - testing
@@ -26,6 +27,29 @@ Invoice and client commands unlock encrypted databases through the shared prompt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An integration test runs at least one invoice/client command against an encrypted database unlocked via NIGEL_DB_PASSWORD
-- [ ] #2 A wrong NIGEL_DB_PASSWORD on an invoice command fails with the documented error rather than hanging on a prompt
+- [x] #1 An integration test runs at least one invoice/client command against an encrypted database unlocked via NIGEL_DB_PASSWORD
+- [x] #2 A wrong NIGEL_DB_PASSWORD on an invoice command fails with the documented error rather than hanging on a prompt
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Two integration tests in tests/cli_dispatch.rs, beside recategorize_works_on_encrypted_db_via_env_password. Nothing in src/ changed for this task — invoice/client were never in main.rs's needs_password exclusion list, so the path already worked; the tests are what stop it changing unnoticed.
+
+The happy path asserts a read (invoice list prints 1248 and Acme Co) and a write (client add Globex, then client list shows both). The write matters: unlocking for a SELECT and unlocking for an INSERT are the same key, but a test that only lists would not notice a regression leaving the connection read-only.
+
+The wrong-password test asserts NIGEL_DB_PASSWORD appears on stderr rather than settling for .failure(). Reaching the rpassword prompt with no tty errors with ENXIO, which satisfies a bare .failure() and would let a real hang-or-prompt regression pass — this is backup_fails_fast_on_wrong_env_password's reasoning reused. TEST_TIMEOUT (60s) is the backstop for a run that inherits a tty.
+
+TestEnv::cmd clears all nine NIGEL_* invoicing variables, so the launch sync cannot reach Stripe.
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Encrypted-database coverage for the invoice and client commands.
+
+AC #1: invoice_and_client_commands_work_on_encrypted_db_via_env_password — a read and a write against a database encrypted by TestEnv::encrypt, unlocked via NIGEL_DB_PASSWORD.
+AC #2: invoice_list_fails_fast_on_wrong_env_password — a wrong password fails with the documented error, asserted by the variable name on stderr so the test cannot be satisfied by an ENXIO from a prompt with no terminal.
+
+Both passed on first run, as expected for characterization tests; no production code changed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -570,6 +570,7 @@ export const CONFLICT_REASONS = [
   'client_missing_email',
   'invoice_not_payable',
   'send_not_configured',
+  'send_misconfigured',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -1132,6 +1133,12 @@ export interface SendResult {
   publicUrl: string;
   paymentLinkUrl: string | null;
   steps: SendStepResult[];
+  /**
+   * Configuration the send went ahead with but the operator should look at —
+   * a from address that is not on the Mailgun domain. The invoice went out;
+   * these are not failures.
+   */
+  configWarnings: string[];
 }
 
 /** One invoice the gateway refused during a sync. */
