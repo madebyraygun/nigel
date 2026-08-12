@@ -18,7 +18,12 @@ import {
   today,
   voidConfirmationMessage,
 } from './invoice-data.js';
-import type { Client, InvoiceDetail, InvoiceListRow } from '../api/types.js';
+import type {
+  Client,
+  ClientContact,
+  InvoiceDetail,
+  InvoiceListRow,
+} from '../api/types.js';
 
 const CLIENT: Client = {
   id: 1,
@@ -261,19 +266,106 @@ describe('payRequest', () => {
 });
 
 describe('client requests', () => {
+  const CONTACTS: ClientContact[] = [
+    {
+      id: 1,
+      clientId: 1,
+      email: 'ap@acme.test',
+      name: 'Ada Payne',
+      title: null,
+      isBilling: true,
+      position: 0,
+    },
+    {
+      id: 2,
+      clientId: 1,
+      email: 'dana@acme.test',
+      name: null,
+      title: null,
+      isBilling: false,
+      position: 1,
+    },
+  ];
+
   it('sends an empty optional field as null, not as an empty string', () => {
     expect(
-      newClientRequest({ name: ' Acme Co ', email: '', billingAddress: '', notes: '' }),
-    ).toEqual({ name: 'Acme Co', email: null, billingAddress: null, notes: null });
+      newClientRequest({
+        name: ' Acme Co ',
+        contacts: [],
+        billingIndex: 0,
+        billingAddress: '',
+        notes: '',
+      }),
+    ).toEqual({ name: 'Acme Co', billingAddress: null, notes: null });
+  });
+
+  it('sends the contact list whole, with exactly one billing recipient', () => {
+    // `email` is never sent beside `contacts` — the route refuses both.
+    expect(
+      newClientRequest({
+        name: 'Acme Co',
+        contacts: [
+          { email: ' ap@acme.test ', name: 'Ada', title: '' },
+          { email: 'dana@acme.test', name: '', title: 'Design' },
+        ],
+        billingIndex: 1,
+        billingAddress: '',
+        notes: '',
+      }),
+    ).toEqual({
+      name: 'Acme Co',
+      billingAddress: null,
+      notes: null,
+      contacts: [
+        { email: 'ap@acme.test', name: 'Ada', title: null, isBilling: false },
+        { email: 'dana@acme.test', name: null, title: 'Design', isBilling: true },
+      ],
+    });
+  });
+
+  it('drops a row nobody filled in', () => {
+    const request = newClientRequest({
+      name: 'Acme Co',
+      contacts: [
+        { email: 'ap@acme.test', name: '', title: '' },
+        { email: '   ', name: '', title: '' },
+      ],
+      billingIndex: 0,
+      billingAddress: '',
+      notes: '',
+    });
+    expect(request.contacts).toHaveLength(1);
   });
 
   it('patches only what moved, and clears with null', () => {
-    const form = clientFormFrom(CLIENT);
-    expect(clientPatch(CLIENT, form)).toEqual({});
-    expect(clientPatch(CLIENT, { ...form, email: '' })).toEqual({ email: null });
-    expect(clientPatch(CLIENT, { ...form, name: 'Acme Corp' })).toEqual({
+    const form = clientFormFrom(CLIENT, CONTACTS);
+    expect(clientPatch(CLIENT, form, CONTACTS)).toEqual({});
+    expect(clientPatch(CLIENT, { ...form, name: 'Acme Corp' }, CONTACTS)).toEqual({
       name: 'Acme Corp',
     });
+  });
+
+  it('sends contacts only when the list actually changed', () => {
+    const form = clientFormFrom(CLIENT, CONTACTS);
+
+    // A reorder is a change, because position is what the cc order is.
+    const reordered = {
+      ...form,
+      contacts: [form.contacts[1], form.contacts[0]],
+      billingIndex: 1,
+    };
+    expect(clientPatch(CLIENT, reordered, CONTACTS).contacts).toHaveLength(2);
+    expect(clientPatch(CLIENT, reordered, CONTACTS).contacts?.[0].email).toBe(
+      'dana@acme.test',
+    );
+
+    // Moving the billing flag is a change even when the rows do not move.
+    expect(
+      clientPatch(CLIENT, { ...form, billingIndex: 1 }, CONTACTS).contacts?.[1].isBilling,
+    ).toBe(true);
+
+    // Clearing the list is how a client loses every address.
+    expect(clientPatch(CLIENT, { ...form, contacts: [] }, CONTACTS).contacts).toEqual([]);
   });
 });
 

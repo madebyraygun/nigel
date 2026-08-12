@@ -24,6 +24,9 @@ pub struct ImportSummary {
     pub next_number: i64,
     /// Source dates copied verbatim because Nigel's own rule could not read them.
     pub unparsed_dates: u32,
+    /// Source addresses copied verbatim because they carry a character no mail
+    /// header may. They are imported all the same — see the writer below.
+    pub unusable_emails: u32,
 }
 
 /// A source date in Nigel's stored form, or the source's own text when that rule
@@ -61,6 +64,7 @@ pub fn import(dest: &Connection, invoiceshelf_db: &Path) -> Result<ImportSummary
         payments: 0,
         next_number: NEXT_NUMBER_FLOOR + 1,
         unparsed_dates: 0,
+        unusable_emails: 0,
     };
     let mut max_number: i64 = NEXT_NUMBER_FLOOR;
 
@@ -80,11 +84,33 @@ pub fn import(dest: &Connection, invoiceshelf_db: &Path) -> Result<ImportSummary
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         for (src_id, name, email) in rows {
+            // A raw insert rather than `add_client`, because import data
+            // legitimately carries the blank and duplicate names `add_client`
+            // refuses and this importer's job is to take what is there.
             dest.execute(
-                "INSERT INTO clients (name, email) VALUES (?1, ?2)",
-                rusqlite::params![name, email],
+                "INSERT INTO clients (name) VALUES (?1)",
+                rusqlite::params![name],
             )?;
-            customer_map.insert(src_id, dest.last_insert_rowid());
+            let dest_id = dest.last_insert_rowid();
+
+            // Copied verbatim and counted, never refused: an address written
+            // years ago in another program is not something the operator can
+            // correct before importing it, and one bad character must not
+            // abort a whole migration. The same posture this importer already
+            // takes toward a date it cannot parse, and the one v8 takes toward
+            // the column it backfills. A send will refuse it later, by name.
+            if let Some(address) = email.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+                if crate::invoicing::mailgun::validate_header_value(address, "email").is_err() {
+                    summary.unusable_emails += 1;
+                }
+            }
+            crate::invoicing::clients::set_billing_email_unchecked(
+                dest,
+                dest_id,
+                email.as_deref(),
+            )?;
+
+            customer_map.insert(src_id, dest_id);
             summary.clients += 1;
         }
     }
@@ -261,6 +287,96 @@ mod tests {
              INSERT INTO payments VALUES (2,999,5000,'2026-07-20');",
         )
         .unwrap();
+    }
+
+    /// AC #7: the one address the source has lands as a billing contact.
+    #[test]
+    fn an_imported_customer_email_becomes_its_billing_contact() {
+        use crate::invoicing::clients::{get_client, list_contacts};
+
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        fixture_invoiceshelf(&src_path);
+
+        import(&dest, &src_path).unwrap();
+
+        let id: i64 = dest
+            .query_row("SELECT id FROM clients WHERE name = 'Acme'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            get_client(&dest, id).unwrap().email.as_deref(),
+            Some("a@b.test")
+        );
+
+        let contacts = list_contacts(&dest, id).unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert!(contacts[0].is_billing);
+        assert_eq!(contacts[0].position, 0);
+    }
+
+    /// Somebody's years-old address is not something they can correct before
+    /// importing it, so it is copied and counted rather than refused.
+    #[test]
+    fn an_address_a_mail_header_could_not_carry_is_imported_and_counted() {
+        use crate::invoicing::clients::list_contacts;
+
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        let c = empty_source(&src_path);
+        c.execute(
+            "INSERT INTO customers VALUES (1,'Acme',?1)",
+            ["ap@acme.test\r\nBcc: x@y.test"],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO customers VALUES (2,'Globex','ok@globex.test')",
+            [],
+        )
+        .unwrap();
+        drop(c);
+
+        let summary = import(&dest, &src_path).unwrap();
+
+        assert_eq!(summary.clients, 2, "the import ran to completion");
+        assert_eq!(summary.unusable_emails, 1);
+
+        let id: i64 = dest
+            .query_row("SELECT id FROM clients WHERE name = 'Acme'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let contacts = list_contacts(&dest, id).unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(
+            contacts[0].email, "ap@acme.test\r\nBcc: x@y.test",
+            "copied verbatim, the way an unparseable date is"
+        );
+    }
+
+    #[test]
+    fn an_imported_customer_with_no_email_gets_no_contact() {
+        use crate::invoicing::clients::list_contacts;
+
+        let (_d, dest) = dest_conn();
+        let src_dir = tempfile::tempdir().unwrap();
+        let src_path = src_dir.path().join("invoiceshelf.sqlite");
+        let c = empty_source(&src_path);
+        c.execute_batch("INSERT INTO customers VALUES (1,'Globex',NULL);")
+            .unwrap();
+        drop(c);
+
+        import(&dest, &src_path).unwrap();
+
+        let id: i64 = dest
+            .query_row("SELECT id FROM clients WHERE name = 'Globex'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(list_contacts(&dest, id).unwrap().is_empty());
     }
 
     #[test]

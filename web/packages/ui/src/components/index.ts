@@ -222,7 +222,9 @@ export {
 export {
   WcClientForm,
   EMPTY_CLIENT_FORM,
+  EMPTY_CONTACT,
   validateClientForm,
+  type ClientFormContact,
   type ClientFormErrors,
   type ClientFormValue,
   type NcClientFormChangeDetail,

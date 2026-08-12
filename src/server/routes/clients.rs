@@ -15,7 +15,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::invoicing::clients::{self, ClientInvoiceRow, ClientScope, ClientUpdate};
+use crate::invoicing::clients::{
+    self, ClientContact, ClientInvoiceRow, ClientScope, ClientUpdate, NewContact,
+};
 use crate::models::Client;
 
 use super::super::error::{ApiError, ApiResult};
@@ -42,6 +44,9 @@ pub fn routes() -> Router<AppState> {
 struct ClientDetail {
     #[serde(flatten)]
     client: Client,
+    /// Every address, billing first. On the detail and not on the list row,
+    /// which stays one query and one cheap payload.
+    contacts: Vec<ClientContact>,
     invoices: Vec<ClientInvoiceRow>,
     outstanding: f64,
 }
@@ -109,6 +114,7 @@ async fn detail(
     .await?;
     Ok(Json(ClientDetail {
         client: summary.client,
+        contacts: summary.contacts,
         invoices: summary.invoices,
         outstanding: summary.outstanding,
     }))
@@ -121,20 +127,50 @@ struct NewClientRequest {
     email: Option<String>,
     billing_address: Option<String>,
     notes: Option<String>,
+    /// A plain `Option`, not `double_option`: an empty array is how a caller
+    /// clears the list, so `null` would need a second meaning for nothing.
+    contacts: Option<Vec<NewContact>>,
+}
+
+/// `email` sets the billing address alone; `contacts` replaces the whole list.
+/// Sending both would make the order they were applied in visible, so it is a
+/// 400 naming them — the CLI's `conflicts_with`, at the wire level.
+///
+/// **Presence**, not value: `{"email": null, "contacts": [...]}` is still both
+/// fields, and `email: null` is a write — it clears the billing address.
+fn refuse_email_and_contacts(
+    email_present: bool,
+    contacts: &Option<Vec<NewContact>>,
+) -> ApiResult<()> {
+    if email_present && contacts.is_some() {
+        return Err(ApiError::bad_request(
+            "`email` and `contacts` cannot both be sent: `email` sets the billing address, `contacts` replaces the whole list.",
+        ));
+    }
+    Ok(())
 }
 
 async fn create(
     State(state): State<AppState>,
     ApiJson(new): ApiJson<NewClientRequest>,
 ) -> ApiResult<(StatusCode, Json<Client>)> {
+    refuse_email_and_contacts(new.email.is_some(), &new.contacts)?;
+
     let client = with_conn(&state, move |conn| {
-        let id = clients::add_client(
-            conn,
+        // One transaction over the row and its addresses: a refused contact
+        // list must leave no client behind.
+        let tx = conn.unchecked_transaction()?;
+        let id = clients::add_client_within(
+            &tx,
             &new.name,
-            new.email.as_deref(),
             new.billing_address.as_deref(),
             new.notes.as_deref(),
         )?;
+        match &new.contacts {
+            Some(contacts) => clients::set_contacts_within(&tx, id, contacts)?,
+            None => clients::set_billing_email(&tx, id, new.email.as_deref())?,
+        }
+        tx.commit()?;
         clients::get_client(conn, id)
     })
     .await?;
@@ -154,17 +190,21 @@ struct ClientPatch {
     billing_address: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     notes: Option<Option<String>>,
+    /// Absent leaves the list alone, present replaces it whole — exactly
+    /// `items` on `PATCH /api/invoices/{number}`.
+    contacts: Option<Vec<NewContact>>,
 }
 
 /// Field for field: the request body *is* the update struct, with no
-/// translation layer to keep in step.
-impl From<ClientPatch> for ClientUpdate {
-    fn from(patch: ClientPatch) -> Self {
+/// translation layer to keep in step. `contacts` is the one field that is not
+/// a client column, so it stays behind.
+impl From<&ClientPatch> for ClientUpdate {
+    fn from(patch: &ClientPatch) -> Self {
         Self {
-            name: patch.name,
-            email: patch.email,
-            billing_address: patch.billing_address,
-            notes: patch.notes,
+            name: patch.name.clone(),
+            email: patch.email.clone(),
+            billing_address: patch.billing_address.clone(),
+            notes: patch.notes.clone(),
         }
     }
 }
@@ -174,19 +214,33 @@ async fn update(
     ApiPath(id): ApiPath<i64>,
     ApiJson(patch): ApiJson<ClientPatch>,
 ) -> ApiResult<Json<Client>> {
-    let update = ClientUpdate::from(patch);
+    refuse_email_and_contacts(patch.email.is_some(), &patch.contacts)?;
+
+    let update = ClientUpdate::from(&patch);
     // `update_client` refuses an empty update too, as an `Invalid`; naming the
     // fields here is what makes the 400 useful to whoever sent `{}`.
-    if update.is_empty() {
+    if update.is_empty() && patch.contacts.is_none() {
         return Err(ApiError::bad_request(
-            "Nothing to update — provide at least one of `name`, `email`, `billingAddress`, or `notes`.",
+            "Nothing to update — provide at least one of `name`, `email`, `billingAddress`, `notes`, or `contacts`.",
         ));
     }
 
     let client = with_conn_api(&state, move |conn| {
-        clients::update_client(conn, id, &update)
-            .map_err(|e| not_found_because(e, "client_not_found"))?;
-        Ok(clients::get_client(conn, id)?)
+        // One transaction: a refused contact list leaves the rename unapplied
+        // too, so a caller never has to guess which half landed.
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(crate::error::NigelError::from)?;
+        if !update.is_empty() {
+            clients::update_client_within(&tx, id, &update)
+                .map_err(|e| not_found_because(e, "client_not_found"))?;
+        }
+        if let Some(contacts) = &patch.contacts {
+            clients::set_contacts_within(&tx, id, contacts)
+                .map_err(|e| not_found_because(e, "client_not_found"))?;
+        }
+        tx.commit().map_err(crate::error::NigelError::from)?;
+        clients::get_client(conn, id).map_err(|e| not_found_because(e, "client_not_found"))
     })
     .await?;
     Ok(Json(client))
@@ -233,6 +287,268 @@ mod tests {
         // The client with no email carries an explicit null, not an absent key.
         assert_eq!(rows[1]["name"], "Globex");
         assert!(rows[1]["email"].is_null(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_client_detail_carries_its_contacts() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, patched) = patch_json(
+            &app,
+            "/api/clients/1",
+            &token,
+            &serde_json::json!({
+                "contacts": [
+                    { "email": "dana@acme.test", "name": "Dana Chen" },
+                    { "email": "ap@acme.test", "isBilling": true },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{patched}");
+
+        let body = ok_json(&app, "/api/clients/1", &token).await;
+        let contacts = body["contacts"].as_array().expect("contacts");
+        assert_eq!(contacts.len(), 2);
+        // Billing first, whatever order it arrived in.
+        assert_eq!(contacts[0]["email"], "ap@acme.test");
+        assert_eq!(contacts[0]["isBilling"], true);
+        assert_eq!(contacts[1]["name"], "Dana Chen");
+        // And the projection follows it.
+        assert_eq!(body["email"], "ap@acme.test");
+    }
+
+    #[tokio::test]
+    async fn creating_a_client_with_contacts_stores_them_all() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, created) = post_json(
+            &app,
+            "/api/clients",
+            &token,
+            &serde_json::json!({
+                "name": "Initech",
+                "contacts": [
+                    { "email": "ap@initech.test", "name": "Ada" },
+                    { "email": "dev@initech.test" },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        assert_eq!(created["email"], "ap@initech.test", "the first is billing");
+
+        let id = created["id"].as_i64().expect("an id");
+        let detail = ok_json(&app, &format!("/api/clients/{id}"), &token).await;
+        assert_eq!(detail["contacts"].as_array().expect("contacts").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn patching_contacts_replaces_the_whole_list() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for list in [
+            serde_json::json!([{ "email": "a@x.test" }, { "email": "b@x.test" }]),
+            serde_json::json!([{ "email": "c@x.test" }]),
+        ] {
+            let (status, body) = patch_json(
+                &app,
+                "/api/clients/1",
+                &token,
+                &serde_json::json!({ "contacts": list }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+
+        let detail = ok_json(&app, "/api/clients/1", &token).await;
+        let contacts = detail["contacts"].as_array().expect("contacts");
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0]["email"], "c@x.test");
+    }
+
+    /// Atomicity, on create: the contact list is refused after the client row
+    /// has been written, and neither survives.
+    #[tokio::test]
+    async fn a_refused_contact_list_leaves_no_client_row() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/clients",
+            &token,
+            &serde_json::json!({
+                "name": "Initech",
+                "contacts": [
+                    { "email": "a@x.test", "isBilling": true },
+                    { "email": "b@x.test", "isBilling": true },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+
+        let names: Vec<String> = ok_json(&app, "/api/clients", &token)
+            .await
+            .as_array()
+            .expect("a bare array")
+            .iter()
+            .map(|c| c["name"].as_str().expect("name").to_string())
+            .collect();
+        assert!(
+            !names.contains(&"Initech".to_string()),
+            "the client row outlived the request that was refused: {names:?}"
+        );
+    }
+
+    /// Atomicity, on patch: the rename and the contact list are one write.
+    #[tokio::test]
+    async fn a_refused_contact_list_leaves_the_rename_unapplied() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = patch_json(
+            &app,
+            "/api/clients/1",
+            &token,
+            &serde_json::json!({
+                "name": "Acme Corporation",
+                "contacts": [
+                    { "email": "a@x.test", "isBilling": true },
+                    { "email": "b@x.test", "isBilling": true },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+
+        let detail = ok_json(&app, "/api/clients/1", &token).await;
+        assert_eq!(detail["name"], "Acme Co", "half the edit landed");
+        assert_eq!(detail["email"], "ap@acme.test");
+    }
+
+    /// The guard is about which fields arrived, not what they carried: `null`
+    /// is a write — it clears the billing address.
+    #[tokio::test]
+    async fn a_null_email_beside_contacts_is_still_a_400() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = patch_json(
+            &app,
+            "/api/clients/1",
+            &token,
+            &serde_json::json!({
+                "email": null,
+                "contacts": [{ "email": "dana@acme.test" }],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        let message = json["error"]["message"].as_str().expect("a message");
+        assert!(
+            message.contains("email") && message.contains("contacts"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absent_contacts_field_leaves_the_list_alone() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = patch_json(
+            &app,
+            "/api/clients/1",
+            &token,
+            &serde_json::json!({ "name": "Acme Corporation" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let detail = ok_json(&app, "/api/clients/1", &token).await;
+        assert_eq!(detail["contacts"].as_array().expect("contacts").len(), 1);
+        assert_eq!(detail["email"], "ap@acme.test");
+    }
+
+    #[tokio::test]
+    async fn email_and_contacts_in_one_body_is_a_400() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = serde_json::json!({
+            "email": "ap@acme.test",
+            "contacts": [{ "email": "dana@acme.test" }],
+        });
+
+        let (status, json) = patch_json(&app, "/api/clients/1", &token, &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        let message = json["error"]["message"].as_str().expect("a message");
+        assert!(
+            message.contains("email") && message.contains("contacts"),
+            "{message}"
+        );
+
+        let (status, json) = post_json(
+            &app,
+            "/api/clients",
+            &token,
+            &serde_json::json!({
+                "name": "Initech",
+                "email": "ap@initech.test",
+                "contacts": [{ "email": "dev@initech.test" }],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    }
+
+    #[tokio::test]
+    async fn two_billing_contacts_is_a_400_from_the_data_layers_own_check() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = patch_json(
+            &app,
+            "/api/clients/1",
+            &token,
+            &serde_json::json!({
+                "contacts": [
+                    { "email": "a@x.test", "isBilling": true },
+                    { "email": "b@x.test", "isBilling": true },
+                ],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .expect("a message")
+                .contains("billing recipient"),
+            "{json}"
+        );
+
+        // Refused before anything was deleted.
+        let detail = ok_json(&app, "/api/clients/1", &token).await;
+        assert_eq!(detail["email"], "ap@acme.test");
+    }
+
+    /// The list stays bare `Client` rows and one query.
+    #[tokio::test]
+    async fn the_client_list_still_carries_one_email_per_row() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/clients", &token).await;
+        for row in body.as_array().expect("a bare array") {
+            assert!(row.get("contacts").is_none(), "{row}");
+            assert!(row.get("email").is_some(), "{row}");
+        }
     }
 
     #[tokio::test]

@@ -652,6 +652,13 @@ pub fn import(db: &str) -> Result<()> {
             summary.unparsed_dates
         );
     }
+    if summary.unusable_emails > 0 {
+        eprintln!(
+            "Warning: {} email address(es) carry a character a mail header may not, and were \
+             copied as they stand. Sending to those clients will refuse until they are corrected.",
+            summary.unusable_emails
+        );
+    }
     Ok(())
 }
 

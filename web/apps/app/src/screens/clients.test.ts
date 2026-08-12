@@ -138,6 +138,104 @@ describe('nigel-clients-screen', () => {
     vi.restoreAllMocks();
   });
 
+  describe('contacts', () => {
+    it('fetches the detail before the edit dialog can be filled in', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+
+      // The list row is a bare `Client`; the contacts come from one request on
+      // a deliberate click.
+      expect(fake.calls).toContain('getClient:1');
+      expect(form(el).value.contacts).toEqual([
+        { email: 'ap@acme.test', name: '', title: '' },
+      ]);
+    });
+
+    it('never offers a form the detail could not fill in', async () => {
+      // An editable form here would carry an empty contacts baseline, and
+      // saving it would whole-list-replace — delete — every address the client
+      // actually has.
+      const fake = client();
+      fake.clientError = new Error('boom');
+      const { el } = await mount(fake);
+      await rowAction(el, 'edit', 1);
+
+      expect(dialog(el)).not.toBeNull();
+      expect(dialog(el)?.error).toBeTruthy();
+      expect(dialog(el)?.querySelector('wc-client-form')).toBeNull();
+      expect(dialog(el)?.querySelector('[data-retry-editor]')).not.toBeNull();
+      // The list behind it loaded fine.
+      expect(layout(el).error).toBeNull();
+
+      // And a save cannot be coaxed out of it.
+      await save(el);
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+    });
+
+    it('retries the detail and then offers the form', async () => {
+      const fake = client();
+      fake.clientError = new Error('boom');
+      const { el } = await mount(fake);
+      await rowAction(el, 'edit', 1);
+
+      fake.clientError = null;
+      dialog(el)?.querySelector<HTMLElement>('[data-retry-editor]')?.click();
+      await settle(el);
+
+      expect(dialog(el)?.querySelector('wc-client-form')).not.toBeNull();
+      expect(form(el).value.contacts).toEqual([
+        { email: 'ap@acme.test', name: '', title: '' },
+      ]);
+    });
+
+    it('sends the whole contact list when it changes', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+
+      const contacts = form(el).shadowRoot?.querySelector<HTMLElement>('[data-add-contact]');
+      contacts?.click();
+      await settle(el);
+      const email = form(el).shadowRoot?.querySelectorAll<HTMLInputElement>(
+        '[data-contact-email]',
+      )[1];
+      email!.value = 'dana@acme.test';
+      email!.dispatchEvent(new Event('input'));
+      await settle(el);
+      await save(el);
+
+      const call = fake.calls.find((c) => c.startsWith('updateClient:1:'));
+      expect(call).toBeDefined();
+      const body = JSON.parse(call!.slice('updateClient:1:'.length));
+      expect(body.contacts).toEqual([
+        { email: 'ap@acme.test', name: null, title: null, isBilling: true },
+        { email: 'dana@acme.test', name: null, title: null, isBilling: false },
+      ]);
+      // `email` and `contacts` in one body is a 400, so the screen never sends
+      // both.
+      expect(body.email).toBeUndefined();
+    });
+
+    it('closes rather than patching when the contact list did not move', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+      await save(el);
+
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+      expect(dialog(el)).toBeNull();
+    });
+
+    it('refuses a blank row before the server sees it', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+      form(el).shadowRoot?.querySelector<HTMLElement>('[data-add-contact]')?.click();
+      await settle(el);
+      await save(el);
+
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+      expect(form(el).errors.contacts?.[1]).toBe('An email address is required');
+    });
+  });
+
   describe('archiving', () => {
     const ARCHIVED: Client[] = [
       ...CLIENTS,
@@ -260,7 +358,9 @@ describe('nigel-clients-screen', () => {
     const { el, fake } = await mount();
     await rowAction(el, 'edit', 1);
     expect(form(el).value.name).toBe('Acme Co');
-    expect(form(el).value.email).toBe('ap@acme.test');
+    expect(form(el).value.contacts).toEqual([
+      { email: 'ap@acme.test', name: '', title: '' },
+    ]);
 
     await type(el, '[data-address]', '2 Elm St');
     await save(el);

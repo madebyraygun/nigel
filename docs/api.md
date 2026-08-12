@@ -334,6 +334,10 @@ the same round trip `nigel client show` makes:
   "id": 1, "name": "Acme Co", "email": "ap@acme.test",
   "billingAddress": "1 Main St, Portland OR", "notes": null,
   "archivedAt": null,
+  "contacts": [
+    { "id": 1, "clientId": 1, "email": "ap@acme.test", "name": "Ada Payne",
+      "title": "AP Manager", "isBilling": true, "position": 0 }
+  ],
   "invoices": [
     { "number": 1251, "status": "sent", "issueDate": "2026-03-06",
       "dueDate": "2026-04-06", "total": 1850.0, "paid": 0.0 }
@@ -514,8 +518,8 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/reconcile` | `POST` | `account`, `month`, `statementBalance` | `ReconcileResult` |
 | `/api/reconciliations` | `GET` | `account` (query) | `ReconciliationRecord[]` |
 | `/api/imports/:id` | `DELETE` | — | `{ id, deletedTransactions }` |
-| `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?` | `Client` (`201`) |
-| `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?` | `Client` |
+| `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?`, `contacts?` | `Client` (`201`) |
+| `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?`, `contacts?` | `Client` |
 | `/api/clients/:id` | `DELETE` | — | `{ id, deleted }` |
 | `/api/clients/:id/archive` | `POST` | — | `Client` |
 | `/api/clients/:id/unarchive` | `POST` | — | `Client` |
@@ -666,9 +670,34 @@ record — the way `nigel undo` rolls back the most recent one. It answers with
 
 `POST /api/clients` answers `201` with the created `Client`. An empty or
 whitespace-only `name` is `400`; a name another client already has is `409`
-`duplicate_name` carrying the `name`. `PATCH` takes the same four fields, all
+`duplicate_name` carrying the `name`. `PATCH` takes the same fields, all
 optional, with `email`, `billingAddress` and `notes` clearable by `null`; an
 all-absent body is `400`.
+
+`contacts` is a whole-list replacement — exactly `items` on
+`PATCH /api/invoices/{number}`. Absent leaves the list alone; an empty array
+clears it, which is why it is a plain optional and not a nullable one. Each
+entry is `{ email, name?, title?, isBilling? }` and positions come from the
+array order.
+
+`email` and `contacts` in one body is a `400` naming both: `email` sets the
+billing address alone, `contacts` replaces the collection, and applying both
+would make the order they were applied in visible. The check is on which
+fields *arrived*, not what they carried — `{"email": null, "contacts": […]}` is
+still both, because `null` clears the billing address. The CLI refuses the same
+pair through clap's `conflicts_with`.
+
+Both writes are one transaction over the client row and its addresses: a
+refused contact list leaves no client behind on `POST`, and no half-applied
+rename on `PATCH`.
+
+The data layer's own checks arrive as `400`s: a blank address, the same address
+twice on one client (case-insensitively), and more than one `isBilling`. A
+list naming no billing recipient is not refused — the first row becomes one, so
+a client with contacts and no billing address is not representable.
+
+Only `GET /api/clients/{id}` carries `contacts`. The list stays bare `Client`
+rows and one query; the edit dialog fetches the detail on a deliberate click.
 
 `DELETE /api/clients/:id` is a hard delete, and is refused while the client has
 **any** invoice — void and paid included, because those invoices still name the

@@ -1,10 +1,11 @@
 ---
 id: TASK-77
 title: 'Invoicing: a client needs more than one email address'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@stream-3'
 created_date: '2026-08-10 19:19'
-updated_date: '2026-08-11 20:03'
+updated_date: '2026-08-11 23:26'
 labels:
   - enhancement
   - invoicing
@@ -34,12 +35,61 @@ Open questions to settle before implementing: what require_email means when a cl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A client can hold more than one email address
-- [ ] #2 Exactly one address is identifiable as the billing recipient, and require_email is expressed in terms of it
-- [ ] #3 A sent invoice reaches the additional recipients — the Mailgun call carries them rather than a single To
-- [ ] #4 The design decision is recorded, including why a comma-separated column was or was not chosen
-- [ ] #5 Existing single-email clients migrate without anyone re-entering an address
-- [ ] #6 The CLI, the TUI and the web can all read and edit the full set, not just the first one
-- [ ] #7 The InvoiceShelf importer maps its one address to the new shape without losing it
-- [ ] #8 It is settled and documented whether a cc recipient can pay the invoice from the link they receive
+- [x] #1 A client can hold more than one email address
+- [x] #2 Exactly one address is identifiable as the billing recipient, and require_email is expressed in terms of it
+- [x] #3 A sent invoice reaches the additional recipients — the Mailgun call carries them rather than a single To
+- [x] #4 The design decision is recorded, including why a comma-separated column was or was not chosen
+- [x] #5 Existing single-email clients migrate without anyone re-entering an address
+- [x] #6 The CLI, the TUI and the web can all read and edit the full set, not just the first one
+- [x] #7 The InvoiceShelf importer maps its one address to the new shape without losing it
+- [x] #8 It is settled and documented whether a cc recipient can pay the invoice from the link they receive
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Migration **v8** creates `client_contacts` (one row per address: name, email,
+title, `is_billing`, `position`) with a partial unique index for at most one
+billing contact per client and an expression index for per-client
+`lower(email)` uniqueness, backfills it from `clients.email` (trimmed, blanks
+skipped) and drops that column. `ON DELETE CASCADE` is live — `db.rs` opens
+every connection with `PRAGMA foreign_keys=ON` — so `delete_client` needed no
+new statement, and a test pins it. A test also pins that the bundled SQLite is
+past 3.35, which is what `DROP COLUMN` needs; the documented `RENAME COLUMN`
+fallback was not needed.
+
+`models::Client` is unchanged: `Client.email` became a correlated-subquery
+projection of the billing contact, which is why every pre-existing test in
+`clients.rs`, `cli/client.rs` and `routes/clients.rs` passes untouched and the
+`clients.json`/`clients.txt` fixtures did not move. `set_billing_email` is the
+one private writer `add_client`, `update_client` and the InvoiceShelf importer
+go through; setting the email to an address the client already holds as a cc
+moves the flag rather than colliding with the unique index, and clearing it
+promotes the next contact by position.
+
+`set_contacts` is a whole-list replacement validated before anything is
+deleted; `validate_contacts` refuses a blank address, a duplicate under
+`to_lowercase`, more than one `is_billing`, and any field carrying a control
+character (these strings become mail headers). Normalization runs after
+validation: a list naming no billing recipient makes its first row one.
+
+`Mailer::send_invoice` gained `cc: &[String]`; `message_fields` emits one
+comma-joined `cc` field and none at all when the list is empty.
+`send::require_recipients` wraps `require_email` — so the refusal, its code and
+its sentence are the ones that already ship — and formats each entry with
+TASK-80's `format_address`, at the existing `Precheck` step, so no network call
+happens before the recipients are known.
+
+Surfaces: `--contact "email[:name[:title]]"` on `client add`/`edit`
+(repeatable, whole-list, `conflicts_with = "email"`, `splitn(3, ':')` so a
+title keeps a colon); a contacts table in `client show`; a `c` sub-screen in
+the TUI client manager (a/e/d/b/Esc); `contacts` on `POST`/`PATCH
+/api/clients` and on `ClientDetail`, with `email` + `contacts` in one body a
+400; and on the web a contacts repeater in `wc-client-form` with a radio for
+the billing recipient and up/down reordering, the edit dialog fetching
+`GET /api/clients/{id}` first.
+
+AC #8 settled and documented: every recipient gets the same document and can
+pay it. One render, one message, `To` plus `Cc`, and the published page names
+the billing contact alone.
+<!-- SECTION:NOTES:END -->

@@ -178,6 +178,51 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 8,
+        description: "move client emails into client_contacts, one row per address",
+        up: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS client_contacts (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    name TEXT,
+                    email TEXT NOT NULL,
+                    title TEXT,
+                    is_billing INTEGER NOT NULL DEFAULT 0,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+                );
+                 -- At most one billing contact per client, enforced by the
+                 -- database rather than by remembering to check.
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_client_contacts_billing
+                     ON client_contacts(client_id) WHERE is_billing = 1;
+                 -- One address per client, case-insensitively: a cc that is
+                 -- also the To is a duplicate delivery, not a second recipient.
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_client_contacts_email
+                     ON client_contacts(client_id, lower(email));",
+            )?;
+
+            // v5's probe again, and here it also makes the backfill replayable:
+            // once the column is gone there is nothing left to read.
+            let has_email: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('clients') WHERE name = 'email'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_email {
+                conn.execute_batch(
+                    "INSERT INTO client_contacts (client_id, email, is_billing, position)
+                     SELECT id, TRIM(email), 1, 0
+                       FROM clients
+                      WHERE email IS NOT NULL AND TRIM(email) <> '';
+                     ALTER TABLE clients DROP COLUMN email;",
+                )?;
+            }
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -550,6 +595,171 @@ mod tests {
             .query_row("SELECT archived_at FROM clients", [], |r| r.get(0))
             .unwrap();
         assert_eq!(archived, None);
+    }
+
+    /// `DROP COLUMN` needs SQLite 3.35+, and the migration must not be where we
+    /// find out otherwise.
+    #[test]
+    fn the_bundled_sqlite_supports_drop_column() {
+        let (_dir, conn) = test_db();
+        let v: String = conn
+            .query_row("SELECT sqlite_version()", [], |r| r.get(0))
+            .unwrap();
+        let parts: Vec<u32> = v.split('.').filter_map(|p| p.parse().ok()).collect();
+        assert!(
+            parts[0] > 3 || (parts[0] == 3 && parts[1] >= 35),
+            "sqlite {v} cannot DROP COLUMN"
+        );
+    }
+
+    /// A database as it stood before contacts: `clients.email` back, the
+    /// contacts table gone, the version rewound.
+    fn rewind_to_pre_contacts(conn: &Connection) {
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS client_contacts;
+             ALTER TABLE clients ADD COLUMN email TEXT;
+             UPDATE metadata SET value = '7' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_single_email_becomes_one_billing_contact() {
+        let (_dir, conn) = test_db();
+        rewind_to_pre_contacts(&conn);
+        conn.execute_batch(
+            "INSERT INTO clients (name, email) VALUES ('Acme Co', '  ap@acme.test  ');
+             INSERT INTO clients (name, email) VALUES ('Globex', NULL);",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let (email, billing, position): (String, i64, i64) = conn
+            .query_row(
+                "SELECT email, is_billing, position FROM client_contacts
+                  WHERE client_id = (SELECT id FROM clients WHERE name = 'Acme Co')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            email, "ap@acme.test",
+            "the address is trimmed, not re-entered"
+        );
+        assert_eq!(billing, 1);
+        assert_eq!(position, 0);
+
+        let globex: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM client_contacts
+                  WHERE client_id = (SELECT id FROM clients WHERE name = 'Globex')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(globex, 0);
+    }
+
+    #[test]
+    fn a_blank_email_does_not_become_a_contact() {
+        let (_dir, conn) = test_db();
+        rewind_to_pre_contacts(&conn);
+        conn.execute(
+            "INSERT INTO clients (name, email) VALUES ('Blank', '   ')",
+            [],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM client_contacts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "a whitespace address is not an address");
+    }
+
+    #[test]
+    fn the_clients_table_no_longer_carries_an_email_column() {
+        let (_dir, conn) = test_db();
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('clients') WHERE name = 'email'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!has, "a second source of truth for the billing address");
+    }
+
+    #[test]
+    fn two_billing_contacts_for_one_client_are_refused_by_the_index() {
+        let (_dir, conn) = test_db();
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme Co')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO client_contacts (client_id, email, is_billing) VALUES (1, 'a@x.test', 1)",
+            [],
+        )
+        .unwrap();
+
+        assert!(conn
+            .execute(
+                "INSERT INTO client_contacts (client_id, email, is_billing) \
+                 VALUES (1, 'b@x.test', 1)",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn the_same_address_twice_for_one_client_is_refused_case_insensitively() {
+        let (_dir, conn) = test_db();
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme Co')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO client_contacts (client_id, email) VALUES (1, 'ap@acme.test')",
+            [],
+        )
+        .unwrap();
+
+        assert!(conn
+            .execute(
+                "INSERT INTO client_contacts (client_id, email) VALUES (1, 'AP@acme.test')",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn deleting_a_client_takes_its_contacts_with_it() {
+        let (_dir, conn) = test_db();
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme Co')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO client_contacts (client_id, email) VALUES (1, 'ap@acme.test')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM clients WHERE id = 1", [])
+            .unwrap();
+
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM client_contacts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            left, 0,
+            "the FK cascade is live — db.rs sets foreign_keys=ON"
+        );
+    }
+
+    #[test]
+    fn the_contacts_migration_is_replayable() {
+        let (_dir, conn) = test_db();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
 
     #[test]

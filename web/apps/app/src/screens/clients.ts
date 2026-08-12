@@ -8,6 +8,7 @@ import {
 } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import { controlsCss } from '@nigel/theme';
 import '@nigel/ui';
 import {
@@ -24,7 +25,7 @@ import {
 } from '@nigel/ui';
 
 import { ApiError, type ApiClient } from '../api/index.js';
-import type { Client } from '../api/types.js';
+import type { Client, ClientContact } from '../api/types.js';
 import { clientFormFrom, clientPatch, newClientRequest } from './invoice-data.js';
 import {
   invoicingGuardrailAction,
@@ -65,6 +66,20 @@ interface Editor {
   /** The client being edited; absent when creating. */
   id?: number;
   value: ClientFormValue;
+  /**
+   * The contacts the dialog opened with, so the patch can send `contacts` only
+   * when the list actually changed — an all-absent PATCH is a 400.
+   */
+  contacts: ClientContact[];
+  /** The detail request is still in flight. */
+  loading?: boolean;
+  /**
+   * The detail could not be loaded. The dialog shows the failure and a retry,
+   * never a form: an editable form here would carry an empty contacts
+   * baseline, and saving it would whole-list-replace — that is, delete — every
+   * address the client actually has.
+   */
+  loadFailed?: boolean;
 }
 
 /**
@@ -153,9 +168,54 @@ export class NigelClientsScreen extends LitElement {
   // -- editing --------------------------------------------------------------
 
   private openCreate = (): void => {
-    this.editor = { mode: 'create', value: EMPTY_CLIENT_FORM };
+    this.editor = { mode: 'create', value: EMPTY_CLIENT_FORM, contacts: [] };
     this.formErrors = {};
     this.dialogError = null;
+  };
+
+  /**
+   * Opening Edit fetches the detail first: the list row is a bare `Client` and
+   * carries no contacts, and putting them on every row would cost the one
+   * screen that must stay one query and one cheap payload. One request, on a
+   * deliberate click, with a loading state in the dialog.
+   */
+  private async openEdit(client: Client): Promise<void> {
+    this.editor = {
+      mode: 'edit',
+      id: client.id,
+      value: clientFormFrom(client),
+      contacts: [],
+      loading: true,
+    };
+    this.formErrors = {};
+    this.dialogError = null;
+    await this.loadEditor(client.id);
+  }
+
+  private async loadEditor(id: number): Promise<void> {
+    this.editor = { ...this.editor!, loading: true, loadFailed: false };
+    this.dialogError = null;
+
+    try {
+      const detail = await this.client.getClient(id);
+      // The route may have moved on while the request was in flight.
+      if (this.editor?.id !== id) return;
+      this.editor = {
+        ...this.editor,
+        value: clientFormFrom(detail, detail.contacts),
+        contacts: detail.contacts,
+        loading: false,
+        loadFailed: false,
+      };
+    } catch (error) {
+      if (this.editor?.id !== id) return;
+      this.editor = { ...this.editor, loading: false, loadFailed: true };
+      this.dialogError = invoicingGuardrailMessage(error, 'client');
+    }
+  }
+
+  private retryEditor = (): void => {
+    if (this.editor?.id !== undefined) void this.loadEditor(this.editor.id);
   };
 
   private closeEditor = (): void => {
@@ -180,9 +240,7 @@ export class NigelClientsScreen extends LitElement {
       return;
     }
     if (action === 'edit') {
-      this.editor = { mode: 'edit', id, value: clientFormFrom(client) };
-      this.formErrors = {};
-      this.dialogError = null;
+      void this.openEdit(client);
       return;
     }
     if (action === 'archive' || action === 'unarchive') {
@@ -229,7 +287,9 @@ export class NigelClientsScreen extends LitElement {
 
   private handleSave = async (): Promise<void> => {
     const editor = this.editor;
-    if (!editor || this.saving) return;
+    // A form that never loaded holds no baseline to compare against, so there
+    // is nothing here that could be a save.
+    if (!editor || this.saving || editor.loading || editor.loadFailed) return;
 
     const errors = validateClientForm(editor.value);
     this.formErrors = errors;
@@ -242,7 +302,7 @@ export class NigelClientsScreen extends LitElement {
         await this.client.createClient(newClientRequest(editor.value));
       } else if (editor.id !== undefined) {
         const current = this.clients.find((candidate) => candidate.id === editor.id);
-        const patch = current ? clientPatch(current, editor.value) : {};
+        const patch = current ? clientPatch(current, editor.value, editor.contacts) : {};
         // An all-absent PATCH is a 400: a save with nothing changed is a close.
         if (Object.keys(patch).length === 0) {
           this.closeEditor();
@@ -357,17 +417,21 @@ export class NigelClientsScreen extends LitElement {
         open
         heading=${creating ? 'Add client' : 'Edit client'}
         confirm-label=${creating ? 'Add client' : 'Save'}
-        ?busy=${this.saving}
+        ?busy=${this.saving || editor.loading === true || editor.loadFailed === true}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
       >
-        <wc-client-form
-          .value=${editor.value}
-          .errors=${this.formErrors}
-          ?disabled=${this.saving}
-          @nc-client-form-change=${this.handleFormChange}
-        ></wc-client-form>
+        ${editor.loadFailed
+          ? html`<wa-button data-retry-editor @click=${this.retryEditor}>Try again</wa-button>`
+          : editor.loading
+            ? html`<wc-spinner show-label label="Loading contacts"></wc-spinner>`
+            : html`<wc-client-form
+                .value=${editor.value}
+                .errors=${this.formErrors}
+                ?disabled=${this.saving}
+                @nc-client-form-change=${this.handleFormChange}
+              ></wc-client-form>`}
       </wc-manager-dialog>
     `;
   }

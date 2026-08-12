@@ -1,7 +1,8 @@
-use rusqlite::Connection;
-use serde::Serialize;
+use rusqlite::{Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{DeleteBlock, NigelError, Result};
+use crate::invoicing::mailgun::validate_header_value;
 use crate::models::Client;
 
 /// Is this name already taken by some other client?
@@ -18,10 +19,34 @@ fn name_taken(conn: &Connection, name: &str, except: Option<i64>) -> Result<bool
     Ok(taken)
 }
 
+/// Add a client in its own transaction.
+///
+/// A caller that writes something else in the same breath — a whole contact
+/// list, say — wants [`add_client_within`] and one transaction of its own, so
+/// a refusal on the second half leaves no client row behind. This is the
+/// `sync_all_report`/`sync_all_report_within` split, applied to writes.
 pub fn add_client(
     conn: &Connection,
     name: &str,
     email: Option<&str>,
+    billing_address: Option<&str>,
+    notes: Option<&str>,
+) -> Result<i64> {
+    let tx = conn.unchecked_transaction()?;
+    let id = add_client_within(&tx, name, billing_address, notes)?;
+    set_billing_email(&tx, id, email)?;
+    tx.commit()?;
+    Ok(id)
+}
+
+/// The client row alone, inside the caller's transaction.
+///
+/// No email: an address is a `client_contacts` row, and a caller composing
+/// this with [`set_contacts_within`] would otherwise write the billing contact
+/// twice.
+pub fn add_client_within(
+    conn: &Connection,
+    name: &str,
     billing_address: Option<&str>,
     notes: Option<&str>,
 ) -> Result<i64> {
@@ -36,10 +61,264 @@ pub fn add_client(
         });
     }
     conn.execute(
-        "INSERT INTO clients (name, email, billing_address, notes) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![name, email, billing_address, notes],
+        "INSERT INTO clients (name, billing_address, notes) VALUES (?1, ?2, ?3)",
+        rusqlite::params![name, billing_address, notes],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// One address a client can be reached at.
+///
+/// Exactly one row per client carries `is_billing`: a partial unique index
+/// gives *at most* one, and the normalize step every write runs gives *at
+/// least* one whenever there is any contact at all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientContact {
+    pub id: i64,
+    pub client_id: i64,
+    pub name: Option<String>,
+    pub email: String,
+    pub title: Option<String>,
+    pub is_billing: bool,
+    pub position: i64,
+}
+
+/// A contact as a caller supplies it — no id, because the write is a
+/// whole-list replacement, the shape `update_invoice` uses for `items`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewContact {
+    pub email: String,
+    pub name: Option<String>,
+    pub title: Option<String>,
+    #[serde(default)]
+    pub is_billing: bool,
+}
+
+const CONTACT_COLUMNS: &str = "id, client_id, name, email, title, is_billing, position";
+
+fn contact_from_row(r: &rusqlite::Row) -> rusqlite::Result<ClientContact> {
+    Ok(ClientContact {
+        id: r.get(0)?,
+        client_id: r.get(1)?,
+        name: r.get(2)?,
+        email: r.get(3)?,
+        title: r.get(4)?,
+        is_billing: r.get::<_, i64>(5)? != 0,
+        position: r.get(6)?,
+    })
+}
+
+/// A client's addresses, the billing one first and the rest in the order they
+/// were written.
+pub fn list_contacts(conn: &Connection, client_id: i64) -> Result<Vec<ClientContact>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {CONTACT_COLUMNS} FROM client_contacts
+          WHERE client_id = ?1 ORDER BY is_billing DESC, position, id"
+    ))?;
+    let rows = stmt
+        .query_map([client_id], contact_from_row)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// At least an address, no blank or duplicate one, at most one billing row.
+///
+/// It does **not** shape-check an address, for the reason the rest of the
+/// codebase does not: `nigel client add --email` never has, and a form that
+/// refused what the CLI accepts would make the surfaces disagree about what a
+/// client is. What it does refuse is a line break, because these strings become
+/// mail headers.
+pub fn validate_contacts(contacts: &[NewContact]) -> Result<()> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut billing = 0;
+    for contact in contacts {
+        let email = contact.email.trim();
+        if email.is_empty() {
+            return Err(NigelError::Invalid(
+                "A contact needs an email address".into(),
+            ));
+        }
+        validate_header_value(email, "contact email")?;
+        if let Some(name) = &contact.name {
+            validate_header_value(name, "contact name")?;
+        }
+        if let Some(title) = &contact.title {
+            validate_header_value(title, "contact title")?;
+        }
+        let key = email.to_lowercase();
+        if seen.contains(&key) {
+            return Err(NigelError::Invalid(format!(
+                "'{email}' is listed twice — one address per client"
+            )));
+        }
+        seen.push(key);
+        if contact.is_billing {
+            billing += 1;
+        }
+    }
+    if billing > 1 {
+        return Err(NigelError::Invalid(
+            "exactly one contact can be the billing recipient".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Replace a client's whole contact list, in one transaction.
+///
+/// Validation runs before anything is deleted, and positions are the order the
+/// contacts arrived in. Ids are not preserved — the same property `items` has
+/// on `update_invoice`, and nothing references a contact id.
+pub fn set_contacts(conn: &Connection, client_id: i64, contacts: &[NewContact]) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    set_contacts_within(&tx, client_id, contacts)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// [`set_contacts`] inside the caller's transaction, for a surface writing the
+/// client row and its addresses as one thing.
+pub fn set_contacts_within(
+    conn: &Connection,
+    client_id: i64,
+    contacts: &[NewContact],
+) -> Result<()> {
+    ensure_client_exists(conn, client_id)?;
+    validate_contacts(contacts)?;
+
+    // Normalization, after validation: a list that names no billing recipient
+    // makes its first row one, so a client with contacts but no billing address
+    // is not representable.
+    let billing_index = contacts.iter().position(|c| c.is_billing).unwrap_or(0);
+
+    conn.execute(
+        "DELETE FROM client_contacts WHERE client_id = ?1",
+        [client_id],
+    )?;
+    for (position, contact) in contacts.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO client_contacts (client_id, name, email, title, is_billing, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                client_id,
+                optional(contact.name.as_deref()),
+                contact.email.trim(),
+                optional(contact.title.as_deref()),
+                i64::from(position == billing_index),
+                position as i64,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// A trimmed value, or `None` when it is blank.
+fn optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// The one place a billing address is written, so `add_client`,
+/// `update_client` and the InvoiceShelf importer cannot disagree about what
+/// setting an email means.
+///
+/// `Some(addr)` promotes an address the client already has, or updates the
+/// billing row, or adds one; `None` deletes the billing row and promotes the
+/// next contact by position, so clearing the email of a client with cc rows
+/// leaves them reachable rather than orphaned.
+pub(crate) fn set_billing_email(
+    conn: &Connection,
+    client_id: i64,
+    email: Option<&str>,
+) -> Result<()> {
+    if let Some(address) = email.map(str::trim).filter(|a| !a.is_empty()) {
+        validate_header_value(address, "email")?;
+    }
+    set_billing_email_unchecked(conn, client_id, email)
+}
+
+/// [`set_billing_email`] without the header check, for data that already
+/// exists somewhere else and is only being copied.
+///
+/// The InvoiceShelf importer is the one caller: refusing somebody's years-old
+/// address would abort a whole migration over a value they cannot edit until
+/// it is imported. It counts what it copies instead — v8's own posture toward
+/// the column it backfills.
+pub(crate) fn set_billing_email_unchecked(
+    conn: &Connection,
+    client_id: i64,
+    email: Option<&str>,
+) -> Result<()> {
+    let address = email.map(str::trim).filter(|a| !a.is_empty());
+
+    let Some(address) = address else {
+        conn.execute(
+            "DELETE FROM client_contacts WHERE client_id = ?1 AND is_billing = 1",
+            [client_id],
+        )?;
+        promote_first_contact(conn, client_id)?;
+        return Ok(());
+    };
+
+    // `.optional()`, not `.ok()`: only "no such row" means the client does not
+    // already hold this address. Swallowing a real database error here would
+    // insert a duplicate the unique index then refuses, reporting a constraint
+    // violation in place of whatever actually went wrong.
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM client_contacts
+              WHERE client_id = ?1 AND lower(email) = lower(?2)",
+            rusqlite::params![client_id, address],
+            |r| r.get(0),
+        )
+        .optional()?;
+
+    if let Some(id) = existing {
+        // The address is already on the client, as a cc. Moving the flag beats
+        // inserting a duplicate the unique index would refuse.
+        conn.execute(
+            "UPDATE client_contacts SET is_billing = 0 WHERE client_id = ?1",
+            [client_id],
+        )?;
+        conn.execute(
+            "UPDATE client_contacts SET is_billing = 1 WHERE id = ?1",
+            [id],
+        )?;
+        return Ok(());
+    }
+
+    let changed = conn.execute(
+        "UPDATE client_contacts SET email = ?2 WHERE client_id = ?1 AND is_billing = 1",
+        rusqlite::params![client_id, address],
+    )?;
+    if changed == 0 {
+        let next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position) + 1, 0) FROM client_contacts WHERE client_id = ?1",
+            [client_id],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO client_contacts (client_id, email, is_billing, position)
+             VALUES (?1, ?2, 1, ?3)",
+            rusqlite::params![client_id, address, next],
+        )?;
+    }
+    Ok(())
+}
+
+/// Give the billing flag to the lowest-position contact, if any remain.
+fn promote_first_contact(conn: &Connection, client_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE client_contacts SET is_billing = 1
+          WHERE id = (SELECT id FROM client_contacts WHERE client_id = ?1
+                       ORDER BY position, id LIMIT 1)",
+        [client_id],
+    )?;
+    Ok(())
 }
 
 /// Which clients a list wants.
@@ -62,7 +341,14 @@ impl ClientScope {
     }
 }
 
-const CLIENT_COLUMNS: &str = "id, name, email, billing_address, notes, archived_at";
+/// `email` is a projection of the billing contact rather than a column: the
+/// field kept its meaning — the address an invoice is sent to — which is what
+/// keeps `require_email`, `{{CLIENT_EMAIL}}`, `format_client_list` and the wire
+/// shape working unchanged. The subquery is correlated, not an N+1.
+const CLIENT_COLUMNS: &str = "id, name,
+     (SELECT c.email FROM client_contacts c
+       WHERE c.client_id = clients.id AND c.is_billing = 1) AS email,
+     billing_address, notes, archived_at";
 
 fn client_from_row(r: &rusqlite::Row) -> rusqlite::Result<Client> {
     Ok(Client {
@@ -123,8 +409,18 @@ impl ClientUpdate {
     }
 }
 
-/// Apply a partial update to a client.
+/// Apply a partial update to a client, in its own transaction.
+///
+/// [`update_client_within`] is the same work inside the caller's, for a
+/// surface that also replaces the contact list and wants both or neither.
 pub fn update_client(conn: &Connection, id: i64, update: &ClientUpdate) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    update_client_within(&tx, id, update)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn update_client_within(conn: &Connection, id: i64, update: &ClientUpdate) -> Result<()> {
     if update.is_empty() {
         return Err(NigelError::Invalid(
             "Nothing to update — provide at least one flag".to_string(),
@@ -145,16 +441,16 @@ pub fn update_client(conn: &Connection, id: i64, update: &ClientUpdate) -> Resul
         }
     }
 
+    // Checked up front rather than read off the row count, because `email` is
+    // no longer a column on `clients` and an email-only update touches none.
+    ensure_client_exists(conn, id)?;
+
     let mut updates = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(ref name) = update.name {
         params.push(Box::new(name.trim().to_string()));
         updates.push(format!("name = ?{}", params.len()));
-    }
-    if let Some(ref email) = update.email {
-        params.push(Box::new(email.clone()));
-        updates.push(format!("email = ?{}", params.len()));
     }
     if let Some(ref address) = update.billing_address {
         params.push(Box::new(address.clone()));
@@ -165,15 +461,19 @@ pub fn update_client(conn: &Connection, id: i64, update: &ClientUpdate) -> Resul
         updates.push(format!("notes = ?{}", params.len()));
     }
 
-    params.push(Box::new(id));
-    let sql = format!(
-        "UPDATE clients SET {} WHERE id = ?{}",
-        updates.join(", "),
-        params.len()
-    );
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    if conn.execute(&sql, param_refs.as_slice())? == 0 {
-        return Err(NigelError::NotFound(format!("Client not found: id {id}")));
+    if !updates.is_empty() {
+        params.push(Box::new(id));
+        let sql = format!(
+            "UPDATE clients SET {} WHERE id = ?{}",
+            updates.join(", "),
+            params.len()
+        );
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        conn.execute(&sql, param_refs.as_slice())?;
+    }
+    if let Some(ref email) = update.email {
+        set_billing_email(conn, id, email.as_deref())?;
     }
     Ok(())
 }
@@ -282,6 +582,9 @@ pub struct ClientInvoiceRow {
 #[serde(rename_all = "camelCase")]
 pub struct ClientSummary {
     pub client: Client,
+    /// Every address, billing first. On the summary rather than on `Client`,
+    /// so the list stays one query and one row shape.
+    pub contacts: Vec<ClientContact>,
     /// Newest invoice number first.
     pub invoices: Vec<ClientInvoiceRow>,
     /// Open invoices only, so a paid or voided one contributes nothing.
@@ -290,6 +593,7 @@ pub struct ClientSummary {
 
 pub fn client_summary(conn: &Connection, id: i64) -> Result<ClientSummary> {
     let client = get_client(conn, id)?;
+    let contacts = list_contacts(conn, id)?;
 
     let mut stmt = conn.prepare(
         "SELECT i.number, i.status, i.issue_date, i.due_date, i.total,
@@ -320,6 +624,7 @@ pub fn client_summary(conn: &Connection, id: i64) -> Result<ClientSummary> {
 
     Ok(ClientSummary {
         client,
+        contacts,
         invoices,
         outstanding,
     })
@@ -783,6 +1088,328 @@ mod tests {
             "got: {err:?}"
         );
         assert!(err.to_string().contains("Acme Co"), "got: {err}");
+    }
+
+    fn contact(email: &str) -> NewContact {
+        NewContact {
+            email: email.into(),
+            ..Default::default()
+        }
+    }
+
+    fn billing(email: &str) -> NewContact {
+        NewContact {
+            email: email.into(),
+            is_billing: true,
+            ..Default::default()
+        }
+    }
+
+    /// The whole point of keeping `Client.email` as a projection.
+    #[test]
+    fn add_client_still_stores_and_answers_one_email() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("ap@acme.test")
+        );
+        let contacts = list_contacts(&conn, id).unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert!(contacts[0].is_billing);
+        assert_eq!(contacts[0].position, 0);
+    }
+
+    #[test]
+    fn a_client_added_with_no_email_has_no_contacts_at_all() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Globex", None, None, None).unwrap();
+        assert_eq!(get_client(&conn, id).unwrap().email, None);
+        assert!(list_contacts(&conn, id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_projected_email_is_the_billing_contacts_address() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        set_contacts(
+            &conn,
+            id,
+            &[
+                NewContact {
+                    email: "dana@acme.test".into(),
+                    name: Some("Dana".into()),
+                    is_billing: true,
+                    ..Default::default()
+                },
+                contact("ap@acme.test"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("dana@acme.test")
+        );
+    }
+
+    #[test]
+    fn setting_the_email_upserts_the_billing_contact_and_leaves_the_cc_rows_alone() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(
+            &conn,
+            id,
+            &[billing("ap@acme.test"), contact("dana@acme.test")],
+        )
+        .unwrap();
+
+        update_client(
+            &conn,
+            id,
+            &ClientUpdate {
+                email: Some(Some("new@acme.test".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let contacts = list_contacts(&conn, id).unwrap();
+        assert_eq!(contacts.len(), 2);
+        assert_eq!(contacts[0].email, "new@acme.test");
+        assert!(contacts[0].is_billing);
+        assert_eq!(
+            contacts[1].email, "dana@acme.test",
+            "the cc row is untouched"
+        );
+    }
+
+    #[test]
+    fn clearing_the_email_promotes_the_next_contact() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(
+            &conn,
+            id,
+            &[billing("ap@acme.test"), contact("dana@acme.test")],
+        )
+        .unwrap();
+
+        update_client(
+            &conn,
+            id,
+            &ClientUpdate {
+                email: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // A client with contacts but no billing recipient is not representable.
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("dana@acme.test")
+        );
+        let contacts = list_contacts(&conn, id).unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert!(contacts[0].is_billing);
+    }
+
+    #[test]
+    fn clearing_the_email_of_a_single_contact_client_leaves_no_contacts() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+
+        update_client(
+            &conn,
+            id,
+            &ClientUpdate {
+                email: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(get_client(&conn, id).unwrap().email, None);
+        assert!(list_contacts(&conn, id).unwrap().is_empty());
+    }
+
+    /// Setting the billing address to one the client already has as a cc moves
+    /// the flag rather than colliding with the unique index.
+    #[test]
+    fn setting_the_email_to_an_existing_cc_promotes_it() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(
+            &conn,
+            id,
+            &[billing("ap@acme.test"), contact("dana@acme.test")],
+        )
+        .unwrap();
+
+        update_client(
+            &conn,
+            id,
+            &ClientUpdate {
+                email: Some(Some("DANA@acme.test".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("dana@acme.test")
+        );
+        assert_eq!(list_contacts(&conn, id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_list_with_no_billing_flag_makes_the_first_row_billing() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(&conn, id, &[contact("a@x.test"), contact("b@x.test")]).unwrap();
+
+        let contacts = list_contacts(&conn, id).unwrap();
+        assert_eq!(contacts[0].email, "a@x.test");
+        assert!(contacts[0].is_billing);
+        assert!(!contacts[1].is_billing);
+    }
+
+    #[test]
+    fn a_list_with_two_billing_flags_is_refused_before_anything_is_deleted() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+
+        let err = set_contacts(&conn, id, &[billing("a@x.test"), billing("b@x.test")]).unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
+        assert_eq!(
+            list_contacts(&conn, id).unwrap().len(),
+            1,
+            "validation runs before the delete"
+        );
+    }
+
+    #[test]
+    fn a_blank_or_duplicate_address_is_refused() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+
+        for bad in [vec![contact("")], vec![contact("   ")]] {
+            let err = set_contacts(&conn, id, &bad).unwrap_err();
+            assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
+        }
+
+        let err = set_contacts(&conn, id, &[contact("A@x.test"), contact("a@x.test")]).unwrap_err();
+        assert!(err.to_string().contains("twice"), "got: {err}");
+    }
+
+    /// These strings become mail headers.
+    #[test]
+    fn a_contact_carrying_a_line_break_is_refused() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+
+        let err = set_contacts(
+            &conn,
+            id,
+            &[NewContact {
+                email: "a@x.test".into(),
+                name: Some("Ada\r\nBcc: x@y.test".into()),
+                ..Default::default()
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
+        assert!(list_contacts(&conn, id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_contacts_replaces_the_whole_list_in_one_transaction() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(
+            &conn,
+            id,
+            &[
+                contact("a@x.test"),
+                contact("b@x.test"),
+                contact("c@x.test"),
+            ],
+        )
+        .unwrap();
+
+        set_contacts(&conn, id, &[contact("d@x.test"), contact("e@x.test")]).unwrap();
+
+        let contacts = list_contacts(&conn, id).unwrap();
+        assert_eq!(
+            contacts
+                .iter()
+                .map(|c| c.email.as_str())
+                .collect::<Vec<_>>(),
+            vec!["d@x.test", "e@x.test"]
+        );
+        assert_eq!(contacts[0].position, 0);
+        assert_eq!(contacts[1].position, 1);
+    }
+
+    #[test]
+    fn an_empty_contact_list_clears_every_address() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        set_contacts(&conn, id, &[]).unwrap();
+        assert!(list_contacts(&conn, id).unwrap().is_empty());
+        assert_eq!(get_client(&conn, id).unwrap().email, None);
+    }
+
+    #[test]
+    fn client_summary_carries_the_contacts() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        set_contacts(&conn, id, &[contact("a@x.test"), billing("b@x.test")]).unwrap();
+
+        let summary = client_summary(&conn, id).unwrap();
+        assert_eq!(summary.contacts.len(), 2);
+        assert_eq!(summary.contacts[0].email, "b@x.test", "billing first");
+        assert!(summary.contacts[0].is_billing);
+    }
+
+    #[test]
+    fn list_clients_answers_every_billing_email_in_one_query() {
+        let (_d, conn) = test_conn();
+        for (name, email) in [
+            ("Acme Co", Some("ap@acme.test")),
+            ("Globex", None),
+            ("Northwind", Some("billing@nw.test")),
+        ] {
+            add_client(&conn, name, email, None, None).unwrap();
+        }
+
+        let rows = list_clients(&conn, ClientScope::Active).unwrap();
+        assert_eq!(
+            rows.iter().map(|c| c.email.as_deref()).collect::<Vec<_>>(),
+            vec![Some("ap@acme.test"), None, Some("billing@nw.test")]
+        );
+    }
+
+    #[test]
+    fn deleting_a_client_takes_its_contacts_with_it() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        delete_client(&conn, id).unwrap();
+
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM client_contacts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "the FK cascade does it; no new statement needed");
+    }
+
+    #[test]
+    fn setting_contacts_on_a_missing_client_is_not_found() {
+        let (_d, conn) = test_conn();
+        let err = set_contacts(&conn, 99, &[contact("a@x.test")]).unwrap_err();
+        assert_eq!(err.to_string(), "Client not found: id 99");
     }
 
     #[test]
