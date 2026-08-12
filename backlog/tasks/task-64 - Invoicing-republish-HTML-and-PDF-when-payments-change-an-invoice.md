@@ -1,11 +1,11 @@
 ---
 id: TASK-64
 title: 'Invoicing: republish HTML and PDF when payments change an invoice'
-status: In Progress
+status: Done
 assignee:
   - '@stream-2'
 created_date: '2026-08-07 23:09'
-updated_date: '2026-08-11 23:35'
+updated_date: '2026-08-12 00:54'
 labels:
   - invoicing
 dependencies: []
