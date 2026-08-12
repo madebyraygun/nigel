@@ -95,6 +95,44 @@ host. Order matters — `controlsCss` first, so your own rules can still overrid
 it. `controls-adoption.test.ts` in each package fails the build if you forget,
 and it applies to app screens as well as to `wc-*` components.
 
+## Light and dark
+
+Three states, expressed as two classes on `<html>`:
+
+| Choice | Class | What decides the colours |
+|---|---|---|
+| Follow the system | *none* | `@media (prefers-color-scheme: dark)` |
+| Light | `light-mode` | opts out of that media query |
+| Dark | `dark-mode` | forces the dark tokens |
+
+**`system` writes no class**, and that is the design rather than an omission:
+the browser re-evaluates a media query the moment the OS setting changes, so
+the app follows along live with no listener, no reload, and nothing to fail.
+Resolving `system` in JavaScript would make that media query dead code.
+
+`@nigel/theme`'s `color-mode.ts` is the writer — `readMode`, `writeMode`,
+`applyMode`, `resolveMode`, `initColorMode` — and the preference lives in
+`localStorage` under `nigel.color-mode`, not in `settings.json`. Every
+`/api/settings/*` route is behind the locked guard, so a server-stored
+preference could not be honoured on the unlock screen, which is the first thing
+an encrypted database shows; and a laptop and a desktop pointed at the same
+books can legitimately disagree.
+
+`wc-mode-switcher` is on the settings screen and is fully controlled: it emits
+`nc-color-mode-change` and the screen does the persisting, so there is one
+source of truth and the preview harness cannot change the real app's
+appearance. The harness has its own toggle in the sidebar for reviewing states
+in both palettes.
+
+`apps/app/index.html` runs a blocking inline copy of the read-and-apply in
+`<head>`, because `main.ts` is a module script and would otherwise let a frame
+of the wrong palette paint first. That duplicates the key and the class names
+in HTML; `src/__tests__/color-mode-bootstrap.test.ts` fails if they drift.
+
+The one `matchMedia` listener in the app exists solely to keep the
+"currently dark" hint honest while System is selected. If it broke, the
+colours would still be right.
+
 ## The api seam
 
 `apps/app/src/api/` is the only module that talks to the server. This is the
@@ -399,6 +437,12 @@ and `wc-register-toolbar` themselves — while `controlsCss` carries the
 parts. They are cheap and `nigel-app` is one boundary away, but print no longer
 depends on them.
 
+The print token block is selected by `:root:root`, and the doubling is load
+bearing. The dark palette is selected by `:root:not(.light-mode)` and
+`:root.dark-mode`, both (0,2,0); a bare `:root` is (0,1,0) and loses to them
+wherever it appears, so composing print last was never enough on its own.
+Simplify it back and a dark-mode machine prints dark pages.
+
 `packages/theme/__tests__/print.test.ts` asserts what the document sheet carries
 and, as importantly, that it no longer carries the component selectors it could
 never match; each component's own test asserts it hides itself. What a printer
@@ -406,7 +450,7 @@ actually does still needs eyes, so before changing any of this, run through:
 
 - [ ] `npm run dev`, open each of the eight reports, print preview
 - [ ] No sidebar, header, banner, period control or export buttons
-- [ ] Black on white in both light and dark mode
+- [ ] Black on white in **all three** appearance modes, on a dark-OS machine
 - [ ] A multi-page register repeats its column headings
 - [ ] Nothing clipped at the right edge, at A4 and at Letter
 

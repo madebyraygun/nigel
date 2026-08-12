@@ -233,3 +233,4 @@ export {
   type SendStepState,
   type SendStepView,
 } from './wc-send-dialog.js';
+export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher.js';

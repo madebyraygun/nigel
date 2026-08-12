@@ -3,6 +3,13 @@ import { customElement, state, property } from 'lit/decorators.js';
 import type { Preview, PreviewBackground } from '../types.js';
 import { parseRoute, routeToUrl, type Route } from '../router.js';
 import { runA11y, type A11yResult } from '../a11y.js';
+import {
+  COLOR_MODES,
+  applyMode,
+  readMode,
+  writeMode,
+  type ColorMode,
+} from '@nigel/theme';
 
 const BG_MAP: Record<PreviewBackground, string> = {
   default: 'var(--wa-color-bg)',
@@ -17,6 +24,7 @@ export class PreviewApp extends LitElement {
   @state() private route: Route = parseRoute(window.location.href);
   @state() private a11y: A11yResult | null = null;
   @state() private inspectorOpen = false;
+  @state() private colorMode: ColorMode = readMode();
 
   static styles = css`
     :host {
@@ -49,6 +57,27 @@ export class PreviewApp extends LitElement {
       font-size: 13px;
     }
     nav a.active {
+      background: var(--nc-color-selected-bg);
+      font-weight: var(--wa-font-weight-medium);
+    }
+    .modes {
+      display: flex;
+      gap: 4px;
+      margin-bottom: var(--wa-space-m);
+    }
+    .modes button {
+      flex: 1;
+      padding: 4px 6px;
+      font: inherit;
+      font-size: 11px;
+      text-transform: capitalize;
+      color: var(--wa-color-text);
+      background: var(--wa-color-surface);
+      border: 1px solid var(--wa-color-border);
+      border-radius: var(--wa-radius-sm);
+      cursor: pointer;
+    }
+    .modes button[aria-pressed='true'] {
       background: var(--nc-color-selected-bg);
       font-weight: var(--wa-font-weight-medium);
     }
@@ -160,6 +189,18 @@ export class PreviewApp extends LitElement {
     `;
   }
 
+  /**
+   * The harness's own control, deliberately plain buttons rather than
+   * `wc-mode-switcher`. The harness is chrome around the components, and
+   * reviewing a component while an instance of it drives the page it is
+   * rendered on is a confusing way to look at anything.
+   */
+  private setColorMode(mode: ColorMode): void {
+    this.colorMode = mode;
+    writeMode(mode);
+    applyMode(mode);
+  }
+
   private renderSidebar(): TemplateResult {
     const groups = new Map<string, Preview[]>();
     for (const p of this.previews) {
@@ -169,6 +210,20 @@ export class PreviewApp extends LitElement {
     }
     return html`
       <nav>
+        <h3>Appearance</h3>
+        <div class="modes" role="group" aria-label="Preview colour mode">
+          ${COLOR_MODES.map(
+            (mode) => html`
+              <button
+                type="button"
+                aria-pressed=${this.colorMode === mode}
+                @click=${() => this.setColorMode(mode)}
+              >
+                ${mode}
+              </button>
+            `,
+          )}
+        </div>
         ${Array.from(
           groups,
           ([group, items]) => html`

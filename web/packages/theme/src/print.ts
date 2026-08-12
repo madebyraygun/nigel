@@ -27,7 +27,12 @@ export const printCss = css`
   }
 
   @media print {
-    :root {
+    /* :root:root, not :root. The dark palette is selected by
+       :root:not(.light-mode) and :root.dark-mode, both (0,2,0); a bare :root is
+       (0,1,0) and loses to them wherever it sits in the sheet, which is why a
+       dark OS printed dark pages. Doubling the selector ties the specificity,
+       and this sheet composes last, so print wins. Do not simplify it back. */
+    :root:root {
       color-scheme: light;
 
       --wa-color-bg: #ffffff;
@@ -50,10 +55,19 @@ export const printCss = css`
       --nc-color-income: #000000;
       --nc-color-expense: #000000;
       --nc-color-flagged: #000000;
+
+      /* The bar fills follow the figures to black, which is what a chart
+         printed from this app has always done. They are separate tokens on
+         screen only so the bars can sit lighter than the numbers. */
+      --nc-color-income-fill: #000000;
+      --nc-color-expense-fill: #000000;
+
+      --nc-color-sidebar-bg: #ffffff;
       --nc-color-selected-bg: transparent;
 
       --nc-grad-brand: none;
       --nc-grad-brand-hover: none;
+      --nc-grad-brand-text: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;

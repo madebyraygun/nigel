@@ -55,6 +55,14 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
+  it('pins color-scheme when a mode is forced, so native widgets follow', () => {
+    // :root declares `color-scheme: light dark`, which lets the UA pick
+    // scrollbars, date pickers and form-control defaults from the OS. An
+    // explicit choice has to pin it, or the app is light with dark scrollbars.
+    expect(text).toMatch(/:root\.light-mode\s*{[^}]*color-scheme:\s*light/);
+    expect(text).toMatch(/:root\.dark-mode\s*{[^}]*color-scheme:\s*dark/);
+  });
+
   it('supports system dark mode and both explicit overrides', () => {
     expect(text).toMatch(/prefers-color-scheme:\s*dark/);
     expect(text).toContain('.dark-mode');
@@ -68,7 +76,7 @@ describe('nigelTheme', () => {
   it('orders light tokens before dark overrides before print', () => {
     // Specificity alone does not settle this: the dark block and the light
     // block both target :root, so the later one wins. Order is the contract.
-    const light = text.indexOf('--wa-color-bg: #fdfcfb');
+    const light = text.indexOf('--wa-color-bg: #f3f2f7');
     const dark = text.indexOf('.dark-mode');
     const print = text.indexOf('@media print');
     expect(light).toBeGreaterThan(-1);

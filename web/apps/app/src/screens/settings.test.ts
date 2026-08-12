@@ -40,6 +40,14 @@ function button(el: NigelSettingsScreen, panelIndex: number) {
   return panel(el, panelIndex)?.querySelector('wa-button') as HTMLElement | undefined;
 }
 
+/** Panels move as settings are added; the heading is the stable handle. */
+function buttonIn(el: NigelSettingsScreen, heading: string) {
+  const found = [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
+    (p) => p.getAttribute('heading') === heading,
+  );
+  return found?.querySelector('wa-button') as HTMLElement | undefined;
+}
+
 async function settle(el: NigelSettingsScreen): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
   await el.updateComplete;
@@ -163,7 +171,7 @@ describe('settings screen', () => {
       field.dispatchEvent(new Event('input'));
       await el.updateComplete;
 
-      button(el, 2)?.click();
+      buttonIn(el, 'Data directory')?.click();
       await settle(el);
 
       expect(client.calls).not.toContain('setDataDir');
@@ -179,7 +187,7 @@ describe('settings screen', () => {
       field.dispatchEvent(new Event('input'));
       await el.updateComplete;
 
-      button(el, 2)?.click();
+      buttonIn(el, 'Data directory')?.click();
       await settle(el);
 
       expect(client.calls).toContain('setDataDir');
@@ -188,7 +196,7 @@ describe('settings screen', () => {
 
     it('does nothing when the path is blank', async () => {
       const { el, client } = await mount();
-      button(el, 2)?.click();
+      buttonIn(el, 'Data directory')?.click();
       await settle(el);
       expect(client.calls).not.toContain('setDataDir');
     });
@@ -275,6 +283,78 @@ describe('settings screen', () => {
       expect(
         el.shadowRoot?.querySelector('wc-password-form')?.getAttribute('error'),
       ).toBe('Wrong password.');
+    });
+  });
+
+  describe('appearance', () => {
+    const switcher = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wc-mode-switcher') as HTMLElement & {
+        mode: string;
+        resolved: string;
+      };
+
+    function choose(el: NigelSettingsScreen, mode: string) {
+      switcher(el).dispatchEvent(
+        new CustomEvent('nc-color-mode-change', {
+          detail: { mode },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      localStorage.clear();
+      document.documentElement.classList.remove('light-mode', 'dark-mode');
+    });
+
+    it('offers the switcher', async () => {
+      const { el } = await mount();
+      expect(switcher(el)).toBeTruthy();
+    });
+
+    it('shows the stored mode as the current one', async () => {
+      localStorage.setItem('nigel.color-mode', 'dark');
+      const { el } = await mount();
+      expect(switcher(el).mode).toBe('dark');
+    });
+
+    it('defaults to system with nothing stored', async () => {
+      const { el } = await mount();
+      expect(switcher(el).mode).toBe('system');
+    });
+
+    it('persists a choice and applies it', async () => {
+      const { el } = await mount();
+      choose(el, 'dark');
+      await el.updateComplete;
+
+      expect(localStorage.getItem('nigel.color-mode')).toBe('dark');
+      expect(document.documentElement.classList.contains('dark-mode')).toBe(true);
+      expect(switcher(el).mode).toBe('dark');
+    });
+
+    it('removes both classes for system, leaving the media query in charge', async () => {
+      const { el } = await mount();
+      choose(el, 'dark');
+      await el.updateComplete;
+      choose(el, 'system');
+      await el.updateComplete;
+
+      expect(localStorage.getItem('nigel.color-mode')).toBe('system');
+      expect(document.documentElement.classList.contains('dark-mode')).toBe(false);
+      expect(document.documentElement.classList.contains('light-mode')).toBe(false);
+    });
+
+    it('sends nothing to the server — the preference is per-browser', async () => {
+      // Every /api/settings/* route is behind the locked guard, so a
+      // server-stored mode could not be honoured on the unlock screen.
+      const { el, client } = await mount();
+      client.calls.length = 0;
+      choose(el, 'light');
+      await settle(el);
+
+      expect(client.calls).toEqual([]);
     });
   });
 });
