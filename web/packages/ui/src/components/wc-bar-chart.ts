@@ -94,11 +94,11 @@ export class WcBarChart extends LitElement {
     }
 
     .bar.income {
-      background: var(--nc-color-income);
+      background: var(--nc-color-income-fill, var(--nc-color-income));
     }
 
     .bar.expense {
-      background: var(--nc-color-expense);
+      background: var(--nc-color-expense-fill, var(--nc-color-expense));
     }
 
     .labels {
@@ -136,11 +136,11 @@ export class WcBarChart extends LitElement {
     }
 
     .swatch.income {
-      background: var(--nc-color-income);
+      background: var(--nc-color-income-fill, var(--nc-color-income));
     }
 
     .swatch.expense {
-      background: var(--nc-color-expense);
+      background: var(--nc-color-expense-fill, var(--nc-color-expense));
     }
 
     .error {

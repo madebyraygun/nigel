@@ -55,10 +55,19 @@ export const printCss = css`
       --nc-color-income: #000000;
       --nc-color-expense: #000000;
       --nc-color-flagged: #000000;
+
+      /* The bar fills follow the figures to black, which is what a chart
+         printed from this app has always done. They are separate tokens on
+         screen only so the bars can sit lighter than the numbers. */
+      --nc-color-income-fill: #000000;
+      --nc-color-expense-fill: #000000;
+
+      --nc-color-sidebar-bg: #ffffff;
       --nc-color-selected-bg: transparent;
 
       --nc-grad-brand: none;
       --nc-grad-brand-hover: none;
+      --nc-grad-brand-text: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;

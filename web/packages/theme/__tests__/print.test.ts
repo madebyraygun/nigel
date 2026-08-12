@@ -34,7 +34,15 @@ describe('printCss', () => {
 
   it('drops the brand gradient and the shadows', () => {
     expect(print).toMatch(/--nc-grad-brand:\s*none/);
+    expect(print).toMatch(/--nc-grad-brand-text:\s*none/);
     expect(print).toMatch(/--wa-shadow-m:\s*none/);
+  });
+
+  it('takes the chart fills to black with the figures', () => {
+    // These are separate tokens on screen so bars can sit lighter than the
+    // numbers. On paper they follow, or a colour chart escapes the repaint.
+    expect(print).toMatch(/--nc-color-income-fill:\s*#000000/);
+    expect(print).toMatch(/--nc-color-expense-fill:\s*#000000/);
   });
 
   it('leaves component chrome to the components that own it', () => {
