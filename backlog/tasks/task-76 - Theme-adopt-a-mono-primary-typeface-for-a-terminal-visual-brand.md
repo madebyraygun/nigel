@@ -1,11 +1,11 @@
 ---
 id: TASK-76
 title: 'Theme: adopt a mono primary typeface for a terminal visual brand'
-status: In Progress
+status: Done
 assignee:
   - '@stream-4'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 23:15'
+updated_date: '2026-08-12 21:27'
 labels:
   - enhancement
   - web
