@@ -56,6 +56,9 @@ Secrets and endpoints resolve from the environment first, then from
 | `mailgun_api_key` | `NIGEL_MAILGUN_API_KEY` | `send` | — |
 | `mailgun_domain` | `NIGEL_MAILGUN_DOMAIN` | `send` | — |
 | `from_email` | `NIGEL_FROM_EMAIL` | `send` | — |
+| `from_name` | `NIGEL_FROM_NAME` | — | the business name |
+| `reply_to_email` | `NIGEL_REPLY_TO_EMAIL` | — | no Reply-To header |
+| `contact_email` | `NIGEL_CONTACT_EMAIL` | — | `from_email` |
 | `r2_account_id` | `NIGEL_R2_ACCOUNT_ID` | `send` | — |
 | `r2_access_key` | `NIGEL_R2_ACCESS_KEY` | `send` | — |
 | `r2_secret_key` | `NIGEL_R2_SECRET_KEY` | `send` | — |
@@ -64,6 +67,25 @@ Secrets and endpoints resolve from the environment first, then from
 
 A missing value is reported by name, e.g.
 `missing invoicing config: r2_bucket (set it in settings.json or the matching NIGEL_ env var)`.
+
+`public_base_url` is checked at send time as well as required. An address
+without an `http://` or `https://` scheme, or with no host after it (`https://:8787/i`,
+`https://user@/i`), is refused by name before any Stripe link is created,
+anything is uploaded or any email goes out — `billing.example.com` is the common
+mistake and reads as a relative address in a client's inbox. A **scheme-relative**
+address, `//billing.example.com/i`, is refused for the same reason and is the one
+worth calling out on upgrade: it resolves in a browser that already has a
+scheme, and a link in an email has no page to inherit one from. Put `https:` in
+front of it.
+
+The refusal quotes the offending value in a terminal, where it is being read by
+whoever just typed the command; over HTTP it names the key and the defect only,
+because no API response carries a configured setting's value. A `publicUrl` on
+`GET /api/invoices/{number}` is likewise `null` when the base URL cannot produce
+a working link — an absent address beats a broken one. An address whose path does not end in `/i` still
+sends, with a notice: Nigel writes every object under the `i/` prefix, so a base
+URL pointing at the bucket root produces links that 404. The same notice appears
+as `invoicing.publicBaseUrlWarning` on `GET /api/status`.
 
 Environment variables keep credentials out of the settings file. If you do store
 them in `settings.json`, note that Nigel writes that file with owner-only
@@ -75,7 +97,10 @@ permissions on Unix. Use Stripe test keys (`sk_test_…`) while trying things ou
   "stripe_secret_key": "sk_test_...",
   "mailgun_api_key": "...",
   "mailgun_domain": "mg.example.com",
-  "from_email": "billing@example.com",
+  "from_email": "billing@mg.example.com",
+  "from_name": "Acme LLC",
+  "reply_to_email": "sam@example.com",
+  "contact_email": "accounts@example.com",
   "r2_account_id": "...",
   "r2_access_key": "...",
   "r2_secret_key": "...",
@@ -97,6 +122,14 @@ without one. `nigel client list` prints the client IDs that `invoice new` takes.
 A name is required and must be unique: an empty one and a name another client
 already has are both refused, on `client add` and on a `client edit` that
 renames. Renaming a client to the name it already has is not a collision.
+
+That rule lives in the data layer (`add_client`/`update_client`), not in the
+schema: `clients.name` carries no `UNIQUE` index, matching `accounts.name` and
+`categories.name`. Two requests racing each other in the web UI can therefore
+both pass the check and both insert; the result is two clients with one name,
+which nothing resolves by name and which you can fix by renaming one on the
+clients screen. The InvoiceShelf import deliberately does not apply the rule at
+all — it copies your old customer list as it stands.
 
 ### Inspecting and editing a client
 
@@ -191,9 +224,9 @@ it is not, which is why the button is dropped even when the Stripe URL is still
 in the row.
 
 Preview is the one invoicing command that works on a fresh install: it needs no
-Stripe, R2, or Mailgun configuration and makes no network call. With `from_email`
-unset the direct-deposit contact line renders `(from_email not configured)` and
-the command says so on stderr — the page is still complete enough to check the
+Stripe, R2, or Mailgun configuration and makes no network call. With neither
+`contact_email` nor `from_email` set the direct-deposit contact line renders
+`(contact_email not configured)` and the command says so on stderr — the page is still complete enough to check the
 figures and the layout.
 
 In a build without the `pdf` feature the HTML is written, no PDF is, and the exit
@@ -313,22 +346,63 @@ One command does the whole publish:
    `nigel invoice preview` writes locally, so a preview cannot disagree with
    what is published.
 3. Uploads both to R2 as `i/{token}/index.html` and `i/{token}/invoice.pdf`, where
-   `token` is the invoice's random 16-character identifier.
+   `token` is the invoice's random 16-character identifier. The address Nigel
+   hands out names the `index.html` object itself — see "Hosting" below.
 4. Emails the client through Mailgun — HTML body, PDF attached, subject
    `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
    is set. The name comes from the same setting the dashboard's settings screen
-   edits.
+   edits. The From carries a display name and, when one is configured, a
+   Reply-To — see "Who the email is from" below.
 5. Marks the invoice published, which moves it from `draft` to `sent` (or straight
    to `overdue` if its due date has already passed).
 
 If any step fails the invoice stays a draft and no email goes out, so a failed
 send is safe to retry. The command prints the public URL on success:
-`Sent invoice #1248: https://billing.example.com/i/aBc123.../`.
+`Sent invoice #1248: https://billing.example.com/i/aBc123.../index.html`.
 
 The published page shows the line items, the total, any notes and terms, a Pay
 button linking to Stripe, and bank-transfer instructions. The direct-deposit line
-tells the client to get in touch at `from_email`, the same address the invoice is
-sent from.
+tells the client to get in touch at `contact_email`, which falls back to
+`from_email` when it is not set.
+
+### Who the email is from
+
+Four settings decide what a client sees at the top of the message, and they are
+four different jobs:
+
+| Setting | What it is |
+|---|---|
+| `from_email` | the address Mailgun sends from |
+| `from_name` | the display name beside it; unset means the business name |
+| `reply_to_email` | the `Reply-To`; unset means the message carries no such header |
+| `contact_email` | the address the published page's direct-deposit line prints |
+
+```
+From: Acme LLC <billing@mg.example.com>
+Reply-To: sam@example.com
+To: ap@acme.test
+Subject: Invoice #1248 from Acme LLC
+```
+
+`from_email` should be on `mailgun_domain`. When it is not, the send reports a
+warning and goes ahead: a Mailgun domain of `mg.example.com` sending for
+`billing@example.com` is a common, deliverable setup, and only your Mailgun
+account knows which senders it has verified. The warning appears on stderr from
+the CLI, on the status line in the dashboard, and as `configWarnings` on the
+send response. The reply-to is not checked at all — Mailgun constrains what a
+message is sent *from*, not where a human replies to it.
+
+`from_email` must be a **bare address**. Putting the display name in it —
+`Acme LLC <billing@mg.example.com>`, which is how you would have had to do it
+before `from_name` existed — is refused, because the name goes in `from_name`
+now and composing both would produce a header Mailgun rejects.
+
+A display name containing a comma or a quote is encoded for you
+(`"Carter, Sam" <billing@mg.example.com>`); you never quote it yourself. A
+control character in `from_email`, `from_name`, the business name or
+`reply_to_email` is refused by naming where it came from, and the send stops
+before any network call: a header carrying a newline can add recipients nobody
+chose.
 
 ### From the web UI
 
@@ -444,7 +518,7 @@ nothing to say.
 | `{{TERMS}}` | fragment | Terms block, empty when unset |
 | `{{PAY_URL}}` | text | Stripe payment link, empty when there is none |
 | `{{PAY}}` | fragment | The Pay button, empty when there is no link |
-| `{{CONTACT}}` | text | Direct-deposit contact address (`from_email`) |
+| `{{CONTACT}}` | text | Direct-deposit contact address (`contact_email`, or `from_email`) |
 
 **Text** placeholders are HTML-escaped values you can put in element content or
 inside a quoted attribute value. **Fragment**
@@ -566,6 +640,12 @@ nigel invoice pay 1248 --date 2026-08-20 --method ach
 are allowed, since banks make them. `--method` is one of `stripe`, `ach`,
 `direct_deposit` (the default), or `other`.
 
+`--date` must be a real date in `YYYY-MM-DD`; anything else is refused rather
+than recorded. A month or day you typed without its leading zero is accepted and
+stored padded — `--date 2026-8-9` lands in the books as `2026-08-09`, which is
+also what `--issue` and `--due` do on `invoice new` and `invoice edit`. Dates are
+stored one way so they compare and sort as dates.
+
 ### Sync on launch
 
 Every subcommand that reads or writes the books runs a sync first, as long as a
@@ -604,6 +684,19 @@ whenever it is published or paid:
 | `overdue` | Published, past its due date, with a balance |
 | `paid` | Paid in full (settled to within half a cent) |
 | `void` | Cancelled; cannot be sent, paid, or edited |
+
+Status is **stored**, not computed when you read it. It is re-derived only by a
+write to the invoice, and each write names the day it derives against: `invoice
+send` uses the publish date, a payment uses the payment's own date (so entering
+last month's cheque today does not advance anything else), and an edit or a void
+uses the day the command runs. `invoice sync` re-derives only for an invoice it
+records a new Stripe payment against.
+
+An invoice that simply passes its due date with nothing else happening to it
+therefore keeps the status it was last written with — nothing recomputes it in
+the background, and reading the list does not recompute it either. **A/R aging is
+the report to trust for how late something is**: it measures every open invoice
+against today's date directly rather than reading the stored word.
 
 ## A/R aging
 
@@ -688,10 +781,22 @@ key pair, and builds client-facing links from `public_base_url`.
 The two sides meet at Cloudflare: expose the bucket at a hostname you control —
 a custom domain on the bucket, or an equivalent route into it — so an object
 stored at key `i/{token}/index.html` is served at, for example,
-`https://billing.example.com/i/{token}/`, and set `public_base_url` to
+`https://billing.example.com/i/{token}/index.html`, and set `public_base_url` to
 `https://billing.example.com/i`. Keep the `i/` prefix in `public_base_url` aligned
 with that mapping — Nigel writes keys under `i/`, and the base URL only tells it
 what public address that prefix answers on.
+
+Nigel names the file, not its directory: every link it prints, returns and
+reports ends in `/index.html`. A plain R2 custom domain serves objects by key
+and has no directory-index behaviour, so `…/{token}/` would 404 while the object
+beside it resolves. The file form works on a bare custom domain, on S3 static
+hosting, behind a Worker, and on a synced local copy, without asking anything of
+the host.
+
+If you would rather hand out the directory form, add an edge rewrite — a
+Cloudflare transform rule or a Worker that appends `index.html` to a path ending
+in `/`. That is an option, not a requirement: with the rewrite in place both
+addresses resolve to the same object, and Nigel keeps linking to the file.
 
 Tokens are random and unguessable, and nothing enumerates the bucket, so an
 invoice is readable only by someone holding its link.

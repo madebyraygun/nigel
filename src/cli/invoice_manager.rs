@@ -9,7 +9,8 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::invoice::{
-    build_clients, company_name, optional_gateway, optional_publisher, PUBLISHED_VOID_NOTICE,
+    build_clients, company_name, contact_email_for_preview, optional_gateway, optional_publisher,
+    PUBLISHED_VOID_NOTICE,
 };
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
@@ -837,7 +838,13 @@ impl InvoiceManager {
 
         if let Screen::ConfirmSend = &self.screen {
             lines.push(Line::from(""));
-            for line in send_confirmation(detail) {
+            let cfg = crate::settings::invoicing_config();
+            let base_url_warning = cfg
+                .public_base_url
+                .as_deref()
+                .filter(|url| crate::invoicing::r2::validate_public_base_url(url).is_ok())
+                .and_then(crate::invoicing::r2::public_base_url_warning);
+            for line in send_confirmation(detail, base_url_warning, content_area.width) {
                 lines.push(Line::from(Span::styled(
                     format!("   {line}"),
                     Style::default().fg(Color::Yellow),
@@ -1025,6 +1032,7 @@ impl InvoiceManager {
     /// network.
     pub(crate) fn begin_send(
         &mut self,
+        conn: &Connection,
         cfg: InvoicingConfig,
         data_dir: &std::path::Path,
     ) -> InvoiceAction {
@@ -1045,7 +1053,7 @@ impl InvoiceManager {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
-        if let Err(e) = build_clients(cfg) {
+        if let Err(e) = build_clients(cfg, &company_name(conn)) {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
@@ -1103,19 +1111,34 @@ impl InvoiceManager {
         cfg: InvoicingConfig,
         data_dir: &std::path::Path,
     ) {
+        let company = company_name(conn);
+        let contact_email = contact_email_for_preview(&cfg).0;
         let prepared = load_template(data_dir).and_then(|template| {
-            let clients = build_clients(cfg)?;
+            let clients = build_clients(cfg, &company)?;
             Ok((template, clients))
         });
         match prepared {
-            Ok((template, (stripe, r2, mail))) => {
-                let company = company_name(conn);
+            Ok((template, clients)) => {
+                // The one place a send's config warnings are surfaced on this
+                // screen: `begin_send` builds clients too, and printing there
+                // as well would say it twice. Never `eprintln!` — ratatui owns
+                // the alternate screen this is drawn into.
+                for warning in &clients.warnings {
+                    self.set_status(warning.clone());
+                }
                 let branding = Branding {
                     template: &template,
                     company: &company,
-                    contact_email: &mail.from,
+                    contact_email: &contact_email,
                 };
-                self.perform_send(conn, today, &branding, &stripe, &r2, &mail);
+                self.perform_send(
+                    conn,
+                    today,
+                    &branding,
+                    &clients.stripe,
+                    &clients.r2,
+                    &clients.mail,
+                );
             }
             Err(e) => self.finish_send(conn, Err(e)),
         }
@@ -1430,7 +1453,9 @@ impl InvoiceManager {
             KeyCode::PageDown => self.detail_scroll += 10,
             KeyCode::Char('p') => self.open_pay_form(&crate::cli::today()),
             KeyCode::Char('v') => self.open_void_confirmation(conn),
-            KeyCode::Char('s') => return self.begin_send(invoicing_config(), &get_data_dir()),
+            KeyCode::Char('s') => {
+                return self.begin_send(conn, invoicing_config(), &get_data_dir())
+            }
             KeyCode::Esc => self.close_detail(),
             KeyCode::Char('q') => return InvoiceAction::Close,
             _ => {}
@@ -1599,12 +1624,16 @@ fn warning_lines(invoice: &Invoice, width: u16) -> Vec<String> {
     wrapped.lines().map(|line| format!("   {line}")).collect()
 }
 
-/// The two lines S6 puts under the invoice, worded for a first send or a
-/// re-send.
-fn send_confirmation(detail: &Detail) -> Vec<String> {
+/// The lines S6 puts under the invoice, worded for a first send or a re-send,
+/// with the `public_base_url` caution beneath them when there is one.
+///
+/// The warning arrives as an argument rather than being read here: this is the
+/// pure half, and the sentence itself lives in `invoicing::r2` so a terminal and
+/// a browser say the same thing about the same setting.
+fn send_confirmation(detail: &Detail, base_url_warning: Option<&str>, width: u16) -> Vec<String> {
     let invoice = &detail.invoice;
     let email = optional_display(detail.client_email());
-    match &invoice.published_at {
+    let mut lines = match &invoice.published_at {
         Some(published) => vec![
             format!("Re-send invoice #{} to {email}?", invoice.number),
             format!("Published {published}. The existing payment link is reused; the page and"),
@@ -1619,7 +1648,12 @@ fn send_confirmation(detail: &Detail) -> Vec<String> {
             ),
             "page and PDF, then emails the client.".to_string(),
         ],
+    };
+    if let Some(warning) = base_url_warning {
+        let (wrapped, _) = crate::tui::wrap_text(warning, (width as usize).max(20) - 6);
+        lines.extend(wrapped.lines().map(|line| format!("notice: {line}")));
     }
+    lines
 }
 
 /// The CLI names the flag it wants; a form names the field that was typed in.
@@ -2506,6 +2540,36 @@ mod tests {
         );
     }
 
+    /// The `/i` caution is a fact about the installation, so it belongs where
+    /// the operator is deciding — under the send confirmation, not only on the
+    /// CLI's stderr.
+    #[test]
+    fn the_send_confirmation_carries_the_public_base_url_notice() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Cedar Systems", 100.0);
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+        let detail = mgr.detail.as_ref().expect("a detail is open");
+
+        let quiet = send_confirmation(detail, None, 80);
+        assert!(
+            !quiet.iter().any(|line| line.starts_with("notice:")),
+            "a configured installation says nothing extra: {quiet:?}"
+        );
+
+        let warning = crate::invoicing::r2::public_base_url_warning("https://billing.example.test")
+            .expect("a base URL missing the prefix warns");
+        let warned = send_confirmation(detail, Some(warning), 80);
+        assert_eq!(
+            &warned[..quiet.len()],
+            &quiet[..],
+            "the notice is added below the decision, never in place of it"
+        );
+        let notice = warned[quiet.len()..].join(" ");
+        assert!(notice.starts_with("notice:"), "{warned:?}");
+        assert!(notice.contains("/i"), "{warned:?}");
+    }
+
     fn open_void(mgr: &mut InvoiceManager, conn: &Connection) {
         mgr.handle_key(KeyCode::Enter, conn);
         mgr.handle_key(KeyCode::Char('v'), conn);
@@ -2667,7 +2731,7 @@ mod tests {
 
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
-        mgr.begin_send(full_config(), dir.path());
+        mgr.begin_send(&conn, full_config(), dir.path());
 
         let screen = rendered(&mut mgr);
         assert!(screen.contains("Send invoice #1248"), "{screen}");
@@ -2744,6 +2808,9 @@ mod tests {
             mailgun_api_key: None,
             mailgun_domain: None,
             from_email: None,
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: None,
             r2_access_key: None,
             r2_secret_key: None,
@@ -2757,7 +2824,10 @@ mod tests {
             stripe_secret_key: Some("sk_test".into()),
             mailgun_api_key: Some("key".into()),
             mailgun_domain: Some("mail.example.test".into()),
-            from_email: Some("billing@example.test".into()),
+            from_email: Some("billing@mail.example.test".into()),
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: Some("acct".into()),
             r2_access_key: Some("ak".into()),
             r2_secret_key: Some("sk".into()),
@@ -2775,7 +2845,7 @@ mod tests {
         data_dir: &std::path::Path,
     ) -> InvoiceAction {
         mgr.handle_key(KeyCode::Enter, conn);
-        mgr.begin_send(cfg, data_dir)
+        mgr.begin_send(conn, cfg, data_dir)
     }
 
     #[test]
@@ -2988,7 +3058,7 @@ mod tests {
             }
             fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
                 *self.pages.borrow_mut() += 1;
-                Ok(format!("https://billing.example.test/i/{token}/"))
+                Ok(format!("https://billing.example.test/i/{token}/index.html"))
             }
         }
 
@@ -3140,10 +3210,10 @@ mod tests {
         struct FakePub;
         impl AssetPublisher for FakePub {
             fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
-                Ok(format!("https://billing.example.com/i/{token}/"))
+                Ok(format!("https://billing.example.com/i/{token}/index.html"))
             }
             fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
-                Ok(format!("https://billing.example.com/i/{token}/"))
+                Ok(format!("https://billing.example.com/i/{token}/index.html"))
             }
         }
         struct FailPub;
@@ -3446,7 +3516,7 @@ mod tests {
         mgr.handle_key(KeyCode::Char('p'), &conn);
         draw(&mut mgr); // payment form
         mgr.handle_key(KeyCode::Esc, &conn);
-        mgr.begin_send(full_config(), dir.path());
+        mgr.begin_send(&conn, full_config(), dir.path());
         draw(&mut mgr); // confirm send
         mgr.handle_key(KeyCode::Char('y'), &conn);
         draw(&mut mgr); // sending

@@ -196,7 +196,7 @@ describe('wc-send-dialog', () => {
     const el = await mount({
       phase: 'sent',
       steps: STEPS,
-      publicUrl: 'https://billing.example.com/i/aBc123XyZ/',
+      publicUrl: 'https://billing.example.com/i/aBc123XyZ/index.html',
     });
     expect(el.shadowRoot?.querySelector('[data-sent]')?.textContent).toContain(
       'ap@acme.test',

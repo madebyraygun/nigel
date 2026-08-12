@@ -26,6 +26,12 @@ pub struct Settings {
     #[serde(default)]
     pub from_email: Option<String>,
     #[serde(default)]
+    pub from_name: Option<String>,
+    #[serde(default)]
+    pub reply_to_email: Option<String>,
+    #[serde(default)]
+    pub contact_email: Option<String>,
+    #[serde(default)]
     pub r2_account_id: Option<String>,
     #[serde(default)]
     pub r2_access_key: Option<String>,
@@ -48,6 +54,9 @@ impl Default for Settings {
             mailgun_api_key: None,
             mailgun_domain: None,
             from_email: None,
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: None,
             r2_access_key: None,
             r2_secret_key: None,
@@ -230,6 +239,9 @@ pub struct InvoicingConfig {
     pub mailgun_api_key: Option<String>,
     pub mailgun_domain: Option<String>,
     pub from_email: Option<String>,
+    pub from_name: Option<String>,
+    pub reply_to_email: Option<String>,
+    pub contact_email: Option<String>,
     pub r2_account_id: Option<String>,
     pub r2_access_key: Option<String>,
     pub r2_secret_key: Option<String>,
@@ -257,6 +269,9 @@ fn invoicing_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
         mailgun_api_key: env_or("NIGEL_MAILGUN_API_KEY", &s.mailgun_api_key),
         mailgun_domain: env_or("NIGEL_MAILGUN_DOMAIN", &s.mailgun_domain),
         from_email: env_or("NIGEL_FROM_EMAIL", &s.from_email),
+        from_name: env_or("NIGEL_FROM_NAME", &s.from_name),
+        reply_to_email: env_or("NIGEL_REPLY_TO_EMAIL", &s.reply_to_email),
+        contact_email: env_or("NIGEL_CONTACT_EMAIL", &s.contact_email),
         r2_account_id: env_or("NIGEL_R2_ACCOUNT_ID", &s.r2_account_id),
         r2_access_key: env_or("NIGEL_R2_ACCESS_KEY", &s.r2_access_key),
         r2_secret_key: env_or("NIGEL_R2_SECRET_KEY", &s.r2_secret_key),
@@ -280,6 +295,10 @@ pub struct InvoicingStatus {
     pub send_configured: bool,
     pub sync_configured: bool,
     pub missing: Vec<&'static str>,
+    /// A configured `public_base_url` that is probably pointing at the wrong
+    /// prefix. Absent when it is unset (that is `missing`'s job) or fine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_base_url_warning: Option<&'static str>,
 }
 
 pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
@@ -306,6 +325,10 @@ pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
         send_configured: missing.is_empty(),
         sync_configured: cfg.stripe_secret_key.is_some(),
         missing,
+        public_base_url_warning: cfg
+            .public_base_url
+            .as_deref()
+            .and_then(crate::invoicing::r2::public_base_url_warning),
     }
 }
 
@@ -365,6 +388,9 @@ mod tests {
             mailgun_api_key: Some("key-secret".into()),
             mailgun_domain: Some("mg.example.com".into()),
             from_email: Some("billing@example.com".into()),
+            from_name: Some("Bluepeak".into()),
+            reply_to_email: Some("sam@example.com".into()),
+            contact_email: Some("accounts@example.com".into()),
             r2_account_id: Some("acct-secret".into()),
             r2_access_key: Some("access-secret".into()),
             r2_secret_key: Some("secret-secret".into()),
@@ -380,20 +406,102 @@ mod tests {
         assert!(status.sync_configured);
         assert!(status.missing.is_empty());
 
-        let rendered = serde_json::to_string(&status).expect("serializes");
-        for value in [
-            "sk_live_secret",
-            "key-secret",
-            "mg.example.com",
-            "billing@example.com",
-            "acct-secret",
-            "access-secret",
-            "secret-secret",
-            "billing",
-            "https://billing.example.com/i",
-        ] {
-            assert!(!rendered.contains(value), "{value} leaked into {rendered}");
+        // The warning field is only on a status that earns one, so the
+        // invariant is checked against both shapes.
+        let mut warned = fully_configured();
+        warned.public_base_url = Some("https://billing.example.com".into());
+        let warning_status = invoicing_status(&warned);
+        assert!(warning_status.public_base_url_warning.is_some());
+
+        for status in [&status, &warning_status] {
+            let rendered = serde_json::to_string(status).expect("serializes");
+            for value in [
+                "sk_live_secret",
+                "key-secret",
+                "mg.example.com",
+                "billing@example.com",
+                "Bluepeak",
+                "sam@example.com",
+                "accounts@example.com",
+                "acct-secret",
+                "access-secret",
+                "secret-secret",
+                "billing",
+                "https://billing.example.com/i",
+                "https://billing.example.com",
+            ] {
+                assert!(!rendered.contains(value), "{value} leaked into {rendered}");
+            }
         }
+    }
+
+    #[test]
+    fn the_optional_envelope_keys_never_appear_in_the_missing_list() {
+        let mut cfg = fully_configured();
+        cfg.from_name = None;
+        cfg.reply_to_email = None;
+        cfg.contact_email = None;
+        let status = invoicing_status(&cfg);
+        assert!(
+            status.send_configured,
+            "an optional key cannot block a send"
+        );
+        assert!(status.missing.is_empty(), "got: {:?}", status.missing);
+    }
+
+    #[test]
+    fn the_new_envelope_keys_resolve_from_the_environment_first() {
+        let file_settings = Settings {
+            from_name: Some("File Co".into()),
+            reply_to_email: Some("file@example.test".into()),
+            contact_email: Some("file-contact@example.test".into()),
+            ..Settings::default()
+        };
+        let cfg = invoicing_config_with(&file_settings, |name| match name {
+            "NIGEL_FROM_NAME" => Some("Env Co".into()),
+            "NIGEL_REPLY_TO_EMAIL" => Some("env@example.test".into()),
+            "NIGEL_CONTACT_EMAIL" => Some("env-contact@example.test".into()),
+            _ => None,
+        });
+        assert_eq!(cfg.from_name.as_deref(), Some("Env Co"));
+        assert_eq!(cfg.reply_to_email.as_deref(), Some("env@example.test"));
+        assert_eq!(
+            cfg.contact_email.as_deref(),
+            Some("env-contact@example.test")
+        );
+
+        let from_file = invoicing_config_with(&file_settings, |_| None);
+        assert_eq!(from_file.from_name.as_deref(), Some("File Co"));
+        assert_eq!(
+            from_file.contact_email.as_deref(),
+            Some("file-contact@example.test")
+        );
+    }
+
+    #[test]
+    fn a_settings_file_written_before_these_keys_existed_still_loads() {
+        let json = r#"{"data_dir": "/tmp/t", "from_email": "billing@mg.example.com"}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.from_email.as_deref(), Some("billing@mg.example.com"));
+        assert!(s.from_name.is_none() && s.reply_to_email.is_none() && s.contact_email.is_none());
+    }
+
+    #[test]
+    fn the_status_warns_about_a_base_url_that_misses_the_i_prefix() {
+        let mut cfg = fully_configured();
+        cfg.public_base_url = Some("https://billing.example.com".into());
+        let status = invoicing_status(&cfg);
+        assert!(status.send_configured, "a warning is not a refusal");
+        assert!(status.public_base_url_warning.is_some());
+    }
+
+    #[test]
+    fn an_unset_base_url_is_missing_rather_than_warned_about() {
+        let mut cfg = fully_configured();
+        cfg.public_base_url = None;
+        let status = invoicing_status(&cfg);
+        assert!(status.public_base_url_warning.is_none());
+        assert!(status.missing.contains(&"public_base_url"));
     }
 
     #[test]

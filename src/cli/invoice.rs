@@ -14,8 +14,11 @@ use crate::invoicing::invoices::{
     line_items, list_invoices, paid_amount, payment_amount, record_payment, update_invoice,
     InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
-use crate::invoicing::mailgun::MailgunClient;
-use crate::invoicing::r2::R2Publisher;
+use crate::invoicing::mailgun::{
+    from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
+    MailgunClient,
+};
+use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
 use crate::invoicing::render::render_invoice;
 use crate::invoicing::render_html::{
     load_template, template_path, Branding, PayButton, DEFAULT_TEMPLATE,
@@ -130,23 +133,102 @@ pub(crate) fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
     })
 }
 
-pub(crate) fn build_clients(
-    cfg: InvoicingConfig,
-) -> Result<(StripeClient, R2Publisher, MailgunClient)> {
+/// The three network clients a send needs, the sender identity its email
+/// carries, and anything about the configuration worth saying out loud.
+///
+/// `warnings` are configuration Nigel will send with but wants the operator to
+/// look at. They travel as data, the way `VoidOutcome::warnings()` does, so
+/// each surface renders them where it can be read: a terminal prints them, the
+/// TUI puts them on its status line, the API answers them as a field. Printing
+/// them here would corrupt ratatui's alternate screen and would fire once per
+/// call rather than once per send.
+pub(crate) struct SendClients {
+    pub stripe: StripeClient,
+    pub r2: R2Publisher,
+    pub mail: MailgunClient,
+    pub warnings: Vec<String>,
+}
+
+/// The clients a send needs, or the first refusal the configuration earns.
+///
+/// `company` is the business name from the database, which an unset `from_name`
+/// falls back to — the same value the subject line already uses. An empty
+/// company and no `from_name` means a bare address, which is what this app sent
+/// before these keys existed.
+pub(crate) fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients> {
     let stripe = build_gateway(&cfg)?;
+    let account_id = require(cfg.r2_account_id, "r2_account_id")?;
+    let access_key = require(cfg.r2_access_key, "r2_access_key")?;
+    let secret_key = require(cfg.r2_secret_key, "r2_secret_key")?;
+    let bucket = require(cfg.r2_bucket, "r2_bucket")?;
+    let public_base_url = require(cfg.public_base_url, "public_base_url")?;
+    // The single constructor both send paths use, and the last moment before any
+    // client exists: a base URL that cannot produce a working link is refused
+    // here, so nothing is published, nothing is emailed and no Stripe link is
+    // created. `optional_publisher` stays lenient — void and republish only need
+    // the upload to happen and never print the address.
+    validate_public_base_url(&public_base_url)?;
     let r2 = R2Publisher {
-        account_id: require(cfg.r2_account_id, "r2_account_id")?,
-        access_key: require(cfg.r2_access_key, "r2_access_key")?,
-        secret_key: require(cfg.r2_secret_key, "r2_secret_key")?,
-        bucket: require(cfg.r2_bucket, "r2_bucket")?,
-        public_base_url: require(cfg.public_base_url, "public_base_url")?,
+        account_id,
+        access_key,
+        secret_key,
+        bucket,
+        public_base_url,
     };
+
+    let api_key = require(cfg.mailgun_api_key, "mailgun_api_key")?;
+    let domain = require(cfg.mailgun_domain, "mailgun_domain")?;
+
+    // The from address is composed into a header like every other value here,
+    // so it is guarded like one — and it must be a bare address, because
+    // `format_address` is what puts the display name on.
+    let from_address = require(cfg.from_email, "from_email")?;
+    validate_header_value(&from_address, "from_email")?;
+    validate_bare_address(&from_address, "from_email")?;
+
+    // An unset `from_name` falls back to the business name, and the refusal
+    // has to name whichever of the two the bad value actually came from: an
+    // operator who never set `from_name` cannot fix `from_name`.
+    let (from_name, name_source) = match cfg.from_name {
+        Some(name) => (Some(name), "from_name"),
+        None => (
+            Some(company.trim().to_string()).filter(|c| !c.is_empty()),
+            "the business name",
+        ),
+    };
+    if let Some(name) = &from_name {
+        validate_header_value(name, name_source)?;
+    }
+    // The reply-to gets no domain check: Mailgun constrains what a message is
+    // sent from, not where a human replies to it.
+    if let Some(reply_to) = &cfg.reply_to_email {
+        validate_header_value(reply_to, "reply_to_email")?;
+    }
+
+    // Config cautions travel as data on the one channel, so a terminal, the
+    // TUI and a browser all say the same things about the same installation.
+    // The `/i` one is a caution and not a refusal, because an edge rewrite can
+    // map that prefix onto the domain root.
+    let warnings = from_address_domain_warning(&from_address, &domain)
+        .into_iter()
+        .chain(public_base_url_warning(&r2.public_base_url).map(str::to_string))
+        .collect();
+
     let mail = MailgunClient {
-        api_key: require(cfg.mailgun_api_key, "mailgun_api_key")?,
-        domain: require(cfg.mailgun_domain, "mailgun_domain")?,
-        from: require(cfg.from_email, "from_email")?,
+        api_key,
+        domain,
+        envelope: EmailEnvelope {
+            from_address,
+            from_name,
+            reply_to: cfg.reply_to_email,
+        },
     };
-    Ok((stripe, r2, mail))
+    Ok(SendClients {
+        stripe,
+        r2,
+        mail,
+        warnings,
+    })
 }
 
 pub fn new(
@@ -181,6 +263,7 @@ pub fn edit(
     notes: Option<String>,
     terms: Option<String>,
     items: &[String],
+    today: &str,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
@@ -198,7 +281,7 @@ pub fn edit(
         terms: terms.map(Some),
         items: optional_items(items)?,
     };
-    update_invoice(&conn, invoice.id, &update)?;
+    update_invoice(&conn, invoice.id, &update, today)?;
 
     let updated = get_invoice(&conn, invoice.id)?;
     println!(
@@ -344,10 +427,11 @@ pub fn show(number: i64) -> Result<()> {
     Ok(())
 }
 
-/// The direct-deposit contact line when `from_email` is not configured. Preview
-/// is the one invoicing command that runs without any configuration, so it
-/// renders a visible stand-in rather than refusing.
-const PREVIEW_CONTACT_PLACEHOLDER: &str = "(from_email not configured)";
+/// The direct-deposit contact line when neither `contact_email` nor
+/// `from_email` is configured. Preview is the one invoicing command that runs
+/// without any configuration, so it renders a visible stand-in rather than
+/// refusing.
+const PREVIEW_CONTACT_PLACEHOLDER: &str = "(contact_email not configured)";
 
 fn preview_dir(output_dir: Option<String>) -> (PathBuf, bool) {
     match output_dir {
@@ -379,9 +463,16 @@ pub(crate) fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
     }
 }
 
+/// The address the published page's direct-deposit line prints. Falls back to
+/// the send address, so an installation that never sets `contact_email` renders
+/// exactly the page it rendered before the key existed.
+pub(crate) fn contact_address(cfg: &InvoicingConfig) -> Option<String> {
+    cfg.contact_email.clone().or_else(|| cfg.from_email.clone())
+}
+
 pub(crate) fn contact_email_for_preview(cfg: &InvoicingConfig) -> (String, bool) {
-    match cfg.from_email.as_deref() {
-        Some(email) => (email.to_string(), false),
+    match contact_address(cfg) {
+        Some(email) => (email, false),
         None => (PREVIEW_CONTACT_PLACEHOLDER.to_string(), true),
     }
 }
@@ -397,7 +488,7 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
     let (contact_email, is_placeholder) = contact_email_for_preview(&invoicing_config());
     if is_placeholder {
         eprintln!(
-            "notice: from_email is not configured — the direct-deposit contact line is a placeholder"
+            "notice: neither contact_email nor from_email is configured — the direct-deposit contact line is a placeholder"
         );
     }
 
@@ -450,14 +541,27 @@ pub fn send(number: i64, today: &str) -> Result<()> {
     // The template is loaded before anything is built or created, so a broken
     // one fails the send with no Stripe link made and nothing published.
     let template = load_template(&get_data_dir())?;
-    let (stripe, r2, mail) = build_clients(invoicing_config())?;
+    let cfg = invoicing_config();
+    let contact_email = contact_email_for_preview(&cfg).0;
     let company = company_name(&conn);
+    let clients = build_clients(cfg, &company)?;
+    for warning in &clients.warnings {
+        eprintln!("notice: {warning}");
+    }
     let branding = Branding {
         template: &template,
         company: &company,
-        contact_email: &mail.from,
+        contact_email: &contact_email,
     };
-    let url = send_invoice(&conn, invoice.id, today, &branding, &stripe, &r2, &mail)?;
+    let url = send_invoice(
+        &conn,
+        invoice.id,
+        today,
+        &branding,
+        &clients.stripe,
+        &clients.r2,
+        &clients.mail,
+    )?;
     println!("Sent invoice #{number}: {url}");
     Ok(())
 }
@@ -548,6 +652,13 @@ pub fn import(db: &str) -> Result<()> {
         "Imported {} clients, {} invoices, {} payments. Next invoice number: {}",
         summary.clients, summary.invoices, summary.payments, summary.next_number
     );
+    if summary.unparsed_dates > 0 {
+        eprintln!(
+            "Warning: {} date(s) were not in YYYY-MM-DD form and were copied as they stand. \
+             They will not sort or bucket as dates until corrected.",
+            summary.unparsed_dates
+        );
+    }
     Ok(())
 }
 
@@ -768,6 +879,9 @@ mod tests {
             mailgun_api_key: None,
             mailgun_domain: None,
             from_email: None,
+            from_name: None,
+            reply_to_email: None,
+            contact_email: None,
             r2_account_id: None,
             r2_access_key: None,
             r2_secret_key: None,
@@ -776,13 +890,187 @@ mod tests {
         }
     }
 
+    /// Every key a send needs, with a from address on its own Mailgun domain.
+    fn configured() -> InvoicingConfig {
+        InvoicingConfig {
+            mailgun_domain: Some("mg.example.test".into()),
+            from_email: Some("billing@mg.example.test".into()),
+            ..config_up_to_mailgun()
+        }
+    }
+
     #[test]
     fn missing_secret_names_the_setting() {
-        let err = build_clients(test_config())
+        let err = build_clients(test_config(), "Bluepeak")
             .map(|_| ())
             .unwrap_err()
             .to_string();
         assert!(err.contains("stripe_secret_key"), "got: {err}");
+    }
+
+    #[test]
+    fn the_display_name_falls_back_to_the_company_name() {
+        let cfg = InvoicingConfig {
+            from_name: None,
+            ..configured()
+        };
+        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        assert_eq!(mail.envelope.from_name.as_deref(), Some("Bluepeak"));
+
+        let cfg = InvoicingConfig {
+            from_name: Some("Bluepeak Books".into()),
+            ..configured()
+        };
+        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        assert_eq!(
+            mail.envelope.from_name.as_deref(),
+            Some("Bluepeak Books"),
+            "from_name wins over the business name"
+        );
+    }
+
+    #[test]
+    fn no_company_and_no_from_name_means_no_display_name() {
+        let cfg = InvoicingConfig {
+            from_name: None,
+            ..configured()
+        };
+        let mail = build_clients(cfg, "").expect("built").mail;
+        assert!(mail.envelope.from_name.is_none());
+    }
+
+    #[test]
+    fn a_reply_to_reaches_the_envelope_and_is_not_domain_checked() {
+        let cfg = InvoicingConfig {
+            reply_to_email: Some("sam@elsewhere.test".into()),
+            ..configured()
+        };
+        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        assert_eq!(
+            mail.envelope.reply_to.as_deref(),
+            Some("sam@elsewhere.test")
+        );
+    }
+
+    /// A from address off the sending domain is a deliverable setup Nigel
+    /// cannot verify, so it warns and sends — and the warning is data the
+    /// caller renders, never a print into a terminal ratatui owns.
+    #[test]
+    fn a_from_address_off_the_mailgun_domain_warns_as_data_and_still_builds() {
+        let cfg = InvoicingConfig {
+            from_email: Some("billing@elsewhere.test".into()),
+            ..configured()
+        };
+        let built = build_clients(cfg, "Bluepeak").expect("built");
+        assert_eq!(built.mail.envelope.from_address, "billing@elsewhere.test");
+        assert_eq!(built.warnings.len(), 1, "got: {:?}", built.warnings);
+        assert!(built.warnings[0].contains("mailgun_domain"));
+
+        let on_domain = build_clients(configured(), "Bluepeak").expect("built");
+        assert!(
+            on_domain.warnings.is_empty(),
+            "got: {:?}",
+            on_domain.warnings
+        );
+    }
+
+    #[test]
+    fn a_from_address_with_a_control_character_is_refused_by_name() {
+        // Header injection through `NIGEL_FROM_EMAIL`: the from address is
+        // composed into a header like every other value, so it is guarded like
+        // one.
+        let cfg = InvoicingConfig {
+            from_email: Some("billing@mg.example.test\r\nBcc: attacker@evil.test".into()),
+            ..configured()
+        };
+        let err = build_clients(cfg, "Bluepeak")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("from_email"), "got: {err}");
+        assert!(!err.contains("attacker@evil.test"), "got: {err}");
+    }
+
+    #[test]
+    fn a_from_email_that_already_carries_a_display_name_is_refused_before_any_call() {
+        // The old way to get a display name. Left alone it would compose a
+        // nested `name-addr` Mailgun rejects — after the Stripe link and the
+        // upload.
+        let cfg = InvoicingConfig {
+            from_email: Some("Acme LLC <billing@mg.example.test>".into()),
+            ..configured()
+        };
+        let err = build_clients(cfg, "Bluepeak")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("from_email") && err.contains("from_name"),
+            "got: {err}"
+        );
+    }
+
+    /// The refusal has to name where the value came from: an operator who never
+    /// set `from_name` cannot fix `from_name`.
+    #[test]
+    fn a_bad_business_name_is_refused_by_its_own_name_not_by_from_name() {
+        let cfg = InvoicingConfig {
+            from_name: None,
+            ..configured()
+        };
+        let err = build_clients(cfg, "Bluepeak\r\nBcc: x@y.test")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("business name"), "got: {err}");
+        assert!(!err.contains("from_name"), "got: {err}");
+    }
+
+    #[test]
+    fn a_display_name_with_a_line_break_is_refused_by_name() {
+        let cfg = InvoicingConfig {
+            from_name: Some("Bluepeak\r\nBcc: x@y.test".into()),
+            ..configured()
+        };
+        let err = build_clients(cfg, "").map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("from_name"), "got: {err}");
+        assert!(!err.contains("x@y.test"), "got: {err}");
+    }
+
+    #[test]
+    fn a_reply_to_with_a_line_break_is_refused_by_name() {
+        let cfg = InvoicingConfig {
+            reply_to_email: Some("sam@example.com\nBcc: x@y.test".into()),
+            ..configured()
+        };
+        let err = build_clients(cfg, "Bluepeak")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reply_to_email"), "got: {err}");
+    }
+
+    #[test]
+    fn the_page_contact_falls_back_to_the_from_address() {
+        let cfg = InvoicingConfig {
+            contact_email: None,
+            from_email: Some("billing@mg.example.com".into()),
+            ..test_config()
+        };
+        assert_eq!(
+            contact_address(&cfg).as_deref(),
+            Some("billing@mg.example.com")
+        );
+
+        let cfg = InvoicingConfig {
+            contact_email: Some("accounts@example.com".into()),
+            ..cfg
+        };
+        assert_eq!(
+            contact_address(&cfg).as_deref(),
+            Some("accounts@example.com"),
+            "contact_email is what the page prints, whatever the email is sent from"
+        );
     }
 
     #[test]
@@ -795,8 +1083,32 @@ mod tests {
             r2_bucket: Some("billing".into()),
             ..test_config()
         };
-        let err = build_clients(cfg).map(|_| ()).unwrap_err().to_string();
+        let err = build_clients(cfg, "Bluepeak")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("public_base_url"), "got: {err}");
+    }
+
+    fn fully_configured_test_config() -> InvoicingConfig {
+        InvoicingConfig {
+            mailgun_domain: Some("mail.example.test".into()),
+            from_email: Some("billing@example.test".into()),
+            ..config_up_to_mailgun()
+        }
+    }
+
+    #[test]
+    fn a_scheme_less_public_base_url_is_refused_before_any_client_is_built() {
+        let mut cfg = fully_configured_test_config();
+        cfg.public_base_url = Some("billing.example.com".into());
+        let err = build_clients(cfg, "").map(|_| ()).unwrap_err().to_string();
+        assert!(err.contains("public_base_url"), "got: {err}");
+    }
+
+    #[test]
+    fn a_configured_base_url_that_can_produce_a_link_still_builds() {
+        assert!(build_clients(fully_configured_test_config(), "").is_ok());
     }
 
     fn config_up_to_mailgun() -> InvoicingConfig {
@@ -814,7 +1126,7 @@ mod tests {
 
     #[test]
     fn missing_mailgun_domain_names_the_setting() {
-        let err = build_clients(config_up_to_mailgun())
+        let err = build_clients(config_up_to_mailgun(), "Bluepeak")
             .map(|_| ())
             .unwrap_err()
             .to_string();
@@ -827,7 +1139,10 @@ mod tests {
             mailgun_domain: Some("mail.example.test".into()),
             ..config_up_to_mailgun()
         };
-        let err = build_clients(cfg).map(|_| ()).unwrap_err().to_string();
+        let err = build_clients(cfg, "Bluepeak")
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("from_email"), "got: {err}");
     }
 
@@ -978,9 +1293,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_from_email_becomes_a_flagged_placeholder() {
+    fn neither_contact_key_becomes_a_flagged_placeholder() {
         let (value, placeholder) = contact_email_for_preview(&test_config());
-        assert!(placeholder && value.contains("from_email"), "got: {value}");
+        assert!(
+            placeholder && value.contains("contact_email"),
+            "got: {value}"
+        );
 
         let cfg = InvoicingConfig {
             from_email: Some("billing@example.test".into()),
@@ -994,7 +1312,7 @@ mod tests {
 
     #[test]
     fn preview_requires_no_invoicing_config_at_all() {
-        assert!(build_clients(test_config()).is_err()); // send cannot run
+        assert!(build_clients(test_config(), "Bluepeak").is_err()); // send cannot run
         assert!(!contact_email_for_preview(&test_config()).0.is_empty()); // preview can
     }
 
