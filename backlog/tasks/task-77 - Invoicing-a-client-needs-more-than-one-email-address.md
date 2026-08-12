@@ -1,11 +1,11 @@
 ---
 id: TASK-77
 title: 'Invoicing: a client needs more than one email address'
-status: In Progress
+status: Done
 assignee:
   - '@stream-3'
 created_date: '2026-08-10 19:19'
-updated_date: '2026-08-11 23:26'
+updated_date: '2026-08-12 23:52'
 labels:
   - enhancement
   - invoicing

@@ -1,11 +1,11 @@
 ---
 id: TASK-74
 title: 'Invoicing: client delete on the CLI and the TUI, refused while invoices exist'
-status: In Progress
+status: Done
 assignee:
   - '@stream-3'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 21:24'
+updated_date: '2026-08-12 23:52'
 labels:
   - enhancement
   - invoicing

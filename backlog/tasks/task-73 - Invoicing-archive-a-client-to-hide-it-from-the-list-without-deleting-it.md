@@ -1,11 +1,11 @@
 ---
 id: TASK-73
 title: 'Invoicing: archive a client to hide it from the list without deleting it'
-status: In Progress
+status: Done
 assignee:
   - '@stream-3'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 21:24'
+updated_date: '2026-08-12 23:52'
 labels:
   - enhancement
   - invoicing
