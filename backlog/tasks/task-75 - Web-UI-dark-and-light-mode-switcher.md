@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@stream-4'
 created_date: '2026-08-09 00:46'
-updated_date: '2026-08-11 20:59'
+updated_date: '2026-08-12 18:09'
 labels:
   - enhancement
   - web
@@ -78,6 +78,60 @@ manual pass — both need a browser and a dark OS. AC #5 in particular is
 argued from specificity and asserted in the sheet, but the printer itself has
 not been watched. That, the keyboard walk, and looking at dark mode across a
 few screens are the review.
+
+REVIEW ROUND 2 — light palette pass (dark untouched, print unaffected, text
+size deliberately left to the #201 review).
+
+The first two asks were one problem: there was only ever one light plane. The
+sidebar was --wa-color-surface, the same #ffffff as the cards, and the canvas
+behind it was #fdfcfb — 1.025:1 against white. Nothing could read as a separate
+surface because nothing was one.
+
+  --wa-color-bg          #fdfcfb -> #f3f2f7   canvas, lavender-grey tint
+  --wa-color-text        #2b2b33 -> #383843   soft charcoal
+  --wa-color-border      #e6e3f0 -> #dedaeb   or it vanishes on the new canvas
+  --wa-color-border-soft #f0eef7 -> #ebe8f3
+  --nc-color-sidebar-bg      new -> #e8e6f0   the sidebar's own plane
+  --wa-color-surface     unchanged            cards stay the only true white
+
+  text on card    14.04 -> 11.57   (still past AAA; "slightly", not to the floor)
+  text on canvas  13.70 -> 10.39
+  sidebar vs card  1.000 -> 1.235
+  canvas vs card   1.025 -> 1.114
+
+Wordmark: NIGEL_PALETTE is untouched, so palette-parity.test.ts still pins it to
+GRADIENT in src/effects.rs. Light mode gets an additive second ramp,
+NIGEL_PALETTE_INK, via --nc-grad-brand-text; dark overrides it back to the
+pastels. Darkening the pastels toward black was tried first and desaturates them
+into brown-grey, so the ink ramp keeps each hue and trades lightness for
+saturation instead. Every stop clears 4.5:1 on the sidebar. The brand button
+still uses the pastel ramp with dark text (7.73:1) — it was not flagged.
+
+Chart bars: the bar colours and the figure colours were the same tokens, so
+lightening in place would have dropped every green and red number in the reports
+below AA. Split instead — --nc-color-income-fill/--nc-color-expense-fill at
+#5a9473/#cb6b7b (6.82/6.38 -> 3.55/3.54), bars and legend swatches only, while
+--nc-color-income/--nc-color-expense keep their values for figures. A bar owes
+WCAG 3:1 as a graphic; a number owes 4.5:1. That threshold difference is the
+whole reason the split buys anything.
+
+All three new tokens are given dark values reproducing exactly what rendered
+before they existed, and all are reset in the print block alongside the tokens
+they shadow, so a printed chart is as black as it was.
+
+contrast.test.ts gains three sidebar pairings, a graphic-threshold group for the
+fills, and per-stop assertions on both wordmark ramps against the surface each
+is actually drawn on. Every pre-existing pairing passes in both modes.
+
+Components read the new tokens with a fallback, so they degrade to today's
+rendering rather than to nothing.
+
+Not verified: no browser. Every figure above is computed and none has been seen.
+The taste calls — whether the softening is the right amount, whether the canvas
+tint is the right hue, whether the sidebar step is heavy enough, and above all
+whether seven saturated jewel tones still read as the Nigel rainbow — are the
+review. muted-on-sidebar at 4.80:1 is the tightest pairing in the set and worth
+a look at secondary nav text.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
