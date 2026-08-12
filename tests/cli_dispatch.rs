@@ -1760,6 +1760,62 @@ fn send_with_a_broken_template_fails_before_touching_stripe() {
     assert_eq!(status, "draft");
 }
 
+/// A configured-but-unusable installation: all nine keys set, one of them an
+/// address that cannot produce a working link. Nothing reaches the network,
+/// because the refusal happens while the clients are being built.
+#[test]
+fn invoice_send_refuses_a_public_base_url_with_no_scheme() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_bogus")
+        .env("NIGEL_MAILGUN_API_KEY", "key")
+        .env("NIGEL_MAILGUN_DOMAIN", "mail.example.test")
+        .env("NIGEL_FROM_EMAIL", "billing@example.test")
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "access")
+        .env("NIGEL_R2_SECRET_KEY", "secret")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_PUBLIC_BASE_URL", "billing.example.com")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("public_base_url")
+                .and(predicate::str::contains("billing.example.com")),
+        );
+
+    let (status, published): (String, Option<String>) = env
+        .db()
+        .query_row(
+            "SELECT status, published_at FROM invoices WHERE number = 1248",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+    assert_eq!(published, None);
+}
+
+#[test]
+fn invoice_preview_is_unaffected_by_a_broken_public_base_url() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Preview needs no invoicing config at all and must not have grown a
+    // dependency on one being well-formed.
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .env("NIGEL_PUBLIC_BASE_URL", "billing.example.com")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    assert!(previews_dir(&env).join("invoice-1248.html").exists());
+}
+
 #[test]
 fn invoice_aging_prints_bucket_labels() {
     let env = TestEnv::new();

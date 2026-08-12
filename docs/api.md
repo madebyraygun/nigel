@@ -156,6 +156,15 @@ the values never leave the process, and the names are already published in
 needs. `missing` lists the unset ones in that document's order. A client uses it
 to disable Send and to say which keys are in the way.
 
+`publicBaseUrlWarning` is absent from the example above because
+`public_base_url` is unset there — an unset key is `missing`'s business. The
+field appears only when the key **is** set and its path does not end in `/i`,
+the prefix Nigel writes every object under; the two are mutually exclusive, so
+it can never sit beside `public_base_url` in `missing`. It is a caution rather
+than a refusal — an edge rewrite can map that prefix onto the
+domain root — so a client renders it beside the Send action without blocking it.
+Like every other field here it carries no configured value, only the sentence.
+
 The whole object is **absent while the database is locked**. `/api/status` is
 one of the three ungated paths, and which integrations an installation has
 configured is not something to tell a caller who has not passed the gate.
@@ -369,7 +378,7 @@ The invoice's own fields flattened, plus everything a detail screen prints:
   "client": { "id": 1, "name": "Acme Co", "email": "ap@acme.test" },
   "items": [], "payments": [],
   "paid": 2000.0, "balance": 1200.0,
-  "publicUrl": "https://billing.example.com/i/aBc123.../",
+  "publicUrl": "https://billing.example.com/i/aBc123.../index.html",
   "canEdit": false, "canSend": true, "canVoid": false, "canPay": true
 }
 ```
@@ -379,7 +388,9 @@ a published invoice, and a response carrying one would put it into devtools
 history and any future cache. What a client needs is the address, so the route
 computes `publicUrl` from the token and `public_base_url` instead. It is `null`
 — never an error — when the invoice was never published or `public_base_url` is
-unset.
+unset. The address names the `index.html` object rather than its directory: a
+static host is not required to have an opinion about directories, and a plain R2
+custom domain answers the directory form with a 404.
 
 The four `can*` flags are the data layer's own guards, called rather than
 re-derived: `canEdit` is `ensure_editable`, `canVoid` is `ensure_voidable`, and
@@ -792,7 +803,7 @@ A completed send answers with the refreshed invoice and what each step did:
 ```json
 {
   "invoice": { "number": 1252, "status": "sent", "...": "the whole InvoiceDetail" },
-  "publicUrl": "https://billing.example.com/i/2f9c…/",
+  "publicUrl": "https://billing.example.com/i/2f9c…/index.html",
   "paymentLinkUrl": "https://buy.stripe.com/…",
   "steps": [
     { "step": "load", "outcome": "ok" },
@@ -814,7 +825,7 @@ calls for:
 
 | Step | What it does | A failure is |
 |---|---|---|
-| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys |
+| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys; `400 invalid_public_base_url` when the key is set to something that cannot produce a working link. Both name keys only — no response carries a configured value, so the 400 states the defect and the fix and never quotes the address |
 | `load` | The invoice, its client and its line items | `404 invoice_not_found` / `client_not_found` |
 | `precheck` | Not void; the client has an address; there is something to charge | `409 void` / `client_missing_email` / `invoice_not_payable` |
 | `payment_link` | Create the Stripe link, unless one exists | `502 upstream_failed`, `service: "stripe"` |

@@ -68,6 +68,25 @@ Secrets and endpoints resolve from the environment first, then from
 A missing value is reported by name, e.g.
 `missing invoicing config: r2_bucket (set it in settings.json or the matching NIGEL_ env var)`.
 
+`public_base_url` is checked at send time as well as required. An address
+without an `http://` or `https://` scheme, or with no host after it (`https://:8787/i`,
+`https://user@/i`), is refused by name before any Stripe link is created,
+anything is uploaded or any email goes out — `billing.example.com` is the common
+mistake and reads as a relative address in a client's inbox. A **scheme-relative**
+address, `//billing.example.com/i`, is refused for the same reason and is the one
+worth calling out on upgrade: it resolves in a browser that already has a
+scheme, and a link in an email has no page to inherit one from. Put `https:` in
+front of it.
+
+The refusal quotes the offending value in a terminal, where it is being read by
+whoever just typed the command; over HTTP it names the key and the defect only,
+because no API response carries a configured setting's value. A `publicUrl` on
+`GET /api/invoices/{number}` is likewise `null` when the base URL cannot produce
+a working link — an absent address beats a broken one. An address whose path does not end in `/i` still
+sends, with a notice: Nigel writes every object under the `i/` prefix, so a base
+URL pointing at the bucket root produces links that 404. The same notice appears
+as `invoicing.publicBaseUrlWarning` on `GET /api/status`.
+
 Environment variables keep credentials out of the settings file. If you do store
 them in `settings.json`, note that Nigel writes that file with owner-only
 permissions on Unix. Use Stripe test keys (`sk_test_…`) while trying things out.
@@ -327,7 +346,8 @@ One command does the whole publish:
    `nigel invoice preview` writes locally, so a preview cannot disagree with
    what is published.
 3. Uploads both to R2 as `i/{token}/index.html` and `i/{token}/invoice.pdf`, where
-   `token` is the invoice's random 16-character identifier.
+   `token` is the invoice's random 16-character identifier. The address Nigel
+   hands out names the `index.html` object itself — see "Hosting" below.
 4. Emails the client through Mailgun — HTML body, PDF attached, subject
    `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
    is set. The name comes from the same setting the dashboard's settings screen
@@ -338,7 +358,7 @@ One command does the whole publish:
 
 If any step fails the invoice stays a draft and no email goes out, so a failed
 send is safe to retry. The command prints the public URL on success:
-`Sent invoice #1248: https://billing.example.com/i/aBc123.../`.
+`Sent invoice #1248: https://billing.example.com/i/aBc123.../index.html`.
 
 The published page shows the line items, the total, any notes and terms, a Pay
 button linking to Stripe, and bank-transfer instructions. The direct-deposit line
@@ -761,10 +781,22 @@ key pair, and builds client-facing links from `public_base_url`.
 The two sides meet at Cloudflare: expose the bucket at a hostname you control —
 a custom domain on the bucket, or an equivalent route into it — so an object
 stored at key `i/{token}/index.html` is served at, for example,
-`https://billing.example.com/i/{token}/`, and set `public_base_url` to
+`https://billing.example.com/i/{token}/index.html`, and set `public_base_url` to
 `https://billing.example.com/i`. Keep the `i/` prefix in `public_base_url` aligned
 with that mapping — Nigel writes keys under `i/`, and the base URL only tells it
 what public address that prefix answers on.
+
+Nigel names the file, not its directory: every link it prints, returns and
+reports ends in `/index.html`. A plain R2 custom domain serves objects by key
+and has no directory-index behaviour, so `…/{token}/` would 404 while the object
+beside it resolves. The file form works on a bare custom domain, on S3 static
+hosting, behind a Worker, and on a synced local copy, without asking anything of
+the host.
+
+If you would rather hand out the directory form, add an edge rewrite — a
+Cloudflare transform rule or a Worker that appends `index.html` to a path ending
+in `/`. That is an option, not a requirement: with the rewrite in place both
+addresses resolve to the same object, and Nigel keeps linking to the file.
 
 Tokens are random and unguessable, and nothing enumerates the bucket, so an
 invoice is readable only by someone holding its link.

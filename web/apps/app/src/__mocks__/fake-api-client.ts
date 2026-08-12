@@ -1205,7 +1205,7 @@ export class FakeApiClient implements ApiClient {
       status: 'sent',
       publishedAt: '2026-03-15 09:00:00',
       canEdit: false,
-      publicUrl: `https://billing.example.test/i/token${number}/`,
+      publicUrl: `https://billing.example.test/i/token${number}/index.html`,
     };
     this.invoiceDetails[number] = sent;
     return {

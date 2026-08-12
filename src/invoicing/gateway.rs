@@ -49,17 +49,17 @@ mod tests {
     struct Ok1;
     impl AssetPublisher for Ok1 {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> crate::error::Result<String> {
-            Ok(format!("https://billing.example.com/i/{token}/"))
+            Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
         fn publish_page(&self, token: &str, _h: &[u8]) -> crate::error::Result<String> {
-            Ok(format!("https://billing.example.com/i/{token}/"))
+            Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
     }
 
     #[test]
     fn publisher_trait_returns_url() {
         let url = Ok1.publish("tok", b"<html>", b"%PDF").unwrap();
-        assert_eq!(url, "https://billing.example.com/i/tok/");
+        assert_eq!(url, "https://billing.example.com/i/tok/index.html");
     }
 
     #[test]

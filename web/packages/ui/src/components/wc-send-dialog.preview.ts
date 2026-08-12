@@ -87,7 +87,7 @@ const preview: Preview = {
           .number=${1251}
           .total=${1850}
           .recipient=${'ap@acme.test'}
-          .publicUrl=${'https://billing.example.com/i/aBc123XyZ/'}
+          .publicUrl=${'https://billing.example.com/i/aBc123XyZ/index.html'}
           .steps=${trace(ORDER)}
         ></wc-send-dialog>
       `,

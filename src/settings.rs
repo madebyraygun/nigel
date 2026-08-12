@@ -295,6 +295,10 @@ pub struct InvoicingStatus {
     pub send_configured: bool,
     pub sync_configured: bool,
     pub missing: Vec<&'static str>,
+    /// A configured `public_base_url` that is probably pointing at the wrong
+    /// prefix. Absent when it is unset (that is `missing`'s job) or fine.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_base_url_warning: Option<&'static str>,
 }
 
 pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
@@ -321,6 +325,10 @@ pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
         send_configured: missing.is_empty(),
         sync_configured: cfg.stripe_secret_key.is_some(),
         missing,
+        public_base_url_warning: cfg
+            .public_base_url
+            .as_deref()
+            .and_then(crate::invoicing::r2::public_base_url_warning),
     }
 }
 
@@ -398,22 +406,32 @@ mod tests {
         assert!(status.sync_configured);
         assert!(status.missing.is_empty());
 
-        let rendered = serde_json::to_string(&status).expect("serializes");
-        for value in [
-            "sk_live_secret",
-            "key-secret",
-            "mg.example.com",
-            "billing@example.com",
-            "Bluepeak",
-            "sam@example.com",
-            "accounts@example.com",
-            "acct-secret",
-            "access-secret",
-            "secret-secret",
-            "billing",
-            "https://billing.example.com/i",
-        ] {
-            assert!(!rendered.contains(value), "{value} leaked into {rendered}");
+        // The warning field is only on a status that earns one, so the
+        // invariant is checked against both shapes.
+        let mut warned = fully_configured();
+        warned.public_base_url = Some("https://billing.example.com".into());
+        let warning_status = invoicing_status(&warned);
+        assert!(warning_status.public_base_url_warning.is_some());
+
+        for status in [&status, &warning_status] {
+            let rendered = serde_json::to_string(status).expect("serializes");
+            for value in [
+                "sk_live_secret",
+                "key-secret",
+                "mg.example.com",
+                "billing@example.com",
+                "Bluepeak",
+                "sam@example.com",
+                "accounts@example.com",
+                "acct-secret",
+                "access-secret",
+                "secret-secret",
+                "billing",
+                "https://billing.example.com/i",
+                "https://billing.example.com",
+            ] {
+                assert!(!rendered.contains(value), "{value} leaked into {rendered}");
+            }
         }
     }
 
@@ -466,6 +484,24 @@ mod tests {
         let s: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(s.from_email.as_deref(), Some("billing@mg.example.com"));
         assert!(s.from_name.is_none() && s.reply_to_email.is_none() && s.contact_email.is_none());
+    }
+
+    #[test]
+    fn the_status_warns_about_a_base_url_that_misses_the_i_prefix() {
+        let mut cfg = fully_configured();
+        cfg.public_base_url = Some("https://billing.example.com".into());
+        let status = invoicing_status(&cfg);
+        assert!(status.send_configured, "a warning is not a refusal");
+        assert!(status.public_base_url_warning.is_some());
+    }
+
+    #[test]
+    fn an_unset_base_url_is_missing_rather_than_warned_about() {
+        let mut cfg = fully_configured();
+        cfg.public_base_url = None;
+        let status = invoicing_status(&cfg);
+        assert!(status.public_base_url_warning.is_none());
+        assert!(status.missing.contains(&"public_base_url"));
     }
 
     #[test]
