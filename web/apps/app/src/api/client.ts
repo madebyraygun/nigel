@@ -368,6 +368,16 @@ export interface ApiClient {
    * seam's to spell.
    */
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string;
+
+  /**
+   * The rendered invoice page as HTML, for framing before a send.
+   *
+   * Bytes rather than an address, unlike `invoicePreviewUrl`: an iframe cannot
+   * report a failure, and a broken custom template makes that route answer an
+   * error envelope — which the frame would render as JSON in a box, inside the
+   * very dialog whose job is to catch exactly that before the send.
+   */
+  invoicePreviewHtml(number: number): Promise<string>;
 }
 
 export interface FetchApiClientOptions {
@@ -722,6 +732,26 @@ export class FetchApiClient implements ApiClient {
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string {
     const suffix = format === 'pdf' ? 'preview.pdf' : 'preview';
     return `${this.baseUrl}/invoices/${number}/${suffix}`;
+  }
+
+  async invoicePreviewHtml(number: number): Promise<string> {
+    // The same address `invoicePreviewUrl` spells, so there is one literal.
+    const url = this.invoicePreviewUrl(number, 'html');
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, { credentials: 'same-origin' });
+    } catch {
+      throw new ApiError({
+        code: 'unknown',
+        rawCode: 'network_error',
+        message: 'Could not reach the nigel server.',
+        status: 0,
+      });
+    }
+    if (!response.ok) throw this.toApiError(await this.errorFrom(response));
+    appUnauthorized.set(false);
+    return response.text();
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

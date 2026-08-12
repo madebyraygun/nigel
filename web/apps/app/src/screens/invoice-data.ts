@@ -350,3 +350,16 @@ export function detailLineItems(detail: InvoiceDetail): LineItemValue[] {
     amount: String(item.lineTotal),
   }));
 }
+
+/**
+ * The subject line the email will carry.
+ *
+ * Two lines of TypeScript mirroring `send.rs`'s own rule, and knowingly
+ * duplicated: the alternative is a new field on a payload for one string, and
+ * this boundary already carries `SEND_STEP_LABELS` the same way. `companyName`
+ * is the same business name the server composes it from.
+ */
+export function emailSubject(number: number, companyName: string): string {
+  const company = companyName.trim();
+  return company ? `Invoice #${number} from ${company}` : `Invoice #${number}`;
+}

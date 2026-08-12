@@ -862,6 +862,12 @@ A database failure inside a send is `500`, whichever step it lands on — a `502
 would send the operator to Cloudflare's status page for a problem on their own
 disk.
 
+The HTML preview route is also the send dialog's source: the browser fetches
+it as text and frames it as `srcdoc`, rather than pointing an iframe at it,
+because an iframe cannot report a failure — a broken custom template has to
+arrive as the server's sentence rather than as this envelope rendered in a box.
+That is why the route's error body has to stay legible.
+
 #### Recording a payment
 
 `POST /api/invoices/:number/pay` answers the refreshed invoice flattened, exactly

@@ -204,6 +204,98 @@ describe('wc-send-dialog', () => {
       'billing.example.com',
     );
   });
+  describe('the document', () => {
+    const PAGE = '<h1>Invoice #1251</h1><p>Acme Co — $1,850.00</p>';
+
+    it('states the recipient and the total where the send is confirmed', async () => {
+      const el = await mount({ client: 'Acme Co' });
+      const line = el.shadowRoot?.querySelector('[data-recipient-line]');
+      expect(line?.textContent).toContain('Invoice #1251');
+      expect(line?.textContent).toContain('Acme Co');
+      expect(line?.textContent).toContain('ap@acme.test');
+      // The figure goes through wc-money, so it reads as every other amount does.
+      expect(line?.querySelector('wc-money')).toBeTruthy();
+    });
+
+    it('names no address when the client has none', async () => {
+      const el = await mount({ client: 'Globex', recipient: '' });
+      const line = el.shadowRoot?.querySelector('[data-recipient-line]');
+      expect(line?.textContent).toContain('no email address on file');
+    });
+
+    it('frames the rendered invoice in the confirm phase', async () => {
+      const el = await mount({ previewHtml: PAGE });
+      const frame = el.shadowRoot?.querySelector('[data-preview]') as
+        | (HTMLElement & { srcdoc: string })
+        | null;
+      expect(frame).toBeTruthy();
+      expect(frame?.srcdoc).toBe(PAGE);
+    });
+
+    it('drops the frame once the send is in flight', async () => {
+      // The trace is what the operator is reading by then, and forty lines of
+      // invoice above it would push that off screen.
+      const el = await mount({ previewHtml: PAGE, phase: 'sending', steps: STEPS });
+      expect(el.shadowRoot?.querySelector('[data-preview]')).toBeNull();
+      expect(el.shadowRoot?.querySelector('[data-steps]')).toBeTruthy();
+    });
+
+    it('shows a spinner while the document is being fetched', async () => {
+      const el = await mount({ previewLoading: true });
+      expect(el.shadowRoot?.querySelector('[data-preview-loading]')).toBeTruthy();
+      expect(el.shadowRoot?.querySelector('[data-preview]')).toBeNull();
+    });
+
+    it('renders a preview failure as a notice, not as a frame', async () => {
+      const message = 'Invoice template /books/templates/invoice.html is empty.';
+      const el = await mount({ previewError: message });
+
+      const notice = el.shadowRoot?.querySelector('[data-preview-error]');
+      expect(notice?.getAttribute('message')).toBe(message);
+      expect(el.shadowRoot?.querySelector('[data-preview]')).toBeNull();
+      // A preview that could not render is not a reason to refuse the send.
+      const confirm = el.shadowRoot?.querySelector('[data-confirm]');
+      expect(confirm?.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('says the PDF is unavailable in a build without it', async () => {
+      const el = await mount({ previewHtml: PAGE, pdfAvailable: false });
+      expect(el.shadowRoot?.querySelector('[data-pdf-link]')).toBeNull();
+      expect(el.shadowRoot?.querySelector('[data-pdf-unavailable]')?.textContent).toContain(
+        'not available',
+      );
+    });
+
+    it('offers the PDF beside the frame when the build can render one', async () => {
+      const el = await mount({ previewHtml: PAGE, pdfHref: '/api/invoices/1251/preview.pdf' });
+      expect(el.shadowRoot?.querySelector('[data-pdf-link]')?.getAttribute('href')).toBe(
+        '/api/invoices/1251/preview.pdf',
+      );
+    });
+
+    it('blocks the send when this build cannot attach a PDF, and still frames the page', async () => {
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfAvailable: false,
+        blocked: 'This build cannot send — PDF support is not compiled in.',
+      });
+      expect(el.shadowRoot?.querySelector('[data-blocked]')).toBeTruthy();
+      expect(
+        (el.shadowRoot?.querySelector('[data-confirm]') as HTMLElement)?.hasAttribute('disabled'),
+      ).toBe(true);
+      expect(el.shadowRoot?.querySelector('[data-preview]')).toBeTruthy();
+    });
+
+    it('renders a configuration caution without blocking the send', async () => {
+      const el = await mount({
+        previewHtml: PAGE,
+        configCautions: ['public_base_url does not end in /i — …'],
+      });
+      const caution = el.shadowRoot?.querySelector('[data-config-caution]');
+      expect(caution?.getAttribute('variant')).toBe('warning');
+      expect(el.shadowRoot?.querySelector('[data-blocked]')).toBeNull();
+    });
+  });
 });
 
 describePreviewA11y(preview);

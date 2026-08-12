@@ -62,6 +62,14 @@ export interface InvoicingStatus {
   syncConfigured: boolean;
   /** The unset keys, in `docs/invoicing.md`'s order. */
   missing: string[];
+  /**
+   * A configured `public_base_url` whose path does not end in `/i`, the prefix
+   * Nigel writes every object under. A caution, not a refusal — an edge rewrite
+   * can map that prefix onto the domain root — and the sentence carries no
+   * configured value. Absent when the key is unset (that is `missing`'s job)
+   * or fine.
+   */
+  publicBaseUrlWarning?: string;
 }
 
 /**

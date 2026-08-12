@@ -423,6 +423,9 @@ pub enum InvoiceCommands {
     Send {
         /// Invoice number
         number: i64,
+        /// Send without confirmation (required when stdin is not a TTY)
+        #[arg(long)]
+        yes: bool,
     },
     /// Poll Stripe and record any new payments.
     Sync,

@@ -671,6 +671,89 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeNull();
   });
 
+  it('fetches the preview when the send dialog opens, and not before', async () => {
+    const { el, fake } = await mount('number=1250');
+    expect(fake.calls.some((call) => call.startsWith('invoicePreviewHtml'))).toBe(false);
+
+    button(el, '[data-send]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('invoicePreviewHtml:1250');
+    expect(sendDialog(el)?.previewHtml).toContain('Invoice #1250');
+    expect(sendDialog(el)?.previewError).toBe('');
+  });
+
+  it('renders a preview failure as the server’s own sentence', async () => {
+    // A broken custom template is exactly what this dialog exists to catch,
+    // and it has to arrive as a sentence rather than as JSON in a box.
+    const fake = client();
+    fake.previewHtmlError = new ApiError({
+      code: 'bad_request',
+      rawCode: 'bad_request',
+      message: 'Invoice template /books/templates/invoice.html is empty.',
+      status: 400,
+    });
+    const { el } = await mount('number=1250', fake);
+
+    button(el, '[data-send]').click();
+    await settle(el);
+
+    expect(sendDialog(el)?.previewError).toContain('templates/invoice.html');
+    expect(sendDialog(el)?.previewHtml).toBe('');
+  });
+
+  it('shows the email subject the server will use', async () => {
+    const named = client({ ...CONFIGURED, companyName: 'Bluepeak LLC' });
+    const { el } = await mount('number=1250', named);
+    button(el, '[data-send]').click();
+    await settle(el);
+    expect(sendDialog(el)?.subject).toBe('Invoice #1250 from Bluepeak LLC');
+
+    document.body.innerHTML = '';
+    resetAppStore();
+    const anonymous = client({ ...CONFIGURED, companyName: null });
+    const second = await mount('number=1250', anonymous);
+    button(second.el, '[data-send]').click();
+    await settle(second.el);
+    expect(sendDialog(second.el)?.subject).toBe('Invoice #1250');
+  });
+
+  it('blocks the send when the build has no pdf export', async () => {
+    // A send without the `pdf` feature stops at the render step, because the
+    // PDF is attached to the email. Said up front, in the same place an unset
+    // key is said, rather than discovered three steps in.
+    const fake = client({ ...CONFIGURED, pdfExport: false });
+    const { el } = await mount('number=1250', fake);
+
+    expect(button(el, '[data-send]').hasAttribute('disabled')).toBe(true);
+    expect(button(el, '[data-send]').getAttribute('title')).toContain(
+      'PDF support is not compiled in',
+    );
+    // The detail view's own preview is untouched: nothing about a missing PDF
+    // stops the page from rendering.
+    expect(el.shadowRoot?.querySelector('wc-invoice-preview')).toBeTruthy();
+  });
+
+  it('surfaces a public_base_url warning without blocking the send', async () => {
+    const fake = client({
+      ...CONFIGURED,
+      invoicing: {
+        sendConfigured: true,
+        syncConfigured: true,
+        missing: [],
+        publicBaseUrlWarning: 'public_base_url does not end in /i — …',
+      },
+    });
+    const { el } = await mount('number=1250', fake);
+
+    button(el, '[data-send]').click();
+    await settle(el);
+
+    const dialog = sendDialog(el);
+    expect(dialog?.configCautions).toEqual(['public_base_url does not end in /i — …']);
+    expect(dialog?.blocked).toBe('');
+  });
+
   it('sends only after the confirmation dialog resolves', async () => {
     const { el, fake } = await mount('number=1250');
 

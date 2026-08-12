@@ -335,7 +335,32 @@ the web UI.
 
 ```bash
 nigel invoice send 1248
+nigel invoice send 1248 --yes        # skip the confirmation (and the files)
 ```
+
+**It asks first.** Before anything is created, uploaded or emailed, Nigel
+renders the invoice through the same seam `send` publishes through, writes the
+same two files `nigel invoice preview` writes, states who it is going to and
+for how much, and waits:
+
+```
+Invoice #1248 — Acme Co, $1,850.00 USD, issued 2026-08-04. To ap@acme.test.
+Wrote /home/you/Documents/nigel/previews/invoice-1248.html
+Wrote /home/you/Documents/nigel/previews/invoice-1248.pdf
+Sending creates a Stripe payment link, publishes the page and PDF to
+billing.example.com, and emails ap@acme.test. This cannot be undone.
+Send it? [y/N]
+```
+
+Anything but `y` prints `Aborted.` and exits 0 — `void`'s behaviour, and
+`--yes` skips the prompt exactly as it does there. `--yes` also writes no
+files: a scripted send has nobody to look at them, and leaving artifacts behind
+on every run is litter. The **render still happens** either way, so a broken
+custom template is caught before any gateway is called.
+
+A non-TTY without `--yes` is refused — `Refusing to send invoice #1248 without
+confirmation. Pass --yes.` — before the summary is printed and before anything
+is written.
 
 One command does the whole publish:
 
@@ -413,6 +438,14 @@ chose.
 `{"confirm": true}`; without it the server answers `400` and sends nothing. A
 confirm dialog on a screen is a convention the next screen can forget, so the
 flag makes the dialog the only way to reach the endpoint.
+
+**It shows the document.** The dialog frames the rendered invoice page above
+the confirm button — the same bytes the send will publish, fetched through the
+preview route, which constructs no gateway and creates no Stripe link. The PDF
+is offered as a download beside it. A build that cannot render a PDF says so
+and refuses the send up front, because the PDF is attached to the email; the
+page still renders. A broken custom template arrives as a sentence naming the
+path, not as an error envelope drawn inside the frame.
 
 **It says which step failed.** Where the CLI prints one error, the response
 names the step (`config`, `load`, `precheck`, `payment_link`, `render`,

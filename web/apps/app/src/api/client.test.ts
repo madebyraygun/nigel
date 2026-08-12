@@ -652,6 +652,35 @@ describe('FetchApiClient', () => {
       expect(client.invoicePreviewUrl(1248, 'pdf')).toBe('/api/invoices/1248/preview.pdf');
     });
 
+    it('fetches the rendered invoice page as text', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        new Response('<h1>Invoice #1248</h1>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+
+      const html = await clientFor(fetchImpl).invoicePreviewHtml(1248);
+
+      expect(html).toBe('<h1>Invoice #1248</h1>');
+      // The same address `invoicePreviewUrl` spells — one literal, one seam.
+      expect(fetchImpl.mock.calls[0][0]).toBe('/api/invoices/1248/preview');
+    });
+
+    it('raises the server’s sentence when the page cannot be rendered', async () => {
+      // A broken custom template. The dialog has to be able to print this;
+      // framing the envelope would render JSON in a box.
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(
+          envelope('bad_request', 'Invoice template /books/templates/invoice.html is empty.'),
+        );
+
+      await expect(clientFor(fetchImpl).invoicePreviewHtml(1248)).rejects.toMatchObject({
+        message: 'Invoice template /books/templates/invoice.html is empty.',
+      });
+    });
+
     it('normalizes a 502 to upstream_failed and keeps the step details', async () => {
       // Without `upstream_failed` in API_ERROR_CODES the client would flatten a
       // gateway failure to `unknown`, and the send dialog could not tell an R2
