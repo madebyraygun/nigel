@@ -7,9 +7,10 @@ import {
   validateCategoryForm,
   type CategoryFormValue,
   type NcCategoryFormChangeDetail,
-  type WcCategoryForm,
+  WcCategoryForm,
 } from './wc-category-form.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-category-form.preview.js';
 
 const filled: CategoryFormValue = {
@@ -138,3 +139,8 @@ describe('wc-category-form', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(
+  WcCategoryForm,
+  ':focus-visible',
+);

@@ -30,6 +30,7 @@ import {
 } from './register-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * The transaction register — the web counterpart of `browser.rs`.
@@ -47,53 +48,56 @@ import type { ScreenId } from './registry.js';
  */
 @customElement('nigel-register-screen')
 export class NigelRegisterScreen extends LitElement {
-  static styles = css`
-    :host {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      align-content: start;
-      padding: var(--wa-space-l, 16px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-      min-height: 0;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        align-content: start;
+        padding: var(--wa-space-l, 16px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+        min-height: 0;
+      }
 
-    .bar {
-      display: flex;
-      align-items: end;
-      gap: var(--wa-space-m, 12px);
-      flex-wrap: wrap;
-    }
+      .bar {
+        display: flex;
+        align-items: end;
+        gap: var(--wa-space-m, 12px);
+        flex-wrap: wrap;
+      }
 
-    wc-register-toolbar {
-      flex: 1 1 auto;
-    }
+      wc-register-toolbar {
+        flex: 1 1 auto;
+      }
 
-    details.help {
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-    }
+      details.help {
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+      }
 
-    details.help summary {
-      cursor: pointer;
-    }
+      details.help summary {
+        cursor: pointer;
+      }
 
-    details.help dl {
-      display: grid;
-      grid-template-columns: max-content 1fr;
-      gap: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-    }
+      details.help dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+        margin: var(--wa-space-xs, 6px) 0 0;
+      }
 
-    details.help dt {
-      font-family: var(--wa-font-family-mono, monospace);
-      color: var(--wa-color-text);
-    }
+      details.help dt {
+        font-family: var(--wa-font-family-mono, monospace);
+        color: var(--wa-color-text);
+      }
 
-    details.help dd {
-      margin: 0;
-    }
-  `;
+      details.help dd {
+        margin: 0;
+      }
+    `,
+  ];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })

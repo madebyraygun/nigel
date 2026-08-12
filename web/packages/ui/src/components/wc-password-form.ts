@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 
 export type WcPasswordMode = 'set' | 'change' | 'remove';
 
@@ -28,34 +29,37 @@ const SUBMIT_LABELS: Record<WcPasswordMode, string> = {
  */
 @customElement('wc-password-form')
 export class WcPasswordForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    form {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      max-width: 24rem;
-    }
+      form {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        max-width: 24rem;
+      }
 
-    .message {
-      margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      min-height: 1.25rem;
-    }
+      .message {
+        margin: 0;
+        font-size: var(--wa-font-size-s, 13px);
+        min-height: 1.25rem;
+      }
 
-    .error {
-      color: var(--wa-color-danger);
-    }
+      .error {
+        color: var(--wa-color-danger);
+      }
 
-    .actions {
-      display: flex;
-      gap: var(--wa-space-s, 8px);
-    }
-  `;
+      .actions {
+        display: flex;
+        gap: var(--wa-space-s, 8px);
+      }
+    `,
+  ];
 
   @property({ type: String, reflect: true })
   mode: WcPasswordMode = 'set';

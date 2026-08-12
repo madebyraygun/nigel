@@ -102,6 +102,16 @@ export class WcNavSidebar extends LitElement {
       justify-content: center;
       padding: 8px 0;
     }
+
+    /* Screen chrome, not part of the report. This lives here rather than in
+       @nigel/theme's print sheet because a rule that hides an element has to
+       be in the tree that element is in, and every wc-* here sits inside
+       nigel-app's shadow root where a document rule cannot reach it. */
+    @media print {
+      :host {
+        display: none;
+      }
+    }
   `;
 
   @property({ attribute: false })

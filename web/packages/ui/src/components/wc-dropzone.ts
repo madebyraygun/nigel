@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/format-bytes/format-bytes.js';
 import '../icons/icons.js';
+import { controlsCss } from '@nigel/theme';
 
 export interface NcFileSelectDetail {
   file: File;
@@ -30,130 +31,133 @@ export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
  */
 @customElement('wc-dropzone')
 export class WcDropzone extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .well {
-      display: grid;
-      justify-items: center;
-      gap: var(--wa-space-2xs, 4px);
-      width: 100%;
-      padding: var(--wa-space-2xl, 32px) var(--wa-space-l, 16px);
-      font: inherit;
-      color: inherit;
-      text-align: center;
-      background: var(--wa-color-surface);
-      border: 2px dashed var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-      cursor: pointer;
-    }
+      .well {
+        display: grid;
+        justify-items: center;
+        gap: var(--wa-space-2xs, 4px);
+        width: 100%;
+        padding: var(--wa-space-2xl, 32px) var(--wa-space-l, 16px);
+        font: inherit;
+        color: inherit;
+        text-align: center;
+        background: var(--wa-color-surface);
+        border: 2px dashed var(--wa-color-border);
+        border-radius: var(--wa-radius-l, 12px);
+        cursor: pointer;
+      }
 
-    .well:hover:not(:disabled) {
-      border-color: var(--wa-color-brand);
-    }
+      .well:hover:not(:disabled) {
+        border-color: var(--wa-color-brand);
+      }
 
-    .well:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
+      .well:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 2px;
+      }
 
-    .well:disabled {
-      cursor: default;
-      opacity: 0.6;
-    }
+      .well:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
 
-    .zone.dragover .well {
-      border-color: var(--wa-color-brand);
-      border-style: solid;
-      background: var(--wa-color-surface-raised, var(--wa-color-surface));
-    }
+      .zone.dragover .well {
+        border-color: var(--wa-color-brand);
+        border-style: solid;
+        background: var(--wa-color-surface-raised, var(--wa-color-surface));
+      }
 
-    .icon {
-      --nc-icon-size: 28px;
-      color: var(--wa-color-muted);
-    }
+      .icon {
+        --nc-icon-size: 28px;
+        color: var(--wa-color-muted);
+      }
 
-    .prompt {
-      font-weight: var(--wa-font-weight-medium, 500);
-    }
+      .prompt {
+        font-weight: var(--wa-font-weight-medium, 500);
+      }
 
-    .hint {
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-    }
+      .hint {
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+      }
 
-    .selected {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--wa-space-s, 8px);
-      padding: var(--wa-space-m, 12px);
-      background: var(--wa-color-surface);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-    }
+      .selected {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--wa-space-s, 8px);
+        padding: var(--wa-space-m, 12px);
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-l, 12px);
+      }
 
-    .filename {
-      font-weight: var(--wa-font-weight-medium, 500);
-      overflow-wrap: anywhere;
-    }
+      .filename {
+        font-weight: var(--wa-font-weight-medium, 500);
+        overflow-wrap: anywhere;
+      }
 
-    .size {
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .size {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .spacer {
-      flex: 1 1 auto;
-    }
+      .spacer {
+        flex: 1 1 auto;
+      }
 
-    .replace {
-      font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      background: none;
-      color: inherit;
-      cursor: pointer;
-    }
+      .replace {
+        font: inherit;
+        font-size: var(--wa-font-size-s, 13px);
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-sm, 6px);
+        background: none;
+        color: inherit;
+        cursor: pointer;
+      }
 
-    .replace:hover:not(:disabled) {
-      border-color: var(--wa-color-brand);
-    }
+      .replace:hover:not(:disabled) {
+        border-color: var(--wa-color-brand);
+      }
 
-    .replace:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
+      .replace:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 2px;
+      }
 
-    .replace:disabled {
-      cursor: default;
-      opacity: 0.6;
-    }
+      .replace:disabled {
+        cursor: default;
+        opacity: 0.6;
+      }
 
-    .error {
-      margin: var(--wa-space-xs, 6px) 0 0;
-      color: var(--wa-color-danger);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-xs, 6px) 0 0;
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    input[type='file'] {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
-      white-space: nowrap;
-      border: 0;
-    }
-  `;
+      input[type='file'] {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+    `,
+  ];
 
   /** Extensions the picker offers and the well accepts, comma separated. */
   @property({ type: String })

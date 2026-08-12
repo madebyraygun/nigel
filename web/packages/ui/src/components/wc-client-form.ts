@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
+import { controlsCss } from '@nigel/theme';
 
 export interface ClientFormValue {
   name: string;
@@ -49,63 +50,66 @@ export function validateClientForm(value: ClientFormValue): ClientFormErrors {
  */
 @customElement('wc-client-form')
 export class WcClientForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      min-width: 20rem;
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        min-width: 20rem;
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    /*
-     * A plain textarea rather than wa-textarea: Web Awesome's auto-sizing one
-     * needs a ResizeObserver, which jsdom has not got, and the component-first
-     * workflow means every state of this form is mounted in a jsdom axe run.
-     */
-    .stacked {
-      display: grid;
-      gap: var(--wa-space-2xs, 4px);
-    }
+      /*
+       * A plain textarea rather than wa-textarea: Web Awesome's auto-sizing one
+       * needs a ResizeObserver, which jsdom has not got, and the component-first
+       * workflow means every state of this form is mounted in a jsdom axe run.
+       */
+      .stacked {
+        display: grid;
+        gap: var(--wa-space-2xs, 4px);
+      }
 
-    .label {
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-    }
+      .label {
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-medium, 500);
+      }
 
-    textarea {
-      font: inherit;
-      width: 100%;
-      box-sizing: border-box;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-surface);
-      color: inherit;
-      resize: vertical;
-    }
+      textarea {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-surface);
+        color: inherit;
+        resize: vertical;
+      }
 
-    textarea:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
-  `;
+      textarea:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   value: ClientFormValue = EMPTY_CLIENT_FORM;

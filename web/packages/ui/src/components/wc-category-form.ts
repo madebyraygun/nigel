@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/radio-group/radio-group.js';
 import '@awesome.me/webawesome/dist/components/radio/radio.js';
+import { controlsCss } from '@nigel/theme';
 
 export interface CategoryFormValue {
   name: string;
@@ -74,65 +75,68 @@ export function formLineSuggestions(inUse: (string | null)[]): string[] {
  */
 @customElement('wc-category-form')
 export class WcCategoryForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      min-width: 22rem;
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        min-width: 22rem;
+      }
 
-    label.field {
-      display: block;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      margin-bottom: var(--wa-space-2xs, 4px);
-    }
+      label.field {
+        display: block;
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-medium, 500);
+        margin-bottom: var(--wa-space-2xs, 4px);
+      }
 
-    input.native {
-      width: 100%;
-      box-sizing: border-box;
-      font: inherit;
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-      color: inherit;
-      background: var(--wa-color-surface);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-    }
+      input.native {
+        width: 100%;
+        box-sizing: border-box;
+        font: inherit;
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        color: inherit;
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-m, 8px);
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      }
 
-    input.native:focus-visible {
-      outline: 2px solid var(--wa-color-brand);
-      outline-offset: 1px;
-    }
+      input.native:focus-visible {
+        outline: 2px solid var(--wa-color-brand);
+        outline-offset: 1px;
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .warning {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-warning, #8a6100);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .warning {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-warning, #8a6100);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint code {
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-    }
-  `;
+      .hint code {
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   value: CategoryFormValue = EMPTY_CATEGORY_FORM;

@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import { ACCOUNT_TYPES, accountTypeLabel } from './account-type.js';
+import { controlsCss } from '@nigel/theme';
 
 export type WcAccountFormMode = 'create' | 'rename';
 
@@ -61,53 +62,56 @@ export function validateAccountForm(value: AccountFormValue): AccountFormErrors 
  */
 @customElement('wc-account-form')
 export class WcAccountForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      min-width: 20rem;
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        min-width: 20rem;
+      }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--wa-space-m, 12px);
-    }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .fixed {
-      margin: 0;
-      display: grid;
-      grid-template-columns: max-content 1fr;
-      gap: var(--wa-space-2xs, 4px) var(--wa-space-m, 12px);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .fixed {
+        margin: 0;
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--wa-space-2xs, 4px) var(--wa-space-m, 12px);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .fixed dt {
-      color: var(--wa-color-muted);
-    }
+      .fixed dt {
+        color: var(--wa-color-muted);
+      }
 
-    .fixed dd {
-      margin: 0;
-    }
+      .fixed dd {
+        margin: 0;
+      }
 
-    .hint {
-      margin: 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
-  `;
+      .hint {
+        margin: 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+    `,
+  ];
 
   @property({ type: String, reflect: true })
   mode: WcAccountFormMode = 'create';

@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-manager-dialog.js';
-import type { WcManagerDialog } from './wc-manager-dialog.js';
+import { WcManagerDialog } from './wc-manager-dialog.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-manager-dialog.preview.js';
 
 async function mount(props: Partial<WcManagerDialog> = {}): Promise<WcManagerDialog> {
@@ -77,3 +78,10 @@ describe('wc-manager-dialog', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(
+  WcManagerDialog,
+  'wa-dialog::part(header)',
+  'wa-dialog::part(body)',
+  'wa-dialog::part(footer)',
+);

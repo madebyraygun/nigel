@@ -3,6 +3,7 @@ import { customElement, property, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
+import { controlsCss } from '@nigel/theme';
 
 /** What the card hands back when the form is submitted. */
 export interface NcUnlockDetail {
@@ -19,64 +20,67 @@ export interface NcUnlockDetail {
  */
 @customElement('wc-unlock-card')
 export class WcUnlockCard extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      max-width: 26rem;
-      width: 100%;
-      padding: var(--wa-space-xl, 24px);
-      background: var(--wa-color-surface);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        max-width: 26rem;
+        width: 100%;
+        padding: var(--wa-space-xl, 24px);
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-l, 12px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-s, 8px);
-      margin-bottom: var(--wa-space-l, 16px);
-    }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-s, 8px);
+        margin-bottom: var(--wa-space-l, 16px);
+      }
 
-    .lock {
-      --nc-icon-size: 24px;
-      color: var(--wa-color-brand);
-    }
+      .lock {
+        --nc-icon-size: 24px;
+        color: var(--wa-color-brand);
+      }
 
-    .heading {
-      margin: 0;
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-semibold, 600);
-    }
+      .heading {
+        margin: 0;
+        font-size: var(--wa-font-size-lg, 16px);
+        font-weight: var(--wa-font-weight-semibold, 600);
+      }
 
-    .hint {
-      margin: 0 0 var(--wa-space-m, 12px);
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .hint {
+        margin: 0 0 var(--wa-space-m, 12px);
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    form {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-    }
+      form {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .status {
-      min-height: 1.25rem;
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .status {
+        min-height: 1.25rem;
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .error {
-      color: var(--wa-color-danger);
-      margin: 0;
-    }
+      .error {
+        color: var(--wa-color-danger);
+        margin: 0;
+      }
 
-    .attempts,
-    .countdown {
-      color: var(--wa-color-muted);
-      margin: var(--wa-space-2xs, 4px) 0 0;
-    }
-  `;
+      .attempts,
+      .countdown {
+        color: var(--wa-color-muted);
+        margin: var(--wa-space-2xs, 4px) 0 0;
+      }
+    `,
+  ];
 
   /** Usually the business name; falls back to the product name. */
   @property({ type: String })
