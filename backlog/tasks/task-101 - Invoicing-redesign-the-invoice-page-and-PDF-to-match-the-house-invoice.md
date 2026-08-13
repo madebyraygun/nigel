@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 20:02'
+updated_date: '2026-08-13 20:13'
 labels:
   - invoicing
   - pdf
@@ -87,3 +87,14 @@ AC #9 is not something an implementer can sign. Four rendered pairs, plus a fift
 2. The foot rule prints on a sparse invoice with nothing under it, identically on both documents. It is a literal element of the stock template rather than a renderer decision.
 3. The TUI's `\n` escape: a two-line address is typed as `Line one\nLine two` in a single-line field. The web form uses a textarea and needs no escape.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+created: 2026-08-13 20:13
+---
+Implementation complete through plan Task 9 and Task 11. PR #3 opened against main and NOT merged: https://github.com/madebyraygun/nigel/pull/3
+
+Task 10 is the halt. AC #9 is unchecked and stays unchecked until the four rendered pairs have been looked at side by side. The PR body carries the reproduction steps and the three things to look at first.
+---
+<!-- COMMENTS:END -->
