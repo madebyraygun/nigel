@@ -1993,6 +1993,20 @@ mod tests {
         (dir, conn)
     }
 
+    /// A whole isolated installation: a temp config directory *and* a temp data
+    /// directory. `perform_pending_republish` resolves both from ambient
+    /// settings rather than taking them as arguments the way `begin_send` does,
+    /// so without this a test answers from the developer's own settings.json —
+    /// and on a machine with R2 configured, republishes to the real bucket.
+    /// `cli::invoice`'s own `isolated` is the same guard for the same reason.
+    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
+        let guard = crate::settings::TempConfigDir::new();
+        let mut settings = crate::settings::load_settings();
+        settings.data_dir = dir.to_string_lossy().into_owned();
+        crate::settings::save_settings(&settings).expect("settings");
+        guard
+    }
+
     fn manager(conn: &Connection) -> InvoiceManager {
         InvoiceManager::new(conn, "Hello, Sam.")
     }
@@ -2424,6 +2438,7 @@ mod tests {
     #[test]
     fn paying_a_published_invoice_paints_a_frame_before_it_republishes() {
         let (_d, conn) = test_conn();
+        let _config = isolated(_d.path());
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
         mark_published(&conn, id, "2026-07-16").unwrap();
         let mut mgr = manager(&conn);

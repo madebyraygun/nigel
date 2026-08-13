@@ -3,9 +3,10 @@ id: TASK-103
 title: >-
   Flaky or broken test:
   paying_a_published_invoice_paints_a_frame_before_it_republishes
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-13 18:25'
+updated_date: '2026-08-13 19:25'
 labels:
   - bug
   - tui
@@ -31,3 +32,9 @@ The failure output shows a rendered invoice with Subtotal/Total $2,000.00, a $50
 - [ ] #3 If the cause is a real regression, the TUI pay path repaints before the republish as task-68.4 intended
 - [ ] #4 `cargo test` and `cargo test --no-default-features` are both green
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: the test lacked the TempConfigDir guard, so republish_after_payment read the developer's real settings.json. With R2 configured the republish succeeded rather than being skipped, producing no 'old balance' warning — and uploading to a live bucket. Fixed by applying the same guard cli::invoice uses for the same scenario.
+<!-- SECTION:NOTES:END -->
