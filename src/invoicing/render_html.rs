@@ -256,12 +256,12 @@ pub enum PayButton<'a> {
 /// resolves the whole letterhead and passes it in.
 ///
 /// Every field is a borrowed `&str` and empty means unset, so a caller with
-/// nothing to say says nothing rather than reaching for an `Option`.
-/// `Default` is derived because the struct is built in a couple of dozen test
-/// literals, and a field appended to each of them by hand is a field that ends
-/// up meaning different things in different tests; production sites still name
-/// every field.
-#[derive(Default)]
+/// nothing to say says nothing rather than reaching for an `Option` — with one
+/// exception: `template`, for which empty is not "unset" but "render a blank
+/// document". There is deliberately **no `Default`**: it would make that state
+/// reachable by omission, and a caller who forgot the template would get an
+/// empty page rather than a compile error. Tests that are about something else
+/// use `with_template`.
 pub struct Branding<'a> {
     pub template: &'a str,
     pub company: &'a str,
@@ -273,6 +273,24 @@ pub struct Branding<'a> {
     /// The operator's own payment instructions, multi-line.
     pub payment_instructions: &'a str,
     pub contact_email: &'a str,
+}
+
+#[cfg(test)]
+impl<'a> Branding<'a> {
+    /// A branding carrying a template and no letterhead, for the tests that are
+    /// about something else. It takes the one field that has no honest empty
+    /// value, which is why this exists instead of `Default`.
+    pub(crate) fn with_template(template: &'a str) -> Self {
+        Self {
+            template,
+            company: "",
+            company_address: "",
+            company_phone: "",
+            logo: "",
+            payment_instructions: "",
+            contact_email: "",
+        }
+    }
 }
 
 /// The page that replaces a published invoice when it is voided.
@@ -696,19 +714,17 @@ mod tests {
 
     fn brand(contact_email: &str) -> Branding<'_> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 
     fn brand_with<'a>(template: &'a str, contact_email: &'a str) -> Branding<'a> {
         Branding {
-            template,
             company: "",
             contact_email,
-            ..Branding::default()
+            ..Branding::with_template(template)
         }
     }
 
@@ -935,10 +951,9 @@ mod tests {
     fn company_renders_and_is_escaped() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "A & B <Co>",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template("<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
         let html = render_invoice_html(
             &branding,
@@ -978,10 +993,9 @@ mod tests {
     fn the_company_block_carries_the_name_and_disappears_without_one() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company: "A & B <Co>",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -1014,12 +1028,11 @@ mod tests {
     fn the_company_block_is_the_whole_from_block() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company: "Bluepeak LLC",
             company_address: "P.O. Box 1234\nSpringfield, CA 90001",
             company_phone: "619.555.0123",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -1042,10 +1055,9 @@ mod tests {
     fn the_from_block_omits_the_lines_it_does_not_have() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -1070,10 +1082,9 @@ mod tests {
     fn a_from_block_with_no_name_still_starts_on_its_first_line() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company_phone: "619.555.0123",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -1093,11 +1104,10 @@ mod tests {
     fn a_company_address_containing_markup_is_text() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company: "Bluepeak",
             company_address: "<script>alert(1)</script>",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -1118,7 +1128,8 @@ mod tests {
         let png: &[u8] = &[
             0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
             b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae,
+            0x42, 0x60, 0x82,
         ];
         format!(
             "data:image/png;base64,{}",
@@ -1129,11 +1140,10 @@ mod tests {
     fn logo_html(logo: &str) -> String {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: "[{{LOGO}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "Bluepeak <LLC>",
             logo,
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template("[{{LOGO}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
         render_invoice_html(
             &branding,
@@ -1265,11 +1275,12 @@ mod tests {
     fn payment_html(instructions: &str) -> String {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: "[{{PAYMENT_BLOCK}}][{{PAYMENT_INSTRUCTIONS}}]\
-                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             payment_instructions: instructions,
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(
+                "[{{PAYMENT_BLOCK}}][{{PAYMENT_INSTRUCTIONS}}]\
+                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            )
         };
         render_invoice_html(
             &branding,
@@ -1461,11 +1472,12 @@ mod tests {
         client.billing_address = Some("123 Main St".into());
 
         let branding = Branding {
-            template: "[{{SUBTOTAL}}][{{TAX}}][{{COMPANY}}][{{CLIENT_ADDRESS}}][{{CLIENT_EMAIL}}]\
-                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(
+                "[{{SUBTOTAL}}][{{TAX}}][{{COMPANY}}][{{CLIENT_ADDRESS}}][{{CLIENT_EMAIL}}]\
+                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            )
         };
         let html = render_invoice_html(
             &branding,
@@ -1486,10 +1498,9 @@ mod tests {
         let (inv, mut client, items) = sample();
         client.billing_address = Some("123 Main St\nSpringfield, IL 62704".into());
         let branding = Branding {
-            template: DEFAULT_TEMPLATE,
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         };
         let html = render_invoice_html(
             &branding,
@@ -1595,10 +1606,9 @@ mod tests {
     fn the_stock_page_prints_the_configured_payment_instructions() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: DEFAULT_TEMPLATE,
             payment_instructions: "Wells Fargo\nRouting 121000248",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         };
         let html = render_invoice_html(
             &branding,

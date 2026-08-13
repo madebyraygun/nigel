@@ -58,12 +58,36 @@ fn is_multiline(row: usize) -> bool {
     matches!(row, MENU_COMPANY_ADDRESS | MENU_PAYMENT_INSTRUCTIONS)
 }
 
+/// The escape and its inverse. The backslash is escaped too, so the pair is a
+/// true round trip: without it a stored value carrying a literal `\n` would be
+/// rewritten into a real line break the next time the field was opened and
+/// saved, and there would be no way to type one at all.
 fn escape_newlines(value: &str) -> String {
-    value.replace('\n', "\\n")
+    value.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
 fn unescape_newlines(value: &str) -> String {
-    value.replace("\\n", "\n")
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('\\') => out.push('\\'),
+            // A lone backslash before anything else is what was typed, so it is
+            // what is stored: this form invents no vocabulary beyond the two
+            // sequences it documents.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 pub struct SettingsManager {
@@ -667,6 +691,38 @@ mod tests {
         );
     }
 
+    /// The escape has to be reversible or it is a data-loss bug: a value
+    /// carrying a literal backslash-n would come back as a real line break the
+    /// next time the field was opened and saved, and again, and again.
+    #[test]
+    fn a_value_holding_a_literal_escape_survives_a_form_round_trip() {
+        let (_dir, conn) = test_db();
+        let mut mgr = SettingsManager::new(&conn, "Hello").unwrap();
+        // Typed as `\\n`, which is how the form spells one literal backslash
+        // followed by an n.
+        edit_row(
+            &mut mgr,
+            &conn,
+            MENU_PAYMENT_INSTRUCTIONS,
+            r"Reference C:\\name on the wire",
+        );
+        let stored = db::get_metadata(&conn, "payment_instructions").unwrap();
+        assert_eq!(stored, r"Reference C:\name on the wire");
+
+        // Reopen and save again without touching anything: the value must not
+        // move.
+        let mut mgr = SettingsManager::new(&conn, "Hello").unwrap();
+        mgr.selection = MENU_PAYMENT_INSTRUCTIONS;
+        mgr.handle_key(KeyCode::Enter, &conn);
+        assert_eq!(mgr.edit_buffer, r"Reference C:\\name on the wire");
+        mgr.handle_key(KeyCode::Enter, &conn);
+        assert_eq!(
+            db::get_metadata(&conn, "payment_instructions").unwrap(),
+            stored,
+            "a round trip changed the stored value"
+        );
+    }
+
     #[test]
     fn reopening_a_multiline_field_shows_the_escape_again_not_a_raw_newline() {
         let (_dir, conn) = test_db();
@@ -692,7 +748,8 @@ mod tests {
         let png: &[u8] = &[
             0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
             b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae,
+            0x42, 0x60, 0x82,
         ];
         let path = dir.join(name);
         std::fs::write(&path, png).unwrap();

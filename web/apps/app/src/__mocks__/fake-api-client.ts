@@ -763,6 +763,8 @@ export class FakeApiClient implements ApiClient {
   } satisfies Company;
   /** Only `setCompany` throws this, so a save failure can be told from a load one. */
   companyError: Error | null = null;
+  /** Only `getCompany` throws this, which is the other half of that pair. */
+  companyLoadError: Error | null = null;
 
   async getAppSettings(): Promise<AppSettings> {
     this.calls.push('getAppSettings');
@@ -779,6 +781,7 @@ export class FakeApiClient implements ApiClient {
 
   async getCompany(): Promise<Company> {
     this.calls.push('getCompany');
+    if (this.companyLoadError) throw this.companyLoadError;
     if (this.settingsError) throw this.settingsError;
     return this.company;
   }

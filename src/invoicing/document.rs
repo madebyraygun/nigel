@@ -339,6 +339,13 @@ pub fn parse_logo(data_uri: &str) -> Result<Option<Logo>> {
         )));
     }
 
+    if !ends_correctly(mime, &bytes) {
+        return Err(NigelError::Invalid(format!(
+            "The logo is an incomplete {}: the file ends before its end marker.",
+            format_name(mime)
+        )));
+    }
+
     let (width, height) = image_dimensions(mime, &bytes).ok_or_else(|| {
         NigelError::Invalid(format!(
             "The logo's dimensions could not be read; it is not a usable {}.",
@@ -376,6 +383,23 @@ fn format_name(mime: &str) -> &'static str {
     } else {
         "PNG"
     }
+}
+
+/// Whether the file reaches its own terminator — a PNG's `IEND` chunk, a JPEG's
+/// `FFD9` end-of-image marker.
+///
+/// A header is not a file. A logo cut off after its `IHDR` still answers "how
+/// big am I", so the dimension check alone would accept it, the page would show
+/// a broken `<img>` and the PDF beside it would draw the wordmark — the two
+/// documents disagreeing about the same stored value. This is the completeness
+/// half of that decision, and it is here rather than in a renderer because it
+/// costs no decoder and so holds identically in a build with no `pdf` feature.
+fn ends_correctly(mime: &str, bytes: &[u8]) -> bool {
+    if mime == "image/jpeg" {
+        return bytes.ends_with(&[0xff, 0xd9]);
+    }
+    // The last chunk of a PNG is `IEND` plus its four CRC bytes.
+    bytes.len() >= 12 && bytes[bytes.len() - 8..bytes.len() - 4] == *b"IEND"
 }
 
 /// The pixel size in a PNG's `IHDR` or a JPEG's `SOFn` frame. `None` for
@@ -449,10 +473,13 @@ mod tests {
         0x00, 0x00, 0x00, 0x01, // height 1
         0x08, 0x06, 0x00, 0x00, 0x00, // bit depth, colour type, etc
         0x00, 0x00, 0x00, 0x00, // crc, unchecked
+        0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', // IEND, the file's end
+        0xae, 0x42, 0x60, 0x82, // crc, unchecked
     ];
 
-    /// A JPEG whose SOF0 frame declares 3x7. Nothing decodes it; `parse_logo`
-    /// reads the header and the size, which is all it claims to do.
+    /// A JPEG whose SOF0 frame declares 3x7, terminated by its EOI marker.
+    /// Nothing decodes it; `parse_logo` reads the header, the size and the end,
+    /// which is all it claims to do.
     fn jpeg_3x7() -> Vec<u8> {
         let mut bytes = vec![0xff, 0xd8, 0xff, 0xe0]; // SOI + APP0
         bytes.extend_from_slice(&[0x00, 0x04, 0x00, 0x00]); // APP0 length 4
@@ -461,6 +488,7 @@ mod tests {
         bytes.extend_from_slice(&[0x00, 0x07]); // height 7
         bytes.extend_from_slice(&[0x00, 0x03]); // width 3
         bytes.extend_from_slice(&[0x03; 10]);
+        bytes.extend_from_slice(&[0xff, 0xd9]); // EOI
         bytes
     }
 
@@ -552,11 +580,37 @@ mod tests {
     }
 
     #[test]
-    fn a_truncated_png_whose_size_cannot_be_read_is_refused() {
-        let err = parse_logo(&data_uri("image/png", &PNG_2X1[..12]))
+    fn a_png_whose_size_cannot_be_read_is_refused() {
+        // Signature and end marker, no `IHDR` between them: complete as a file,
+        // and still not something with a size.
+        let mut headless = PNG_2X1[..8].to_vec();
+        headless.extend_from_slice(&PNG_2X1[PNG_2X1.len() - 12..]);
+        let err = parse_logo(&data_uri("image/png", &headless))
             .unwrap_err()
             .to_string();
         assert!(err.contains("dimensions"), "got: {err}");
+    }
+
+    /// A header is not a file. A logo cut off after its dimensions still
+    /// answers "how big am I", and a page that trusted that would show a broken
+    /// `<img>` while the PDF beside it drew the wordmark.
+    #[test]
+    fn a_png_that_stops_before_its_end_marker_is_refused() {
+        let truncated = &PNG_2X1[..PNG_2X1.len() - 8];
+        let err = parse_logo(&data_uri("image/png", truncated))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("incomplete"), "got: {err}");
+    }
+
+    #[test]
+    fn a_jpeg_that_stops_before_its_end_marker_is_refused() {
+        let jpeg = jpeg_3x7();
+        let truncated = &jpeg[..jpeg.len() - 2];
+        let err = parse_logo(&data_uri("image/jpeg", truncated))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("incomplete"), "got: {err}");
     }
 
     #[test]

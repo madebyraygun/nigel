@@ -3384,10 +3384,9 @@ mod tests {
 
         fn branding() -> Branding<'static> {
             Branding {
-                template: DEFAULT_TEMPLATE,
                 company: "",
                 contact_email: "billing@example.test",
-                ..Branding::default()
+                ..Branding::with_template(DEFAULT_TEMPLATE)
             }
         }
 

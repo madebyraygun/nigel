@@ -51,6 +51,13 @@ function buttonIn(el: NigelSettingsScreen, heading: string) {
   return found?.querySelector('wa-button[slot="actions"]') as HTMLElement | undefined;
 }
 
+/** The panel itself, for assertions about what one panel is showing. */
+function panel(el: NigelSettingsScreen, heading: string) {
+  return [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
+    (p) => p.getAttribute('heading') === heading,
+  );
+}
+
 async function settle(el: NigelSettingsScreen): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
   await el.updateComplete;
@@ -186,6 +193,53 @@ describe('settings screen', () => {
       await settle(el);
 
       expect(client.company.logo).toMatch(/^data:/);
+    });
+
+    it('offers a retry when the letterhead cannot be loaded', async () => {
+      const client = new FakeApiClient();
+      client.companyLoadError = new ApiError({
+        code: 'internal',
+        rawCode: 'internal',
+        message: 'the database is unreadable',
+        status: 500,
+      });
+      const { el } = await mount(client);
+
+      // A failed load is its own state, never a form the data could not fill.
+      const letterhead = panel(el, 'Letterhead');
+      expect(letterhead?.querySelector('wc-spinner')).toBeFalsy();
+      expect(letterhead?.querySelector('wa-input')).toBeFalsy();
+      expect(letterhead?.textContent).toContain('the database is unreadable');
+      expect(buttonIn(el, 'Letterhead')?.textContent).toContain('Retry');
+
+      client.companyLoadError = null;
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+
+      expect(client.calls.filter((c) => c === 'getCompany')).toHaveLength(2);
+      expect(input(el, 0).value).toBe('Test Consultancy');
+    });
+
+    it('refuses an oversized logo before it reaches the server', async () => {
+      const { el, client } = await mount();
+      const oversized = new File([new Uint8Array(200 * 1024)], 'huge.png', {
+        type: 'image/png',
+      });
+      const picker = el.shadowRoot?.querySelector(
+        'input[type="file"]',
+      ) as HTMLInputElement;
+      Object.defineProperty(picker, 'files', { value: [oversized], configurable: true });
+      picker.dispatchEvent(new Event('change'));
+      await settle(el);
+
+      // Named, so it is a refusal about the file that was chosen and not the
+      // standing note about the cap.
+      expect(el.shadowRoot?.textContent).toContain('huge.png');
+      expect(el.shadowRoot?.querySelector('.logo-preview')).toBeFalsy();
+
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+      expect(client.company.logo).toBe('');
     });
 
     it('reports a failed save without changing what is shown', async () => {

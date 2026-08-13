@@ -50,19 +50,39 @@ pub fn render_invoice(
     // the same figures without asking for them.
     let items = line_items(conn, invoice.id)?;
     let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
+
+    // Whether there is a usable logo is decided **here**, once, and both
+    // documents are then rendered from that one answer.
+    //
+    // `parse_logo` is everything a check can establish without a decoder, and it
+    // holds in every build. `logo_is_embeddable` is the rest, and it only exists
+    // where the `pdf` feature brought a decoder in. A value that fails either is
+    // erased from the branding the page is rendered from, so the page is handed
+    // no logo rather than asked to reach the same verdict a second time — which
+    // is what stops a file the page would display and the PDF would refuse.
+    // Neither refusal is an error: a logo never fails an invoice.
+    let logo = parse_logo(branding.logo).ok().flatten();
+    #[cfg(feature = "pdf")]
+    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    let branding = &Branding {
+        logo: if logo.is_some() { branding.logo } else { "" },
+        template: branding.template,
+        company: branding.company,
+        company_address: branding.company_address,
+        company_phone: branding.company_phone,
+        payment_instructions: branding.payment_instructions,
+        contact_email: branding.contact_email,
+    };
+
     let html = render_invoice_html(branding, invoice, client, &items, &money, pay);
 
-    // The From block is decided once, above both renderers, which is what makes
-    // the page and the attachment agree by construction rather than by review.
-    // The logo goes through the same `parse_logo` the page used, on the same
-    // string: a stored value that cannot be used is `None` here and no `<img>`
-    // there, and neither is an error — a logo never fails an invoice.
+    // The From block is decided once, above both renderers, for the same
+    // reason: the page and the attachment agree by construction, not by review.
     let company = company_block(
         branding.company,
         branding.company_address,
         branding.company_phone,
     );
-    let logo = parse_logo(branding.logo).ok().flatten();
     let pdf = render_pdf(
         invoice,
         client,
@@ -124,10 +144,9 @@ mod tests {
 
     fn brand(contact_email: &str) -> Branding<'_> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 
@@ -181,10 +200,9 @@ mod tests {
         let client = get_client(&conn, invoice.client_id).unwrap();
 
         let branding = Branding {
-            template: "<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
             company: "",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template("<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>")
         };
         let out = render_invoice(&conn, &invoice, &client, PayButton::Omitted, &branding).unwrap();
 
@@ -444,10 +462,9 @@ mod tests {
         let client = get_client(&conn, invoice.client_id).unwrap();
 
         let branding = Branding {
-            template: "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
-            ..Branding::default()
+            ..Branding::with_template("<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
         let out = render_invoice(&conn, &invoice, &client, PayButton::Omitted, &branding).unwrap();
 
@@ -630,6 +647,63 @@ mod tests {
         assert!(
             text.contains("Bluepeak LLC"),
             "the wordmark stands in: {text}"
+        );
+    }
+
+    /// A logo that passes every structural check and still will not decode is
+    /// the case where the two documents could disagree: the page has no decoder
+    /// to consult, so it would show a broken `<img>` beside a PDF drawing the
+    /// wordmark. The seam decides once and neither document uses it.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_logo_that_will_not_decode_is_dropped_from_both_documents() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        // A well-formed PNG wrapper — signature, `IHDR` declaring a size, and
+        // the `IEND` that says the file is whole — around no image data at all.
+        let mut hollow = vec![
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        hollow.extend_from_slice(&[
+            0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82,
+        ]);
+        let uri = {
+            use base64::Engine as _;
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&hollow)
+            )
+        };
+        assert!(
+            crate::invoicing::document::parse_logo(&uri)
+                .unwrap()
+                .is_some(),
+            "the premise: it passes every check that costs no decoder"
+        );
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead(&uri, ""),
+        )
+        .expect("an undecodable logo is not a failed render");
+
+        assert!(!out.html.contains("<img"), "no broken image on the page");
+        let pdf = out.pdf.expect("a pdf");
+        assert!(
+            crate::pdf::image_xobjects(&pdf).is_empty(),
+            "and nothing embedded in the attachment"
+        );
+        assert!(
+            crate::pdf::extract_text(&pdf).contains("Bluepeak LLC"),
+            "the wordmark stands in on both"
         );
     }
 

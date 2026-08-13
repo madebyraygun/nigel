@@ -1695,6 +1695,62 @@ fn the_stock_page_prints_no_contact_line_and_says_nothing_about_one() {
     );
 }
 
+/// The stock page no longer hardcodes a way to pay, so an installation with
+/// nothing configured now sends a document that says how much is owed and
+/// nothing about how to settle it. That is a legitimate choice and a silent one,
+/// so it is said out loud — once, on stderr, where the old placeholder notice
+/// was.
+#[test]
+fn a_document_with_no_way_to_pay_says_so_on_stderr() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions"));
+}
+
+#[test]
+fn configured_payment_instructions_draw_no_notice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.db()
+        .execute(
+            "INSERT INTO metadata (key, value) VALUES ('payment_instructions', ?1)",
+            ["Bank transfer to Example Bank"],
+        )
+        .unwrap();
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions").not());
+}
+
+/// An operator who owns their template owns what it says about paying, and a
+/// notice about a key their page may not even use is noise.
+#[test]
+fn a_custom_template_draws_no_payment_notice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} — pay however we agreed</p>",
+    );
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions").not());
+}
+
 /// AC #3 end to end: the page's direct-deposit line is `contact_email`, not the
 /// address the email is sent from.
 #[test]

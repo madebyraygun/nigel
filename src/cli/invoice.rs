@@ -477,6 +477,26 @@ const PREVIEW_CONTACT_PLACEHOLDER: &str = "(contact_email not configured)";
 /// no longer does; a custom one may.
 const CONTACT_PLACEHOLDER_KEY: &str = "{{CONTACT}}";
 
+/// The notice a document with no way to pay on it earns, or nothing.
+///
+/// The stock page used to hardcode a bank-transfer paragraph. It does not any
+/// more, which is the point — but an operator who never set
+/// `payment_instructions` would otherwise send an amount owed with nothing on
+/// the document about how to settle it, and hear nothing about it. This is the
+/// old placeholder notice's job, moved to the thing that is now missing.
+///
+/// Silent for a **custom template**: that page is the operator's, it may say
+/// whatever it likes about paying, and Nigel cannot read it.
+pub(crate) fn payment_instructions_notice(
+    payment_instructions: &str,
+    has_template_override: bool,
+) -> Option<&'static str> {
+    (payment_instructions.trim().is_empty() && !has_template_override).then_some(
+        "notice: no payment_instructions are set, so neither document says how to pay \
+         — set them in Settings, or leave them unset deliberately",
+    )
+}
+
 fn preview_dir(output_dir: Option<String>) -> (PathBuf, bool) {
     match output_dir {
         Some(dir) => (
@@ -587,6 +607,7 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
     let (contact_email, is_placeholder) = contact_email_for_preview(&invoicing_config());
 
     let template = load_template(&get_data_dir())?;
+    let has_override = matches!(template, std::borrow::Cow::Owned(_));
     // The stock page does not print `{{CONTACT}}` any more — payment
     // instructions are the operator's own text — so the notice is about the
     // template actually in use rather than about the setting in the abstract.
@@ -596,6 +617,9 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
         );
     }
     let profile = company_profile(&conn);
+    if let Some(notice) = payment_instructions_notice(&profile.payment_instructions, has_override) {
+        eprintln!("{notice}");
+    }
     let branding = profile.branding(&template, &contact_email);
 
     // Both artifacts are rendered before either is written, so a PDF failure
@@ -736,6 +760,12 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     let cfg = invoicing_config();
     let contact_email = contact_email_for_preview(&cfg).0;
     let profile = company_profile(&conn);
+    if let Some(notice) = payment_instructions_notice(
+        &profile.payment_instructions,
+        matches!(template, std::borrow::Cow::Owned(_)),
+    ) {
+        eprintln!("{notice}");
+    }
     let branding = profile.branding(&template, &contact_email);
 
     // Rendered before the decision and before any client is built, through the

@@ -11,6 +11,12 @@ import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
 import type { AppSettings, Company } from '../api/types.js';
+
+/**
+ * The cap `document::parse_logo` enforces, in the one place the browser needs
+ * it: `MAX_LOGO_BYTES` in `src/invoicing/document.rs`.
+ */
+const MAX_LOGO_BYTES = 128 * 1024;
 import type { ScreenContext } from './context.js';
 import {
   applyMode,
@@ -91,9 +97,10 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       .logo-preview {
         max-height: 3rem;
         max-width: 12rem;
-        /* The stored image may be transparent, and both documents put it on
-           white. Showing it on the card would misrepresent it in dark mode. */
-        background: #fff;
+        /* The stored image may be transparent, and both documents flatten it
+           onto white. Showing it on the card would misrepresent it in dark
+           mode, which is why this token is deliberately mode-independent. */
+        background: var(--nc-color-document-bg);
         border-radius: var(--wa-radius-s, 6px);
         padding: var(--wa-space-2xs, 4px);
       }
@@ -107,6 +114,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private appSettings: AppSettings | null = null;
   @state() private company: Company | null = null;
   @state() private companyError = '';
+  /** A failed *load*, which is a different state from a failed save. */
+  @state() private companyLoadError = '';
   @state() private dataDirDraft = '';
   @state() private busy: string | null = null;
   @state() private passwordError = '';
@@ -179,31 +188,66 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
    * halfway through typing an address.
    */
   private async loadCompany(): Promise<void> {
+    this.companyLoadError = '';
     try {
       this.company = await this.client.getCompany();
     } catch (error) {
+      // A failed load is its own state, never a form the data could not fill:
+      // an empty letterhead form would save five blank fields over whatever is
+      // actually stored.
+      this.companyLoadError =
+        error instanceof ApiError ? error.message : 'Could not load the letterhead.';
       this.toastError(error, 'Could not load the letterhead.');
     }
   }
+
+  private retryCompany = () => {
+    void this.loadCompany();
+  };
 
   private editCompany(field: keyof Company, value: string): void {
     if (!this.company) return;
     this.company = { ...this.company, [field]: value };
   }
 
-  private handleCompanyInput = (field: keyof Company) => (event: Event) => {
-    this.editCompany(field, (event.target as HTMLInputElement).value);
+  /**
+   * One bound handler per field, built once. A factory called from `render`
+   * hands Lit a new function on every pass, so the listener is torn down and
+   * re-attached each time for no gain.
+   */
+  private readonly companyInput: Record<keyof Company, (event: Event) => void> = {
+    name: this.onCompanyInput('name'),
+    address: this.onCompanyInput('address'),
+    phone: this.onCompanyInput('phone'),
+    logo: this.onCompanyInput('logo'),
+    paymentInstructions: this.onCompanyInput('paymentInstructions'),
   };
 
+  private onCompanyInput(field: keyof Company): (event: Event) => void {
+    return (event: Event) =>
+      this.editCompany(field, (event.target as HTMLInputElement).value);
+  }
+
   /**
-   * The logo travels as a `data:` URI, so the file is read here. The server
-   * checks the type, the magic bytes and the size cap and answers a message;
-   * this only has to hand it the bytes.
+   * The logo travels as a `data:` URI, so the file is read here.
+   *
+   * The size is checked **before** anything is read. Base64 inflates the
+   * payload by a third, so an oversized image would arrive as a body axum
+   * refuses outright — a generic 413 in place of the server's own sentence
+   * about the 128 KiB cap. `wc-dropzone` checks extension and size client-side
+   * for exactly this reason. Everything else about the file — the magic bytes,
+   * the type actually inside it, whether it decodes — is still the server's to
+   * answer, because only it can.
    */
   private handleLogoFile = async (event: Event) => {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    if (file.size > MAX_LOGO_BYTES) {
+      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KiB; the limit is ${MAX_LOGO_BYTES / 1024} KiB.`;
+      input.value = '';
+      return;
+    }
     try {
       const dataUri = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -340,6 +384,21 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     }
   };
 
+  /**
+   * The three states this panel has: loaded, loading, and could-not-load. The
+   * last one is not a form — an empty letterhead over a load failure would save
+   * five blank fields on top of whatever is really stored.
+   */
+  private renderCompanyBody(nameLabel: string): TemplateResult {
+    if (this.companyLoadError) {
+      return html`<p class="error">${this.companyLoadError}</p>`;
+    }
+    if (!this.company) {
+      return html`<wc-spinner label="Loading the letterhead"></wc-spinner>`;
+    }
+    return this.renderCompanyFields(this.company, nameLabel);
+  }
+
   private renderCompanyFields(company: Company, nameLabel: string): TemplateResult {
     const disabled = this.busy === 'company';
     return html`
@@ -348,13 +407,13 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           label=${nameLabel}
           .value=${company.name}
           ?disabled=${disabled}
-          @input=${this.handleCompanyInput('name')}
+          @input=${this.companyInput.name}
         ></wa-input>
         <wa-input
           label="Phone"
           .value=${company.phone}
           ?disabled=${disabled}
-          @input=${this.handleCompanyInput('phone')}
+          @input=${this.companyInput.phone}
         ></wa-input>
       </div>
       <wa-textarea
@@ -362,14 +421,14 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         rows="3"
         .value=${company.address}
         ?disabled=${disabled}
-        @input=${this.handleCompanyInput('address')}
+        @input=${this.companyInput.address}
       ></wa-textarea>
       <wa-textarea
         label="Payment instructions"
         rows="3"
         .value=${company.paymentInstructions}
         ?disabled=${disabled}
-        @input=${this.handleCompanyInput('paymentInstructions')}
+        @input=${this.companyInput.paymentInstructions}
       ></wa-textarea>
       <p class="note">
         Printed on both the invoice page and the PDF, or on neither. Leave it
@@ -409,17 +468,19 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         heading="Letterhead"
         description="What the invoice page and the PDF say about you. The name is also shown in the sidebar, on reports, and in the browser tab."
       >
-        ${this.company ? this.renderCompanyFields(this.company, nameLabel) : html`<wc-spinner
-              label="Loading the letterhead"
-            ></wc-spinner>`}
+        ${this.renderCompanyBody(nameLabel)}
         ${this.companyError ? html`<p class="error">${this.companyError}</p>` : nothing}
-        <wa-button
-          slot="actions"
-          variant="brand"
-          ?disabled=${this.busy === 'company' || this.company === null}
-          @click=${this.saveCompany}
-          >Save</wa-button
-        >
+        ${this.companyLoadError
+          ? html`<wa-button slot="actions" variant="brand" @click=${this.retryCompany}
+              >Retry</wa-button
+            >`
+          : html`<wa-button
+              slot="actions"
+              variant="brand"
+              ?disabled=${this.busy === 'company' || this.company === null}
+              @click=${this.saveCompany}
+              >Save</wa-button
+            >`}
       </wc-panel>
 
       <wc-panel

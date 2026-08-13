@@ -223,9 +223,76 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 9,
+        description: "seed payment_instructions from the paragraph the stock page used to print",
+        up: |conn| seed_payment_instructions(conn, contact_address()),
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// The sentence the stock invoice page hardcoded before payment instructions
+/// became the operator's own text, with the address `{{CONTACT}}` used to
+/// interpolate written in.
+///
+/// The invoice number is gone from it: the old paragraph said "reference invoice
+/// #1248" per document, and a setting is one value for every invoice. "the
+/// invoice number" says the same thing to a person reading a bill.
+fn legacy_payment_instructions(contact: &str) -> String {
+    format!(
+        "Direct deposit: to pay by bank transfer, reference the invoice number. \
+         Contact {contact} for account details."
+    )
+}
+
+/// The address the old page printed, from wherever this installation keeps it.
+fn contact_address() -> Option<String> {
+    let cfg = crate::settings::invoicing_config();
+    cfg.contact_email
+        .or(cfg.from_email)
+        .map(|address| address.trim().to_string())
+        .filter(|address| !address.is_empty())
+}
+
+/// Give an installation that has been invoicing the payment instructions its
+/// documents used to carry.
+///
+/// Deleting the hardcoded paragraph from the stock page is a silent regression
+/// for everyone who was relying on it: nothing seeds the new key, so both
+/// documents would simply stop saying how to pay. This puts the old sentence
+/// where the operator can now edit or delete it.
+///
+/// Three conditions, all of them about not inventing anything:
+///
+/// - **The key is unset.** A value already there is the operator's, including a
+///   deliberately empty one, and a migration never overwrites one of those. This
+///   is also what makes a replay a no-op.
+/// - **There is a contact address.** The old sentence's only variable part was
+///   `{{CONTACT}}`; with nothing to put there it printed a broken line, and
+///   seeding that would be worse than seeding nothing.
+/// - **This database has invoiced.** A brand-new database runs every migration
+///   too, and a fresh install never printed the old paragraph — so it starts
+///   with no payment instructions, which is the whole point of making them
+///   configurable.
+fn seed_payment_instructions(conn: &Connection, contact: Option<String>) -> Result<()> {
+    if crate::db::get_metadata(conn, "payment_instructions").is_some() {
+        return Ok(());
+    }
+    let Some(contact) = contact else {
+        return Ok(());
+    };
+    let has_invoiced: bool =
+        conn.query_row("SELECT COUNT(*) > 0 FROM invoices", [], |r| r.get(0))?;
+    if !has_invoiced {
+        return Ok(());
+    }
+    set_metadata(
+        conn,
+        "payment_instructions",
+        &legacy_payment_instructions(&contact),
+    )
+}
 
 /// Rewrite every value a date column holds that `validate_date` accepts to its
 /// zero-padded form, answering the ids of the rows that moved.
@@ -773,8 +840,8 @@ mod tests {
 
 #[cfg(test)]
 mod invoicing_migration_tests {
+    use super::*;
     use crate::db::{get_connection, init_db};
-    use crate::migrations::run_migrations;
 
     #[test]
     fn invoicing_tables_exist_after_migration() {
@@ -842,6 +909,112 @@ mod invoicing_migration_tests {
             )
             .unwrap();
         assert_eq!(voided_at.as_deref(), Some("2026-08-04"));
+    }
+
+    /// A database that has been invoicing under the old stock page, upgrading.
+    fn invoiced_db_at_v8() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        let up_to_v8 = &MIGRATIONS[..8];
+        apply_migrations(&conn, up_to_v8).unwrap();
+        conn.execute("INSERT INTO clients (name) VALUES ('Acme')", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO invoices (number, client_id, issue_date, status, token)
+             VALUES (1248, 1, '2026-08-04', 'sent', 'tok')",
+            [],
+        )
+        .unwrap();
+        (dir, conn)
+    }
+
+    fn stored_instructions(conn: &Connection) -> Option<String> {
+        crate::db::get_metadata(conn, "payment_instructions")
+    }
+
+    /// The regression this migration exists for: an operator upgrades, the
+    /// stock page stops hardcoding a bank-transfer paragraph, and without this
+    /// their next invoice would go out with no way to pay it by transfer and
+    /// nothing to say so.
+    #[test]
+    fn v9_gives_an_upgraded_database_the_instructions_its_documents_carried() {
+        let (_dir, conn) = invoiced_db_at_v8();
+        seed_payment_instructions(&conn, Some("billing@example.com".into())).unwrap();
+
+        let stored = stored_instructions(&conn).expect("seeded");
+        assert!(stored.contains("bank transfer"), "got: {stored}");
+        assert!(stored.contains("billing@example.com"), "got: {stored}");
+        assert!(
+            !stored.contains("1248") && !stored.contains("{{"),
+            "one value for every invoice, with nothing left to expand: {stored}"
+        );
+    }
+
+    #[test]
+    fn v9_never_overwrites_instructions_the_operator_already_set() {
+        let (_dir, conn) = invoiced_db_at_v8();
+        set_metadata(&conn, "payment_instructions", "Cheques only, please").unwrap();
+        seed_payment_instructions(&conn, Some("billing@example.com".into())).unwrap();
+        assert_eq!(
+            stored_instructions(&conn).as_deref(),
+            Some("Cheques only, please")
+        );
+    }
+
+    /// Deliberately cleared is a decision, and a replay must not undo it.
+    #[test]
+    fn v9_leaves_a_deliberately_empty_value_empty_and_is_idempotent() {
+        let (_dir, conn) = invoiced_db_at_v8();
+        set_metadata(&conn, "payment_instructions", "").unwrap();
+        seed_payment_instructions(&conn, Some("billing@example.com".into())).unwrap();
+        assert_eq!(stored_instructions(&conn).as_deref(), Some(""));
+
+        let (_dir, conn) = invoiced_db_at_v8();
+        seed_payment_instructions(&conn, Some("billing@example.com".into())).unwrap();
+        let once = stored_instructions(&conn);
+        seed_payment_instructions(&conn, Some("someone.else@example.com".into())).unwrap();
+        assert_eq!(stored_instructions(&conn), once, "a replay changed it");
+    }
+
+    /// The old sentence's only variable part was the address. With nothing to
+    /// put there it printed a broken line, and seeding that is worse than
+    /// seeding nothing.
+    #[test]
+    fn v9_seeds_nothing_when_the_installation_has_no_contact_address() {
+        let (_dir, conn) = invoiced_db_at_v8();
+        seed_payment_instructions(&conn, None).unwrap();
+        assert_eq!(stored_instructions(&conn), None);
+    }
+
+    /// A fresh `nigel init` runs every migration too. It never printed the old
+    /// paragraph, so it starts with no payment instructions — which is what
+    /// making them configurable was for.
+    #[test]
+    fn v9_seeds_nothing_on_a_database_that_has_never_invoiced() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        init_db(&conn).unwrap();
+        seed_payment_instructions(&conn, Some("billing@example.com".into())).unwrap();
+        assert_eq!(stored_instructions(&conn), None);
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    /// End to end through `run_migrations`, reading the address from the
+    /// settings file the way the migration itself does.
+    #[test]
+    fn v9_reads_the_address_from_the_installations_own_settings() {
+        let _config = crate::settings::TempConfigDir::new();
+        let mut settings = crate::settings::load_settings();
+        settings.from_email = Some("accounts@example.com".into());
+        crate::settings::save_settings(&settings).unwrap();
+
+        let (_dir, conn) = invoiced_db_at_v8();
+        run_migrations(&conn).unwrap();
+
+        let stored = stored_instructions(&conn).expect("seeded");
+        assert!(stored.contains("accounts@example.com"), "got: {stored}");
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
 }
 

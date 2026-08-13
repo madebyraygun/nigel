@@ -337,10 +337,9 @@ mod tests {
 
     fn brand(contact_email: &str) -> Branding<'_> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 
@@ -686,11 +685,10 @@ mod tests {
             html: RefCell::new(String::new()),
         };
         let branding = Branding {
-            template: DEFAULT_TEMPLATE,
             company: "Bluepeak LLC",
             company_phone: "619.555.0123",
             payment_instructions: "Wells Fargo, routing 121000248",
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         };
         send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
         let html = publisher.html.borrow();
@@ -714,10 +712,9 @@ mod tests {
             html: RefCell::new(String::new()),
         };
         let branding = Branding {
-            template: "<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
             company: "",
             contact_email: "billing@example.test",
-            ..Branding::default()
+            ..Branding::with_template("<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>")
         };
         send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
 
@@ -735,10 +732,9 @@ mod tests {
         };
         let mail = FakeMail::default();
         let branding = Branding {
-            template: DEFAULT_TEMPLATE,
             company: "Acme LLC",
             contact_email: "billing@example.test",
-            ..Branding::default()
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         };
         send_invoice(&conn, id, "2026-08-04", &branding, &gw, &FakePub, &mail).unwrap();
         assert_eq!(*mail.subject.borrow(), "Invoice #1248 from Acme LLC");

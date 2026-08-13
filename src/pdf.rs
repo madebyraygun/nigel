@@ -82,6 +82,11 @@ struct PdfWriter {
     current_page: PdfPageIndex,
     current_layer: PdfLayerIndex,
     y: f32,
+    /// How many pages have been started. The one thing that tells a caller
+    /// whether a block it was drawing crossed a page break: `y` resets on a new
+    /// page, so it can be *lower* after a break than before one and cannot be
+    /// compared across it.
+    page_no: usize,
 }
 
 impl PdfWriter {
@@ -100,6 +105,7 @@ impl PdfWriter {
             current_page: page,
             current_layer: layer,
             y: MARGIN_TOP,
+            page_no: 0,
         })
     }
 
@@ -112,6 +118,7 @@ impl PdfWriter {
         self.current_page = page;
         self.current_layer = layer;
         self.y = MARGIN_TOP;
+        self.page_no += 1;
     }
 
     fn ensure_space(&mut self, needed: f32) {
@@ -926,22 +933,75 @@ const PARTY_LABEL_X: f32 = 110.0;
 const PARTY_RULE_X: f32 = 126.0;
 const PARTY_TEXT_X: f32 = 129.0;
 
+/// How wide a party block's lines may be before they wrap.
+const PARTY_WIDTH: f32 = PAGE_W - MARGIN_RIGHT - PARTY_TEXT_X;
+
 /// The metadata column's value column, beside its labels at `MARGIN_LEFT`.
 const META_VALUE_X: f32 = MARGIN_LEFT + 30.0;
 
+/// How wide a metadata value may be before it is cut: up to the party column,
+/// which starts beside it. `due_value` can put a whole terms sentence here.
+const META_VALUE_WIDTH: f32 = PARTY_LABEL_X - META_VALUE_X - COL_PAD;
+
+/// The wordmark's size when there is room for it, and the smallest it may shrink
+/// to before the name is cut instead. Below the body size it stops reading as a
+/// letterhead and starts reading as a mistake.
+const WORDMARK_SIZE: f32 = 22.0;
+const WORDMARK_MIN_SIZE: f32 = FONT_SIZE;
+
+/// How wide the wordmark may be: the whole left half of the letterhead band, up
+/// to where the From block's label starts.
+const WORDMARK_WIDTH: f32 = PARTY_LABEL_X - MARGIN_LEFT;
+
+/// What a value cut to fit ends with, the same marker `document::address_lines`
+/// uses when it clamps an address.
+const TRUNCATED: &str = "...";
+
 const LINE_H: f32 = 5.0;
 
+/// `text` cut down until it fits `max_width` at `size`, ending in `TRUNCATED`
+/// when anything was dropped. A value that already fits comes back untouched.
+fn truncate_to_width(text: &str, max_width: f32, size: f32) -> String {
+    if approx_text_width(text, size) <= max_width {
+        return text.to_string();
+    }
+    let mut kept = String::new();
+    for ch in text.chars() {
+        let mut candidate = kept.clone();
+        candidate.push(ch);
+        if approx_text_width(&(candidate.clone() + TRUNCATED), size) > max_width {
+            break;
+        }
+        kept = candidate;
+    }
+    kept.push_str(TRUNCATED);
+    kept
+}
+
 impl PdfWriter {
-    /// The company name where a logo would go: 22pt bold at the left margin.
-    /// What every document without a usable image is headed by.
+    /// The company name where a logo would go: bold at the left margin, in the
+    /// space left of the From block. What every document without a usable image
+    /// is headed by.
+    ///
+    /// A name too wide for that space is **shrunk first and cut second**. A
+    /// business name is somebody's own, so making it smaller keeps all of it;
+    /// cutting only happens once shrinking would take the wordmark below the
+    /// body size, at which point it has stopped being a letterhead anyway.
+    /// Either way it never reaches the From block, which it would otherwise
+    /// print straight through.
     fn wordmark(&mut self, name: &str) {
         if name.is_empty() {
             return;
         }
+        let mut size = WORDMARK_SIZE;
+        while size > WORDMARK_MIN_SIZE && approx_text_width(name, size) > WORDMARK_WIDTH {
+            size -= 0.5;
+        }
+        let drawn = truncate_to_width(name, WORDMARK_WIDTH, size);
         // The baseline sits a line down from the band's top, so the wordmark
         // occupies the band rather than hanging above it.
         self.y += 7.0;
-        self.text(name, MARGIN_LEFT, 22.0, true);
+        self.text(&drawn, MARGIN_LEFT, size, true);
         self.y += 3.0;
     }
 
@@ -996,6 +1056,15 @@ impl PdfWriter {
 
     /// A ruled party block — a label, a vertical rule, and the lines beside it.
     /// Draws nothing at all when there is nothing to say.
+    ///
+    /// Every line the block carries arrives in `lines`, so the rule is drawn
+    /// once, last, over everything it brackets. A caller that drew one more line
+    /// afterwards would leave that line outside the rule and outside the
+    /// emptiness test both.
+    ///
+    /// Lines wrap inside the column. This one is `PARTY_WIDTH` wide, `self.text`
+    /// does not wrap, and a client's postal address running off the right edge
+    /// of the page is a document that has lost part of where it is going.
     fn party_block(&mut self, label: &str, name: &str, lines: &[&str], bold_name: bool) {
         if name.is_empty() && lines.is_empty() {
             return;
@@ -1003,12 +1072,16 @@ impl PdfWriter {
         let top = self.y - 3.5;
         self.text(label, PARTY_LABEL_X, 7.0, false);
         if !name.is_empty() {
-            self.text(name, PARTY_TEXT_X, FONT_SIZE, bold_name);
-            self.y += LINE_H;
+            for wrapped in wrap_text(name, PARTY_WIDTH, FONT_SIZE) {
+                self.text(&wrapped, PARTY_TEXT_X, FONT_SIZE, bold_name);
+                self.y += LINE_H;
+            }
         }
         for line in lines {
-            self.text(line, PARTY_TEXT_X, FONT_SIZE, false);
-            self.y += LINE_H;
+            for wrapped in wrap_text(line, PARTY_WIDTH, FONT_SIZE) {
+                self.text(&wrapped, PARTY_TEXT_X, FONT_SIZE, false);
+                self.y += LINE_H;
+            }
         }
         self.vline(PARTY_RULE_X, top, self.y - 3.5);
     }
@@ -1023,6 +1096,18 @@ impl PdfWriter {
 /// and compositing onto the surface the image will sit on is the only choice
 /// that is not an invention about someone's brand. `None` for anything that
 /// will not decode — a logo is decoration on a document about money.
+/// Whether this logo will actually decode into something embeddable.
+///
+/// The half of "is this logo usable" that needs a decoder, which is why it lives
+/// here and not in `document.rs`: `image` arrives with the `pdf` feature and
+/// exists nowhere else. `render_invoice` calls it once, above both renderers, so
+/// a file the page would happily put in an `<img>` and this document could not
+/// embed is dropped from both rather than shown by one.
+#[cfg(feature = "pdf")]
+pub fn logo_is_embeddable(logo: &Logo) -> bool {
+    prepare_logo(&logo.bytes).is_some()
+}
+
 #[cfg(feature = "pdf")]
 fn prepare_logo(bytes: &[u8]) -> Option<image_crate::DynamicImage> {
     let decoded = image_crate::load_from_memory(bytes).ok()?;
@@ -1085,11 +1170,13 @@ pub fn render_invoice_pdf(
     let left_bottom = pdf.y;
 
     pdf.y = band_top;
-    pdf.party_block("From", company.name, &company.address, true);
-    if let Some(phone) = company.phone {
-        pdf.text(&format!("ph. {phone}"), PARTY_TEXT_X, FONT_SIZE, false);
-        pdf.y += LINE_H;
-    }
+    // The phone is one of the block's lines, not something drawn after it: the
+    // block decides from all of them whether there is anything to draw, and its
+    // rule brackets all of them.
+    let phone_line = company.phone.map(|phone| format!("ph. {phone}"));
+    let mut from_lines: Vec<&str> = company.address.clone();
+    from_lines.extend(phone_line.as_deref());
+    pdf.party_block("From", company.name, &from_lines, true);
     pdf.y = pdf.y.max(left_bottom) + 8.0;
 
     pdf.text(&title, MARGIN_LEFT, TITLE_SIZE, true);
@@ -1099,7 +1186,11 @@ pub fn render_invoice_pdf(
     let band_top = pdf.y;
     for row in meta_rows(invoice) {
         pdf.text(row.label, MARGIN_LEFT, FONT_SIZE, false);
-        pdf.text(&row.value, META_VALUE_X, FONT_SIZE, row.emphasis);
+        // Cut rather than wrapped: these are label/value pairs on one line
+        // each, and `due_value` can fold a whole terms sentence into one of
+        // them. Unbounded it prints straight through the party column beside it.
+        let value = truncate_to_width(&row.value, META_VALUE_WIDTH, FONT_SIZE);
+        pdf.text(&value, META_VALUE_X, FONT_SIZE, row.emphasis);
         pdf.y += LINE_H;
     }
     let left_bottom = pdf.y;
@@ -1133,6 +1224,7 @@ pub fn render_invoice_pdf(
         },
     ];
     let table_top = pdf.y - 3.5;
+    let table_page = pdf.page_no;
     pdf.table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
 
     for item in items {
@@ -1148,8 +1240,9 @@ pub fn render_invoice_pdf(
     }
     // Column dividers, drawn once the table's extent is known. Skipped when the
     // rows paginated, since a rule spanning a page break would be drawn on the
-    // wrong page.
-    if pdf.y > table_top {
+    // wrong page — and `y` alone cannot say whether they did, because it resets
+    // at the top of each new page and can pass the `> table_top` test again.
+    if pdf.page_no == table_page && pdf.y > table_top {
         let mut divider = MARGIN_LEFT;
         for col in &cols[..cols.len() - 1] {
             divider += col.width;
@@ -1267,6 +1360,113 @@ pub(crate) fn extract_text(bytes: &[u8]) -> String {
     let doc = lopdf::Document::load_mem(bytes).expect("rendered pdf parses");
     let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
     doc.extract_text(&pages).expect("rendered pdf carries text")
+}
+
+/// One page's decompressed content stream, in page order.
+#[cfg(test)]
+fn page_streams(bytes: &[u8]) -> Vec<String> {
+    let doc = lopdf::Document::load_mem(bytes).expect("rendered pdf parses");
+    doc.get_pages()
+        .values()
+        .map(|id| {
+            String::from_utf8_lossy(&doc.get_page_content(*id).expect("page content")).into_owned()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+const PT_PER_MM: f32 = 72.0 / 25.4;
+
+/// One string a rendered document drew: where, at what size, and what it said.
+#[cfg(test)]
+pub(crate) struct Drawn {
+    /// Millimetres from the left edge.
+    pub x: f32,
+    /// Millimetres from the bottom edge.
+    pub y: f32,
+    /// The point size it was drawn at, which is what its width is measured in.
+    pub size: f32,
+    pub text: String,
+}
+
+/// Every string a rendered document draws, per page.
+///
+/// `extract_text` answers what a document *says*; this answers *where* and *how
+/// big*, which is the whole of what a column bound and a page break are about.
+#[cfg(test)]
+pub(crate) fn drawn_text(bytes: &[u8]) -> Vec<Vec<Drawn>> {
+    page_streams(bytes)
+        .iter()
+        .map(|stream| {
+            let mut out = Vec::new();
+            let mut at = (0.0f32, 0.0f32);
+            let mut size = 0.0f32;
+            for line in stream.lines().map(str::trim) {
+                if let Some(rest) = line.strip_suffix(" Tf") {
+                    size = rest
+                        .rsplit_once(' ')
+                        .and_then(|(_, s)| s.parse::<f32>().ok())
+                        .unwrap_or(size);
+                } else if let Some(rest) = line.strip_suffix(" Td") {
+                    let mut parts = rest.split_whitespace();
+                    if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
+                        at = (
+                            x.parse::<f32>().unwrap_or(0.0) / PT_PER_MM,
+                            y.parse::<f32>().unwrap_or(0.0) / PT_PER_MM,
+                        );
+                    }
+                } else if let Some(hex) = line
+                    .strip_suffix("> Tj")
+                    .and_then(|rest| rest.strip_prefix('<'))
+                {
+                    let text: String = hex
+                        .as_bytes()
+                        .chunks(2)
+                        .filter_map(|pair| {
+                            u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
+                        })
+                        .map(|b| b as char)
+                        .collect();
+                    out.push(Drawn {
+                        x: at.0,
+                        y: at.1,
+                        size,
+                        text,
+                    });
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// Every straight line a rendered document draws, per page, as
+/// `(x1, y1, x2, y2)` in millimetres from the bottom-left.
+#[cfg(test)]
+pub(crate) fn drawn_lines(bytes: &[u8]) -> Vec<Vec<(f32, f32, f32, f32)>> {
+    page_streams(bytes)
+        .iter()
+        .map(|stream| {
+            let mut out = Vec::new();
+            let mut start = None;
+            for line in stream.lines().map(str::trim) {
+                let point = |rest: &str| {
+                    let mut parts = rest.split_whitespace();
+                    let x = parts.next()?.parse::<f32>().ok()? / PT_PER_MM;
+                    let y = parts.next()?.parse::<f32>().ok()? / PT_PER_MM;
+                    Some((x, y))
+                };
+                if let Some(rest) = line.strip_suffix(" m") {
+                    start = point(rest);
+                } else if let Some(rest) = line.strip_suffix(" l") {
+                    if let (Some(from), Some(to)) = (start, point(rest)) {
+                        out.push((from.0, from.1, to.0, to.1));
+                    }
+                }
+            }
+            out
+        })
+        .collect()
 }
 
 #[cfg(all(test, feature = "pdf"))]
@@ -1411,6 +1611,175 @@ mod invoice_pdf_tests {
         assert!(at("From") < at("P.O. Box 1234"));
         assert!(at("P.O. Box 1234") < at("Springfield, CA 90001"));
         assert!(at("Springfield, CA 90001") < at("ph. 619.555.0123"));
+    }
+
+    /// A company with a phone and nothing else still has a From block. The page
+    /// draws one, and an unlabelled telephone number floating where a letterhead
+    /// should be is not what "both documents agree" means.
+    #[test]
+    fn a_phone_only_company_still_gets_a_labelled_from_block() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("", "", "619.555.0123");
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &items(), &money, "").unwrap();
+        let text = extract_text(&bytes);
+        assert!(text.contains("From"), "the label: {text}");
+        assert!(text.contains("ph. 619.555.0123"), "the phone: {text}");
+    }
+
+    /// The vertical rule is what makes the block a block. It has to run past the
+    /// last line it is bracketing, and the phone is a line like any other.
+    #[test]
+    fn the_from_rule_brackets_every_line_including_the_phone() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block(
+            "Bluepeak LLC",
+            "P.O. Box 1234\nSpringfield, CA 90001",
+            "619.555.0123",
+        );
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &items(), &money, "").unwrap();
+
+        let phone_y = drawn_text(&bytes)[0]
+            .iter()
+            .find(|drawn| drawn.text.starts_with("ph."))
+            .expect("the phone is drawn")
+            .y;
+        // The From block's rule is the topmost vertical one.
+        let rule = drawn_lines(&bytes)[0]
+            .iter()
+            .filter(|(x1, _, x2, _)| (x1 - x2).abs() < 0.01)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .copied()
+            .expect("a vertical rule");
+        let bottom = rule.1.min(rule.3);
+        assert!(
+            bottom < phone_y,
+            "the rule stops at {bottom} mm, above the phone at {phone_y} mm"
+        );
+    }
+
+    /// A 43-character address line is wider than the party column. Drawn
+    /// unwrapped it runs off the right edge of the page, and the client's
+    /// address is the one block a document may not silently lose.
+    #[test]
+    fn a_long_client_address_line_stays_inside_its_column() {
+        let mut client = rich_client();
+        client.billing_address = Some("1600 Pennsylvania Avenue Northwest, Suite 4100".into());
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes =
+            render_invoice_pdf(&invoice(), &client, &block, None, &items(), &money, "").unwrap();
+
+        for drawn in &drawn_text(&bytes)[0] {
+            if drawn.x < PARTY_TEXT_X - 0.01 {
+                continue;
+            }
+            let right = drawn.x + approx_text_width(&drawn.text, drawn.size);
+            assert!(
+                right <= PAGE_W - MARGIN_RIGHT + 0.01,
+                "{:?} runs to {right} mm, past the {} mm margin",
+                drawn.text,
+                PAGE_W - MARGIN_RIGHT
+            );
+        }
+        let text = extract_text(&bytes);
+        assert!(text.contains("1600 Pennsylvania"), "still drawn: {text}");
+        assert!(text.contains("Suite 4100"), "and all of it: {text}");
+    }
+
+    /// The wordmark is 22 pt and sits left of the From block. A long business
+    /// name printed at that size would overprint it.
+    #[test]
+    fn a_long_company_name_does_not_overprint_the_from_block() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let name = "Bluepeak Integrated Bookkeeping and Advisory Services LLC";
+        let block = company_block(name, "P.O. Box 1234", "");
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &items(), &money, "").unwrap();
+
+        let page = drawn_text(&bytes);
+        let mark = page[0]
+            .iter()
+            .find(|drawn| (drawn.x - MARGIN_LEFT).abs() < 0.01)
+            .expect("the wordmark is drawn at the left margin");
+        assert!(
+            mark.x + approx_text_width(&mark.text, mark.size) <= PARTY_LABEL_X,
+            "{:?} at {} pt reaches the party column at {PARTY_LABEL_X} mm",
+            mark.text,
+            mark.size
+        );
+        assert!(
+            mark.size <= WORDMARK_SIZE,
+            "it was shrunk, not grown: {}",
+            mark.size
+        );
+    }
+
+    /// A due date carrying long terms is the value most likely to overrun: it is
+    /// two fields on one line, and the party column starts right beside it.
+    #[test]
+    fn a_long_metadata_value_does_not_overprint_the_party_column() {
+        let mut inv = invoice();
+        inv.due_date = Some("2026-09-05".into());
+        inv.terms = Some("Net 30 from receipt of the signed acceptance certificate".into());
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes =
+            render_invoice_pdf(&inv, &client(), &block, None, &items(), &money, "").unwrap();
+
+        for drawn in &drawn_text(&bytes)[0] {
+            if (drawn.x - META_VALUE_X).abs() > 0.01 {
+                continue;
+            }
+            assert!(
+                drawn.x + approx_text_width(&drawn.text, drawn.size) <= PARTY_LABEL_X,
+                "{:?} reaches the party column at {PARTY_LABEL_X} mm",
+                drawn.text
+            );
+        }
+    }
+
+    /// The column dividers are drawn once the table's extent is known. When the
+    /// rows paginate there is no single extent, and `y` alone cannot say so —
+    /// it resets on a new page, so a guard reading it would draw the dividers
+    /// down the second page over rows that are not there.
+    #[test]
+    fn a_paginated_item_table_draws_no_dividers_on_the_wrong_page() {
+        let mut inv = invoice();
+        inv.subtotal = 6000.0;
+        inv.total = 6000.0;
+        let long: Vec<InvoiceLineItem> = (0..60)
+            .map(|i| InvoiceLineItem {
+                id: None,
+                invoice_id: Some(1),
+                description: format!("Line item number {i}"),
+                quantity: 1.0,
+                unit_amount: 100.0,
+                line_total: 100.0,
+                position: i,
+            })
+            .collect();
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(&inv, &client(), &block, None, &long, &money, "").unwrap();
+
+        let pages = drawn_lines(&bytes);
+        assert!(pages.len() > 1, "the premise: the table paginated");
+        for (index, lines) in pages.iter().enumerate() {
+            let verticals = lines.iter().filter(|(x1, _, x2, _)| (x1 - x2).abs() < 0.01);
+            for rule in verticals {
+                let top = rule.1.max(rule.3);
+                let bottom = rule.1.min(rule.3);
+                let covered = drawn_text(&bytes)[index]
+                    .iter()
+                    .any(|drawn| drawn.y >= bottom - 0.01 && drawn.y <= top + 0.01);
+                assert!(
+                    covered,
+                    "page {index} carries a rule from {top} to {bottom} mm with no text beside it"
+                );
+            }
+        }
     }
 
     #[test]

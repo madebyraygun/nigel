@@ -157,6 +157,26 @@ details, or to "Checks payable to …", or leave it unset — an installation th
 takes no bank transfers prints nothing at all, no heading and no block. Nigel
 never writes a sentence about how to pay you.
 
+Leaving it unset is a decision, so it is one you make rather than one you
+discover. `nigel invoice preview` and `nigel invoice send` print a single line on
+stderr when a document would go out with no way to pay on it:
+
+```
+notice: no payment_instructions are set, so neither document says how to pay — set them in Settings, or leave them unset deliberately
+```
+
+Nothing is blocked and nothing is invented; say what you want in Settings, or
+carry on. The notice is silent once instructions are set, and silent for a custom
+`templates/invoice.html` — that page is yours, it may say whatever it likes about
+paying, and Nigel cannot read it.
+
+**Upgrading.** Earlier versions hardcoded a bank-transfer paragraph on the stock
+page. If your books have already sent invoices and you have a `contact_email` or
+`from_email` configured, the upgrade writes that sentence into
+`payment_instructions` for you, so nothing your clients were reading disappears.
+It is ordinary text from that moment on: edit it, or clear it. Books that have
+never sent an invoice, and books where the key is already set, are left alone.
+
 ## Clients
 
 ```bash
@@ -835,6 +855,14 @@ most six lines deep with `...` for the rest — this document has no page-break
 logic under that block, and a client block running off the bottom margin is
 never what anyone wanted. The page clamps identically, so the two still agree.
 
+Nothing runs off the right edge. Address lines wrap inside their column; a
+business name too wide for the space beside the From block is set smaller until
+it fits, and cut with `...` only if shrinking it would take it below the body
+size; a metadata value too long for its column — a due date carrying a whole
+sentence of terms — is cut the same way. The page has no such limits, so a
+letterhead that is comfortable there can still be tight here: the preview is
+where you find that out.
+
 Single-line terms ride beside the due date as `2026-09-05 (Net 30)` on both
 documents. Terms that run to a paragraph stay their own block under the foot
 rule instead, because a paragraph in parentheses after a date reads as neither.
@@ -868,10 +896,9 @@ Two things made that affordable:
   feature pulls nine crates — `image`, `png`, `gif`, `jpeg-decoder`, `tiff`,
   `color_quant`, `fdeflate`, `bytemuck` and `bitflags` — because its `image`
   dependency hard-enables every format; PNG alone is not on offer. On identical
-  source, turning the feature on cost **84,352 bytes** of release binary
-  (25,317,000 → 25,401,352), and the whole change — the feature plus the code
-  that actually decodes, flattens and embeds an image — cost **1,015,728 bytes**,
-  about 992 KiB, on a 24 MiB binary.
+  source, with the same web assets embedded on both sides, turning the feature on
+  cost **84,496 bytes** of release binary (26,075,256 → 26,159,752) — about
+  83 KiB on a 25 MiB binary.
 - **The soft-mask defect, made unreachable.** printpdf 0.7 sizes a transparent
   image's mask from the image's *width*, so a wide transparent wordmark — the
   shape a logo actually is — embeds wrong. Nothing here ever hands printpdf an
