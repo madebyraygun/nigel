@@ -5,6 +5,8 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import { controlsCss } from '@nigel/theme';
+import './wc-notice-bar.js';
+import './wc-document-frame.js';
 
 /** Where a send is in its life. */
 export type SendPhase = 'confirm' | 'sending' | 'sent' | 'failed';
@@ -75,9 +77,36 @@ export class WcSendDialog extends LitElement {
   static styles = [
     controlsCss,
     css`
-      :host {
-        font-family: var(--wa-font-family-sans);
+    wa-dialog {
+      /* A framed invoice in a default-width dialog is letterboxed. Wide
+         enough for the document, never wider than the viewport. */
+      --width: min(60rem, 92vw);
+    }
+
+    .recipient {
+      margin: 0 0 var(--wa-space-s, 8px);
+      font-weight: var(--wa-font-weight-medium, 500);
+    }
+
+    .preview-loading {
+      display: flex;
+      justify-content: center;
+      padding: var(--wa-space-l, 16px);
+    }
+
+    @media (max-width: 48rem) {
+      wa-dialog {
+        --width: 100%;
       }
+
+      wc-document-frame {
+        --nc-document-frame-height: 16rem;
+      }
+    }
+
+    :host {
+      font-family: var(--wa-font-family-sans);
+    }
 
       ul {
         margin: 0 0 var(--wa-space-m, 12px);
@@ -192,6 +221,10 @@ export class WcSendDialog extends LitElement {
   @property({ type: String })
   currency = 'USD';
 
+  /** Whose invoice it is, for the line the decision is made on. */
+  @property({ type: String, attribute: false })
+  client = '';
+
   /** Where the invoice is going. Empty means the client has no address. */
   @property({ type: String, attribute: false })
   recipient = '';
@@ -227,10 +260,45 @@ export class WcSendDialog extends LitElement {
 
   /**
    * Why this invoice cannot be sent at all — a missing client email, an unset
-   * setting. Present means the confirm button is inert.
+   * setting, a build with no PDF support. Present means the confirm button is
+   * inert.
    */
   @property({ type: String, attribute: false })
   blocked = '';
+
+  /**
+   * The rendered invoice page, framed above the confirm button. Held as bytes
+   * rather than pointed at with a URL, because an iframe cannot report a
+   * failure and a broken custom template has to arrive as a sentence.
+   */
+  @property({ type: String, attribute: false })
+  previewHtml = '';
+
+  /** Why the document could not be rendered — the server's own words. */
+  @property({ type: String, attribute: false })
+  previewError = '';
+
+  @property({ type: Boolean, attribute: false })
+  previewLoading = false;
+
+  /** Where the PDF can be downloaded, from `invoicePreviewUrl`. */
+  @property({ type: String, attribute: false })
+  pdfHref = '';
+
+  /**
+   * Whether this build of the server can render a PDF. A download link cannot
+   * inspect what comes back, so without this the link would save a 501.
+   */
+  @property({ type: Boolean, attribute: false })
+  pdfAvailable = true;
+
+  /**
+   * Configuration worth reading before confirming, rather than after — the
+   * `/i`-prefix caution `/api/status` carries. A caution, not a refusal, so it
+   * never touches `blocked`.
+   */
+  @property({ attribute: false })
+  configCautions: string[] = [];
 
   private emit(name: string): void {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
@@ -284,6 +352,9 @@ export class WcSendDialog extends LitElement {
       ${this.blocked
         ? html`<p class="blocked" role="alert" data-blocked>${this.blocked}</p>`
         : nothing}
+      <p class="recipient" data-recipient-line>
+        Invoice #${this.number} — ${this.clientLine()}
+      </p>
       <p class="outcome">This will:</p>
       <ul data-consequences>
         <li>
@@ -298,10 +369,62 @@ export class WcSendDialog extends LitElement {
       ${this.subject
         ? html`<p class="caveat" data-subject>Subject: ${this.subject}</p>`
         : nothing}
+      ${this.configCautions.map(
+        (caution) =>
+          html`<wc-notice-bar
+            variant="warning"
+            data-config-caution
+            message=${caution}
+          ></wc-notice-bar>`,
+      )}
+      ${this.renderPreview()}
       <p class="caveat">
         Nothing is sent until you confirm, and nothing is retried automatically.
         This cannot be undone.
       </p>
+    `;
+  }
+
+  /** The recipient and the amount, where the decision is made. */
+  private clientLine() {
+    return html`${this.client || 'this client'},
+      <wc-money .amount=${this.total} .currency=${this.currency} variant="plain"></wc-money>
+      ${this.currency}, to ${this.recipient || 'no email address on file'}`;
+  }
+
+  /**
+   * The document itself, in the confirm phase only. Once a send is in flight
+   * the trace is what the operator is reading, and forty lines of invoice above
+   * it would push that off screen.
+   */
+  private renderPreview() {
+    if (this.previewError) {
+      return html`<wc-notice-bar
+        variant="danger"
+        data-preview-error
+        message=${this.previewError}
+      ></wc-notice-bar>`;
+    }
+    if (this.previewLoading) {
+      return html`<div class="preview-loading" data-preview-loading>
+        <wc-spinner show-label label="Rendering the invoice"></wc-spinner>
+      </div>`;
+    }
+    if (!this.previewHtml) return nothing;
+    return html`
+      <wc-document-frame
+        data-preview
+        label=${`Invoice #${this.number} as the client will see it`}
+        height="24rem"
+        .srcdoc=${this.previewHtml}
+      ></wc-document-frame>
+      ${this.pdfAvailable
+        ? html`<a class="caveat" href=${this.pdfHref} data-pdf-link download
+            >Download the PDF</a
+          >`
+        : html`<p class="caveat" data-pdf-unavailable>
+            PDF export is not available in this build.
+          </p>`}
     `;
   }
 

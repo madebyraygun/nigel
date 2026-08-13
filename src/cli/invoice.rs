@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use comfy_table::{Cell, Table};
@@ -18,7 +19,7 @@ use crate::invoicing::mailgun::{
     MailgunClient,
 };
 use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
-use crate::invoicing::render::render_invoice;
+use crate::invoicing::render::{render_invoice, RenderedInvoice};
 use crate::invoicing::render_html::{load_template, template_path, Branding, DEFAULT_TEMPLATE};
 use crate::invoicing::republish::republish_invoice;
 use crate::invoicing::send::send_invoice;
@@ -560,6 +561,19 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
         &branding,
     )?;
 
+    write_preview(&rendered, number, output_dir)
+}
+
+/// Write a rendered invoice beside itself and say where it went.
+///
+/// The one place the preview paths, the permissions and the `Wrote`/no-PDF
+/// wording live, so `preview` and the confirmation `send` shows cannot differ
+/// about what was written or where.
+fn write_preview(
+    rendered: &RenderedInvoice,
+    number: i64,
+    output_dir: Option<String>,
+) -> Result<()> {
     let (dir, is_default) = preview_dir(output_dir);
     std::fs::create_dir_all(&dir)?;
     if is_default {
@@ -573,9 +587,9 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
     crate::settings::restrict_file_permissions(&html_path)?;
     println!("Wrote {}", html_path.display());
 
-    match rendered.pdf {
+    match &rendered.pdf {
         Some(bytes) => {
-            std::fs::write(&pdf_path, &bytes)?;
+            std::fs::write(&pdf_path, bytes)?;
             crate::settings::restrict_file_permissions(&pdf_path)?;
             println!("Wrote {}", pdf_path.display());
         }
@@ -584,16 +598,127 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
     Ok(())
 }
 
-pub fn send(number: i64, today: &str) -> Result<()> {
+/// The line the operator reads before answering: which invoice, whose, how
+/// much, and the address it is going to.
+fn send_summary(invoice: &Invoice, client: &Client) -> String {
+    format!(
+        "Invoice #{} — {}, {} {}, issued {}. To {}.",
+        invoice.number,
+        client.name,
+        money(invoice.total),
+        invoice.currency,
+        invoice.issue_date,
+        // A client with no address is refused by the precheck a moment later;
+        // the summary states the fact rather than printing "None".
+        client
+            .email
+            .as_deref()
+            .unwrap_or("no email address on file")
+    )
+}
+
+/// What sending will do, in one paragraph. The TUI's `send_confirmation` in
+/// prose, worded for a first send or a re-send, naming the publish host when
+/// there is one.
+fn send_consequences(invoice: &Invoice, client: &Client, publish_host: Option<&str>) -> String {
+    let to = match client.email.as_deref() {
+        Some(email) => format!("emails {email}"),
+        None => "emails the client".to_string(),
+    };
+    let host = match publish_host {
+        Some(host) => format!("publishes the page and PDF to {host}"),
+        None => "publishes the page and PDF".to_string(),
+    };
+    match invoice.published_at {
+        Some(_) => format!(
+            "The existing payment link is reused; Nigel re-{host} and {to} again. \
+             This cannot be undone."
+        ),
+        None => format!(
+            "Sending creates a Stripe payment link, {host}, and {to}. \
+             This cannot be undone."
+        ),
+    }
+}
+
+/// `confirm_void`'s twin. `--yes` is the answer; a non-TTY without it is a
+/// refusal rather than a send nobody saw.
+fn confirm_send(invoice: &Invoice, yes: bool) -> Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    refuse_unconfirmed_send(invoice)?;
+    print!("Send it? [y/N] ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Nobody is there to answer. Checked before the summary is printed and before
+/// the preview files are written, so a scripted send that cannot be confirmed
+/// leaves nothing behind.
+fn refuse_unconfirmed_send(invoice: &Invoice) -> Result<()> {
+    if std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    Err(NigelError::Other(format!(
+        "Refusing to send invoice #{} without confirmation. Pass --yes.",
+        invoice.number
+    )))
+}
+
+/// The host a published page is served from, for the consequence sentence.
+/// Just the authority — the operator recognizes `billing.example.com`, not a path.
+fn publish_host(base: &str) -> Option<String> {
+    let rest = base
+        .strip_prefix("https://")
+        .or_else(|| base.strip_prefix("http://"))?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    (!host.is_empty()).then(|| host.to_string())
+}
+
+pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "sent")?;
+    let client = get_client(&conn, invoice.client_id)?;
     // The template is loaded before anything is built or created, so a broken
     // one fails the send with no Stripe link made and nothing published.
     let template = load_template(&get_data_dir())?;
     let cfg = invoicing_config();
     let contact_email = contact_email_for_preview(&cfg).0;
     let company = company_name(&conn);
+
+    // Rendered before the decision and before any client is built, through the
+    // seam `send` publishes through — so what the operator looks at is the
+    // document the client will get, and a broken template costs no Stripe link.
+    let rendered = render_invoice(
+        &conn,
+        &invoice,
+        &client,
+        pay_button_for(&invoice),
+        &Branding {
+            template: &template,
+            company: &company,
+            contact_email: &contact_email,
+        },
+    )?;
+
+    if !yes {
+        refuse_unconfirmed_send(&invoice)?;
+        println!("{}", send_summary(&invoice, &client));
+        // The same bytes the send will publish, at the paths `invoice preview`
+        // writes. A terminal cannot show a document; it can hand over a path.
+        write_preview(&rendered, number, None)?;
+        let host = cfg.public_base_url.as_deref().and_then(publish_host);
+        println!("{}", send_consequences(&invoice, &client, host.as_deref()));
+        if !confirm_send(&invoice, yes)? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
     let clients = build_clients(cfg, &company)?;
     for warning in &clients.warnings {
         eprintln!("notice: {warning}");
@@ -1037,6 +1162,100 @@ mod tests {
             warnings[0].contains("payment is recorded"),
             "a template typo may not read as a failed payment: {warnings:?}"
         );
+    }
+
+    fn acme() -> Client {
+        Client {
+            id: 1,
+            name: "Acme Co".into(),
+            email: Some("ap@acme.test".into()),
+            billing_address: None,
+            notes: None,
+            archived_at: None,
+        }
+    }
+
+    #[test]
+    fn the_summary_names_the_client_the_total_and_the_recipient() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        let line = send_summary(&invoice, &acme());
+        assert!(line.contains("#1248"), "got: {line}");
+        assert!(line.contains("Acme Co"), "got: {line}");
+        assert!(line.contains("$100.00"), "got: {line}");
+        assert!(line.contains("USD"), "got: {line}");
+        assert!(line.contains("2026-08-04"), "got: {line}");
+        assert!(line.contains("ap@acme.test"), "the address it is going to");
+    }
+
+    #[test]
+    fn a_client_with_no_email_is_still_summarised() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+        let mut client = acme();
+        client.email = None;
+
+        let line = send_summary(&invoice, &client);
+        assert!(line.contains("Acme Co"), "got: {line}");
+        assert!(!line.contains("None"), "never Debug output: {line}");
+    }
+
+    #[test]
+    fn a_resend_says_the_link_is_reused_and_the_page_republished() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn);
+        crate::invoicing::invoices::mark_published(&conn, id, "2026-08-04").unwrap();
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        let first = send_consequences(&invoice, &acme(), None);
+        assert!(
+            first.contains("existing payment link is reused"),
+            "got: {first}"
+        );
+        assert!(first.contains("cannot be undone"), "got: {first}");
+    }
+
+    #[test]
+    fn a_first_send_says_a_link_is_created() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        let line = send_consequences(&invoice, &acme(), None);
+        assert!(
+            line.contains("creates a Stripe payment link"),
+            "got: {line}"
+        );
+        assert!(line.contains("ap@acme.test"), "got: {line}");
+    }
+
+    #[test]
+    fn the_consequences_name_the_publish_host_when_there_is_one() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+
+        let host = publish_host("https://billing.example.com/i");
+        assert_eq!(host.as_deref(), Some("billing.example.com"));
+        let line = send_consequences(&invoice, &acme(), host.as_deref());
+        assert!(line.contains("to billing.example.com"), "got: {line}");
+
+        // Nothing configured: the sentence still reads, without a dangling "to".
+        let bare = send_consequences(&invoice, &acme(), None);
+        assert!(bare.contains("publishes the page and PDF,"), "got: {bare}");
+        assert_eq!(publish_host("billing.example.com"), None);
+    }
+
+    /// `--yes` is the answer, so nothing is read and nothing is written.
+    #[test]
+    fn yes_confirms_without_asking() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn);
+        let invoice = find_invoice(&conn, 1248).unwrap();
+        assert!(confirm_send(&invoice, true).unwrap());
     }
 
     #[test]

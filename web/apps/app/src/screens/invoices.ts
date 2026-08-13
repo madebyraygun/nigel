@@ -40,6 +40,7 @@ import {
   activeStatusFilter,
   detailBalance,
   detailLineItems,
+  emailSubject,
   invoiceFormFrom,
   invoiceListParams,
   invoicePatch,
@@ -261,6 +262,11 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
    * not. The sentences come from Rust verbatim; nothing here re-derives them.
    */
   @state() private actionWarnings: string[] = [];
+
+  /** The rendered invoice page for the send dialog, and how the fetch went. */
+  @state() private previewHtml = '';
+  @state() private previewError = '';
+  @state() private previewLoading = false;
   @state() private busy = false;
 
   @state() private form: InvoiceFormValue = EMPTY_INVOICE_FORM;
@@ -592,7 +598,30 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.sendSteps = [];
     this.sendFailure = null;
     this.sentUrl = '';
+    void this.loadPreview();
   };
+
+  /**
+   * The document the client will get, fetched when the dialog opens and not
+   * before: it is a whole render of the invoice, and the detail view already
+   * offers one behind a disclosure for anyone browsing.
+   */
+  private async loadPreview(): Promise<void> {
+    const detail = this.detail;
+    if (!detail) return;
+    this.previewHtml = '';
+    this.previewError = '';
+    this.previewLoading = true;
+    try {
+      this.previewHtml = await this.client.invoicePreviewHtml(detail.number);
+    } catch (error) {
+      // The server's own sentence — a broken custom template names its path,
+      // and that is the thing this dialog exists to catch before a send.
+      this.previewError = error instanceof ApiError ? error.message : String(error);
+    } finally {
+      this.previewLoading = false;
+    }
+  }
 
   private closeSend = (): void => {
     this.sendOpen = false;
@@ -905,9 +934,24 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   }
 
   /** Why Send is unavailable, in one sentence, or empty when it is available. */
+  /**
+   * Cautions worth reading before confirming, never refusals. The `/i`-prefix
+   * warning is the server's sentence verbatim, off `/api/status`.
+   */
+  private sendCautions(): string[] {
+    const warning = this.invoicing?.publicBaseUrlWarning;
+    return warning ? [warning] : [];
+  }
+
   private sendBlockReason(detail: InvoiceDetail): string {
     if (detail.client && detail.client.email === null) {
       return `${detail.client.name} has no email address. Add one on the client before sending.`;
+    }
+    // A send without the `pdf` feature stops at the render step, because the
+    // PDF is attached to the email. Said here rather than discovered three
+    // steps in — the preview below still renders.
+    if (!this.pdfExport) {
+      return 'This build cannot send — PDF support is not compiled in, and the invoice PDF is attached to the email.';
     }
     const invoicing = this.invoicing;
     if (invoicing && !invoicing.sendConfigured) {
@@ -962,8 +1006,16 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .number=${detail.number}
         .total=${detail.total}
         .currency=${detail.currency}
+        .client=${detail.client?.name ?? ''}
         .recipient=${detail.client?.email ?? ''}
         .publishHost=${hostOf(detail.publicUrl)}
+        .subject=${emailSubject(detail.number, this.appStore.status.get()?.companyName ?? '')}
+        .previewHtml=${this.previewHtml}
+        .previewError=${this.previewError}
+        .previewLoading=${this.previewLoading}
+        .pdfHref=${this.client.invoicePreviewUrl(detail.number, 'pdf')}
+        .pdfAvailable=${this.pdfExport}
+        .configCautions=${this.sendCautions()}
         phase=${this.sendPhase}
         .steps=${this.sendSteps}
         .failure=${this.sendFailure}

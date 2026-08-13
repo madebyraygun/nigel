@@ -960,6 +960,7 @@ export class FakeApiClient implements ApiClient {
   /** What the republish behind a payment could not do, as the route reports it. */
   payRepublish: { republishWarnings?: string[] } = {};
   payInvoiceError: Error | null = null;
+  previewHtmlError: Error | null = null;
   sendInvoiceError: Error | null = null;
   syncError: Error | null = null;
 
@@ -1327,6 +1328,12 @@ export class FakeApiClient implements ApiClient {
 
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string {
     return `/preview/${number}.${format}`;
+  }
+
+  async invoicePreviewHtml(number: number): Promise<string> {
+    this.calls.push(`invoicePreviewHtml:${number}`);
+    if (this.previewHtmlError) throw this.previewHtmlError;
+    return `<h1>Invoice #${number}</h1>`;
   }
 
   private detail(number: number): InvoiceDetail {

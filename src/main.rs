@@ -271,7 +271,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)
             }
-            InvoiceCommands::Send { number } => cli::invoice::send(number, &cli::today()),
+            InvoiceCommands::Send { number, yes } => cli::invoice::send(number, &cli::today(), yes),
             InvoiceCommands::Sync => cli::invoice::sync(&cli::today()),
             InvoiceCommands::Pay {
                 number,

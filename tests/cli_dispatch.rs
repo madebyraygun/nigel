@@ -1584,7 +1584,7 @@ fn invoice_send_refuses_a_display_name_carrying_a_line_break() {
     init_with_client_and_invoice(&env);
 
     env.cmd()
-        .args(["invoice", "send", "1248"])
+        .args(["invoice", "send", "1248", "--yes"])
         .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
         .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
         .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
@@ -1618,7 +1618,7 @@ fn invoice_send_refuses_a_from_address_carrying_a_line_break() {
     init_with_client_and_invoice(&env);
 
     env.cmd()
-        .args(["invoice", "send", "1248"])
+        .args(["invoice", "send", "1248", "--yes"])
         .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_not_real")
         .env("NIGEL_MAILGUN_API_KEY", "key-not-real")
         .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
@@ -2074,7 +2074,7 @@ fn send_with_a_broken_template_fails_before_touching_stripe() {
     write_template(&env, "<p>no placeholders here</p>");
 
     env.cmd()
-        .args(["invoice", "send", "1248"])
+        .args(["invoice", "send", "1248", "--yes"])
         .timeout(TEST_TIMEOUT)
         .assert()
         .failure()
@@ -2101,7 +2101,7 @@ fn invoice_send_refuses_a_public_base_url_with_no_scheme() {
     init_with_client_and_invoice(&env);
 
     env.cmd()
-        .args(["invoice", "send", "1248"])
+        .args(["invoice", "send", "1248", "--yes"])
         .env("NIGEL_STRIPE_SECRET_KEY", "sk_test_bogus")
         .env("NIGEL_MAILGUN_API_KEY", "key")
         .env("NIGEL_MAILGUN_DOMAIN", "mail.example.test")
@@ -2146,6 +2146,109 @@ fn invoice_preview_is_unaffected_by_a_broken_public_base_url() {
         .success();
 
     assert!(previews_dir(&env).join("invoice-1248.html").exists());
+}
+
+/// A y/N prompt cannot be answered from `assert_cmd` without a pty, so the
+/// interactive path is covered by the unit tests on `send_summary`,
+/// `send_consequences` and `confirm_send` — the split `void`'s tests use.
+#[test]
+fn invoice_send_without_yes_refuses_on_a_non_tty_and_sends_nothing() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Refusing to send invoice #1248")
+                .and(predicate::str::contains("--yes")),
+        );
+
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+/// The refusal comes before the writing, so a scripted send that cannot be
+/// confirmed leaves nothing behind either.
+#[test]
+fn invoice_send_writes_no_preview_when_it_refuses_to_ask() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure();
+
+    assert!(!previews_dir(&env).join("invoice-1248.html").exists());
+}
+
+#[test]
+fn invoice_send_with_a_broken_template_fails_before_asking_anything() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+    );
+
+    env.cmd()
+        .args(["invoice", "send", "1248", "--yes"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(template_file(&env).display().to_string())
+                .and(predicate::str::contains("{{TOTL}}")),
+        );
+
+    assert!(!previews_dir(&env).join("invoice-1248.html").exists());
+}
+
+/// `--yes` reaches `build_clients`, which is the next thing that can refuse —
+/// and it writes no artifacts, because nobody is there to look at them.
+#[test]
+fn invoice_send_with_yes_and_no_config_fails_at_the_config_step() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "send", "1248", "--yes"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing invoicing config"));
+
+    assert!(!previews_dir(&env).join("invoice-1248.html").exists());
+    let status: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("invoice row missing");
+    assert_eq!(status, "draft");
+}
+
+#[test]
+fn invoice_send_help_documents_the_confirmation_flag() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["invoice", "send", "--help"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("--yes")
+                .and(predicate::str::contains("required when stdin is not a TTY")),
+        );
 }
 
 #[test]

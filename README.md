@@ -144,7 +144,8 @@ nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"
 nigel invoice edit 1248 --due 2026-09-30              # Drafts only
 nigel invoice void 1248                               # Cancel, deactivate its link, void its page
 nigel invoice preview 1248                            # Render it locally first — no network, no config
-nigel invoice send 1248                               # Publish, email, attach a payment link
+nigel invoice send 1248                               # Preview it, confirm, then publish and email
+nigel invoice send 1248 --yes                         # Skip the confirmation
 nigel invoice sync                                    # Record Stripe payments
 nigel invoice pay 1248 --date 2026-08-20              # Record a payment received directly
 nigel invoice aging                                   # A/R aging

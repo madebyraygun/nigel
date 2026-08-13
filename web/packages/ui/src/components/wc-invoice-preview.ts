@@ -1,20 +1,15 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 import './wc-notice-bar.js';
-import './wc-spinner.js';
+import './wc-document-frame.js';
 
 /**
- * The sandbox this document is framed in.
+ * The sandbox a framed document is shown in.
  *
- * `allow-same-origin` is deliberately absent. The preview is served from the
- * SPA's own origin, so granting it would put a page rendered from invoice data
- * back inside the app's origin with access to its cookies and storage. Without
- * it the iframe is an opaque origin and the containment is real, which is what
- * the route's `Content-Security-Policy: sandbox` header says independently.
- * The route answers `X-Frame-Options: SAMEORIGIN` (overriding the blanket
- * `DENY`) purely so the frame is allowed to exist at all.
+ * It lives in `wc-document-frame`, which owns every iframe in the app; this
+ * re-export is the name the rest of the codebase already imports it by.
  */
-export const PREVIEW_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
+export { PREVIEW_SANDBOX } from './wc-document-frame.js';
 
 /**
  * The invoice page as the client will see it, behind a disclosure.
@@ -56,28 +51,8 @@ export class WcInvoicePreview extends LitElement {
       padding: 0 var(--wa-space-m, 12px) var(--wa-space-m, 12px);
     }
 
-    .frame {
-      position: relative;
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      overflow: hidden;
-      background: var(--wa-color-surface, #fff);
-    }
-
-    iframe {
-      display: block;
-      width: 100%;
-      height: var(--nc-invoice-preview-height, 32rem);
-      border: 0;
-    }
-
-    .loading {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--wa-color-surface, #fff);
+    wc-document-frame {
+      --nc-document-frame-height: var(--nc-invoice-preview-height, 32rem);
     }
 
     .links {
@@ -125,16 +100,9 @@ export class WcInvoicePreview extends LitElement {
   @property({ type: Boolean, reflect: true })
   open = false;
 
-  @state() private loaded = false;
-
   private handleToggle = (event: Event): void => {
     const details = event.currentTarget as HTMLDetailsElement;
     this.open = details.open;
-    if (!details.open) this.loaded = false;
-  };
-
-  private handleLoad = (): void => {
-    this.loaded = true;
   };
 
   render() {
@@ -172,22 +140,13 @@ export class WcInvoicePreview extends LitElement {
   }
 
   private renderFrame() {
-    return html`
-      <div class="frame">
-        <iframe
-          data-frame
-          title="Invoice preview"
-          src=${this.src}
-          sandbox=${PREVIEW_SANDBOX}
-          @load=${this.handleLoad}
-        ></iframe>
-        ${this.loaded
-          ? nothing
-          : html`<div class="loading">
-              <wc-spinner show-label label="Rendering the invoice"></wc-spinner>
-            </div>`}
-      </div>
-    `;
+    // Created only once the disclosure is open, so a closed preview costs no
+    // request at all — the lazy rule stays here, the iframe does not.
+    return html`<wc-document-frame
+      data-frame
+      .src=${this.src}
+      label="Invoice preview"
+    ></wc-document-frame>`;
   }
 }
 

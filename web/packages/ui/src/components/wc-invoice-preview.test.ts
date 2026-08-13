@@ -1,8 +1,20 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import type { LitElement } from 'lit';
 import './wc-invoice-preview.js';
 import { PREVIEW_SANDBOX, type WcInvoicePreview } from './wc-invoice-preview.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-invoice-preview.preview.js';
+
+/**
+ * The iframe lives in `wc-document-frame` now — one iframe implementation and
+ * one sandbox constant for the whole app — so a test that is about the iframe
+ * reaches through the child it delegates to.
+ */
+async function innerFrame(el: WcInvoicePreview): Promise<Element | null | undefined> {
+  const frame = el.shadowRoot?.querySelector('[data-frame]') as LitElement | null;
+  await frame?.updateComplete;
+  return frame?.shadowRoot?.querySelector('iframe');
+}
 
 async function mount(props: Partial<WcInvoicePreview> = {}): Promise<WcInvoicePreview> {
   const el = document.createElement('wc-invoice-preview');
@@ -29,7 +41,7 @@ describe('wc-invoice-preview', () => {
 
   it('frames the page once opened', async () => {
     const el = await mount({ open: true });
-    const frame = el.shadowRoot?.querySelector('[data-frame]');
+    const frame = await innerFrame(el);
     expect(frame).toBeTruthy();
     expect(frame?.getAttribute('src')).toBe('about:blank');
     expect(frame?.getAttribute('title')).toBe('Invoice preview');
@@ -43,7 +55,7 @@ describe('wc-invoice-preview', () => {
     expect(PREVIEW_SANDBOX).not.toContain('allow-scripts');
 
     const el = await mount({ open: true });
-    const sandbox = el.shadowRoot?.querySelector('[data-frame]')?.getAttribute('sandbox');
+    const sandbox = (await innerFrame(el))?.getAttribute('sandbox');
     expect(sandbox).toBe(PREVIEW_SANDBOX);
   });
 

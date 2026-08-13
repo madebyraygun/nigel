@@ -185,7 +185,8 @@ export {
   paymentMethodLabel,
   type PaymentRow,
 } from './wc-payment-list.js';
-export { WcInvoicePreview, PREVIEW_SANDBOX } from './wc-invoice-preview.js';
+export { WcDocumentFrame, PREVIEW_SANDBOX } from './wc-document-frame.js';
+export { WcInvoicePreview } from './wc-invoice-preview.js';
 export {
   WcLineItems,
   EMPTY_LINE_ITEM,

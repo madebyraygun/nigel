@@ -44,6 +44,9 @@ const base = html`
   ></wc-send-dialog>
 `;
 
+const PREVIEW_PAGE =
+  '<h1>Invoice #1251</h1><p>Billed to: Acme Co</p><p><strong>Total: USD 1850.00</strong></p>';
+
 const preview: Preview = {
   id: 'wc-send-dialog',
   title: 'Send dialog',
@@ -53,6 +56,79 @@ const preview: Preview = {
   layout: 'stack',
   states: [
     { name: 'confirm', render: () => base },
+    {
+      name: 'confirm-with-preview',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .publishHost=${'billing.example.com'}
+          .subject=${'Invoice #1251 from Bluepeak LLC'}
+          .pdfHref=${'#pdf'}
+          .previewHtml=${PREVIEW_PAGE}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'preview-loading',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .previewLoading=${true}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'preview-failed',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .previewError=${'Invoice template /books/templates/invoice.html is empty.'}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'blocked-no-pdf',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .previewHtml=${PREVIEW_PAGE}
+          .pdfAvailable=${false}
+          .blocked=${'This build cannot send — PDF support is not compiled in, and the invoice PDF is attached to the email.'}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'config-caution',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .previewHtml=${PREVIEW_PAGE}
+          .configCautions=${[
+            'public_base_url does not end in /i — Nigel writes objects under the i/ prefix, so published links will 404 unless that prefix is what this address serves.',
+          ]}
+        ></wc-send-dialog>
+      `,
+    },
     {
       name: 'blocked-no-email',
       render: () => html`
