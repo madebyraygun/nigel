@@ -17,6 +17,15 @@ quantity and unit amount, notes, client name, client billing address, company
 name. What it does not hold: a logo, a company address, a company phone, a
 per-invoice subject, and a per-line item type.
 
+A second gap is configurability rather than layout. `templates/invoice.html`
+hardcodes a bank-transfer paragraph — "Direct deposit / To pay by bank transfer,
+reference invoice #N. Contact `{{CONTACT}}` for account details." — in which only
+the address is variable. `src/pdf.rs` has no equivalent block, so the two
+documents disagree; the block is unconditional, so an installation that takes no
+bank transfers still advertises one; and editing the wording means owning a
+custom template forever, which still cannot reach the PDF. Decision 11 makes it
+configurable text carried by both documents or by neither.
+
 Changing the page changes what a client receives in their inbox: `send.rs:249`
 hands `rendered.html` — the same string uploaded to R2 — straight to
 `Mailer::send_invoice`. **There is no email template.** There are two documents,
@@ -31,13 +40,13 @@ re-decides anything it decided.
 
 | #204 seam | What it is | How TASK-101 extends it |
 |---|---|---|
-| `src/invoicing/document.rs` | The module that decides, once, what both documents say — `MoneySummary`/`MoneyLine`, `address_lines`, `email_line`, `MAX_ADDRESS_LINES`, `ADDRESS_TRUNCATED` | Gains `CompanyBlock`, `MetaRow`/`meta_rows`, `due_value`, `parse_logo`. Same rule: the decision lives above both renderers |
+| `src/invoicing/document.rs` | The module that decides, once, what both documents say — `MoneySummary`/`MoneyLine`, `address_lines`, `email_line`, `MAX_ADDRESS_LINES`, `ADDRESS_TRUNCATED` | Gains `CompanyBlock`, `MetaRow`/`meta_rows`, `due_value`, `parse_logo`, `payment_lines`. Same rule: the decision lives above both renderers |
 | `document::address_lines` | Splits a billing address into drawable lines, blank ones dropped, clamped at 6 with `...` | Reused verbatim for the **company** address. One clamp, one truncation marker, both parties |
 | `document::MoneySummary::lines()` | Which money rows exist and which are emphasised | Untouched. The Amount Due block renders `lines()`; only its CSS/geometry changes |
-| Optional fragment placeholders | `COMPANY_BLOCK`, `CLIENT_ADDRESS_BLOCK`, `CLIENT_EMAIL_BLOCK`, `TOTALS` — added to `PLACEHOLDERS`, never to `REQUIRED` | The pattern for four more: `LOGO`, `META_ROWS`, `TERMS_BLOCK`, plus `COMPANY_ADDRESS`/`COMPANY_PHONE` text keys |
+| Optional fragment placeholders | `COMPANY_BLOCK`, `CLIENT_ADDRESS_BLOCK`, `CLIENT_EMAIL_BLOCK`, `TOTALS` — added to `PLACEHOLDERS`, never to `REQUIRED` | The pattern for six more: `LOGO`, `META_ROWS`, `TERMS_BLOCK`, `PAYMENT_BLOCK`, plus the `COMPANY_ADDRESS`/`COMPANY_PHONE`/`PAYMENT_INSTRUCTIONS` text keys |
 | `REQUIRED_ALTERNATIVES` | `("TOTAL", "TOTALS")` — a required key another key stands in for | Untouched, and the reason `REQUIRED` still does not need to grow |
-| `Branding<'a>` | `{ template, company, contact_email }`, all `&'a str`, resolved by the CLI/server layer because `src/invoicing/` reads no settings and no database | Grows `company_address`, `company_phone`, `logo`, `page_url`. Same convention: borrowed `&str`, empty means unset |
-| `render_invoice_pdf(invoice, client, items, company, summary)` | The PDF, drawing the company name bold under the number, then the client block | Takes the whole company block and the logo/page-url decisions instead of a bare `company: &str` |
+| `Branding<'a>` | `{ template, company, contact_email }`, all `&'a str`, resolved by the CLI/server layer because `src/invoicing/` reads no settings and no database | Grows `company_address`, `company_phone`, `logo`, `payment_instructions`. Same convention: borrowed `&str`, empty means unset |
+| `render_invoice_pdf(invoice, client, items, company, summary)` | The PDF, drawing the company name bold under the number, then the client block | Takes the whole company block, the parsed logo and the payment instructions instead of a bare `company: &str` |
 | `pdf.rs`'s `no_live_payment_link_reaches_the_pdf` test | Pins Sam's ruling on #204 | Stays, and Decision 5 makes it permanent |
 
 `pay_button_for` (moved into `render.rs` by **#206**) omits the Pay button for a
@@ -109,7 +118,12 @@ Due Date      2026-09-05 (Net 30)             │ address line 2
 ──────────────────────────────────────────────────  ← full-width rule
 Notes
 …
+Payment                                   ← Decision 11, both documents, omitted
+…                                            entirely when nothing is configured
 ```
+
+The logo block is the **real image** on both documents (Decision 2); the
+wordmark is what stands in its place when there is no usable one.
 
 Two labels change on **both** documents, which also fixes a parity bug #204 left
 behind: the page's item table says `Description / Qty / Unit / Amount` and the
@@ -126,13 +140,19 @@ block whose emphasised row is set larger, and the PDF draws the same rows
 right-aligned against the Amount column's right edge instead of at
 `MARGIN_LEFT`. No line appears or disappears.
 
-### Decision 2 (obstacle A): the logo is on the page; the PDF draws a wordmark
+### Decision 2 (obstacle A): the real logo goes in both documents
 
-**Recommendation: keep the recorded decision, with the cost now measured rather
-than asserted.**
+**Settled by Sam, reversing this document's earlier recommendation.** The
+recommendation was page-only with a 22pt text wordmark in the PDF; the price of
+the reversal was measured before it was taken, and Sam took it knowing the
+number. An invoice is the most client-facing artifact this product produces, and
+the attachment is the half that gets forwarded to an AP department and printed.
+A letterhead that is a letterhead on the page and a line of Helvetica on the
+attachment is not one design.
 
-I investigated rather than inheriting. Findings, all reproduced against the
-version actually in the lockfile:
+The findings below stand as the record of what the reversal costs and of the
+defect it has to route around. They were reproduced against the version actually
+in the lockfile:
 
 1. **Version.** `printpdf 0.7.0` (`Cargo.lock:1834-1836`), optional behind
    Nigel's `pdf` feature (`Cargo.toml:10`, `:32`).
@@ -162,25 +182,50 @@ version actually in the lockfile:
    further and composite RGBA onto white itself before handing printpdf an
    `Rgb8` image — about ten lines, and the defect is unreachable.
 
-I still recommend against putting a logo in the PDF now:
+**So: `{{LOGO}}` on the page, and the same image drawn top-left in the PDF.**
+`printpdf` gains `features = ["embedded_images"]`. When no logo is configured —
+or when the configured one cannot be embedded — the PDF draws the company name
+in `HelveticaBold` at 22pt in the same top-left position and the page's From
+block carries the name alone, so the two documents still agree.
 
-- ~1 MB and 8 crates is a permanent cost paid by every user on every platform,
-  for a block the reference fills with a lowercase wordmark.
-- The failure mode of the "opaque only" variant is a **silently wrong document
-  in a client's inbox**, and an operator's logo is a transparent PNG essentially
-  every time. Flattening it for them means Nigel picking a background colour on
-  behalf of someone's brand asset.
-- The PDF's alternative is close. The reference's logo *is* a wordmark; the
-  company name in `HelveticaBold` at 22pt in the same top-left position is the
-  same block, in the same place, saying the same thing.
-- Reversal stays cheap, and this design leaves the seam pointing at it:
-  `Branding::logo` already carries the bytes to both renderers, and
-  `document::parse_logo` already validates and decodes them. The PDF half would
-  be one `cfg`'d branch drawing an image where it now draws text.
+Three things the reversal has to get right:
 
-**So: `{{LOGO}}` on the page, `company` as a 22pt bold wordmark in the PDF.**
-When no logo is configured, the page draws the same wordmark (`{{LOGO}}` empty,
-`{{COMPANY_BLOCK}}`'s name doing the work) and the two documents look alike.
+**RGBA never reaches printpdf.** Finding 5 is not an edge case to guard against;
+it is the normal path, because an operator's logo is a transparent PNG
+essentially every time. So the flattening is not a fallback either: every image
+is composited onto **white** before it is handed over, and `/SMask null` is what
+the writer then emits. White rather than a guess at the operator's brand
+background — a PDF page is white, and compositing onto the surface the image
+will sit on is the only choice that is not an invention. A test asserts that
+what reaches printpdf is never `Rgba8`, so the defect stays unreachable by
+construction rather than by review.
+
+**The bound.** The logo is drawn at `MARGIN_LEFT`, at the top of the page,
+scaled to fit a **60 mm × 16 mm** box with its aspect ratio preserved (fill the
+box in whichever dimension binds first). The printable width is 177.8 mm and the
+From block sits at the right of it; 60 mm leaves that block 117 mm, and the
+reference's own logo occupies about a third of the width. 16 mm is the height of
+a four-line From block at this document's 5 mm line spacing, so a logo that
+fills the box ends level with the block beside it and can never collide with it.
+The box is a bound, not a size: a taller-than-wide logo is 16 mm tall and
+narrow, a wide wordmark is 60 mm wide and shorter.
+
+**The fallback is mandatory and total.** Bad magic bytes, a payload over
+`MAX_LOGO_BYTES`, a decode failure, an unsupported colour type, dimensions that
+cannot be read: every one of them ends with the PDF drawing the text wordmark
+and the page rendering no `<img>` at all, so the From block's name stands where
+the image would have been. **A logo problem may never fail an invoice render or
+a send.** The wrong shape here is an exception propagating out of
+`render_invoice` and turning a bad PNG into an unsendable invoice; a logo is
+decoration on a document about money.
+
+Two places make that safe rather than silent. Both editing surfaces run
+`parse_logo` **before** `set_metadata`, so a bad file is refused at the settings
+screen with a sentence naming what was wrong — a stored value that cannot be
+embedded is therefore not reachable through any supported path. The renderers'
+fallback exists for the value that got in another way (a hand-edited `metadata`
+row, a restored backup from a build with a wider allow-list), and for that value
+the right answer is a correct invoice without a logo.
 
 #### How a logo is configured
 
@@ -210,8 +255,9 @@ email body *is* the page, there is one HTML and therefore one logo form; a
 hosted `https://` image would render in Gmail but would break `invoice preview`
 (which would reference an object that does not exist), add the upload step
 above, and put a third artifact in the publish story. The chosen degradation is
-that Gmail readers see the `alt` text — the company name — which is precisely
-the PDF's treatment, so the two documents still agree. An operator who wants a
+that Gmail readers see the `alt` text — the company name — in the email body,
+while the **attachment on that same email carries the real logo**, which is the
+half a client keeps. An operator who wants a
 hosted image in the email body has the escape hatch that already exists:
 `{{LOGO}}` is optional, and their own `<data_dir>/templates/invoice.html` can
 carry an absolute `<img src="https://…">` instead.
@@ -219,21 +265,39 @@ carry an absolute `<img src="https://…">` instead.
 Shape and validation, all pure and all in `document.rs`:
 
 - Stored value: `data:image/png;base64,<payload>` or `data:image/jpeg;base64,…`.
-- **PNG and JPEG only.** SVG is unrendered by most mail clients and could never
-  follow into the PDF if Decision 2 is ever reversed, so allowing it would buy a
-  validation branch and nothing else.
+- **PNG and JPEG only.** SVG is unrendered by most mail clients and cannot be
+  handed to printpdf at all, so allowing it would buy a validation branch and a
+  document that disagrees with itself.
 - `parse_logo(&str) -> Result<Logo>` checks the prefix, the MIME against the
   allow-list, that the payload base64-decodes, that the decoded bytes carry the
-  right magic (`\x89PNG\r\n\x1a\n` / `\xFF\xD8\xFF`), and that they are at most
-  **128 KiB** — every byte is base64-inflated by a third into every email body
-  and every published object.
+  right magic (`\x89PNG\r\n\x1a\n` / `\xFF\xD8\xFF`), that its pixel dimensions
+  can be read out of the header and are non-zero, and that the payload is at
+  most **128 KiB** — every byte is base64-inflated by a third into every email
+  body and every published object.
+- It yields what **both** renderers need from one parse:
+
+  ```rust
+  pub struct Logo { pub mime: &'static str, pub base64: String,
+                    pub bytes: Vec<u8>, pub width: u32, pub height: u32 }
+  ```
+
+  `base64` is the page's `<img src>` payload, verbatim as stored. `bytes` is
+  what the PDF decodes and embeds. `width`/`height` are read from the PNG
+  `IHDR` and the JPEG `SOFn` frame by a small pure reader, because `document.rs`
+  must validate a logo identically in a build with **no `pdf` feature**, where
+  the `image` crate does not exist. A `pdf`-gated test cross-checks the header
+  reader against `image`'s own decode for both formats, so the two cannot drift;
+  the transform the PDF draws with uses the decoded image's dimensions, which is
+  what printpdf actually embeds.
 - Input is a **file path** in the TUI and the data URI itself over the API (the
   SPA does the `FileReader` work); both go through `parse_logo` before
   `set_metadata`, so a bad file is refused at the settings screen and never at
   send time.
-- This needs `base64` (0.22, no transitive dependencies) in `Cargo.toml`. Verify
-  with `cargo tree` at implementation time; if it is not dependency-free,
-  say so rather than pulling a tree in quietly.
+- This needs `base64` (0.22) in `Cargo.toml`. It is **already in `Cargo.lock`**,
+  pulled transitively by `reqwest` and `rusty-s3`, so naming it directly adds no
+  crate to the build. Confirm with `cargo tree` at implementation time and say
+  so; if the version resolved changes, report it rather than pulling a second
+  copy in quietly.
 
 ### Decision 3 (obstacle B): address and phone are metadata keys, resolved once
 
@@ -263,20 +327,28 @@ to five hand-built literals is how they drift. So:
 
 ```rust
 // src/cli/invoice.rs — owned, because Branding borrows.
-pub(crate) struct CompanyProfile { pub name: String, pub address: String, pub phone: String, pub logo: String }
-pub(crate) fn company_profile(conn: &Connection) -> CompanyProfile;   // four get_metadata reads
+pub(crate) struct CompanyProfile {
+    pub name: String, pub address: String, pub phone: String,
+    pub logo: String, pub payment_instructions: String,
+}
+pub(crate) fn company_profile(conn: &Connection) -> CompanyProfile;   // five get_metadata reads
 
 // src/invoicing/render_html.rs
+#[derive(Default)]
 pub struct Branding<'a> {
     pub template: &'a str,
     pub company: &'a str,
     pub company_address: &'a str,   // empty means unset, as `company` already does
     pub company_phone: &'a str,
     pub logo: &'a str,              // the data URI, empty means none
-    pub page_url: &'a str,          // Decision 5; empty when public_base_url is unset
+    pub payment_instructions: &'a str,   // Decision 11
     pub contact_email: &'a str,
 }
 ```
+
+`Default` is derived because the struct is built in twenty-odd test literals
+and a field added to all of them by hand is a field that ends up meaning
+different things in different tests. Production sites still name every field.
 
 `cli::invoice::company_name` stays, unchanged, for the nine report exporters
 (`cli/export.rs`), the text reports (`cli/report/text.rs`) and `/api/status` —
@@ -299,22 +371,24 @@ takes `&CompanyBlock` in place of `company: &str` and does not learn about
 #### Editing surfaces
 
 **TUI (`cli/settings_manager.rs`).** `MENU_BUSINESS_NAME` gains
-`MENU_COMPANY_ADDRESS`, `MENU_COMPANY_PHONE` and `MENU_COMPANY_LOGO` before
-`MENU_PASSWORD`; `MENU_LAST` moves. `Screen::EditingName` carries no
-discriminator today, so it becomes `Screen::Editing(usize)` keyed by the
-`MENU_*` constant, and `handle_edit_name_key`'s hard-coded
-`set_metadata(conn, "company_name", …)` (`:310`) becomes key-parameterised. The
-address field is a single-line buffer whose typed `\n` cannot be entered — the
-same limitation `ClientForm`'s "Address" field already has
-(`cli/client_manager.rs:79`), so **it takes `\n` as the two-character escape
-`\n`** and stores real newlines. That is a new convention; it is the smallest
-one that lets a two-line address be typed into a TUI form that has no multi-line
-widget, and it is applied to this field only. The logo field takes a **path**,
-reads the file, and runs `parse_logo`; a failure is the status line's, not the
-save's.
+`MENU_COMPANY_ADDRESS`, `MENU_COMPANY_PHONE`, `MENU_COMPANY_LOGO` and
+`MENU_PAYMENT_INSTRUCTIONS` before `MENU_PASSWORD`; `MENU_LAST` moves.
+`Screen::EditingName` carries no discriminator today, so it becomes
+`Screen::Editing(usize)` keyed by the `MENU_*` constant, and
+`handle_edit_name_key`'s hard-coded `set_metadata(conn, "company_name", …)`
+(`:310`) becomes key-parameterised. The address field is a single-line buffer
+whose typed `\n` cannot be entered — the same limitation `ClientForm`'s
+"Address" field already has (`cli/client_manager.rs:79`), so **it takes `\n` as
+the two-character escape `\n`** and stores real newlines. That is a new
+convention; it is the smallest one that lets a multi-line value be typed into a
+TUI form that has no multi-line widget, and it is applied to the two multi-line
+fields — the company address and the payment instructions — and to nothing else.
+The logo field takes a **path**, reads the file, and runs `parse_logo`; a
+failure is the status line's, not the save's.
 
 **Web.** `PUT /api/settings/company-name` becomes
-**`GET`/`PUT /api/settings/company`** carrying `{name, address, phone, logo}`,
+**`GET`/`PUT /api/settings/company`** carrying
+`{name, address, phone, logo, paymentInstructions}`,
 and the single-field route is removed. Two writers for one letterhead is how
 `company_name` and `company_address` end up disagreeing about whether they were
 saved. The API serves only its own embedded SPA over `127.0.0.1`, so there is no
@@ -386,32 +460,31 @@ printed on a document that cannot be corrected.
 **The reference's "Pay online" line is deliberately not reproduced in Nigel's
 PDF.**
 
-That leaves what, if anything, stands in that slot. **Recommendation: print the
-invoice page URL** — `View or pay online: https://billing.example.com/i/<token>/index.html`
-— right-aligned under the Amount Due figure, omitted entirely when
-`public_base_url` is unset.
+That leaves what, if anything, stands in that slot. **Settled by Sam:
+nothing. No Stripe link and no page URL either.** This document earlier
+recommended printing `{base}/{token}/index.html` under the Amount Due figure;
+that recommendation is withdrawn.
 
-- It is republishable by construction. A settled invoice's page shows a zero
-  balance and no button; a voided one shows `voided_page_html`. The attachment
-  points at whatever is true today, which is the property the rule protects.
-- A PDF is the artifact forwarded to an AP department, and "where do I pay this"
-  is the one question it currently cannot answer.
-- It costs one `Branding` field. The URL is `r2::public_url(base, &invoice.token)`
-  — pure, deterministic from the token, and computable before publish, so
-  `send` and `preview` produce the same document. Resolving it is the CLI/server
-  layer's job, like every other `Branding` field.
+- The email carries the live link, and the email is where the invoice arrives.
+  The attachment is read beside it, not instead of it.
+- A tokenized page URL is about sixty characters of opaque text that no reader
+  can retype and no PDF reader can be relied on to linkify. Printed unclickable
+  under the figure that matters, it is noise on the one block a client actually
+  reads.
+- It also removes a caveat rather than documenting one: `invoice preview` on a
+  draft would otherwise print an address that does not resolve yet.
 
-Two caveats to write down rather than discover: it is **printed text, not a
-clickable annotation** (printpdf's `annotations` feature, which would add
-`pdf-writer`, is off — most readers auto-linkify a bare URL, and enabling it is
-a candidate follow-up, not this task); and `invoice preview` on a draft that is
-never sent prints a URL that does not resolve yet. The alternative — the PDF
-saying nothing at all about paying — is defensible and one line cheaper, but it
-makes the attachment a dead end.
+So `page_url` never joins `Branding` and never reaches `render_invoice_pdf`.
+Nothing else wanted it, so `cli::invoice::page_url_for` is not written either —
+`r2::public_url` keeps its single caller.
 
-`pdf.rs`'s `no_live_payment_link_reaches_the_pdf` test stays, and gains a
-sibling asserting the printed URL is the page's and never
-`stripe_payment_link_url`.
+What a client who has only the attachment does is what they did before this
+change: the invoice carries the sender's name, address, phone and — new in
+Decision 11 — the operator's own payment instructions, which is the block that
+answers "where do I send the money" for anyone not clicking a link at all.
+
+`pdf.rs`'s `no_live_payment_link_reaches_the_pdf` test stays green, and gains a
+stronger sibling: the PDF prints **no URL of any kind**.
 
 ### Decision 6: Subject and Item Type are out of scope
 
@@ -471,9 +544,9 @@ needs four small additions, all inside `src/pdf.rs`:
 | Addition | Why |
 |---|---|
 | `vline(x, y_from, y_to)` | The vertical rules beside "From" and "Invoice For", and the item table's column dividers |
-| `text_right(s, right_edge, size, bold)` | The label column, the Amount Due block and the page URL, without inventing a `Col` for each |
+| `text_right(s, right_edge, size, bold)` | The label column and the Amount Due block, without inventing a `Col` for each |
 | An explicit save/restore of `self.y` around a two-column band | Draw the left column, reset `y` to the band's top, draw the right column, then set `y` to the lower of the two |
-| `wordmark(name)` | The company name at 22pt bold at `MARGIN_LEFT`, Decision 2's PDF half |
+| `logo(&Logo)` and `wordmark(name)` | Decision 2's PDF half: the image inside its 60 × 16 mm box, or the company name at 22pt bold at `MARGIN_LEFT` when there is no usable image. `logo` returns whether it drew, and the caller falls back — a refusal here is never an error |
 
 `ensure_space`/`new_page` keep their meaning: the two-column bands are drawn
 before any table row, so nothing paginates mid-band. The reference's
@@ -482,15 +555,17 @@ means a two-pass render, for a line no one reads on a one-page invoice.
 
 ### Decision 9: `REQUIRED` does not grow, and no shipped key changes meaning
 
-Four keys join `PLACEHOLDERS`, none joins `REQUIRED`, and `REQUIRED_ALTERNATIVES`
+Six keys join `PLACEHOLDERS`, none joins `REQUIRED`, and `REQUIRED_ALTERNATIVES`
 is untouched:
 
 | New key | Kind | Value | Empty when |
 |---|---|---|---|
-| `{{LOGO}}` | fragment | `<img class="logo" src="data:image/png;base64,…" alt="Acme LLC">` | no `company_logo` |
+| `{{LOGO}}` | fragment | `<img class="logo" src="data:image/png;base64,…" alt="Acme LLC">` | no `company_logo`, or one that does not parse |
 | `{{META_ROWS}}` | fragment | the invoice-metadata `<tr>` rows | never — the Invoice ID row is always there |
 | `{{TERMS_BLOCK}}` | fragment | `<h3>Terms</h3><p>…</p>` | terms unset, or folded into the Due Date row |
+| `{{PAYMENT_BLOCK}}` | fragment | `<h3>Payment</h3><p>…</p>`, one line per typed line | `payment_instructions` unset (Decision 11) |
 | `{{COMPANY_ADDRESS}}` / `{{COMPANY_PHONE}}` | text | the escaped raw values | unset |
+| `{{PAYMENT_INSTRUCTIONS}}` | text | the escaped raw value | unset |
 
 `{{COMPANY_BLOCK}}` is **extended** rather than added: it becomes the full From
 block (name bold, address lines, phone) instead of `<p class="company">Name</p>`.
@@ -509,23 +584,107 @@ this spec is visible in at least one of them:
 
 | Fixture | Exercises |
 |---|---|
-| House | logo, company address + phone, two-line client address, email, due date with `Net 30` terms, three items, notes, a live Stripe link |
-| Sparse | no logo, no company address or phone, no client address or email, no due date, no terms, no notes, one item, draft |
+| House | a real transparent-PNG logo, company address + phone, multi-line payment instructions, two-line client address, email, due date with `Net 30` terms, three items, notes, a live Stripe link |
+| Sparse | no logo, no company address or phone, no payment instructions, no client address or email, no due date, no terms, no notes, one item, draft |
 | Long terms | multi-line terms — the Due Date row bare, the Terms block present, nothing duplicated |
 | Part-paid | House plus half the total recorded — Paid/Balance rows, no Pay button once settled |
 
 Step 2 of that task is checking the sparse pair before Sam sees it: no empty
 label, no orphan rule, no `<br>` with nothing after it, no `From` heading over
-nothing, in either document.
+nothing, no `Payment` heading over nothing, in either document.
+
+The House fixture's logo is deliberately a **wide transparent PNG** — the shape
+that reproduces printpdf's soft-mask defect — so the flattening in Decision 2 is
+being looked at by a human, not only asserted in a test.
+
+### Decision 11: payment instructions are configuration, on both documents
+
+New scope, added to the task after this document was first written. Today the
+stock page ends with:
+
+```html
+<h3>Direct deposit</h3>
+<p>To pay by bank transfer, reference invoice <strong>#{{NUMBER}}</strong>.
+   Contact {{CONTACT}} for account details.</p>
+```
+
+Three things are wrong with it. It is **hardcoded English** in a template whose
+whole point is that the wording is the operator's. It is **unconditional**, so an
+installation that has never taken a bank transfer advertises one on every
+invoice it sends. And the **PDF has no equivalent block at all**, so the two
+documents disagree about how to pay — which is exactly the class of divergence
+`document.rs` exists to end.
+
+**So: a fifth company-profile key, `payment_instructions`, holding multi-line
+free text, rendered on both documents or on neither, and omitted entirely when
+unset.**
+
+- It sits beside `company_address`/`company_phone` in `metadata` for the same
+  four reasons Decision 3 gives: per-database, backed up, encrypted with the
+  database, edited where `company_name` is edited.
+- The key is `payment_instructions` rather than `company_payment_instructions`.
+  The other four say who the sender *is*; this one tells the reader what to
+  *do*, and naming it after the company would misfile it.
+- Splitting is `document::payment_lines(&str)` — trimmed, blank lines dropped —
+  the same shape as `address_lines` but with **no clamp and no truncation
+  marker**. An address is a postal fact with a natural length; instructions are
+  the operator's own prose about their own bank, and cutting them at six lines
+  with `...` would be Nigel editing a sentence about where money goes. The PDF
+  wraps them through `table_row_wrapped`, which paginates, so there is nothing
+  to protect against.
+- Heading on both documents: **Payment**, under the same full-width foot rule
+  the Notes block sits under.
+- No interpolation. The old sentence embedded `#{{NUMBER}}`; free text that
+  quietly rewrote parts of itself would be a template language inside a
+  template value, and the invoice number is already the largest thing on both
+  documents.
+
+#### What happens to `{{CONTACT}}`
+
+**Preserved in the vocabulary, retired from the stock documents.** Not folded
+into the new text, and not removed.
+
+- Preserved because `{{CONTACT}}` shipped, and the rule this whole design runs
+  on is that no shipped key changes meaning. It stays in `PLACEHOLDERS` and
+  keeps expanding to exactly what it expands to today — `contact_email` falling
+  back to `from_email`, escaped — so an operator's own template that prints it
+  is untouched.
+- Not folded in, because the two values are different in kind and in home.
+  `contact_email` is a *send identity*: one email address, in `settings.json`,
+  per machine, overridable by `NIGEL_CONTACT_EMAIL`, sitting beside
+  `from_email` and the Mailgun keys. `payment_instructions` is *letterhead*:
+  multi-line prose, in the database, per set of books. Making the second read
+  the first would tie a paragraph about a bank to the address that Mailgun
+  replies go to.
+- Retired from the stock page, which now ends with `{{PAYMENT_BLOCK}}` instead
+  of the hardcoded paragraph. An operator who wants their contact address in
+  the instructions types it there — it is free text, and typing an address is
+  cheaper than a rule that inserts one.
+
+One consequence to state rather than let someone discover: `nigel invoice
+preview` prints a notice when neither `contact_email` nor `from_email` is set,
+because the stock page used to print that address. It now fires **only when the
+template actually contains `{{CONTACT}}`**, which the stock page no longer does.
+A notice about a placeholder the document does not carry is noise.
+
+The other consequence: an installation that upgrades and sets nothing loses the
+bank-transfer paragraph from its page. That is the point of AC #12 — the block
+was never true for everyone — and it is what `docs/invoicing.md` has to say in
+so many words.
 
 ## Out of scope
 
 - **A per-invoice Subject and a per-line Item Type.** Decision 6.
-- **A logo in the PDF.** Decision 2 — with the seam left pointing at it and the
-  cost measured, so reversing it is a decision rather than a rediscovery.
 - **A live Stripe link in the PDF.** Decision 5, settled by Sam.
+- **The invoice page URL in the PDF.** Decision 5, settled by Sam. The PDF
+  prints no URL at all.
 - **Clickable link annotations in the PDF.** Would enable printpdf's
-  `annotations` feature (`pdf-writer`). Candidate follow-up.
+  `annotations` feature (`pdf-writer`). Nothing in either document is a link
+  any more, so there is nothing left to annotate.
+- **SVG logos.** Decision 2 — unrendered by most mail clients and not something
+  printpdf can embed, so it would produce two documents that disagree.
+- **Interpolating the invoice number into the payment instructions.**
+  Decision 11.
 - **`Page N of M`.** Decision 8.
 - **Currency glyph unification.** The page prints `USD 250.00` and the PDF
   `$250.00`; that is TASK-87's, deferred by #204 on purpose, and reopening it
@@ -541,25 +700,29 @@ nothing, in either document.
 - **Restyling the SPA's invoice screens.** `wc-document-frame` (#207) renders
   whatever the seam produces.
 
-## Open questions for Sam
+## Questions Sam has settled
 
-1. **The page URL in the PDF.** Recommended in Decision 5: printed, right-aligned
-   under Amount Due, omitted when `public_base_url` is unset. The alternative is
-   a PDF that says nothing about paying at all. Yes/no.
-2. **The logo, given the measured cost.** Decision 2 recommends page-only with a
-   22pt wordmark in the PDF. The reversal is now precisely priced — 8 crates and
-   ~984 KiB — and the alpha defect is avoidable by flattening onto white. Say if
-   ~1 MB is worth a logo on the attachment.
-3. **The TUI's `\n` escape for the company address.** Decision 3. It is the only
-   way to type a two-line address into a form with no multi-line widget, and it
-   is a convention this app does not otherwise have. The alternative is a
-   single-line company address (`P.O. Box 1234, Springfield, CA 90001`), which is
-   less like the reference and needs no new convention.
-4. **Retiring `PUT /api/settings/company-name` for `PUT /api/settings/company`.**
+1. **The page URL in the PDF — no.** The PDF carries no Stripe link *and* no
+   page URL. The email's live link is sufficient, and sixty characters of
+   tokenized URL printed as unclickable text is noise. Decision 5.
+2. **The logo, given the measured cost — reversed, both documents get the real
+   image.** Decision 2. `embedded_images` is enabled, RGBA is flattened onto
+   white before printpdf sees it, and the fallback to a text wordmark is
+   mandatory on every failure path.
+3. **Payment instructions — configurable, on both documents or neither.** New
+   scope; Decision 11. `{{CONTACT}}` keeps its meaning and leaves the stock
+   documents.
+
+## Still open for the side-by-side review (Task 10)
+
+1. **The TUI's `\n` escape for the company address and the payment
+   instructions.** Decision 3. It is the only way to type a two-line value into
+   a form with no multi-line widget, and it is a convention this app does not
+   otherwise have. The alternative is single-line values, which are less like
+   the reference and need no new convention.
+2. **Retiring `PUT /api/settings/company-name` for `PUT /api/settings/company`.**
    Decision 3. Free at this scale, but it is an API shape change.
-5. **Dates.** Decision 7 recommends keeping ISO everywhere. Confirm, or say
+3. **Dates.** Decision 7 recommends keeping ISO everywhere. Confirm, or say
    `MM/DD/YYYY` on the client-facing documents only and accept two vocabularies.
-6. **Confirm Subject and Item Type stay out** (Decision 6), or file them as their
+4. **Confirm Subject and Item Type stay out** (Decision 6), or file them as their
    own tasks with their own migrations.
-</content>
-</invoke>
