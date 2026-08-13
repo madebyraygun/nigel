@@ -781,9 +781,12 @@ invoice Stripe refused — a deleted payment link 404s forever, and one of those
 must not stop the rest of the run.
 
 `POST /api/invoices/sync` is the same run over HTTP. It answers with the count,
-how many invoices were checked, and those per-invoice failures as data rather
-than as stderr a browser cannot read. Only a run where *every* invoice failed is
-an error.
+how many invoices were checked, `recordedInvoices` (the numbers a payment landed
+against — what a browser needs to say *which* invoices moved), and those
+per-invoice failures as data rather than as stderr a browser cannot read. Only a
+run where *every* invoice failed is an error. Each invoice it moved has its
+published page corrected, with `republishWarnings` carrying anything that could
+not be.
 
 Payments made outside Stripe are entered by hand:
 
@@ -803,13 +806,42 @@ stored padded — `--date 2026-8-9` lands in the books as `2026-08-09`, which is
 also what `--issue` and `--due` do on `invoice new` and `invoice edit`. Dates are
 stored one way so they compare and sort as dates.
 
+### The published page is corrected
+
+A payment against a **published** invoice re-renders the page and the PDF and
+puts them back where the client is looking, so following a bookmarked link shows
+the balance that is actually outstanding — and, once the invoice is settled, no
+Pay button at all. A payment against an unpublished invoice has no page to
+correct and reaches nothing.
+
+It is **best-effort**, exactly as void's teardown is. The payment is committed
+first and nothing afterwards can undo it:
+
+| What happened | What you get |
+|---|---|
+| Nothing published | nothing, silently |
+| Republished | nothing — the page is right |
+| No R2 keys configured | `Warning: invoice #1248 was paid but the R2 publisher is not configured, so its published page still shows the old balance.` |
+| R2 refused | `Warning: could not republish invoice #1248's page (r2 403: …). It still shows the old balance.` |
+
+Either way the payment is recorded. A build without the `pdf` feature replaces
+the page only, leaving the attachment the client was actually sent — the same
+rule void follows when it takes a page down.
+
+`POST /api/invoices/{number}/pay` therefore **makes network calls** when the
+invoice is published: two uploads, bounded like every other invoicing call, so
+about a minute at worst. It answers the refreshed invoice as it always did, plus
+`republishWarnings` when there are any.
+
 ### Sync on launch
 
 Every subcommand that reads or writes the books runs a sync first, as long as a
 Stripe secret key is configured. It is best-effort: it prints
 `notice: recorded 2 new invoice payment(s)` when it finds something and
 `notice: invoice sync skipped: <reason>` when Stripe or the network is unavailable,
-and either way the command you typed runs normally. `init`, `demo`, `load`,
+and either way the command you typed runs normally. A payment it finds against a
+published invoice corrects that page too, printing the same `notice:` warnings
+when it cannot. `init`, `demo`, `load`,
 `update`, `password`, `restore`, `completions`, `invoice sync` itself, and
 `invoice preview` skip the hook — preview is defined to make no network call, and
 the launch sync would make that false on a configured machine.

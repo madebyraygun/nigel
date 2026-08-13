@@ -526,7 +526,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
-| `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `InvoiceDetail` |
+| `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
 | `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings`) |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
 
@@ -918,6 +918,30 @@ A database failure inside a send is `500`, whichever step it lands on — a `502
 would send the operator to Cloudflare's status page for a problem on their own
 disk.
 
+#### Recording a payment
+
+`POST /api/invoices/:number/pay` answers the refreshed invoice flattened, exactly
+as it always did, plus `republishWarnings` when there are any:
+
+```json
+{ "number": 1250, "status": "partial", "paid": 2000.0, "balance": 1200.0,
+  "republishWarnings": [
+    "Warning: could not republish invoice #1250's page (r2 403: …). It still shows the old balance."
+  ] }
+```
+
+**This route may make network calls.** A payment against a *published* invoice
+re-renders the page and the PDF and puts them back, so a client following their
+bookmark does not see a balance they have already settled. That is two uploads,
+each bounded by the same 30s timeout every invoicing call carries, so a payment
+on a bad day is about a minute rather than instant, and it holds the database
+for that long. A payment against an unpublished invoice reaches nothing.
+
+The republish is **best-effort**, the shape `void`'s teardown established: the
+payment commits first, nothing afterwards can undo it, and a failure is a `200`
+carrying a correct invoice plus a sentence naming what a person still has to do.
+No unpublished invoice and no successful republish carries the field at all.
+
 #### Syncing payments
 
 `POST /api/invoices/sync` takes no body. It pulls paid Stripe checkout sessions
@@ -926,10 +950,17 @@ not seen, keyed by session id, so running it twice records nothing twice. It is
 the same reconciliation the CLI runs at launch.
 
 ```json
-{ "recorded": 1, "invoicesChecked": 3, "failures": [
+{ "recorded": 1, "invoicesChecked": 3, "recordedInvoices": [1250], "failures": [
   { "number": 1249, "message": "stripe 404: no such payment link plink_…" }
 ] }
 ```
+
+`recordedInvoices` names the invoices a payment actually landed against, in the
+order the run found them. It is what the server republishes, and it is the only
+way a client can say *which* invoices a sync moved rather than how many. Each of
+those published pages is re-rendered and put back; anything that could not be
+comes back in `republishWarnings`, a list of sentences, absent when there are
+none.
 
 Per-invoice failures are **data, not an error**: a deleted payment link 404s
 forever, and one of those must not hide the payments the run did record. Only a

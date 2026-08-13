@@ -2,9 +2,29 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 use crate::invoicing::document::MoneySummary;
-use crate::invoicing::invoices::{line_items, paid_amount};
+use crate::invoicing::invoices::{is_void, line_items, paid_amount};
 use crate::invoicing::render_html::{render_invoice_html, Branding, PayButton};
-use crate::models::{Client, Invoice, InvoiceLineItem};
+use crate::models::{Client, Invoice, InvoiceLineItem, InvoiceStatus};
+
+/// Which pay element an invoice renders, wherever it is rendered.
+///
+/// Void and paid-in-full both omit it: an invoice that is settled or cancelled
+/// must not offer a working payment link, and a page republished after the last
+/// payment is exactly the moment that becomes reachable. It lives beside the
+/// seam rather than in the CLI layer because `preview`, `send` and a republish
+/// must all reach the same answer for the same invoice.
+pub fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
+    // A voided or settled invoice can still carry a live Stripe URL. Rendering
+    // a working Pay button on either is the one way rendering could cost
+    // someone money.
+    if is_void(invoice) || invoice.status == InvoiceStatus::Paid.as_str() {
+        return PayButton::Omitted;
+    }
+    match invoice.stripe_payment_link_url.as_deref() {
+        Some(url) => PayButton::Link(url),
+        None => PayButton::Placeholder,
+    }
+}
 
 /// Everything `invoice send` publishes for one invoice.
 pub struct RenderedInvoice {
@@ -61,7 +81,9 @@ fn render_pdf(
 mod tests {
     use crate::db::{get_connection, init_db};
     use crate::invoicing::clients::{add_client, get_client};
-    use crate::invoicing::invoices::{create_invoice, get_invoice, NewLineItem};
+    use crate::invoicing::invoices::{
+        create_invoice, get_invoice, record_payment, set_payment_link, NewLineItem,
+    };
     use crate::invoicing::render::render_invoice;
     use crate::invoicing::render_html::{Branding, PayButton, DEFAULT_TEMPLATE};
     use crate::migrations::run_migrations;
@@ -253,6 +275,87 @@ mod tests {
                 "{figure} missing from the pdf: {text}"
             );
         }
+    }
+
+    #[test]
+    fn a_settled_invoice_never_renders_a_pay_button() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-05", "other", None).unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+
+        assert_eq!(invoice.status, "paid");
+        assert!(
+            matches!(pay_button_for(&invoice), PayButton::Omitted),
+            "a settled invoice must not offer a working payment link"
+        );
+    }
+
+    #[test]
+    fn a_partly_paid_invoice_keeps_its_link() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+
+        assert!(matches!(
+            pay_button_for(&invoice),
+            PayButton::Link("https://pay/x")
+        ));
+    }
+
+    #[test]
+    fn a_void_invoice_never_renders_a_pay_button_even_with_a_live_link() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        crate::invoicing::invoices::void_invoice(&conn, id, "2026-08-06").unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+
+        assert!(matches!(pay_button_for(&invoice), PayButton::Omitted));
+    }
+
+    #[test]
+    fn a_draft_with_no_link_gets_the_placeholder() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let invoice = get_invoice(&conn, seed(&conn, &one_item())).unwrap();
+        assert!(matches!(pay_button_for(&invoice), PayButton::Placeholder));
+    }
+
+    #[test]
+    fn a_sent_unpaid_invoice_renders_its_real_link() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        assert!(matches!(
+            pay_button_for(&invoice),
+            PayButton::Link("https://pay/x")
+        ));
+    }
+
+    /// A void whose status write did not land: the timestamp is the fact, the
+    /// same reading `ensure_not_void` takes.
+    #[test]
+    fn a_stale_void_status_still_omits_the_pay_button() {
+        use crate::invoicing::render::pay_button_for;
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        conn.execute(
+            "UPDATE invoices SET voided_at='2026-08-06', status='draft',
+                                 stripe_payment_link_url='https://pay/x' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        assert!(matches!(pay_button_for(&invoice), PayButton::Omitted));
     }
 
     #[test]

@@ -30,6 +30,11 @@ pub struct SyncReport {
     pub recorded: u32,
     pub invoices_checked: u32,
     pub failures: Vec<SyncFailure>,
+    /// Invoice numbers a new payment was recorded against, in the order the run
+    /// found them. Numbers rather than ids, because this crosses the wire and a
+    /// number is what a person reads. It is what a front end republishes, and it
+    /// is the only way a browser can say *which* invoices a sync moved.
+    pub recorded_invoices: Vec<i64>,
 }
 
 pub fn sync_invoice<G: PaymentGateway>(
@@ -127,7 +132,11 @@ fn run_sync<G: PaymentGateway>(
             break;
         }
         match sync_invoice(conn, *id, today, gateway) {
-            Ok(recorded) => report.recorded += recorded,
+            Ok(0) => {}
+            Ok(recorded) => {
+                report.recorded += recorded;
+                report.recorded_invoices.push(*number);
+            }
             Err(e) => report.failures.push(SyncFailure {
                 number: *number,
                 message: e.to_string(),
@@ -250,6 +259,64 @@ mod tests {
         assert_eq!(sync_invoice(&conn, id, "2026-08-11", &gw).unwrap(), 0); // idempotent
         assert_eq!(paid_amount(&conn, id).unwrap(), 100.0);
         assert_eq!(get_invoice(&conn, id).unwrap().status, "paid");
+    }
+
+    /// A front end republishes the pages a sync moved, so the report has to say
+    /// which invoices those were — the count alone cannot address a page.
+    #[test]
+    fn the_report_names_the_invoices_a_payment_landed_on() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", Some("a@b.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        conn.execute(
+            "UPDATE invoices SET status='sent', published_at='2026-08-04' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+
+        let gw = Gw(vec![PaidSession {
+            session_id: "cs_1".into(),
+            amount: 40.0,
+        }]);
+        let report = sync_all_report(&conn, "2026-08-10", &gw).unwrap();
+        assert_eq!(report.recorded, 1);
+        assert_eq!(report.recorded_invoices, vec![1248]);
+    }
+
+    /// Session dedup means a second run records nothing, so it names nothing —
+    /// a republish that runs anyway would rewrite a page for no reason.
+    #[test]
+    fn an_invoice_with_no_new_payment_is_not_named() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", Some("a@b.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        conn.execute(
+            "UPDATE invoices SET status='sent', published_at='2026-08-04' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+
+        let gw = Gw(vec![PaidSession {
+            session_id: "cs_1".into(),
+            amount: 40.0,
+        }]);
+        sync_all_report(&conn, "2026-08-10", &gw).unwrap();
+        let again = sync_all_report(&conn, "2026-08-11", &gw).unwrap();
+
+        assert_eq!(again.recorded, 0);
+        assert!(again.recorded_invoices.is_empty(), "{again:?}");
     }
 
     #[test]

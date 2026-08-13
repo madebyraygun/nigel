@@ -15,11 +15,16 @@ fn sync_invoice_payments() {
     };
     let gateway = nigel::invoicing::stripe::StripeClient { secret_key };
     let db_path = nigel::settings::get_data_dir().join("nigel.db");
-    let result = nigel::db::get_connection(&db_path)
-        .and_then(|conn| nigel::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway));
+    let result = nigel::db::get_connection(&db_path).and_then(|conn| {
+        let report = nigel::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway)?;
+        // A payment found at launch corrects the page it was found for, so a
+        // client following their bookmark does not see a balance they settled.
+        let warnings = nigel::cli::invoice::republish_all(&conn, &report.recorded_invoices);
+        Ok((report, warnings))
+    });
 
     match result {
-        Ok(report) => {
+        Ok((report, warnings)) => {
             for failure in &report.failures {
                 eprintln!(
                     "notice: invoice sync failed for #{}: {}",
@@ -31,6 +36,9 @@ fn sync_invoice_payments() {
                     "notice: recorded {} new invoice payment(s)",
                     report.recorded
                 );
+            }
+            for warning in warnings {
+                eprintln!("notice: {warning}");
             }
         }
         Err(e) => eprintln!("notice: invoice sync skipped: {e}"),

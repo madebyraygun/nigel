@@ -49,6 +49,10 @@ enum Screen {
     /// deactivates its Stripe payment link and republishes its page, and those
     /// are network calls on the same thread that reads keys.
     Voiding,
+    /// A payment against a published invoice, once it is recorded. The write is
+    /// already committed; what this frame covers is the republish behind it,
+    /// which uploads the corrected page and PDF.
+    Republishing,
     ActionResult {
         title: String,
         lines: Vec<String>,
@@ -469,6 +473,7 @@ impl InvoiceManager {
             Screen::PayForm(form) => self.draw_pay_form(frame, form),
             Screen::Sending => self.draw_sending(frame),
             Screen::Voiding => self.draw_voiding(frame),
+            Screen::Republishing => self.draw_republishing(frame),
             Screen::ActionResult {
                 title,
                 lines,
@@ -668,6 +673,32 @@ impl InvoiceManager {
             Line::from(""),
             Line::from("   Cancelling it, deactivating its Stripe payment link and replacing"),
             Line::from("   its published page."),
+            Line::from(""),
+            Line::from("   This can take a few seconds. Nigel is not reading keys until it"),
+            Line::from("   finishes."),
+        ];
+        frame.render_widget(Paragraph::new(lines), content_area);
+        frame.render_widget(
+            Paragraph::new(" Working\u{2026}").style(FOOTER_STYLE),
+            hints_area,
+        );
+    }
+
+    fn draw_republishing(&self, frame: &mut Frame) {
+        let (content_area, hints_area) = self.draw_chrome(frame);
+        let Some(detail) = &self.detail else {
+            return;
+        };
+
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Republishing invoice #{}", detail.invoice.number),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("   The payment is recorded. Putting the corrected page and PDF back"),
+            Line::from("   where the client is looking."),
             Line::from(""),
             Line::from("   This can take a few seconds. Nigel is not reading keys until it"),
             Line::from("   finishes."),
@@ -1021,7 +1052,7 @@ impl InvoiceManager {
             }
             // The screen is painted and then blocks; no key is read until the
             // work returns.
-            Screen::Sending | Screen::Voiding => InvoiceAction::Continue,
+            Screen::Sending | Screen::Voiding | Screen::Republishing => InvoiceAction::Continue,
         }
     }
 
@@ -1100,6 +1131,7 @@ impl InvoiceManager {
         }
         match self.screen {
             Screen::Voiding => self.perform_pending_void(conn, today, cfg),
+            Screen::Republishing => self.perform_pending_republish(conn),
             _ => self.perform_pending_send(conn, today, cfg, data_dir),
         }
     }
@@ -1372,15 +1404,19 @@ impl InvoiceManager {
             }
             KeyCode::Char(c) => form.push(c),
             KeyCode::Backspace => form.backspace(),
-            KeyCode::Enter => self.record_pay_form(conn),
+            // A payment against a published invoice republishes its page, which
+            // reaches the network — so the write can ask for the same two-phase
+            // treatment send and void get, rather than freezing the terminal on
+            // the form.
+            KeyCode::Enter => return self.record_pay_form(conn),
             _ => {}
         }
         InvoiceAction::Continue
     }
 
-    fn record_pay_form(&mut self, conn: &Connection) {
+    fn record_pay_form(&mut self, conn: &Connection) -> InvoiceAction {
         let (Screen::PayForm(form), Some(detail)) = (&self.screen, &self.detail) else {
-            return;
+            return InvoiceAction::Continue;
         };
         let raw = form.amount.trim().replace(',', "");
         let date = form.date.trim().to_string();
@@ -1388,11 +1424,11 @@ impl InvoiceManager {
 
         if raw.is_empty() {
             self.set_status("Amount is required".into());
-            return;
+            return InvoiceAction::Continue;
         }
         let Ok(typed) = raw.parse::<f64>() else {
             self.set_status("Amount must be a number".into());
-            return;
+            return InvoiceAction::Continue;
         };
         // The CLI's own rule, so an overpayment stays allowed and only junk is
         // refused; its message names --amount, which this form does not have.
@@ -1400,25 +1436,26 @@ impl InvoiceManager {
             Ok(amount) => amount,
             Err(e) => {
                 self.set_status(field_wording(e.to_string()));
-                return;
+                return InvoiceAction::Continue;
             }
         };
         if date.is_empty() {
             self.set_status("Date is required (YYYY-MM-DD)".into());
-            return;
+            return InvoiceAction::Continue;
         }
         // A malformed date poisons refresh_status and ar_aging, so it is checked
         // through the data layer's own rule rather than one invented here.
         if let Err(e) = validate_date(&date, "payment") {
             self.set_status(e.to_string());
-            return;
+            return InvoiceAction::Continue;
         }
 
         let invoice_id = detail.invoice.id;
         let number = detail.invoice.number;
+        let was_published = detail.invoice.published_at.is_some();
         if let Err(e) = record_payment(conn, invoice_id, amount, &date, method, None) {
             self.set_status(e.to_string());
-            return;
+            return InvoiceAction::Continue;
         }
         self.after_mutation(conn, invoice_id);
         let status = self
@@ -1430,6 +1467,36 @@ impl InvoiceManager {
             "Recorded {} against invoice #{number} ({status}).",
             money(amount)
         ));
+
+        // The payment is committed either way. An unpublished invoice has no
+        // page to correct, so nothing reaches the network and the screen stays
+        // where it is; a published one paints the blocking frame first, the way
+        // send and void do, because the uploads take seconds.
+        if was_published {
+            self.screen = Screen::Republishing;
+            return InvoiceAction::Perform;
+        }
+        InvoiceAction::Continue
+    }
+
+    /// The republish that follows a payment, run after the blocking frame has
+    /// been painted. It cannot fail: every outcome is one of
+    /// `RepublishOutcome`'s sentences, and the payment is already recorded.
+    fn perform_pending_republish(&mut self, conn: &Connection) {
+        let Some(detail) = &self.detail else {
+            self.screen = Screen::List;
+            return;
+        };
+        let invoice_id = detail.invoice.id;
+        let warnings = crate::cli::invoice::republish_after_payment(conn, invoice_id);
+        self.screen = Screen::Detail;
+        if !warnings.is_empty() {
+            self.screen = Screen::ActionResult {
+                title: "Payment recorded".to_string(),
+                lines: warnings,
+                is_error: false,
+            };
+        }
     }
 
     /// Reload both the row list and the open detail after a write.
@@ -2353,6 +2420,59 @@ mod tests {
         clear_field(mgr, conn);
         type_str(mgr, conn, date);
         mgr.handle_key(KeyCode::Enter, conn);
+    }
+
+    /// A payment against a published invoice republishes its page, and that is
+    /// two uploads on the thread that reads keys — so it goes through the same
+    /// two phases send and void do rather than freezing the form.
+    #[test]
+    fn paying_a_published_invoice_paints_a_frame_before_it_republishes() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
+        mark_published(&conn, id, "2026-07-16").unwrap();
+        let mut mgr = manager(&conn);
+        open_pay(&mut mgr, &conn);
+
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "500");
+        mgr.handle_key(KeyCode::Tab, &conn);
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "2026-08-07");
+        let action = mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert!(matches!(action, InvoiceAction::Perform));
+        assert!(matches!(mgr.screen, Screen::Republishing));
+        // The write is already committed: the frame covers the upload, not the
+        // payment.
+        assert_eq!(payment_rows(&conn), 1);
+
+        // Nothing is configured, so the page is still stale — and the result
+        // screen says so rather than passing the republish off as done.
+        mgr.perform_pending_republish(&conn);
+        let after = rendered(&mut mgr);
+        assert!(after.contains("old balance"), "{after}");
+    }
+
+    #[test]
+    fn paying_an_unpublished_invoice_reaches_no_network_and_stays_put() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Cedar Systems", 2_000.0);
+        let mut mgr = manager(&conn);
+        open_pay(&mut mgr, &conn);
+
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "500");
+        mgr.handle_key(KeyCode::Tab, &conn);
+        clear_field(&mut mgr, &conn);
+        type_str(&mut mgr, &conn, "2026-08-07");
+        let action = mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert!(
+            matches!(action, InvoiceAction::Continue),
+            "there is no page to correct, so there is nothing to block on"
+        );
+        assert!(matches!(mgr.screen, Screen::Detail));
+        assert_eq!(payment_rows(&conn), 1);
     }
 
     #[test]

@@ -1003,6 +1003,15 @@ export interface VoidResult extends InvoiceDetail {
   teardownWarnings?: string[];
 }
 
+/**
+ * What `POST /api/invoices/{n}/pay` answers: the refreshed invoice, flattened,
+ * plus whatever the republish behind it could not do. Absent when there was
+ * nothing to correct, which is the ordinary case.
+ */
+export interface PayResult extends InvoiceDetail {
+  republishWarnings?: string[];
+}
+
 export interface AgingBucket {
   label: string;
   count: number;
