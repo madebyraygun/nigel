@@ -69,3 +69,11 @@ Remaining unmatched (3) — review manually:
   - POS DEBIT 1847234
   - ACH WITHDRAWAL REF#9182
 ```
+
+## Tax-aware hints
+
+Both skills carry guidance about the transactions that are expensive to get wrong at filing time — owner distributions, tax payments and penalties, equipment purchases needing a §179 placed-in-service date, contractor payments needing a W-9 or W-8BEN, and the officer/employee payroll split. Where the deciding fact is not in the file, the skills are instructed to ask rather than guess.
+
+The importer skill is likewise told not to discard tax-relevant columns it cannot yet use — statement opening balances, per-employee payroll detail, payment method, and confirmation numbers — and to name them in its summary instead.
+
+A third skill, a full year-end tax review, is planned once the reports it would drive exist (TASK-102.10).

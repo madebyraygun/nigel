@@ -70,6 +70,18 @@ Add a test in the `mod tests` block that:
 
 Run `cargo test` to confirm the new importer passes all tests and doesn't break existing ones. Run `cargo test --no-default-features` if feature-gated code was modified.
 
+## Don't discard tax-relevant detail
+
+Statements and payroll exports usually carry more than date, description and amount, and the extra columns are exactly what the year-end reports need. Discarding them at parse time means going back to PDFs at filing time. When the source file offers them, note them in the importer spec even if the current schema has nowhere to put them yet — and say so in the summary rather than dropping them silently.
+
+- **Opening and closing balances.** Most statements state a beginning balance in a preamble or summary row that the parser is told to skip. Those rows are the source for per-account opening balances, without which no year-end balance sheet is correct.
+- **Per-employee payroll detail.** Payroll exports break gross pay down by person and pay item. Aggregating a run into one wage transaction throws away the officer/employee split (1120-S line 7 vs line 8) and any separately reported pay item, such as 2% shareholder health insurance. Prefer preserving the breakdown, or flag clearly that it is being collapsed.
+- **Payment method and card indicators.** Whether a contractor was paid by card or by ACH determines whether a Form 1099-NEC is the payer's responsibility at all.
+- **Reference and confirmation numbers.** The way a duplicated tax payment gets identified as duplicated.
+- **Posting date vs. transaction date.** They differ across year end, which is precisely when it matters on cash-basis books.
+
+If a format contains one of these and the parser cannot yet use it, say which column it is and what it would be good for. That is a better outcome than a clean-looking importer that quietly loses the figure.
+
 ## Code Conventions
 
 - Detection functions: `fn detect_<key>(file_path: &Path) -> bool`
