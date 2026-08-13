@@ -4,7 +4,7 @@ title: 'Invoicing: redesign the invoice page and PDF to match the house invoice'
 status: To Do
 assignee: []
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 00:10'
+updated_date: '2026-08-13 17:04'
 labels:
   - invoicing
   - pdf
@@ -54,4 +54,20 @@ Note the email body is the invoice page itself — mailgun is handed render_invo
 - [ ] #7 A custom template exported before this change still loads, and REQUIRED does not grow
 - [ ] #8 The pay-link-in-PDF rule is either upheld or reversed on the record, with the reasoning written down
 - [ ] #9 A rendered example of both documents is reviewed side by side before this is called done
+- [ ] #10 Payment instructions are configurable text, not a sentence hardcoded in the stock template
+- [ ] #11 Payment instructions render on both the page and the PDF, or on neither
+- [ ] #12 An installation that takes no bank transfers can omit the block entirely
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Payment-instructions gap found while reviewing #204, folded into this task rather than filed separately since it lives in the same blocks this redesign rewrites.
+
+- The "Direct deposit / To pay by bank transfer, reference invoice #N. Contact <address> for account details." sentence is hardcoded English in src/invoicing/templates/invoice.html:19-20. Only the address is variable ({{CONTACT}}, resolved by cli::invoice::contact_address as contact_email falling back to from_email).
+- src/pdf.rs has no equivalent block at all, so the two documents disagree. TASK-78 did not close this: its parity work covered the company, client address, client email and money blocks.
+- The block is unconditional in the stock page, so an installation that never takes a bank transfer still advertises one.
+- Editing the wording today means exporting a custom template and owning it forever, and even then the PDF is unreachable because it has no template.
+
+The reference invoice puts the same idea in its Notes footer ("If you have any questions, please contact us at ... or call ..."), so the redesign should treat it as one configurable block in the company-profile family beside company_address and company_phone.
+<!-- SECTION:NOTES:END -->
