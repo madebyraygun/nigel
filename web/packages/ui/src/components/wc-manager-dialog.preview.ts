@@ -5,6 +5,7 @@ import './wc-client-form.js';
 import './wc-manager-table.js';
 import type { Preview } from '../../preview/types.js';
 import type { ManagerAction, ManagerColumn, ManagerRow } from './wc-manager-table.js';
+import type { ClientFormValue } from './wc-client-form.js';
 
 const value = {
   name: 'Chase Business',
@@ -116,10 +117,11 @@ const preview: Preview = {
           <wc-client-form
             .value=${{
               name: 'Acme Co',
-              email: 'ap@acme.test',
+              contacts: [{ email: 'ap@acme.test', name: 'Ada Payne', title: 'AP Manager' }],
+              billingIndex: 0,
               billingAddress: '1 Main St, Springfield',
               notes: 'Net 30, PO required',
-            }}
+            } satisfies ClientFormValue}
           ></wc-client-form>
         </wc-manager-dialog>
       `,
