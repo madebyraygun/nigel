@@ -171,6 +171,7 @@ mod tests {
             template: DEFAULT_TEMPLATE,
             company: "Bluepeak LLC",
             contact_email: "billing@example.test",
+            ..Branding::default()
         }
     }
 

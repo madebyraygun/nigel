@@ -4,7 +4,10 @@ use printpdf::*;
 
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
-use crate::invoicing::document::{address_lines, email_line, MoneySummary};
+use crate::invoicing::document::{
+    address_lines, email_line, meta_rows, payment_lines, terms_block_text, CompanyBlock, Logo,
+    MoneySummary,
+};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::reports::*;
 
@@ -128,6 +131,29 @@ impl PdfWriter {
             .get_page(self.current_page)
             .get_layer(self.current_layer);
         layer.use_text(s, size, Mm(x), Mm(self.pdf_y()), &font);
+    }
+
+    /// Right-aligned text ending at `right_edge`, for the blocks that are not
+    /// table cells: the metadata labels and the Amount Due figures.
+    fn text_right(&self, s: &str, right_edge: f32, size: f32, bold: bool) {
+        self.text(s, right_edge - approx_text_width(s, size), size, bold);
+    }
+
+    /// A vertical rule, for the party blocks and the item table's dividers.
+    /// `y_from`/`y_to` are this writer's downward `y`, not PDF coordinates.
+    fn vline(&self, x: f32, y_from: f32, y_to: f32) {
+        let layer = self
+            .doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
+        layer.set_outline_thickness(0.5);
+        layer.add_line(Line {
+            points: vec![
+                (Point::new(Mm(x), Mm(PAGE_H - y_from)), false),
+                (Point::new(Mm(x), Mm(PAGE_H - y_to)), false),
+            ],
+            is_closed: false,
+        });
     }
 
     fn hline(&self, x1: f32, x2: f32) {
@@ -886,62 +912,207 @@ fn document_title(title: &str, company: &str) -> String {
     }
 }
 
-/// `company` is the operator's own name — the `company_name` metadata key the
-/// HTML page resolves through `Branding`. Empty means unset, and the document
-/// is headed by the invoice number alone.
+/// The box a logo is fitted into, top-left of the page.
+///
+/// The printable width is 177.8 mm and the From block occupies the right of it
+/// from `PARTY_LABEL_X`; 60 mm leaves that block clear. 16 mm is the height of a
+/// four-line From block at this document's 5 mm line spacing, so a logo that
+/// fills the box ends level with the block beside it rather than under it.
+const LOGO_MAX_W: f32 = 60.0;
+const LOGO_MAX_H: f32 = 16.0;
+
+/// Where the two right-hand party blocks — From, and Invoice For — start.
+const PARTY_LABEL_X: f32 = 110.0;
+const PARTY_RULE_X: f32 = 126.0;
+const PARTY_TEXT_X: f32 = 129.0;
+
+/// The metadata column's value column, beside its labels at `MARGIN_LEFT`.
+const META_VALUE_X: f32 = MARGIN_LEFT + 30.0;
+
+const LINE_H: f32 = 5.0;
+
+impl PdfWriter {
+    /// The company name where a logo would go: 22pt bold at the left margin.
+    /// What every document without a usable image is headed by.
+    fn wordmark(&mut self, name: &str) {
+        if name.is_empty() {
+            return;
+        }
+        // The baseline sits a line down from the band's top, so the wordmark
+        // occupies the band rather than hanging above it.
+        self.y += 7.0;
+        self.text(name, MARGIN_LEFT, 22.0, true);
+        self.y += 3.0;
+    }
+
+    /// Draw the logo top-left, fitted to `LOGO_MAX_W` × `LOGO_MAX_H` with its
+    /// aspect ratio preserved. Answers whether it drew: every refusal is the
+    /// caller's cue to draw the wordmark instead, and none of them is an error.
+    #[cfg(feature = "pdf")]
+    fn logo(&mut self, logo: &Logo) -> bool {
+        let Some(image) = prepare_logo(&logo.bytes) else {
+            return false;
+        };
+        let (px_w, px_h) = (logo_dimensions(&image).0, logo_dimensions(&image).1);
+        if px_w == 0 || px_h == 0 {
+            return false;
+        }
+
+        // Fill the box in whichever dimension binds first, so a wide wordmark
+        // is 60 mm across and short, and a tall mark is 16 mm high and narrow.
+        let aspect = px_w as f32 / px_h as f32;
+        let (draw_w, draw_h) = if LOGO_MAX_H * aspect <= LOGO_MAX_W {
+            (LOGO_MAX_H * aspect, LOGO_MAX_H)
+        } else {
+            (LOGO_MAX_W, LOGO_MAX_W / aspect)
+        };
+
+        // printpdf lays an image out at `dpi`, then applies the scale. Naming
+        // the dpi rather than taking the default keeps the arithmetic here the
+        // same arithmetic it does.
+        const DPI: f32 = 300.0;
+        let natural_w = px_w as f32 / DPI * 25.4;
+        let natural_h = px_h as f32 / DPI * 25.4;
+
+        let layer = self
+            .doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer);
+        Image::from_dynamic_image(&image).add_to_layer(
+            layer,
+            ImageTransform {
+                translate_x: Some(Mm(MARGIN_LEFT)),
+                // PDF coordinates, and an image is placed by its bottom edge.
+                translate_y: Some(Mm(PAGE_H - self.y - draw_h)),
+                rotate: None,
+                scale_x: Some(draw_w / natural_w),
+                scale_y: Some(draw_h / natural_h),
+                dpi: Some(DPI),
+            },
+        );
+        self.y += draw_h;
+        true
+    }
+
+    /// A ruled party block — a label, a vertical rule, and the lines beside it.
+    /// Draws nothing at all when there is nothing to say.
+    fn party_block(&mut self, label: &str, name: &str, lines: &[&str], bold_name: bool) {
+        if name.is_empty() && lines.is_empty() {
+            return;
+        }
+        let top = self.y - 3.5;
+        self.text(label, PARTY_LABEL_X, 7.0, false);
+        if !name.is_empty() {
+            self.text(name, PARTY_TEXT_X, FONT_SIZE, bold_name);
+            self.y += LINE_H;
+        }
+        for line in lines {
+            self.text(line, PARTY_TEXT_X, FONT_SIZE, false);
+            self.y += LINE_H;
+        }
+        self.vline(PARTY_RULE_X, top, self.y - 3.5);
+    }
+}
+
+/// The image printpdf is handed, and the only thing that builds one.
+///
+/// Always `Rgb8`: any alpha is composited onto white first, because printpdf
+/// 0.7's soft-mask path sizes a transparent image's mask from the image's
+/// *width* (`xobject.rs`, `impl From<ImageXObject> for lopdf::Stream`), so a
+/// wide transparent wordmark embeds wrong. White because a PDF page is white,
+/// and compositing onto the surface the image will sit on is the only choice
+/// that is not an invention about someone's brand. `None` for anything that
+/// will not decode — a logo is decoration on a document about money.
+#[cfg(feature = "pdf")]
+fn prepare_logo(bytes: &[u8]) -> Option<image_crate::DynamicImage> {
+    let decoded = image_crate::load_from_memory(bytes).ok()?;
+    let source = decoded.to_rgba8();
+    let mut flattened = image_crate::RgbImage::new(source.width(), source.height());
+    for (x, y, pixel) in source.enumerate_pixels() {
+        let alpha = pixel[3] as u32;
+        let over =
+            |channel: u8| ((channel as u32 * alpha + 255 * (255 - alpha)) / 255).min(255) as u8;
+        flattened.put_pixel(
+            x,
+            y,
+            image_crate::Rgb([over(pixel[0]), over(pixel[1]), over(pixel[2])]),
+        );
+    }
+    Some(image_crate::DynamicImage::ImageRgb8(flattened))
+}
+
+#[cfg(feature = "pdf")]
+fn logo_dimensions(image: &image_crate::DynamicImage) -> (u32, u32) {
+    use image_crate::GenericImageView as _;
+    image.dimensions()
+}
+
 /// The invoice as the client's email attachment carries it.
 ///
-/// It deliberately carries **no payment link**. An emailed attachment cannot be
-/// recalled or republished, so a live charge link in it would survive the
-/// settlement it was created for — the same reasoning that makes void deactivate
-/// links. Paying online is the published page's job, and the page is the one
-/// artifact a republish can correct.
+/// `company` is the whole From block, decided by `document::company_block` so
+/// that the page cannot draw a different one. A logo is drawn top-left when
+/// there is a usable one and the company name is drawn as a wordmark when there
+/// is not — a logo problem degrades this document, never fails it.
+///
+/// It deliberately carries **no payment link and no URL at all**. An emailed
+/// attachment cannot be recalled or republished, so a live charge link in it
+/// would survive the settlement it was created for — the same reasoning that
+/// makes void deactivate links — and a tokenized page address printed as
+/// unclickable text is sixty characters of noise beside the figure that
+/// matters. Paying online is the published page's job, and the email carries
+/// its link.
 pub fn render_invoice_pdf(
     invoice: &Invoice,
     client: &Client,
+    company: &CompanyBlock<'_>,
+    logo: Option<&Logo>,
     items: &[InvoiceLineItem],
-    company: &str,
     summary: &MoneySummary,
+    payment_instructions: &str,
 ) -> Result<Vec<u8>> {
     let title = format!("Invoice #{}", invoice.number);
-    let mut pdf = PdfWriter::new(&document_title(&title, company))?;
+    let mut pdf = PdfWriter::new(&document_title(&title, company.name))?;
+
+    // --- letterhead: the mark on the left, the From block on the right ------
+    let band_top = pdf.y;
+    let drawn = match logo {
+        Some(logo) => pdf.logo(logo),
+        None => false,
+    };
+    if !drawn {
+        pdf.wordmark(company.name);
+    }
+    let left_bottom = pdf.y;
+
+    pdf.y = band_top;
+    pdf.party_block("From", company.name, &company.address, true);
+    if let Some(phone) = company.phone {
+        pdf.text(&format!("ph. {phone}"), PARTY_TEXT_X, FONT_SIZE, false);
+        pdf.y += LINE_H;
+    }
+    pdf.y = pdf.y.max(left_bottom) + 8.0;
 
     pdf.text(&title, MARGIN_LEFT, TITLE_SIZE, true);
-    pdf.y += 7.0;
-    if !company.is_empty() {
-        pdf.text(company, MARGIN_LEFT, SUBTITLE_SIZE, true);
-        pdf.y += 5.0;
+    pdf.y += 9.0;
+
+    // --- the metadata column, and who the invoice is for --------------------
+    let band_top = pdf.y;
+    for row in meta_rows(invoice) {
+        pdf.text(row.label, MARGIN_LEFT, FONT_SIZE, false);
+        pdf.text(&row.value, META_VALUE_X, FONT_SIZE, row.emphasis);
+        pdf.y += LINE_H;
     }
-    pdf.text(
-        &format!("Billed to: {}", client.name),
-        MARGIN_LEFT,
-        SUBTITLE_SIZE,
-        false,
-    );
-    pdf.y += 5.0;
-    // One row per typed line, matching how the page renders the same address.
-    // An absent one draws nothing, so `Issued:` follows the name directly.
-    for line in address_lines(client.billing_address.as_deref().unwrap_or_default()) {
-        pdf.text(line, MARGIN_LEFT, SUBTITLE_SIZE, false);
-        pdf.y += 5.0;
-    }
+    let left_bottom = pdf.y;
+
+    pdf.y = band_top;
+    // The same `address_lines`/`email_line` decisions the page draws from, so
+    // the two documents cannot show a client different lines.
+    let mut client_lines = address_lines(client.billing_address.as_deref().unwrap_or_default());
     if let Some(email) = email_line(client.email.as_deref()) {
-        pdf.text(email, MARGIN_LEFT, SUBTITLE_SIZE, false);
-        pdf.y += 5.0;
+        client_lines.push(email);
     }
-    pdf.text(
-        &format!("Issued: {}", invoice.issue_date),
-        MARGIN_LEFT,
-        SUBTITLE_SIZE,
-        false,
-    );
-    pdf.y += 5.0;
-    if let Some(due) = &invoice.due_date {
-        pdf.text(&format!("Due: {due}"), MARGIN_LEFT, SUBTITLE_SIZE, false);
-        pdf.y += 5.0;
-    }
-    pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
-    pdf.y += 5.0;
+    pdf.party_block("Invoice For", &client.name, &client_lines, true);
+    pdf.y = pdf.y.max(left_bottom) + 6.0;
 
     let cols = &[
         Col {
@@ -961,7 +1132,8 @@ pub fn render_invoice_pdf(
             align: Align::Right,
         },
     ];
-    pdf.table_header(cols, &["Description", "Qty", "Rate", "Amount"]);
+    let table_top = pdf.y - 3.5;
+    pdf.table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
 
     for item in items {
         let qty = item.quantity.to_string();
@@ -974,11 +1146,24 @@ pub fn render_invoice_pdf(
             FONT_SIZE,
         );
     }
+    // Column dividers, drawn once the table's extent is known. Skipped when the
+    // rows paginated, since a rule spanning a page break would be drawn on the
+    // wrong page.
+    if pdf.y > table_top {
+        let mut divider = MARGIN_LEFT;
+        for col in &cols[..cols.len() - 1] {
+            divider += col.width;
+            pdf.vline(divider, table_top, pdf.y - 3.5);
+        }
+    }
+    pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+    pdf.y += 6.0;
 
-    pdf.separator();
-    // Which money lines exist is `MoneySummary::lines()`'s decision, taken once
-    // for both documents. Only the total names the currency, which is where
-    // this document has always put it.
+    // --- the money block, right-aligned under the Amount column -------------
+    // Which lines exist is `MoneySummary::lines()`'s decision, taken once for
+    // both documents. Only the total names the currency, which is where this
+    // document has always put it.
+    let figure_right = PAGE_W - MARGIN_RIGHT - COL_PAD;
     for line in summary.lines() {
         let label = if line.label == "Total" {
             format!("Total ({})", invoice.currency)
@@ -994,21 +1179,85 @@ pub fn render_invoice_pdf(
         } else {
             money(line.amount)
         };
-        pdf.table_row(cols, &[&label, "", "", &amount], line.emphasis);
+        let size = if line.emphasis { 12.0 } else { FONT_SIZE };
+        pdf.ensure_space(ROW_H);
+        pdf.text_right(&label, figure_right - 35.0, size, line.emphasis);
+        pdf.text_right(&amount, figure_right, size, line.emphasis);
+        pdf.y += ROW_H + 1.0;
     }
 
+    // --- the foot ------------------------------------------------------------
+    pdf.blank_row();
+    pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+    pdf.y += 6.0;
+
     if let Some(notes) = &invoice.notes {
-        pdf.blank_row();
         pdf.section_label("Notes");
         pdf.table_row_wrapped(&cols[..1], &[notes], false, FONT_SIZE);
-    }
-    if let Some(terms) = &invoice.terms {
         pdf.blank_row();
+    }
+    // The block only when `due_value` did not already print the terms beside
+    // the date — the page's rule, from the same function.
+    if let Some(terms) = terms_block_text(invoice) {
         pdf.section_label("Terms");
         pdf.table_row_wrapped(&cols[..1], &[terms], false, FONT_SIZE);
+        pdf.blank_row();
+    }
+    let instructions = payment_lines(payment_instructions);
+    if !instructions.is_empty() {
+        pdf.section_label("Payment");
+        for line in instructions {
+            pdf.table_row_wrapped(&cols[..1], &[line], false, FONT_SIZE);
+        }
     }
 
     pdf.into_bytes()
+}
+
+/// A real PNG, painted by `image` so a decoder has something genuine to read.
+/// Transparent and, at the sizes the tests ask for, wider than it is tall — the
+/// shape printpdf's soft-mask path gets wrong.
+#[cfg(all(test, feature = "pdf"))]
+pub(crate) fn transparent_png(width: u32, height: u32) -> Vec<u8> {
+    let mut buffer = image_crate::RgbaImage::new(width, height);
+    for (x, _y, pixel) in buffer.enumerate_pixels_mut() {
+        *pixel = image_crate::Rgba([200, 30, 30, if x % 2 == 0 { 0 } else { 255 }]);
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    image_crate::DynamicImage::ImageRgba8(buffer)
+        .write_to(&mut out, image_crate::ImageOutputFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
+/// That PNG as the `company_logo` metadata value would hold it.
+#[cfg(all(test, feature = "pdf"))]
+pub(crate) fn logo_uri(width: u32, height: u32) -> String {
+    use base64::Engine as _;
+    format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(transparent_png(width, height))
+    )
+}
+
+/// Every image XObject a rendered document carries, as its dictionary. The seam
+/// asserts through this rather than reaching into `lopdf` itself, which is only
+/// in scope here.
+#[cfg(test)]
+pub(crate) fn image_xobjects(bytes: &[u8]) -> Vec<lopdf::Dictionary> {
+    let doc = lopdf::Document::load_mem(bytes).expect("rendered pdf parses");
+    doc.objects
+        .values()
+        .filter_map(|object| object.as_stream().ok())
+        .filter(|stream| {
+            stream
+                .dict
+                .get(b"Subtype")
+                .and_then(|s| s.as_name())
+                .is_ok_and(|name| name == b"Image")
+        })
+        .map(|stream| stream.dict.clone())
+        .collect()
 }
 
 /// The text a rendered document's content streams carry, in draw order. Tests
@@ -1070,17 +1319,40 @@ mod invoice_pdf_tests {
         }]
     }
 
+    use crate::invoicing::document::{company_block, parse_logo};
+
     /// One line item, nothing paid — what every test that is about something
     /// else wants.
     fn pdf_of(invoice: &Invoice, client: &Client, company: &str) -> Vec<u8> {
         let money = MoneySummary::of(invoice, 0.0);
-        render_invoice_pdf(invoice, client, &items(), company, &money).unwrap()
+        let block = company_block(company, "", "");
+        render_invoice_pdf(invoice, client, &block, None, &items(), &money, "").unwrap()
     }
 
     fn text_of(invoice: &Invoice, client: &Client, paid: f64) -> String {
         let money = MoneySummary::of(invoice, paid);
-        let bytes = render_invoice_pdf(invoice, client, &items(), "Bluepeak LLC", &money).unwrap();
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes =
+            render_invoice_pdf(invoice, client, &block, None, &items(), &money, "").unwrap();
         extract_text(&bytes)
+    }
+
+    use crate::pdf::{logo_uri, transparent_png};
+
+    fn pdf_with_logo(logo_uri: &str) -> Vec<u8> {
+        let logo = parse_logo(logo_uri).ok().flatten();
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        render_invoice_pdf(
+            &invoice(),
+            &client(),
+            &block,
+            logo.as_ref(),
+            &items(),
+            &money,
+            "",
+        )
+        .unwrap()
     }
 
     fn rich_client() -> Client {
@@ -1101,12 +1373,11 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {text}"))
         };
-        assert!(at("Invoice #1248") < at("Bluepeak LLC"));
-        assert!(at("Bluepeak LLC") < at("Billed to: Acme"));
-        assert!(at("Billed to: Acme") < at("123 Main St"));
+        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
+        assert!(at("Invoice For") < at("123 Main St"));
         assert!(at("123 Main St") < at("Springfield, IL 62704"));
         assert!(at("Springfield, IL 62704") < at("ap@acme.test"));
-        assert!(at("ap@acme.test") < at("Issued:"));
+        assert!(at("ap@acme.test") < at("Description"));
     }
 
     #[test]
@@ -1117,9 +1388,223 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {text}"))
         };
-        assert!(at("Billed to: Acme") < at("Issued:"));
+        assert!(at("Invoice For") < at("Description"));
         assert!(!text.contains("Main St"), "got: {text}");
         assert!(!text.contains("@"), "no email line at all: {text}");
+    }
+
+    #[test]
+    fn the_from_block_carries_the_address_and_the_phone() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block(
+            "Bluepeak LLC",
+            "P.O. Box 1234\nSpringfield, CA 90001",
+            "619.555.0123",
+        );
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &items(), &money, "").unwrap();
+        let text = extract_text(&bytes);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("From") < at("P.O. Box 1234"));
+        assert!(at("P.O. Box 1234") < at("Springfield, CA 90001"));
+        assert!(at("Springfield, CA 90001") < at("ph. 619.555.0123"));
+    }
+
+    #[test]
+    fn an_unset_company_draws_no_from_block() {
+        let text = extract_text(&pdf_of(&invoice(), &client(), ""));
+        assert!(!text.contains("From"), "got: {text}");
+        assert!(!text.contains("ph."), "got: {text}");
+        // The bands after it still start where they should.
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("Invoice #1248") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
+    }
+
+    #[test]
+    fn the_metadata_column_is_the_shared_one() {
+        let mut inv = invoice();
+        inv.due_date = Some("2026-09-03".into());
+        inv.terms = Some("Net 30".into());
+        let text = text_of(&inv, &client(), 0.0);
+
+        let mut at = 0;
+        for row in crate::invoicing::document::meta_rows(&inv) {
+            for needle in [row.label, row.value.as_str()] {
+                let found = text[at..]
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} missing or out of order: {text}"));
+                at += found + needle.len();
+            }
+        }
+        assert!(text.contains("2026-09-03 (Net 30)"), "got: {text}");
+    }
+
+    #[test]
+    fn the_item_table_says_quantity_and_unit_price() {
+        let text = text_of(&invoice(), &client(), 0.0);
+        assert!(text.contains("Quantity"), "got: {text}");
+        assert!(text.contains("Unit Price"), "got: {text}");
+        assert!(!text.contains("Rate"), "got: {text}");
+    }
+
+    #[test]
+    fn a_configured_logo_is_embedded_as_an_image() {
+        let bytes = pdf_with_logo(&logo_uri(400, 60));
+        assert_eq!(image_xobjects(&bytes).len(), 1, "one image, the logo");
+    }
+
+    /// The whole reason the flattening exists. printpdf 0.7 sizes a soft mask
+    /// from the image's *width*, so a wide transparent logo embeds a mask
+    /// declaring `width x width` samples. Handing it `Rgb8` makes that path
+    /// unreachable, and `/SMask null` is the proof.
+    #[test]
+    fn nothing_handed_to_printpdf_is_ever_rgba() {
+        let prepared = prepare_logo(&transparent_png(400, 60)).expect("a decodable png");
+        assert!(
+            matches!(prepared, image_crate::DynamicImage::ImageRgb8(_)),
+            "printpdf must never see an alpha channel"
+        );
+
+        let dictionaries = image_xobjects(&pdf_with_logo(&logo_uri(400, 60)));
+        let dict = dictionaries.first().expect("the logo");
+        assert!(
+            matches!(dict.get(b"SMask").unwrap(), lopdf::Object::Null),
+            "an alpha channel reached printpdf"
+        );
+        assert_eq!(dict.get(b"Width").unwrap().as_i64().unwrap(), 400);
+        assert_eq!(dict.get(b"Height").unwrap().as_i64().unwrap(), 60);
+    }
+
+    #[test]
+    fn a_transparent_logo_is_flattened_onto_white() {
+        use image_crate::GenericImageView as _;
+        let prepared = prepare_logo(&transparent_png(4, 1)).expect("a decodable png");
+        // Even columns are fully transparent and become the page they sit on;
+        // odd ones keep their colour.
+        assert_eq!(prepared.get_pixel(0, 0).0[..3], [255, 255, 255]);
+        assert_eq!(prepared.get_pixel(1, 0).0[..3], [200, 30, 30]);
+    }
+
+    #[test]
+    fn the_logo_is_bounded_and_keeps_its_aspect_ratio() {
+        // A 10:1 wordmark binds on width; a 1:10 tower binds on height. Both
+        // fit the box, and neither is distorted.
+        for (px_w, px_h) in [(1200u32, 120u32), (120, 1200)] {
+            let bytes = pdf_with_logo(&logo_uri(px_w, px_h));
+            let doc = lopdf::Document::load_mem(&bytes).unwrap();
+            let (scale_w, scale_h) = drawn_logo_size(&doc);
+            assert!(
+                scale_w <= LOGO_MAX_W + 0.01 && scale_h <= LOGO_MAX_H + 0.01,
+                "{px_w}x{px_h} drew {scale_w}x{scale_h}mm, outside the box"
+            );
+            let wanted = px_w as f32 / px_h as f32;
+            assert!(
+                ((scale_w / scale_h) - wanted).abs() < 0.01,
+                "{px_w}x{px_h} drew at aspect {}, wanted {wanted}",
+                scale_w / scale_h
+            );
+            // One of the two dimensions fills the box, or the bound is not one.
+            assert!(
+                (scale_w - LOGO_MAX_W).abs() < 0.01 || (scale_h - LOGO_MAX_H).abs() < 0.01,
+                "{px_w}x{px_h} drew {scale_w}x{scale_h}mm, filling neither dimension"
+            );
+        }
+    }
+
+    /// The width and height in mm of the one image the document draws, read
+    /// back out of the content stream's scaling matrix.
+    fn drawn_logo_size(doc: &lopdf::Document) -> (f32, f32) {
+        let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
+        let content = doc
+            .get_page_content(*doc.get_pages().get(&pages[0]).unwrap())
+            .unwrap();
+        let operations = lopdf::content::Content::decode(&content)
+            .unwrap()
+            .operations;
+        let matrix = operations
+            .iter()
+            .find(|op| op.operator == "cm")
+            .expect("an image transform");
+        let number = |i: usize| matrix.operands[i].as_float().unwrap();
+        // The first `cm` is `Scale(w_pt, h_pt)`; 1 pt is 25.4/72 mm.
+        (number(0) * 25.4 / 72.0, number(3) * 25.4 / 72.0)
+    }
+
+    /// A logo may never cost an invoice. Every way one can be unusable ends
+    /// with a rendered document headed by the company name.
+    #[test]
+    fn an_unusable_logo_falls_back_to_the_wordmark_rather_than_failing() {
+        use base64::Engine as _;
+        let over_cap = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 200 * 1024]);
+        let undecodable = {
+            // Right magic bytes and a readable IHDR, but no image data behind
+            // it: `parse_logo` accepts it and the decoder cannot.
+            let mut bytes = vec![
+                0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+                b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                0x00,
+            ];
+            bytes.extend_from_slice(&[0u8; 4]);
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            )
+        };
+        for bad in [
+            "data:image/png;base64,bm90IGEgcG5n".to_string(),
+            format!("data:image/png;base64,{over_cap}"),
+            "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=".to_string(),
+            "not a data uri".to_string(),
+            undecodable,
+        ] {
+            let bytes = pdf_with_logo(&bad);
+            assert!(bytes.starts_with(b"%PDF"), "{bad} failed the render");
+            assert!(
+                image_xobjects(&bytes).is_empty(),
+                "{bad} embedded something"
+            );
+            assert!(
+                extract_text(&bytes).contains("Bluepeak LLC"),
+                "{bad} left no wordmark"
+            );
+        }
+    }
+
+    #[test]
+    fn the_payment_instructions_are_printed_under_the_foot_rule() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(
+            &invoice(),
+            &client(),
+            &block,
+            None,
+            &items(),
+            &money,
+            "Wells Fargo\nRouting 121000248",
+        )
+        .unwrap();
+        let text = extract_text(&bytes);
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {text}"))
+        };
+        assert!(at("Total") < at("Payment"));
+        assert!(at("Payment") < at("Wells Fargo"));
+        assert!(at("Wells Fargo") < at("Routing 121000248"));
+    }
+
+    #[test]
+    fn no_payment_instructions_draw_no_payment_heading() {
+        let text = text_of(&invoice(), &client(), 0.0);
+        assert!(!text.contains("Payment"), "got: {text}");
     }
 
     #[test]
@@ -1219,7 +1704,7 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {text}"))
         };
-        assert!(at("Address line 1") < at("Issued:"));
+        assert!(at("Address line 1") < at("Description"));
     }
 
     /// The one thing this document deliberately does not carry. An emailed
@@ -1234,8 +1719,23 @@ mod invoice_pdf_tests {
         assert!(!text.contains("Pay online"), "got: {text}");
     }
 
+    /// Not only no Stripe link: no address at all. A tokenized page URL printed
+    /// as unclickable text is noise beside the figure that matters, and the
+    /// email carries the live link.
     #[test]
-    fn the_company_name_heads_the_document() {
+    fn the_pdf_prints_no_url_at_all() {
+        let mut inv = invoice();
+        inv.stripe_payment_link_url = Some("https://pay.stripe.test/x".into());
+        inv.published_at = Some("2026-08-04".into());
+        inv.token = "abc123".into();
+        let text = text_of(&inv, &client(), 0.0);
+        for absence in ["http", "index.html", "abc123", "://"] {
+            assert!(!text.contains(absence), "{absence} survived in: {text}");
+        }
+    }
+
+    #[test]
+    fn the_wordmark_heads_the_document_when_there_is_no_logo() {
         let bytes = pdf_of(&invoice(), &client(), "Bluepeak LLC");
         let text = extract_text(&bytes);
 
@@ -1243,8 +1743,21 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing: {text}"))
         };
-        assert!(at("Invoice #1248") < at("Bluepeak LLC"));
-        assert!(at("Bluepeak LLC") < at("Billed to: Acme"));
+        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
+        assert!(at("Invoice #1248") < at("Invoice For"));
+        assert!(image_xobjects(&bytes).is_empty(), "no image was configured");
+    }
+
+    /// The pure header reader in `document.rs` has to agree with the decoder
+    /// that actually embeds the image, or the two would drift.
+    #[test]
+    fn the_header_dimensions_match_what_the_decoder_reads() {
+        use image_crate::GenericImageView as _;
+        let png = transparent_png(37, 11);
+        let logo = parse_logo(&logo_uri(37, 11)).unwrap().expect("a logo");
+        let decoded = image_crate::load_from_memory(&png).unwrap();
+        assert_eq!((logo.width, logo.height), decoded.dimensions());
+        assert_eq!((logo.width, logo.height), (37, 11));
     }
 
     fn document_title_of(bytes: &[u8]) -> String {
@@ -1266,7 +1779,7 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing: {text}"))
         };
-        assert!(at("Invoice #1248") < at("Billed to: Acme"));
+        assert!(at("Invoice #1248") < at("Invoice For"));
         assert_eq!(document_title_of(&bytes), "Invoice #1248");
     }
 
@@ -1314,7 +1827,8 @@ mod invoice_pdf_tests {
             position: 0,
         }];
         let money = MoneySummary::of(&inv, 0.0);
-        let bytes = render_invoice_pdf(&inv, &client(), &items, "Bluepeak LLC", &money).unwrap();
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(&inv, &client(), &block, None, &items, &money, "").unwrap();
         assert!(bytes.starts_with(b"%PDF"));
     }
 }

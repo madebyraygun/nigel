@@ -5,6 +5,9 @@
 //! row, and the only way they can be trusted to agree is for the decision — the
 //! figures, and which of them appear at all — to live above both of them.
 
+use base64::Engine as _;
+
+use crate::error::{NigelError, Result};
 use crate::invoicing::invoices::{is_settled, CENT_SLACK};
 use crate::models::Invoice;
 
@@ -135,10 +138,568 @@ pub fn email_line(email: Option<&str>) -> Option<&str> {
     email.map(str::trim).filter(|e| !e.is_empty())
 }
 
+/// The operator's own payment instructions, as the lines they were typed as.
+///
+/// `address_lines` without the clamp, and deliberately so. An address is a
+/// postal fact with a natural length; this is the operator's prose about their
+/// own bank, and cutting it off after six lines with a `...` would be Nigel
+/// editing a sentence about where money goes. Both documents draw every line —
+/// the PDF through `table_row_wrapped`, which paginates.
+pub fn payment_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// Who the invoice is from, as both documents draw it.
+pub struct CompanyBlock<'a> {
+    pub name: &'a str,
+    pub address: Vec<&'a str>,
+    pub phone: Option<&'a str>,
+}
+
+impl CompanyBlock<'_> {
+    /// Nothing to draw. A From heading over an empty block is the failure mode
+    /// this answers, on both documents at once.
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() && self.address.is_empty() && self.phone.is_none()
+    }
+}
+
+/// The From block, decided once. The address goes through the same
+/// `address_lines` a client's does — one clamp, one truncation marker, both
+/// parties — and the phone through `email_line`'s trim-or-nothing rule.
+pub fn company_block<'a>(name: &'a str, address: &'a str, phone: &'a str) -> CompanyBlock<'a> {
+    CompanyBlock {
+        name: name.trim(),
+        address: address_lines(address),
+        phone: email_line(Some(phone)),
+    }
+}
+
+/// One label/value row of the invoice metadata column.
+pub struct MetaRow {
+    pub label: &'static str,
+    pub value: String,
+    /// The row a reader's eye should land on.
+    pub emphasis: bool,
+}
+
+/// The metadata rows both documents print, in order. A row with nothing to say
+/// is absent rather than empty.
+pub fn meta_rows(invoice: &Invoice) -> Vec<MetaRow> {
+    let mut rows = vec![
+        MetaRow {
+            label: "Invoice ID",
+            value: invoice.number.to_string(),
+            emphasis: true,
+        },
+        MetaRow {
+            label: "Issue Date",
+            value: invoice.issue_date.clone(),
+            emphasis: false,
+        },
+    ];
+    if let Some(value) = due_value(invoice) {
+        rows.push(MetaRow {
+            label: "Due Date",
+            value,
+            emphasis: false,
+        });
+    }
+    rows
+}
+
+/// The due date as a document prints it, with its terms folded in when they fit
+/// on the line.
+///
+/// Single-line terms read naturally in parentheses after the date, which is
+/// what the reference does. A paragraph does not, so multi-line terms stay a
+/// block — and the alternative, a character-count threshold, would be a hidden
+/// rule nobody could predict.
+pub fn due_value(invoice: &Invoice) -> Option<String> {
+    let due = invoice
+        .due_date
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())?;
+    match folded_terms(invoice) {
+        Some(terms) => Some(format!("{due} ({terms})")),
+        None => Some(due.to_string()),
+    }
+}
+
+/// The terms when they belong beside the due date: there is a due date, and the
+/// terms are one line.
+fn folded_terms(invoice: &Invoice) -> Option<&str> {
+    invoice
+        .due_date
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())?;
+    let terms = trimmed_terms(invoice)?;
+    (!terms.contains('\n')).then_some(terms)
+}
+
+fn trimmed_terms(invoice: &Invoice) -> Option<&str> {
+    invoice
+        .terms
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+}
+
+/// The terms as their own block, and only when `due_value` did not already
+/// print them — so nothing appears twice.
+pub fn terms_block_text(invoice: &Invoice) -> Option<&str> {
+    let terms = trimmed_terms(invoice)?;
+    folded_terms(invoice).is_none().then_some(terms)
+}
+
+/// How large a stored logo may be, decoded.
+///
+/// Every byte is base64-inflated by a third into every email body and every
+/// published object, and the page is the email.
+pub const MAX_LOGO_BYTES: usize = 128 * 1024;
+
+/// The image types a logo may be.
+///
+/// SVG is not among them: most mail clients will not render it, and printpdf
+/// cannot embed it, so allowing it would buy a validation branch and two
+/// documents that disagree.
+const LOGO_MIMES: &[(&str, &[u8])] = &[
+    (
+        "image/png",
+        &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+    ),
+    ("image/jpeg", &[0xff, 0xd8, 0xff]),
+];
+
+/// A validated logo, carrying what each document needs from one parse.
+pub struct Logo {
+    pub mime: &'static str,
+    /// The payload as stored, ready to go straight into an `<img src>`.
+    pub base64: String,
+    /// The image file itself, for the PDF to decode and embed.
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The stored `company_logo` value, checked end to end, or the reason it cannot
+/// be used.
+///
+/// `Ok(None)` is an unset logo, which is not a failure — clearing the field is
+/// how an operator removes one. Every other refusal names what was wrong, so
+/// the settings screen that runs this before writing can say it.
+///
+/// The dimensions are read out of the file header rather than by decoding,
+/// because this module has to validate a logo identically in a build with no
+/// `pdf` feature, where the `image` crate does not exist.
+pub fn parse_logo(data_uri: &str) -> Result<Option<Logo>> {
+    let uri = data_uri.trim();
+    if uri.is_empty() {
+        return Ok(None);
+    }
+
+    let declared = uri
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split_once(";base64,"))
+        .ok_or_else(|| {
+            NigelError::Invalid(
+                "A logo must be a data: URI shaped like data:image/png;base64,<payload>.".into(),
+            )
+        })?;
+    let (mime, payload) = declared;
+
+    let (mime, magic) = LOGO_MIMES
+        .iter()
+        .find(|(known, _)| *known == mime)
+        .ok_or_else(|| {
+            NigelError::Invalid(format!(
+                "A logo of type {mime} cannot be used. PNG (image/png) and JPEG (image/jpeg) are the accepted types."
+            ))
+        })?;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|e| NigelError::Invalid(format!("The logo's base64 payload is invalid: {e}")))?;
+
+    if !bytes.starts_with(magic) {
+        return Err(NigelError::Invalid(format!(
+            "The logo says it is {mime}, but its contents are not a {}.",
+            format_name(mime)
+        )));
+    }
+    if bytes.len() > MAX_LOGO_BYTES {
+        return Err(NigelError::Invalid(format!(
+            "The logo is {} bytes; the limit is {MAX_LOGO_BYTES} bytes.",
+            bytes.len()
+        )));
+    }
+
+    let (width, height) = image_dimensions(mime, &bytes).ok_or_else(|| {
+        NigelError::Invalid(format!(
+            "The logo's dimensions could not be read; it is not a usable {}.",
+            format_name(mime)
+        ))
+    })?;
+
+    Ok(Some(Logo {
+        mime,
+        base64: payload.to_string(),
+        bytes,
+        width,
+        height,
+    }))
+}
+
+/// Written by hand because the derived one would print 128 KiB of base64 and a
+/// vector of bytes into any message that formats a `Logo`.
+impl std::fmt::Debug for Logo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Logo({}, {}x{}, {} bytes)",
+            self.mime,
+            self.width,
+            self.height,
+            self.bytes.len()
+        )
+    }
+}
+
+fn format_name(mime: &str) -> &'static str {
+    if mime == "image/jpeg" {
+        "JPEG"
+    } else {
+        "PNG"
+    }
+}
+
+/// The pixel size in a PNG's `IHDR` or a JPEG's `SOFn` frame. `None` for
+/// anything truncated, malformed or zero-sized.
+fn image_dimensions(mime: &str, bytes: &[u8]) -> Option<(u32, u32)> {
+    let (width, height) = if mime == "image/jpeg" {
+        jpeg_dimensions(bytes)?
+    } else {
+        png_dimensions(bytes)?
+    };
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+fn be_u32(bytes: &[u8]) -> u32 {
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    // The IHDR chunk is required to be the first one, at a fixed offset.
+    let header = bytes.get(8..24)?;
+    (&header[4..8] == b"IHDR").then(|| (be_u32(&header[8..12]), be_u32(&header[12..16])))
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    // Walk the marker segments to the frame header, which is the only one that
+    // carries the size. Everything before it is metadata of some kind.
+    let mut at = 2;
+    loop {
+        // A marker is 0xFF followed by a non-zero, non-0xFF code; runs of 0xFF
+        // are legal padding before it.
+        while *bytes.get(at)? == 0xff && *bytes.get(at + 1)? == 0xff {
+            at += 1;
+        }
+        if *bytes.get(at)? != 0xff {
+            return None;
+        }
+        let marker = *bytes.get(at + 1)?;
+        // Start-of-frame, in every coding this format has: baseline,
+        // extended, progressive and lossless, arithmetic-coded or not. The
+        // three excluded values in each run are DHT, JPG and DAC.
+        if matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            let frame = bytes.get(at + 5..at + 9)?;
+            return Some((
+                u16::from_be_bytes([frame[2], frame[3]]) as u32,
+                u16::from_be_bytes([frame[0], frame[1]]) as u32,
+            ));
+        }
+        // Standalone markers carry no length word to skip over.
+        if matches!(marker, 0x01 | 0xd0..=0xd9) {
+            at += 2;
+            continue;
+        }
+        let length = u16::from_be_bytes([*bytes.get(at + 2)?, *bytes.get(at + 3)?]) as usize;
+        if length < 2 {
+            return None;
+        }
+        at += 2 + length;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::Invoice;
+
+    /// A 2x1 PNG, and the smallest thing that is genuinely one.
+    const PNG_2X1: &[u8] = &[
+        0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, // signature
+        0x00, 0x00, 0x00, 0x0d, b'I', b'H', b'D', b'R', // IHDR, 13 bytes
+        0x00, 0x00, 0x00, 0x02, // width 2
+        0x00, 0x00, 0x00, 0x01, // height 1
+        0x08, 0x06, 0x00, 0x00, 0x00, // bit depth, colour type, etc
+        0x00, 0x00, 0x00, 0x00, // crc, unchecked
+    ];
+
+    /// A JPEG whose SOF0 frame declares 3x7. Nothing decodes it; `parse_logo`
+    /// reads the header and the size, which is all it claims to do.
+    fn jpeg_3x7() -> Vec<u8> {
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0xe0]; // SOI + APP0
+        bytes.extend_from_slice(&[0x00, 0x04, 0x00, 0x00]); // APP0 length 4
+        bytes.extend_from_slice(&[0xff, 0xc0]); // SOF0
+        bytes.extend_from_slice(&[0x00, 0x11, 0x08]); // length 17, precision 8
+        bytes.extend_from_slice(&[0x00, 0x07]); // height 7
+        bytes.extend_from_slice(&[0x00, 0x03]); // width 3
+        bytes.extend_from_slice(&[0x03; 10]);
+        bytes
+    }
+
+    fn data_uri(mime: &str, bytes: &[u8]) -> String {
+        use base64::Engine as _;
+        format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
+    #[test]
+    fn a_png_data_uri_parses() {
+        let uri = data_uri("image/png", PNG_2X1);
+        let logo = parse_logo(&uri).unwrap().expect("a logo");
+        assert_eq!(logo.mime, "image/png");
+        assert_eq!(logo.bytes, PNG_2X1);
+        assert_eq!((logo.width, logo.height), (2, 1));
+        assert_eq!(
+            format!("data:image/png;base64,{}", logo.base64),
+            uri,
+            "the page's src is the value as stored"
+        );
+    }
+
+    #[test]
+    fn a_jpeg_data_uri_parses_with_its_dimensions() {
+        let jpeg = jpeg_3x7();
+        let logo = parse_logo(&data_uri("image/jpeg", &jpeg))
+            .unwrap()
+            .expect("a logo");
+        assert_eq!(logo.mime, "image/jpeg");
+        assert_eq!((logo.width, logo.height), (3, 7));
+    }
+
+    #[test]
+    fn the_empty_string_is_no_logo_rather_than_an_error() {
+        assert!(parse_logo("").unwrap().is_none());
+        assert!(parse_logo("   \n ").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_declared_png_that_is_not_a_png_is_refused() {
+        // Right prefix, valid base64, wrong magic bytes.
+        let err = parse_logo(&data_uri("image/png", b"not a png at all"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("PNG"), "got: {err}");
+    }
+
+    #[test]
+    fn an_svg_or_a_gif_data_uri_is_refused_by_name() {
+        for mime in ["image/svg+xml", "image/gif", "image/webp"] {
+            let err = parse_logo(&data_uri(mime, PNG_2X1))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(mime), "{mime} unnamed in: {err}");
+        }
+    }
+
+    #[test]
+    fn something_that_is_not_a_data_uri_is_refused() {
+        let err = parse_logo("https://example.test/logo.png")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("data:"), "got: {err}");
+    }
+
+    #[test]
+    fn a_logo_over_the_cap_is_refused_with_its_size_in_the_message() {
+        let mut big = PNG_2X1.to_vec();
+        big.resize(MAX_LOGO_BYTES + 1, 0);
+        let err = parse_logo(&data_uri("image/png", &big))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&(MAX_LOGO_BYTES + 1).to_string()),
+            "got: {err}"
+        );
+        assert!(err.contains("131072"), "the cap is named too: {err}");
+    }
+
+    #[test]
+    fn a_payload_that_is_not_base64_is_refused() {
+        let err = parse_logo("data:image/png;base64,!!!not base64!!!")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("base64"), "got: {err}");
+    }
+
+    #[test]
+    fn a_truncated_png_whose_size_cannot_be_read_is_refused() {
+        let err = parse_logo(&data_uri("image/png", &PNG_2X1[..12]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("dimensions"), "got: {err}");
+    }
+
+    #[test]
+    fn a_zero_by_zero_image_is_refused() {
+        let mut flat = PNG_2X1.to_vec();
+        flat[16..24].fill(0);
+        let err = parse_logo(&data_uri("image/png", &flat))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("dimensions"), "got: {err}");
+    }
+
+    #[test]
+    fn the_company_block_splits_its_address_the_way_a_client_address_is_split() {
+        let block = company_block(
+            "Bluepeak",
+            "P.O. Box 1234\n\nSpringfield, CA 90001",
+            " 619.555.0123 ",
+        );
+        assert_eq!(block.name, "Bluepeak");
+        assert_eq!(
+            block.address,
+            vec!["P.O. Box 1234", "Springfield, CA 90001"]
+        );
+        assert_eq!(block.phone, Some("619.555.0123"));
+        assert!(!block.is_empty());
+    }
+
+    #[test]
+    fn an_unset_company_block_says_nothing_at_all() {
+        let block = company_block("  ", "  \n ", "   ");
+        assert!(block.address.is_empty());
+        assert!(block.phone.is_none());
+        assert!(block.is_empty());
+    }
+
+    #[test]
+    fn a_long_company_address_is_clamped_the_same_way_a_client_address_is() {
+        let typed = (1..=12)
+            .map(|n| format!("Line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let block = company_block("Bluepeak", &typed, "");
+        assert_eq!(block.address.len(), MAX_ADDRESS_LINES);
+        assert_eq!(block.address[MAX_ADDRESS_LINES - 1], ADDRESS_TRUNCATED);
+    }
+
+    fn invoice_with(due: Option<&str>, terms: Option<&str>) -> Invoice {
+        let mut inv = invoice(100.0, 0.0);
+        inv.due_date = due.map(str::to_string);
+        inv.terms = terms.map(str::to_string);
+        inv
+    }
+
+    fn meta_labels(rows: &[MetaRow]) -> Vec<&'static str> {
+        rows.iter().map(|r| r.label).collect()
+    }
+
+    #[test]
+    fn the_metadata_rows_always_lead_with_the_invoice_id() {
+        let rows = meta_rows(&invoice_with(None, None));
+        assert_eq!(meta_labels(&rows), vec!["Invoice ID", "Issue Date"]);
+        assert_eq!(rows[0].value, "1248");
+        assert!(rows[0].emphasis, "the number is what a client quotes back");
+        assert!(!rows[1].emphasis);
+    }
+
+    #[test]
+    fn a_due_date_brings_its_row_and_a_missing_one_brings_nothing() {
+        let rows = meta_rows(&invoice_with(Some("2026-09-05"), None));
+        assert_eq!(
+            meta_labels(&rows),
+            vec!["Invoice ID", "Issue Date", "Due Date"]
+        );
+        assert_eq!(rows[2].value, "2026-09-05");
+        assert!(!meta_labels(&meta_rows(&invoice_with(None, None))).contains(&"Due Date"));
+    }
+
+    #[test]
+    fn single_line_terms_ride_beside_the_due_date() {
+        assert_eq!(
+            due_value(&invoice_with(Some("2026-09-05"), Some(" Net 30 "))).unwrap(),
+            "2026-09-05 (Net 30)"
+        );
+    }
+
+    #[test]
+    fn multi_line_terms_stay_a_block_rather_than_a_parenthetical() {
+        let inv = invoice_with(
+            Some("2026-09-05"),
+            Some("Net 30\nLate fees apply after 60 days."),
+        );
+        assert_eq!(due_value(&inv).unwrap(), "2026-09-05");
+        assert!(
+            terms_block_text(&inv).is_some(),
+            "the paragraph has to land somewhere"
+        );
+    }
+
+    #[test]
+    fn folded_terms_do_not_also_print_as_a_block() {
+        assert!(terms_block_text(&invoice_with(Some("2026-09-05"), Some("Net 30"))).is_none());
+    }
+
+    #[test]
+    fn terms_with_no_due_date_are_a_block() {
+        assert_eq!(
+            terms_block_text(&invoice_with(None, Some("Net 30"))),
+            Some("Net 30")
+        );
+    }
+
+    #[test]
+    fn blank_terms_are_no_terms_at_all() {
+        let inv = invoice_with(Some("2026-09-05"), Some("   "));
+        assert_eq!(due_value(&inv).unwrap(), "2026-09-05");
+        assert!(terms_block_text(&inv).is_none());
+    }
+
+    #[test]
+    fn payment_instructions_split_into_the_lines_they_were_typed_as() {
+        assert_eq!(
+            payment_lines("  Wells Fargo  \n\n  Routing 121000248  "),
+            vec!["Wells Fargo", "Routing 121000248"]
+        );
+        assert!(payment_lines("   ").is_empty());
+        assert!(payment_lines("").is_empty());
+    }
+
+    /// An address is a postal fact with a natural length. Instructions are the
+    /// operator's own prose about their own bank, and cutting them off would be
+    /// Nigel editing a sentence about where money goes.
+    #[test]
+    fn payment_instructions_are_never_clamped_the_way_an_address_is() {
+        let typed = (1..=20)
+            .map(|n| format!("Line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = payment_lines(&typed);
+        assert_eq!(lines.len(), 20);
+        assert_eq!(lines[19], "Line 20");
+        assert!(!lines.contains(&ADDRESS_TRUNCATED));
+    }
 
     fn invoice(total: f64, tax: f64) -> Invoice {
         Invoice {

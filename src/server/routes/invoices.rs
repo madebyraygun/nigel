@@ -34,7 +34,7 @@ use crate::invoicing::invoices::{
     self as inv, AgingReport, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::render::{render_invoice, RenderedInvoice};
-use crate::invoicing::render_html::{load_template, Branding};
+use crate::invoicing::render_html::load_template;
 use crate::invoicing::send::{send_invoice_traced, SendFailure, SendStep, StepOutcome};
 use crate::invoicing::sync::{sync_all_report_within, SyncReport};
 use crate::invoicing::void::void_invoice_with_teardown;
@@ -574,11 +574,8 @@ fn republish_page<P: AssetPublisher>(
     };
     let (contact_email, _) =
         crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
-    let branding = Branding {
-        template: &template,
-        company: &crate::cli::invoice::company_name(conn),
-        contact_email: &contact_email,
-    };
+    let profile = crate::cli::invoice::company_profile(conn);
+    let branding = profile.branding(&template, &contact_email);
     crate::invoicing::republish::republish_invoice(conn, invoice, &client, &branding, publisher)
         .warnings()
 }
@@ -759,12 +756,8 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // Loaded before the Stripe link, so a broken override costs no link, no
     // upload and no email.
     let template = load_template(data_dir)?;
-    let company = crate::cli::invoice::company_name(conn);
-    let branding = Branding {
-        template: &template,
-        company: &company,
-        contact_email,
-    };
+    let profile = crate::cli::invoice::company_profile(conn);
+    let branding = profile.branding(&template, contact_email);
 
     let outcome = send_invoice_traced(
         conn, invoice.id, today, &branding, gateway, publisher, mailer,
@@ -913,14 +906,10 @@ fn render(
     // Loaded before anything is rendered, so a broken override is a 400 naming
     // the path rather than a page nobody approved.
     let template = load_template(data_dir)?;
-    let company = crate::cli::invoice::company_name(conn);
+    let profile = crate::cli::invoice::company_profile(conn);
     let (contact_email, _placeholder) =
         crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
-    let branding = Branding {
-        template: &template,
-        company: &company,
-        contact_email: &contact_email,
-    };
+    let branding = profile.branding(&template, &contact_email);
 
     Ok(render_invoice(
         conn,
@@ -2162,9 +2151,12 @@ mod tests {
         let response = get_response(&app, "/api/invoices/1250/preview", &token).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_string(response).await;
-        // The contact line renders the same visible placeholder the CLI notices
-        // about, rather than an empty address or a 500.
-        assert!(body.contains("(contact_email not configured)"), "{body}");
+        // A whole page, not a 500 and not a half-rendered one. The stock page
+        // asks nothing of the invoicing configuration: payment instructions are
+        // the operator's own text and are simply absent when unset.
+        assert!(body.contains("Invoice #1250"), "{body}");
+        assert!(!body.contains("{{"), "no unexpanded placeholder: {body}");
+        assert!(!body.contains("Payment"), "nothing configured: {body}");
     }
 
     /// A byte route still answers its failures as JSON — the `exports.rs`

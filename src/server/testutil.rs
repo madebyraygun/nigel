@@ -361,7 +361,11 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 34] = [
     ),
     ("PATCH", "/api/transactions/1", r#"{"flag":true}"#),
     ("PUT", "/api/settings/app", r#"{"updateCheck":true}"#),
-    ("PUT", "/api/settings/company-name", r#"{"name":"X"}"#),
+    (
+        "PUT",
+        "/api/settings/company",
+        r#"{"name":"X","address":"","phone":"","logo":"","paymentInstructions":""}"#,
+    ),
     ("POST", "/api/settings/data-dir", r#"{"path":"/tmp"}"#),
     (
         "POST",

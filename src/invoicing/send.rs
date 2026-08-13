@@ -340,6 +340,7 @@ mod tests {
             template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
+            ..Branding::default()
         }
     }
 
@@ -674,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn published_html_carries_the_supplied_contact_email() {
+    fn published_html_carries_the_supplied_letterhead() {
         let (_d, conn) = test_conn();
         let id = seed(&conn);
         let gw = FakeGw {
@@ -684,17 +685,21 @@ mod tests {
         let publisher = CapturePub {
             html: RefCell::new(String::new()),
         };
-        send_invoice(
-            &conn,
-            id,
-            "2026-08-04",
-            &brand("ap@acme.test"),
-            &gw,
-            &publisher,
-            &mail,
-        )
-        .unwrap();
-        assert!(publisher.html.borrow().contains("Contact ap@acme.test"));
+        let branding = Branding {
+            template: DEFAULT_TEMPLATE,
+            company: "Bluepeak LLC",
+            company_phone: "619.555.0123",
+            payment_instructions: "Wells Fargo, routing 121000248",
+            ..Branding::default()
+        };
+        send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
+        let html = publisher.html.borrow();
+        assert!(html.contains("Bluepeak LLC"), "got: {html}");
+        assert!(html.contains("ph. 619.555.0123"), "got: {html}");
+        assert!(
+            html.contains("Wells Fargo, routing 121000248"),
+            "got: {html}"
+        );
     }
 
     #[test]
@@ -712,6 +717,7 @@ mod tests {
             template: "<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
             company: "",
             contact_email: "billing@example.test",
+            ..Branding::default()
         };
         send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
 
@@ -732,6 +738,7 @@ mod tests {
             template: DEFAULT_TEMPLATE,
             company: "Acme LLC",
             contact_email: "billing@example.test",
+            ..Branding::default()
         };
         send_invoice(&conn, id, "2026-08-04", &branding, &gw, &FakePub, &mail).unwrap();
         assert_eq!(*mail.subject.borrow(), "Invoice #1248 from Acme LLC");

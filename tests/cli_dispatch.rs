@@ -1647,9 +1647,16 @@ fn invoice_send_refuses_a_from_address_carrying_a_line_break() {
 }
 
 #[test]
-fn invoice_preview_names_contact_email_when_neither_key_is_set() {
+fn invoice_preview_names_contact_email_when_a_template_prints_it() {
     let env = TestEnv::new();
     init_with_client_and_invoice(&env);
+    // The stock page stopped printing `{{CONTACT}}` — payment instructions are
+    // the operator's own text now — so the notice belongs to a template that
+    // actually uses it.
+    write_template(
+        &env,
+        "<p>{{CONTACT}} {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
+    );
 
     env.cmd()
         .args(["invoice", "preview", "1248"])
@@ -1667,12 +1674,37 @@ fn invoice_preview_names_contact_email_when_neither_key_is_set() {
     );
 }
 
+/// A notice about a placeholder the document does not carry is noise.
+#[test]
+fn the_stock_page_prints_no_contact_line_and_says_nothing_about_one() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("contact_email").not());
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(!html.contains("Direct deposit"), "got: {html}");
+    assert!(
+        !html.contains("(contact_email not configured)"),
+        "got: {html}"
+    );
+}
+
 /// AC #3 end to end: the page's direct-deposit line is `contact_email`, not the
 /// address the email is sent from.
 #[test]
 fn contact_email_is_what_the_page_prints_not_from_email() {
     let env = TestEnv::new();
     init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{CONTACT}} {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
+    );
 
     env.cmd()
         .args(["invoice", "preview", "1248"])

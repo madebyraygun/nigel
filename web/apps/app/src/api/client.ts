@@ -16,7 +16,7 @@ import {
   type Client,
   type ClientDetail,
   type ClientPatch,
-  type CompanyNameResponse,
+  type Company,
   type ConfirmImportRequest,
   type CategoryPatch,
   type CsvProfile,
@@ -311,7 +311,8 @@ export interface ApiClient {
 
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(input: UpdateAppSettingsRequest): Promise<AppSettings>;
-  setCompanyName(name: string): Promise<CompanyNameResponse>;
+  getCompany(): Promise<Company>;
+  setCompany(input: Company): Promise<Company>;
   /** Answers with the status of the database it switched to. */
   setDataDir(path: string): Promise<StatusResponse>;
   setPassword(input: SetPasswordRequest): Promise<PasswordStateResponse>;
@@ -452,10 +453,12 @@ export class FetchApiClient implements ApiClient {
     return this.request<AppSettings>('PUT', '/settings/app', input);
   }
 
-  setCompanyName(name: string): Promise<CompanyNameResponse> {
-    return this.request<CompanyNameResponse>('PUT', '/settings/company-name', {
-      name,
-    });
+  getCompany(): Promise<Company> {
+    return this.request<Company>('GET', '/settings/company');
+  }
+
+  setCompany(input: Company): Promise<Company> {
+    return this.request<Company>('PUT', '/settings/company', input);
   }
 
   async setDataDir(path: string): Promise<StatusResponse> {

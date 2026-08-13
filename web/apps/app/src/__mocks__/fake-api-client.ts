@@ -23,7 +23,7 @@ import type {
   ClientContact,
   ClientDetail,
   ClientPatch,
-  CompanyNameResponse,
+  Company,
   ConfirmImportRequest,
   ConflictDetails,
   CsvProfile,
@@ -754,6 +754,15 @@ export class FakeApiClient implements ApiClient {
 
   appSettings: AppSettings = DEFAULT_APP_SETTINGS;
   settingsError: Error | null = null;
+  company: Company = {
+    name: 'Test Consultancy',
+    address: '',
+    phone: '',
+    logo: '',
+    paymentInstructions: '',
+  } satisfies Company;
+  /** Only `setCompany` throws this, so a save failure can be told from a load one. */
+  companyError: Error | null = null;
 
   async getAppSettings(): Promise<AppSettings> {
     this.calls.push('getAppSettings');
@@ -768,11 +777,19 @@ export class FakeApiClient implements ApiClient {
     return this.appSettings;
   }
 
-  async setCompanyName(name: string): Promise<CompanyNameResponse> {
-    this.calls.push('setCompanyName');
+  async getCompany(): Promise<Company> {
+    this.calls.push('getCompany');
     if (this.settingsError) throw this.settingsError;
-    this.status = { ...this.status, companyName: name };
-    return { companyName: name };
+    return this.company;
+  }
+
+  async setCompany(input: Company): Promise<Company> {
+    this.calls.push('setCompany');
+    if (this.companyError) throw this.companyError;
+    if (this.settingsError) throw this.settingsError;
+    this.company = { ...input };
+    this.status = { ...this.status, companyName: input.name };
+    return this.company;
   }
 
   async setDataDir(path: string): Promise<StatusResponse> {

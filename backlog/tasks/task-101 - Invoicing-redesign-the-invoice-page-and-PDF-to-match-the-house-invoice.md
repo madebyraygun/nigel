@@ -1,10 +1,11 @@
 ---
 id: TASK-101
 title: 'Invoicing: redesign the invoice page and PDF to match the house invoice'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 17:04'
+updated_date: '2026-08-13 17:43'
 labels:
   - invoicing
   - pdf

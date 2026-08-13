@@ -96,10 +96,58 @@ fn require(value: Option<String>, what: &str) -> Result<String> {
     })
 }
 
-/// The business name the settings screen writes, as the invoice page and the
-/// email subject want it: a plain string, empty when nobody has set one.
+/// The business name the settings screen writes, as the email subject and the
+/// report headers want it: a plain string, empty when nobody has set one.
+///
+/// Kept beside `company_profile` rather than folded into it: the nine report
+/// exporters, the text reports and `/api/status` want a name, not a letterhead.
 pub(crate) fn company_name(conn: &Connection) -> String {
     crate::db::get_metadata(conn, "company_name").unwrap_or_default()
+}
+
+/// The whole letterhead, read from the one place it lives.
+///
+/// Owned, because `Branding` borrows and the values come out of the database.
+/// Resolved here rather than at each `Branding` site: the fields are only ever
+/// correct together, and six hand-built literals each doing their own
+/// `get_metadata` calls is how a document ends up with an address and no phone.
+pub(crate) struct CompanyProfile {
+    pub name: String,
+    pub address: String,
+    pub phone: String,
+    pub logo: String,
+    pub payment_instructions: String,
+}
+
+pub(crate) fn company_profile(conn: &Connection) -> CompanyProfile {
+    let read = |key: &str| crate::db::get_metadata(conn, key).unwrap_or_default();
+    CompanyProfile {
+        name: read("company_name"),
+        address: read("company_address"),
+        phone: read("company_phone"),
+        logo: read("company_logo"),
+        payment_instructions: read("payment_instructions"),
+    }
+}
+
+impl CompanyProfile {
+    /// The branding for this profile, with the template and contact address the
+    /// caller resolved. One constructor, so no site can forget a field.
+    pub(crate) fn branding<'a>(
+        &'a self,
+        template: &'a str,
+        contact_email: &'a str,
+    ) -> Branding<'a> {
+        Branding {
+            template,
+            company: &self.name,
+            company_address: &self.address,
+            company_phone: &self.phone,
+            logo: &self.logo,
+            payment_instructions: &self.payment_instructions,
+            contact_email,
+        }
+    }
 }
 
 fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
@@ -426,6 +474,10 @@ pub fn show(number: i64) -> Result<()> {
 /// refusing.
 const PREVIEW_CONTACT_PLACEHOLDER: &str = "(contact_email not configured)";
 
+/// The placeholder a template uses to print the contact address. The stock page
+/// no longer does; a custom one may.
+const CONTACT_PLACEHOLDER_KEY: &str = "{{CONTACT}}";
+
 fn preview_dir(output_dir: Option<String>) -> (PathBuf, bool) {
     match output_dir {
         Some(dir) => (
@@ -486,11 +538,8 @@ pub(crate) fn republish_after_payment(conn: &Connection, invoice_id: i64) -> Vec
     // The preview fallback, not `require`: a republish must not depend on an
     // address being configured, since the page it is correcting is already up.
     let (contact_email, _) = contact_email_for_preview(&cfg);
-    let branding = Branding {
-        template: &template,
-        company: &company_name(conn),
-        contact_email: &contact_email,
-    };
+    let profile = company_profile(conn);
+    let branding = profile.branding(&template, &contact_email);
     republish_invoice(
         conn,
         &invoice,
@@ -537,19 +586,18 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
         eprintln!("notice: invoice #{number} is void — this preview is for reference only.");
     }
     let (contact_email, is_placeholder) = contact_email_for_preview(&invoicing_config());
-    if is_placeholder {
-        eprintln!(
-            "notice: neither contact_email nor from_email is configured — the direct-deposit contact line is a placeholder"
-        );
-    }
 
     let template = load_template(&get_data_dir())?;
-    let company = company_name(&conn);
-    let branding = Branding {
-        template: &template,
-        company: &company,
-        contact_email: &contact_email,
-    };
+    // The stock page does not print `{{CONTACT}}` any more — payment
+    // instructions are the operator's own text — so the notice is about the
+    // template actually in use rather than about the setting in the abstract.
+    if is_placeholder && template.contains(CONTACT_PLACEHOLDER_KEY) {
+        eprintln!(
+            "notice: neither contact_email nor from_email is configured — this template's {CONTACT_PLACEHOLDER_KEY} is a placeholder"
+        );
+    }
+    let profile = company_profile(&conn);
+    let branding = profile.branding(&template, &contact_email);
 
     // Both artifacts are rendered before either is written, so a PDF failure
     // cannot leave fresh HTML beside a stale PDF.
@@ -688,7 +736,8 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     let template = load_template(&get_data_dir())?;
     let cfg = invoicing_config();
     let contact_email = contact_email_for_preview(&cfg).0;
-    let company = company_name(&conn);
+    let profile = company_profile(&conn);
+    let branding = profile.branding(&template, &contact_email);
 
     // Rendered before the decision and before any client is built, through the
     // seam `send` publishes through — so what the operator looks at is the
@@ -698,11 +747,7 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         &invoice,
         &client,
         pay_button_for(&invoice),
-        &Branding {
-            template: &template,
-            company: &company,
-            contact_email: &contact_email,
-        },
+        &branding,
     )?;
 
     if !yes {
@@ -719,15 +764,10 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         }
     }
 
-    let clients = build_clients(cfg, &company)?;
+    let clients = build_clients(cfg, &profile.name)?;
     for warning in &clients.warnings {
         eprintln!("notice: {warning}");
     }
-    let branding = Branding {
-        template: &template,
-        company: &company,
-        contact_email: &contact_email,
-    };
     let url = send_invoice(
         &conn,
         invoice.id,

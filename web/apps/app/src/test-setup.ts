@@ -80,4 +80,16 @@ if (typeof window !== 'undefined') {
     if (typeof proto.showPopover !== 'function') proto.showPopover = function () {};
     if (typeof proto.hidePopover !== 'function') proto.hidePopover = function () {};
   }
+
+  // `wa-textarea` observes itself to auto-size. jsdom has no ResizeObserver,
+  // and the throw escapes its `updated()` as an unhandled rejection rather
+  // than a failing assertion — the whole suite passes while the console fills.
+  // Nothing here measures layout, so a stub that never fires is enough.
+  if (!('ResizeObserver' in window)) {
+    (globalThis as Record<string, unknown>)['ResizeObserver'] = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
 }
