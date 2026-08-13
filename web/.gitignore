@@ -1,3 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.map
+apps/*/src/**/*.js
+apps/*/src/**/*.d.ts
+apps/*/src/**/*.map

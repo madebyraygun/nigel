@@ -77,6 +77,143 @@ Use Web Awesome `<wa-*>` primitives unless behavior demands custom. Wrappers
 read theme tokens and expose them as cascading variables; they never inline a
 brand value. Pure logic, state and service work is exempt.
 
+**A component that renders a `wa-*` primitive adopts `controlsCss`:**
+
+```ts
+import { controlsCss } from '@nigel/theme';
+
+static styles = [controlsCss, css`  …your rules…  `];
+```
+
+`controlsCss` is the theme's treatment for Web Awesome primitives — the dialog
+panel, field chrome, the brand gradient on primary buttons, the focus ring. It
+is adopted rather than loaded because a `::part()` rule reaches exactly one
+shadow boundary down, *from the tree the rule is written in*: a `wa-dialog`
+inside `wc-manager-dialog` inside a screen inside `nigel-app` is three
+boundaries from the document, so a document-level copy cannot even select the
+host. Order matters — `controlsCss` first, so your own rules can still override
+it. `controls-adoption.test.ts` in each package fails the build if you forget,
+and it applies to app screens as well as to `wc-*` components.
+
+## Typefaces
+
+**IBM Plex Mono, everywhere in the app, bundled into the binary.** The browser
+is meant to read as the same product as the CLI, and the app has almost no
+prose to lose by it — the longest strings anywhere are two-sentence guardrail
+explanations and empty states.
+
+Weights **400 / 500 / 600**, matching `--wa-font-weight-normal` / `-medium` /
+`-bold` exactly. That match is why Plex Mono and not Fira Mono, which has no
+600: every table header and field label would be browser-synthesised, which
+looks worst at small sizes on a mono. No italics — nothing in the UI is italic.
+
+| | bytes |
+|---|---|
+| `ibm-plex-mono-400.woff2` | 21,676 |
+| `ibm-plex-mono-500.woff2` | 22,264 |
+| `ibm-plex-mono-600.woff2` | 22,348 |
+| **total on disk** | **66,288** |
+| `web/dist` | 659,310 → 726,897 (**+67,587**) |
+| `target/release/nigel` | 25,618,704 → 25,684,688 (**+65,984**, +0.26%) |
+
+The binary delta is the number that matters and it is measured, not derived —
+rust-embed stores the bytes plus path metadata, so it is not the sum of the
+files.
+
+### How they reach the browser
+
+The files live in `packages/theme/src/fonts/`, are declared by
+`src/tokens/font-faces.ts` with **relative** URLs, and are copied to
+`dist/fonts/` by `scripts/build-css.js`. Both Vite roots — the app and the
+preview harness — alias `dist/css/nigel.css`, so each resolves `../fonts/…`
+against it and emits hashed copies into its own `assets/`. rust-embed bakes
+`web/dist` into the binary and `static_files.rs` serves them as `font/woff2`
+with an immutable cache header.
+
+The relative URL is the load-bearing part. An absolute `/fonts/…` would work in
+the app and 404 in the harness on :9090, so every component state would be
+reviewed in the wrong typeface with nothing to say so.
+
+**Nothing is fetched at runtime.** `src/__tests__/no-remote-fonts.test.ts`
+fails the build on a font host, a preconnect hint, a remote `@import` or an
+absolute font URL in any of the three HTML entry points, and
+`font-faces.test.ts` fails on any remote URL in the composed sheet.
+`build-css.test.ts` asserts every declared face is actually present in
+`dist/fonts/` — a `@font-face` pointing at a missing file fails *silently*, and
+the whole UI would render in a system face with every test green.
+
+### Regenerating the subsets
+
+Run by hand, never by the build and never in CI; the output is committed, so a
+checkout needs no font tooling.
+
+```bash
+cd web/packages/theme
+npm pack @ibm/plex-mono@2.5.0 && tar xzf ibm-plex-mono-2.5.0.tgz
+node scripts/subset-fonts.mjs ./package ./src/fonts
+rm -rf package ibm-plex-mono-2.5.0.tgz
+```
+
+The script keeps Latin-1, Latin Extended-A, General Punctuation, Currency
+Symbols, the arrows and `✓`. Ranges rather than the exact glyphs in use,
+because client names and bank descriptions are real-world text: a subset that
+drops `é` renders half a name in a fallback face, mid-word. Anything outside
+the subset falls back per glyph, which is correct behaviour and is why the
+Latin ranges are generous.
+
+### Known gap: eight glyphs the font does not have
+
+IBM Plex Mono has **no glyph** for `✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻`. This is a property of the
+upstream font, verified against the complete release rather than the subset —
+subsetting is not the cause and a wider subset would not fix it.
+
+They are drawn by `wc-invoice-status` (all six status markers),
+`wc-send-dialog` (`⟳`, `✗`) and `wc-reconciliation-history` (`✗`), and they
+fall back to a system face per glyph. `✓` is present, so a reconciled row and a
+discrepancy row currently draw their marks from two different fonts.
+
+The fix is to replace them with `wc-icon-*` SVGs — the library already has
+`WcIconBase` and the icon set for it — rather than to chase a mono with
+dingbat coverage. Not done here: it is a component change, not a typeface one.
+
+## Light and dark
+
+Three states, expressed as two classes on `<html>`:
+
+| Choice | Class | What decides the colours |
+|---|---|---|
+| Follow the system | *none* | `@media (prefers-color-scheme: dark)` |
+| Light | `light-mode` | opts out of that media query |
+| Dark | `dark-mode` | forces the dark tokens |
+
+**`system` writes no class**, and that is the design rather than an omission:
+the browser re-evaluates a media query the moment the OS setting changes, so
+the app follows along live with no listener, no reload, and nothing to fail.
+Resolving `system` in JavaScript would make that media query dead code.
+
+`@nigel/theme`'s `color-mode.ts` is the writer — `readMode`, `writeMode`,
+`applyMode`, `resolveMode`, `initColorMode` — and the preference lives in
+`localStorage` under `nigel.color-mode`, not in `settings.json`. Every
+`/api/settings/*` route is behind the locked guard, so a server-stored
+preference could not be honoured on the unlock screen, which is the first thing
+an encrypted database shows; and a laptop and a desktop pointed at the same
+books can legitimately disagree.
+
+`wc-mode-switcher` is on the settings screen and is fully controlled: it emits
+`nc-color-mode-change` and the screen does the persisting, so there is one
+source of truth and the preview harness cannot change the real app's
+appearance. The harness has its own toggle in the sidebar for reviewing states
+in both palettes.
+
+`apps/app/index.html` runs a blocking inline copy of the read-and-apply in
+`<head>`, because `main.ts` is a module script and would otherwise let a frame
+of the wrong palette paint first. That duplicates the key and the class names
+in HTML; `src/__tests__/color-mode-bootstrap.test.ts` fails if they drift.
+
+The one `matchMedia` listener in the app exists solely to keep the
+"currently dark" hint honest while System is selected. If it broke, the
+colours would still be right.
+
 ## The api seam
 
 `apps/app/src/api/` is the only module that talks to the server. This is the
@@ -360,25 +497,41 @@ captured data behind them.
 
 ### Printing
 
-A printed report is the artifact someone keeps, so `@media print` in
-`@nigel/theme`'s `print.ts` gives the page over to the report: shell chrome
-hidden, black on white, 1.5cm margins, table headings repeating across page
-breaks, and rows and panels kept from splitting.
+A printed report is the artifact someone keeps, so the page has to be the report
+and nothing else: black on white, 1.5cm margins, table headings repeating across
+page breaks, rows and panels kept from splitting, and no screen chrome.
 
-The recolouring works by redefining the tokens at `:root`, not by restyling
-components — custom properties inherit through shadow boundaries, which is the
-only thing that reaches inside every `wc-*` element at once. Hiding the shell
-needs the other route through the boundary, which is why `wc-app-shell` exposes
-`sidebar`, `header`, `banner` and `content` as parts.
+That is done in two places, because a stylesheet reaches a shadow root in only
+one way. **Recolouring** is `@media print` in `@nigel/theme`'s `print.ts`,
+redefining the tokens at `:root` — custom properties inherit through shadow
+boundaries, which is the only thing that reaches inside every `wc-*` element at
+once. **Hiding** cannot ride that channel: a rule that hides an element has to
+be in the tree that element is in, and everything in this app lives inside
+`nigel-app`'s shadow root. So each component hides its own chrome —
+`wc-app-shell` its header, banner and sidebar slot (and its `100vh`/
+`overflow: hidden` clamp, which would otherwise crop a long report to one
+screenful), and `wc-nav-sidebar`, `wc-toast`, `wc-export-links`, `wc-period-nav`
+and `wc-register-toolbar` themselves — while `controlsCss` carries the
+`wa-button`/`wa-select` and table rules into every root that hosts a control.
 
-`packages/theme/__tests__/print.test.ts` asserts the rules that carry the
-behaviour, and the build test proves they reach `dist/css/nigel.css`. What a
-printer actually does still needs eyes, so before changing this sheet, run
-through:
+`wc-app-shell` still exposes `sidebar`, `header`, `banner` and `content` as
+parts. They are cheap and `nigel-app` is one boundary away, but print no longer
+depends on them.
+
+The print token block is selected by `:root:root`, and the doubling is load
+bearing. The dark palette is selected by `:root:not(.light-mode)` and
+`:root.dark-mode`, both (0,2,0); a bare `:root` is (0,1,0) and loses to them
+wherever it appears, so composing print last was never enough on its own.
+Simplify it back and a dark-mode machine prints dark pages.
+
+`packages/theme/__tests__/print.test.ts` asserts what the document sheet carries
+and, as importantly, that it no longer carries the component selectors it could
+never match; each component's own test asserts it hides itself. What a printer
+actually does still needs eyes, so before changing any of this, run through:
 
 - [ ] `npm run dev`, open each of the eight reports, print preview
 - [ ] No sidebar, header, banner, period control or export buttons
-- [ ] Black on white in both light and dark mode
+- [ ] Black on white in **all three** appearance modes, on a dark-OS machine
 - [ ] A multi-page register repeats its column headings
 - [ ] Nothing clipped at the right edge, at A4 and at Letter
 

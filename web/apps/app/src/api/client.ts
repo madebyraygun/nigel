@@ -318,8 +318,8 @@ export interface ApiClient {
   changePassword(input: ChangePasswordRequest): Promise<PasswordStateResponse>;
   removePassword(input: RemovePasswordRequest): Promise<PasswordStateResponse>;
 
-  /** Invoicing clients, by name. */
-  getClients(): Promise<Client[]>;
+  /** Invoicing clients, by name. Archived ones are excluded unless asked for. */
+  getClients(includeArchived?: boolean): Promise<Client[]>;
   /** One client with its invoice history and open balance — `nigel client show`. */
   getClient(id: number): Promise<ClientDetail>;
   createClient(input: NewClientRequest): Promise<Client>;
@@ -327,6 +327,9 @@ export interface ApiClient {
   updateClient(id: number, input: ClientPatch): Promise<Client>;
   /** Refused while the client still has invoices, of any status. */
   deleteClient(id: number): Promise<Deleted>;
+  /** Hide a client from the working list. Touches no invoice. */
+  archiveClient(id: number): Promise<Client>;
+  unarchiveClient(id: number): Promise<Client>;
 
   /** Every invoice, number descending. Filters are omitted when absent. */
   getInvoices(params?: InvoiceListParams): Promise<InvoiceListRow[]>;
@@ -657,8 +660,9 @@ export class FetchApiClient implements ApiClient {
     );
   }
 
-  getClients(): Promise<Client[]> {
-    return this.request<Client[]>('GET', '/clients');
+  getClients(includeArchived = false): Promise<Client[]> {
+    const params = includeArchived ? { includeArchived: true } : {};
+    return this.request<Client[]>('GET', `/clients${query(params)}`);
   }
 
   getClient(id: number): Promise<ClientDetail> {
@@ -675,6 +679,14 @@ export class FetchApiClient implements ApiClient {
 
   deleteClient(id: number): Promise<Deleted> {
     return this.request<Deleted>('DELETE', `/clients/${id}`);
+  }
+
+  archiveClient(id: number): Promise<Client> {
+    return this.request<Client>('POST', `/clients/${id}/archive`);
+  }
+
+  unarchiveClient(id: number): Promise<Client> {
+    return this.request<Client>('POST', `/clients/${id}/unarchive`);
   }
 
   getInvoices(params: InvoiceListParams = {}): Promise<InvoiceListRow[]> {

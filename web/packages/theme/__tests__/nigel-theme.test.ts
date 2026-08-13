@@ -55,6 +55,25 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
+  it('makes the bundled mono the primary face', () => {
+    expect(text).toMatch(/--wa-font-family-sans:\s*'IBM Plex Mono'/);
+  });
+
+  it('keeps a system mono behind it, so a missing face still aligns columns', () => {
+    // The fallback is deliberately mono rather than the old sans stack: if the
+    // bundled face fails, money columns should still line up.
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*ui-monospace/);
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*monospace;/);
+  });
+
+  it('pins color-scheme when a mode is forced, so native widgets follow', () => {
+    // :root declares `color-scheme: light dark`, which lets the UA pick
+    // scrollbars, date pickers and form-control defaults from the OS. An
+    // explicit choice has to pin it, or the app is light with dark scrollbars.
+    expect(text).toMatch(/:root\.light-mode\s*{[^}]*color-scheme:\s*light/);
+    expect(text).toMatch(/:root\.dark-mode\s*{[^}]*color-scheme:\s*dark/);
+  });
+
   it('supports system dark mode and both explicit overrides', () => {
     expect(text).toMatch(/prefers-color-scheme:\s*dark/);
     expect(text).toContain('.dark-mode');
@@ -65,22 +84,14 @@ describe('nigelTheme', () => {
     expect(text).toMatch(/prefers-reduced-motion:\s*reduce/);
   });
 
-  it('carries the global wa-* shadow-part overrides', () => {
-    expect(text).toContain('wa-button');
-    expect(text).toContain('wa-dialog');
-    expect(text).toContain('::part(base)');
-    expect(text).toContain('::part(label)');
-    expect(text).toContain('::part(form-control-label)');
-  });
-
-  it('orders light tokens before dark overrides before the part overrides', () => {
+  it('orders light tokens before dark overrides before print', () => {
     // Specificity alone does not settle this: the dark block and the light
     // block both target :root, so the later one wins. Order is the contract.
-    const light = text.indexOf('--wa-color-bg: #fdfcfb');
+    const light = text.indexOf('--wa-color-bg: #f3f2f7');
     const dark = text.indexOf('.dark-mode');
-    const parts = text.indexOf('::part(base)');
+    const print = text.indexOf('@media print');
     expect(light).toBeGreaterThan(-1);
     expect(light).toBeLessThan(dark);
-    expect(dark).toBeLessThan(parts);
+    expect(dark).toBeLessThan(print);
   });
 });

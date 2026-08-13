@@ -66,6 +66,38 @@ export class WcAppShell extends LitElement {
       background: var(--wa-color-surface-alt);
       border-bottom: 1px solid var(--wa-color-border);
     }
+
+    /* A printed report is the artifact an accountant keeps, so the page has to
+       be the report and nothing else. This lives here rather than in the print
+       sheet because a rule that hides an element has to be in the tree that
+       element is in, and the shell is inside nigel-app's shadow root. Token
+       recolouring is the other way through the boundary and stays in
+       @nigel/theme, where it reaches every component at once by inheritance. */
+    @media print {
+      :host {
+        display: block;
+        height: auto;
+      }
+
+      header,
+      .banner {
+        display: none;
+      }
+
+      ::slotted([slot='sidebar']) {
+        display: none;
+      }
+
+      .main {
+        overflow: visible;
+      }
+
+      .content {
+        display: block;
+        padding: 0;
+        overflow: visible;
+      }
+    }
   `;
 
   @property({ type: String, attribute: 'screen-title' })

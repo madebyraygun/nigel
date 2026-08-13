@@ -2316,7 +2316,14 @@ mod tests {
         sent: RefCell<u32>,
     }
     impl Mailer for FakeMail {
-        fn send_invoice(&self, _t: &str, _s: &str, _h: &str, _p: &[u8]) -> NigelResult<()> {
+        fn send_invoice(
+            &self,
+            _t: &str,
+            _cc: &[String],
+            _s: &str,
+            _h: &str,
+            _p: &[u8],
+        ) -> NigelResult<()> {
             *self.sent.borrow_mut() += 1;
             Ok(())
         }

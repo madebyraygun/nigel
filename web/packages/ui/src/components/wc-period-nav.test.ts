@@ -6,9 +6,10 @@ import {
   periodToParams,
   stepPeriod,
   type NcPeriod,
-  type WcPeriodNav,
+  WcPeriodNav,
 } from './wc-period-nav.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
 import preview from './wc-period-nav.preview.js';
 
 async function mount(props: Partial<WcPeriodNav> = {}): Promise<WcPeriodNav> {
@@ -255,3 +256,5 @@ describe('wc-period-nav', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcPeriodNav, ':host');

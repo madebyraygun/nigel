@@ -159,6 +159,16 @@ export class WcPeriodNav extends LitElement {
       background: var(--wa-color-brand, #4a6cf7);
       color: var(--wa-color-on-brand, #fff);
     }
+
+    /* Screen chrome, not part of the report. This lives here rather than in
+       @nigel/theme's print sheet because a rule that hides an element has to
+       be in the tree that element is in, and every wc-* here sits inside
+       nigel-app's shadow root where a document rule cannot reach it. */
+    @media print {
+      :host {
+        display: none;
+      }
+    }
   `;
 
   @property({ type: String })

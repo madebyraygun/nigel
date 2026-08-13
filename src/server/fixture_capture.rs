@@ -306,7 +306,11 @@ async fn capture_web_invoicing_fixtures() {
         (
             "clients",
             crate::cli::client::format_client_list(
-                &crate::invoicing::clients::list_clients(&conn).expect("clients"),
+                &crate::invoicing::clients::list_clients(
+                    &conn,
+                    crate::invoicing::clients::ClientScope::Active,
+                )
+                .expect("clients"),
             ),
         ),
     ];

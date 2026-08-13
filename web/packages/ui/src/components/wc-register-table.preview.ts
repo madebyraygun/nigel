@@ -51,6 +51,31 @@ const rows: RegisterTableRow[] = [
   },
 ];
 
+/**
+ * The widest row the register can realistically be asked to draw: a 60-column
+ * bank description, a long vendor, the longest name in the stock chart of
+ * accounts (`src/db.rs`), and a six-figure amount, all on one line with the
+ * account column showing.
+ *
+ * IBM Plex Mono advances every glyph at 0.6em — 8.4px at the 14px base — so
+ * that description alone wants about 500px before padding. This is where a
+ * monospace UI overflows first, which is why the state is declared
+ * permanently rather than checked once.
+ */
+const widestRow: RegisterTableRow[] = [
+  {
+    id: 900,
+    date: '2025-11-28',
+    description: 'ACH DEBIT NORTHWIND TRADING COMPANY INTL SETTLEMENT 00421',
+    amount: -128450.75,
+    category: 'Software & Subscriptions',
+    categoryId: 12,
+    vendor: 'Northwind Trading Company',
+    accountName: 'BofA Line of Credit',
+    isFlagged: true,
+  },
+];
+
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
   { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
@@ -75,6 +100,18 @@ const preview: Preview = {
           .selectedId=${102}
           .total=${8281.51}
           footer-note="4 of 480 rows"
+        ></wc-register-table>
+      `,
+    },
+    {
+      name: 'longest-realistic-row',
+      render: () => html`
+        <wc-register-table
+          .rows=${widestRow}
+          .categories=${categories}
+          .selectedId=${900}
+          .total=${-128450.75}
+          footer-note="1 of 1 row"
         ></wc-register-table>
       `,
     },

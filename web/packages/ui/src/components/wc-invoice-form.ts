@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import './wc-line-items.js';
+import { controlsCss } from '@nigel/theme';
 import {
   EMPTY_LINE_ITEM,
   isBlankLineItem,
@@ -142,72 +143,75 @@ export function validateInvoiceForm(value: InvoiceFormValue): InvoiceFormErrors 
  */
 @customElement('wc-invoice-form')
 export class WcInvoiceForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-      gap: var(--wa-space-m, 12px);
-    }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .stacked {
-      display: grid;
-      gap: var(--wa-space-2xs, 4px);
-    }
+      .stacked {
+        display: grid;
+        gap: var(--wa-space-2xs, 4px);
+      }
 
-    .label {
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-    }
+      .label {
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-medium, 500);
+      }
 
-    textarea {
-      font: inherit;
-      width: 100%;
-      box-sizing: border-box;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-surface);
-      color: inherit;
-      resize: vertical;
-    }
+      textarea {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-surface);
+        color: inherit;
+        resize: vertical;
+      }
 
-    textarea:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
+      textarea:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
 
-    h3 {
-      margin: var(--wa-space-s, 8px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--wa-color-muted);
-    }
-  `;
+      h3 {
+        margin: var(--wa-space-s, 8px) 0 0;
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-medium, 500);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--wa-color-muted);
+      }
+    `,
+  ];
 
   @property({ type: String, reflect: true })
   mode: WcInvoiceFormMode = 'create';

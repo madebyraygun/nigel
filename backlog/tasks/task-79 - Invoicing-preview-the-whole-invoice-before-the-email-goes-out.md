@@ -1,10 +1,10 @@
 ---
 id: TASK-79
 title: 'Invoicing: preview the whole invoice before the email goes out'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-10 21:48'
-updated_date: '2026-08-11 20:06'
+updated_date: '2026-08-12 01:00'
 labels:
   - enhancement
   - invoicing

@@ -6,6 +6,7 @@ import '@awesome.me/webawesome/dist/components/option/option.js';
 import './wc-category-picker.js';
 import type { CategoryOption } from './category-option.js';
 import type { NcCategoryChangeDetail } from './wc-category-picker.js';
+import { controlsCss } from '@nigel/theme';
 
 /** The match types the categorizer understands, in `cli/rules.rs` order. */
 export const MATCH_TYPES = ['contains', 'starts_with', 'regex'] as const;
@@ -70,44 +71,47 @@ export function validateRuleForm(value: RuleFormValue): RuleFormErrors {
  */
 @customElement('wc-rule-form')
 export class WcRuleForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .fields {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-      min-width: 24rem;
-    }
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        min-width: 24rem;
+      }
 
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: var(--wa-space-m, 12px);
-    }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .test {
-      /* The panel lists every matching description; the dialog must not grow
-         without limit because a pattern turned out to be broad. */
-      max-height: 12rem;
-      overflow-y: auto;
-    }
-  `;
+      .test {
+        /* The panel lists every matching description; the dialog must not grow
+           without limit because a pattern turned out to be broad. */
+        max-height: 12rem;
+        overflow-y: auto;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   value: RuleFormValue = EMPTY_RULE_FORM;

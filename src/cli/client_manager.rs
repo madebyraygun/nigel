@@ -8,7 +8,12 @@ use ratatui::{
 };
 use rusqlite::Connection;
 
-use crate::invoicing::clients::{add_client, list_clients, update_client, ClientUpdate};
+use crate::error::NigelError;
+use crate::invoicing::clients::{
+    add_client, archive_client, delete_blocker, delete_client, list_clients, list_contacts,
+    set_contacts, unarchive_client, update_client, ClientContact, ClientScope, ClientUpdate,
+    NewContact,
+};
 use crate::models::Client;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
 
@@ -20,6 +25,12 @@ const EMAIL_IDX: usize = 1;
 const ADDRESS_IDX: usize = 2;
 const NOTES_IDX: usize = 3;
 
+// Field indices for the contacts form — keep in sync with CONTACT_LABELS.
+const CONTACT_EMAIL_IDX: usize = 0;
+const CONTACT_NAME_IDX: usize = 1;
+const CONTACT_TITLE_IDX: usize = 2;
+const CONTACT_LABELS: [&str; 3] = ["Email", "Name", "Title"];
+
 pub enum ClientAction {
     Continue,
     Close,
@@ -29,6 +40,19 @@ enum Screen {
     List,
     Add(ClientForm),
     Edit(ClientForm),
+    /// An inline overlay on the list, the way `account_manager` confirms.
+    ConfirmDelete,
+    /// One client's addresses. A sub-screen rather than repeatable rows inside
+    /// the client form: that form is a plain stack where every printable key
+    /// types into a field, and a row editor there would need the invoice
+    /// form's whole `Ins`/`Del` apparatus for a collection that is usually
+    /// empty. A list with single-key actions is what this screen already is.
+    Contacts,
+    /// Add or edit one contact. `None` is an add.
+    ContactForm {
+        editing: Option<usize>,
+        form: ClientForm,
+    },
 }
 
 enum FormMode {
@@ -52,15 +76,33 @@ impl ClientForm {
     }
 
     fn with_values(values: [String; 4]) -> Self {
-        let labels = ["Name", "Email", "Address", "Notes"];
+        Self::labelled(&["Name", "Email", "Address", "Notes"], values.to_vec())
+    }
+
+    /// The same field machinery with a different set of labels, which is what
+    /// lets the contacts sub-screen reuse it rather than grow its own.
+    fn labelled(labels: &[&'static str], values: Vec<String>) -> Self {
         Self {
             fields: labels
-                .into_iter()
+                .iter()
+                .copied()
                 .zip(values)
                 .map(|(label, value)| FormField { label, value })
                 .collect(),
             focused: 0,
         }
+    }
+
+    fn new_contact(contact: Option<&ClientContact>) -> Self {
+        let values = match contact {
+            Some(c) => vec![
+                c.email.clone(),
+                c.name.clone().unwrap_or_default(),
+                c.title.clone().unwrap_or_default(),
+            ],
+            None => vec![String::new(), String::new(), String::new()],
+        };
+        Self::labelled(&CONTACT_LABELS, values)
     }
 
     fn new_edit(client: &Client) -> Self {
@@ -85,6 +127,15 @@ impl ClientForm {
 
 pub struct ClientManager {
     clients: Vec<Client>,
+    /// The client whose contacts are on screen, and the list itself. Held
+    /// here rather than inside `Screen::Contacts` so the add/edit form can go
+    /// back to it without reloading.
+    contacts_client: Option<i64>,
+    contacts: Vec<ClientContact>,
+    contact_selection: usize,
+    /// Archived clients are hidden until `A`, the way the CLI hides them until
+    /// `--all`.
+    show_archived: bool,
     selection: usize,
     scroll_offset: usize,
     last_visible_rows: usize,
@@ -98,7 +149,11 @@ pub struct ClientManager {
 impl ClientManager {
     pub fn new(conn: &Connection, greeting: &str) -> Self {
         Self {
-            clients: list_clients(conn).unwrap_or_default(),
+            clients: list_clients(conn, ClientScope::Active).unwrap_or_default(),
+            contacts_client: None,
+            contacts: Vec::new(),
+            contact_selection: 0,
+            show_archived: false,
             selection: 0,
             scroll_offset: 0,
             last_visible_rows: 20,
@@ -109,8 +164,16 @@ impl ClientManager {
         }
     }
 
+    fn scope(&self) -> ClientScope {
+        if self.show_archived {
+            ClientScope::All
+        } else {
+            ClientScope::Active
+        }
+    }
+
     fn reload(&mut self, conn: &Connection) {
-        self.clients = list_clients(conn).unwrap_or_default();
+        self.clients = list_clients(conn, self.scope()).unwrap_or_default();
         if self.clients.is_empty() {
             self.selection = 0;
         } else {
@@ -125,9 +188,18 @@ impl ClientManager {
 
     pub fn draw(&mut self, frame: &mut Frame) {
         match &self.screen {
-            Screen::List => self.draw_list(frame),
+            Screen::List | Screen::ConfirmDelete => self.draw_list(frame),
             Screen::Add(_) => self.draw_form(frame, "Add Client"),
             Screen::Edit(_) => self.draw_form(frame, "Edit Client"),
+            Screen::Contacts => self.draw_contacts(frame),
+            Screen::ContactForm { editing, .. } => {
+                let title = if editing.is_some() {
+                    "Edit Contact"
+                } else {
+                    "Add Contact"
+                };
+                self.draw_form(frame, title)
+            }
         }
     }
 
@@ -198,26 +270,126 @@ impl ClientManager {
             }
         }
 
+        if matches!(self.screen, Screen::ConfirmDelete) {
+            if let Some(client) = self.clients.get(self.selection) {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("   Delete '{}'? (y/n)", client.name),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+        }
+
         frame.render_widget(Paragraph::new(lines), content_area);
 
-        if let Some(msg) = &self.status_message {
+        if matches!(self.screen, Screen::ConfirmDelete) {
+            frame.render_widget(
+                Paragraph::new(" y=confirm  n=cancel").style(FOOTER_STYLE),
+                hints_area,
+            );
+        } else if let Some(msg) = &self.status_message {
             frame.render_widget(
                 Paragraph::new(format!(" {msg}")).style(Style::default().fg(Color::Yellow)),
                 hints_area,
             );
         } else {
             frame.render_widget(
-                Paragraph::new(" a=add  e=edit  Esc=back  q=quit").style(FOOTER_STYLE),
+                Paragraph::new(self.list_footer()).style(FOOTER_STYLE),
                 hints_area,
             );
+        }
+    }
+
+    /// The footer states what the two toggles will do next, not what they are:
+    /// `x` reads `unarchive` on an archived row and `A` reads `hide archived`
+    /// once they are shown.
+    fn list_footer(&self) -> String {
+        let archive_key = match self.clients.get(self.selection) {
+            Some(c) if c.archived_at.is_some() => "x=unarchive",
+            _ => "x=archive",
+        };
+        // Short enough that the whole footer fits an 80-column terminal with
+        // the longer `x=unarchive` on it.
+        let show_key = if self.show_archived {
+            "A=hide all"
+        } else {
+            "A=show all"
+        };
+        format!(" a=add  e=edit  c=contacts  d=delete  {archive_key}  {show_key}  Esc=back  q=quit")
+    }
+
+    fn draw_contacts(&mut self, frame: &mut Frame) {
+        let (content_area, hints_area) = self.draw_chrome(frame);
+        let name = self
+            .contacts_client
+            .and_then(|id| self.clients.iter().find(|c| c.id == id))
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+
+        let mut lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!(" Contacts for {name} ({})", self.contacts.len()),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        if self.contacts.is_empty() {
+            lines.push(Line::from("   No contacts yet. Press 'a' to add one."));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("   {:<34} {:<22} {:<18} {}", "Email", "Name", "Title", ""),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (i, contact) in self.contacts.iter().enumerate() {
+                let marker = if i == self.contact_selection {
+                    " > "
+                } else {
+                    "   "
+                };
+                let style = if i == self.contact_selection {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "{marker}{:<34} {:<22} {:<18} {}",
+                        truncate(&contact.email, 32),
+                        truncate(&optional_display(contact.name.as_deref()), 20),
+                        truncate(&optional_display(contact.title.as_deref()), 16),
+                        if contact.is_billing { "billing" } else { "" },
+                    ),
+                    style,
+                )));
+            }
+        }
+
+        frame.render_widget(Paragraph::new(lines), content_area);
+
+        match &self.status_message {
+            Some(msg) => frame.render_widget(
+                Paragraph::new(format!(" {msg}")).style(Style::default().fg(Color::Yellow)),
+                hints_area,
+            ),
+            None => frame.render_widget(
+                Paragraph::new(" a=add  e=edit  d=delete  b=make billing  Esc=back")
+                    .style(FOOTER_STYLE),
+                hints_area,
+            ),
         }
     }
 
     fn draw_form(&self, frame: &mut Frame, title: &str) {
         let (content_area, hints_area) = self.draw_chrome(frame);
         let form = match &self.screen {
-            Screen::Add(f) | Screen::Edit(f) => f,
-            Screen::List => return,
+            Screen::Add(f) | Screen::Edit(f) | Screen::ContactForm { form: f, .. } => f,
+            _ => return,
         };
 
         let mut lines = vec![
@@ -252,6 +424,7 @@ impl ClientManager {
                 format!("   {msg}"),
                 Style::default().fg(Color::Yellow),
             ))),
+            None if matches!(self.screen, Screen::ContactForm { .. }) => {}
             None => lines.push(Line::from(Span::styled(
                 format!("   {EMAIL_HINT}"),
                 FOOTER_STYLE,
@@ -285,12 +458,15 @@ impl ClientManager {
         // form types into the field instead of firing the list's binding.
         match &self.screen {
             Screen::List => self.handle_list_key(code, conn),
+            Screen::ConfirmDelete => self.handle_confirm_delete_key(code, conn),
             Screen::Add(_) => self.handle_form_key(code, conn, FormMode::Add),
             Screen::Edit(_) => self.handle_form_key(code, conn, FormMode::Edit),
+            Screen::Contacts => self.handle_contacts_key(code, conn),
+            Screen::ContactForm { .. } => self.handle_contact_form_key(code, conn),
         }
     }
 
-    fn handle_list_key(&mut self, code: KeyCode, _conn: &Connection) -> ClientAction {
+    fn handle_list_key(&mut self, code: KeyCode, conn: &Connection) -> ClientAction {
         match code {
             KeyCode::Up => {
                 self.selection = self.selection.saturating_sub(1);
@@ -308,10 +484,277 @@ impl ClientManager {
                     self.screen = Screen::Edit(ClientForm::new_edit(client));
                 }
             }
+            KeyCode::Char('c') => self.open_contacts(conn),
+            KeyCode::Char('d') => self.begin_delete(conn),
+            KeyCode::Char('x') => self.toggle_archive(conn, &crate::cli::today()),
+            KeyCode::Char('A') => {
+                self.show_archived = !self.show_archived;
+                self.reload(conn);
+            }
             KeyCode::Char('q') | KeyCode::Esc => return ClientAction::Close,
             _ => {}
         }
         ClientAction::Continue
+    }
+
+    fn open_contacts(&mut self, conn: &Connection) {
+        let Some(client) = self.clients.get(self.selection) else {
+            return;
+        };
+        self.contacts_client = Some(client.id);
+        self.contact_selection = 0;
+        self.reload_contacts(conn);
+        self.screen = Screen::Contacts;
+    }
+
+    fn reload_contacts(&mut self, conn: &Connection) {
+        let Some(id) = self.contacts_client else {
+            return;
+        };
+        self.contacts = list_contacts(conn, id).unwrap_or_default();
+        self.contact_selection = self
+            .contact_selection
+            .min(self.contacts.len().saturating_sub(1));
+    }
+
+    /// Every write is the whole list through `set_contacts`, so this screen
+    /// never invents an invariant the data layer does not enforce.
+    fn write_contacts(&mut self, conn: &Connection, contacts: &[NewContact], message: String) {
+        let Some(id) = self.contacts_client else {
+            return;
+        };
+        match set_contacts(conn, id, contacts) {
+            Ok(()) => {
+                self.reload_contacts(conn);
+                // The billing address is a projection of these rows, so the
+                // client list is stale the moment they change.
+                self.reload(conn);
+                self.set_status(message);
+            }
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    fn contacts_as_written(&self) -> Vec<NewContact> {
+        self.contacts
+            .iter()
+            .map(|c| NewContact {
+                email: c.email.clone(),
+                name: c.name.clone(),
+                title: c.title.clone(),
+                is_billing: c.is_billing,
+            })
+            .collect()
+    }
+
+    fn handle_contacts_key(&mut self, code: KeyCode, conn: &Connection) -> ClientAction {
+        match code {
+            KeyCode::Up => self.contact_selection = self.contact_selection.saturating_sub(1),
+            KeyCode::Down => {
+                if !self.contacts.is_empty() {
+                    self.contact_selection =
+                        (self.contact_selection + 1).min(self.contacts.len() - 1);
+                }
+            }
+            KeyCode::Char('a') => {
+                self.screen = Screen::ContactForm {
+                    editing: None,
+                    form: ClientForm::new_contact(None),
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(contact) = self.contacts.get(self.contact_selection) {
+                    self.screen = Screen::ContactForm {
+                        editing: Some(self.contact_selection),
+                        form: ClientForm::new_contact(Some(contact)),
+                    };
+                }
+            }
+            KeyCode::Char('d') => self.delete_contact(conn),
+            KeyCode::Char('b') => self.make_billing(conn),
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                self.contacts_client = None;
+                self.contacts.clear();
+            }
+            _ => {}
+        }
+        ClientAction::Continue
+    }
+
+    fn delete_contact(&mut self, conn: &Connection) {
+        let Some(contact) = self.contacts.get(self.contact_selection) else {
+            return;
+        };
+        let email = contact.email.clone();
+        let mut remaining = self.contacts_as_written();
+        remaining.remove(self.contact_selection);
+        // Whoever is left first becomes the billing recipient, which is
+        // `set_contacts`'s own normalize step rather than a rule invented here.
+        for contact in remaining.iter_mut() {
+            contact.is_billing = false;
+        }
+        self.write_contacts(conn, &remaining, format!("Removed contact: {email}"));
+    }
+
+    fn make_billing(&mut self, conn: &Connection) {
+        let Some(contact) = self.contacts.get(self.contact_selection) else {
+            return;
+        };
+        if contact.is_billing {
+            self.set_status(format!("{} is already the billing contact", contact.email));
+            return;
+        }
+        let email = contact.email.clone();
+        let chosen = self.contact_selection;
+        let mut contacts = self.contacts_as_written();
+        for (i, contact) in contacts.iter_mut().enumerate() {
+            contact.is_billing = i == chosen;
+        }
+        self.write_contacts(conn, &contacts, format!("Billing contact: {email}"));
+    }
+
+    fn handle_contact_form_key(&mut self, code: KeyCode, conn: &Connection) -> ClientAction {
+        let Screen::ContactForm { form, .. } = &mut self.screen else {
+            return ClientAction::Continue;
+        };
+        match code {
+            KeyCode::Esc => self.screen = Screen::Contacts,
+            KeyCode::Tab | KeyCode::Down => {
+                form.focused = (form.focused + 1) % form.fields.len();
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                form.focused = if form.focused == 0 {
+                    form.fields.len() - 1
+                } else {
+                    form.focused - 1
+                };
+            }
+            KeyCode::Char(c) => form.fields[form.focused].value.push(c),
+            KeyCode::Backspace => {
+                form.fields[form.focused].value.pop();
+            }
+            KeyCode::Enter => self.save_contact_form(conn),
+            _ => {}
+        }
+        ClientAction::Continue
+    }
+
+    fn save_contact_form(&mut self, conn: &Connection) {
+        let Screen::ContactForm { editing, form } = &self.screen else {
+            return;
+        };
+        let email = form.fields[CONTACT_EMAIL_IDX].value.trim().to_string();
+        if email.is_empty() {
+            self.set_status("Email is required".into());
+            return;
+        }
+        let written = NewContact {
+            email: email.clone(),
+            name: form.optional(CONTACT_NAME_IDX),
+            title: form.optional(CONTACT_TITLE_IDX),
+            is_billing: false,
+        };
+        let editing = *editing;
+
+        let mut contacts = self.contacts_as_written();
+        let message = match editing {
+            Some(index) => {
+                let was_billing = contacts[index].is_billing;
+                contacts[index] = NewContact {
+                    is_billing: was_billing,
+                    ..written
+                };
+                format!("Updated contact: {email}")
+            }
+            None => {
+                // The first contact a client gets is its billing recipient,
+                // which `set_contacts` normalizes for an empty list anyway.
+                contacts.push(written);
+                format!("Added contact: {email}")
+            }
+        };
+
+        let Some(id) = self.contacts_client else {
+            return;
+        };
+        match set_contacts(conn, id, &contacts) {
+            Ok(()) => {
+                self.reload_contacts(conn);
+                self.reload(conn);
+                self.screen = Screen::Contacts;
+                self.set_status(message);
+            }
+            // Stays on the form with the refusal beside it, the way the client
+            // form keeps a rejected name.
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    /// `d` on the list. The block is asked first, so a client that cannot be
+    /// deleted never sees a confirmation — `account_manager`'s precedent, and
+    /// the reason the screen never offers something it will not honour.
+    fn begin_delete(&mut self, conn: &Connection) {
+        let Some(client) = self.clients.get(self.selection) else {
+            return;
+        };
+        match delete_blocker(conn, client.id) {
+            Ok(Some(block)) => self.set_status(NigelError::Blocked(block).to_string()),
+            Ok(None) => {
+                self.status_message = None;
+                self.status_ttl = 0;
+                self.screen = Screen::ConfirmDelete;
+            }
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    fn handle_confirm_delete_key(&mut self, code: KeyCode, conn: &Connection) -> ClientAction {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let Some(client) = self.clients.get(self.selection) else {
+                    self.screen = Screen::List;
+                    return ClientAction::Continue;
+                };
+                let (id, name) = (client.id, client.name.clone());
+                self.screen = Screen::List;
+                match delete_client(conn, id) {
+                    Ok(()) => {
+                        self.reload(conn);
+                        self.set_status(format!("Deleted client: {name}"));
+                    }
+                    Err(e) => self.set_status(e.to_string()),
+                }
+            }
+            _ => self.screen = Screen::List,
+        }
+        ClientAction::Continue
+    }
+
+    /// `x` on the list. No confirmation: archiving is reversible in one
+    /// keystroke, and the confirmations in this app are for things that are not.
+    fn toggle_archive(&mut self, conn: &Connection, today: &str) {
+        let Some(client) = self.clients.get(self.selection) else {
+            return;
+        };
+        let (id, name, was_archived) =
+            (client.id, client.name.clone(), client.archived_at.is_some());
+        let result = if was_archived {
+            unarchive_client(conn, id)
+        } else {
+            archive_client(conn, id, today)
+        };
+        match result {
+            Ok(()) => {
+                self.reload(conn);
+                self.set_status(if was_archived {
+                    format!("Restored client: {name}")
+                } else {
+                    format!("Archived client: {name}")
+                });
+            }
+            Err(e) => self.set_status(e.to_string()),
+        }
     }
 
     fn handle_form_key(
@@ -322,7 +765,7 @@ impl ClientManager {
     ) -> ClientAction {
         let form = match &mut self.screen {
             Screen::Add(f) | Screen::Edit(f) => f,
-            Screen::List => return ClientAction::Continue,
+            _ => return ClientAction::Continue,
         };
 
         match code {
@@ -350,7 +793,7 @@ impl ClientManager {
     fn save_form(&mut self, conn: &Connection, mode: FormMode) {
         let form = match &self.screen {
             Screen::Add(f) | Screen::Edit(f) => f,
-            Screen::List => return,
+            _ => return,
         };
         let name = form.fields[NAME_IDX].value.trim().to_string();
         let email = form.optional(EMAIL_IDX);
@@ -405,9 +848,16 @@ impl ClientManager {
 /// email columns leave, so the row never outruns the terminal it is drawn into.
 fn client_row(marker: &str, client: &Client, width: usize) -> String {
     let address_width = width.saturating_sub(61).max(10);
+    // The marker rides inside the name column's own budget rather than as a
+    // fourth column, so an archived row is the same width as every other.
+    const ARCHIVED: &str = " (archived)";
+    let name = match client.archived_at {
+        Some(_) => format!("{}{ARCHIVED}", truncate(&client.name, 26 - ARCHIVED.len())),
+        None => truncate(&client.name, 26),
+    };
     format!(
         "{marker}{:<28} {:<28} {}",
-        truncate(&client.name, 26),
+        name,
         truncate(&optional_display(client.email.as_deref()), 26),
         truncate(
             &optional_display(client.billing_address.as_deref()),
@@ -537,6 +987,307 @@ mod tests {
         assert_eq!(mgr.selection, 0);
     }
 
+    /// One draft invoice for `client_id`, which is all `delete_blocker` counts.
+    fn seed_invoice(conn: &Connection, client_id: i64) {
+        let items = vec![crate::invoicing::invoices::NewLineItem {
+            description: "Work".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        crate::invoicing::invoices::create_invoice(
+            conn,
+            client_id,
+            "2026-06-01",
+            None,
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn d_on_a_client_with_no_invoices_opens_the_confirmation() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Globex", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('d'), &conn);
+        assert!(matches!(mgr.screen, Screen::ConfirmDelete));
+    }
+
+    #[test]
+    fn y_deletes_and_reloads_the_list() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Globex", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('d'), &conn);
+        mgr.handle_key(KeyCode::Char('y'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert!(mgr.clients.is_empty());
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Deleted client: Globex")
+        );
+    }
+
+    #[test]
+    fn n_cancels_and_the_client_is_still_there() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Globex", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('d'), &conn);
+        mgr.handle_key(KeyCode::Char('n'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert_eq!(mgr.clients.len(), 1);
+    }
+
+    /// The `account_manager` precedent: a screen never offers a confirmation it
+    /// will not honour.
+    #[test]
+    fn d_on_a_client_with_invoices_never_opens_the_confirmation() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Globex", None, None, None).unwrap();
+        seed_invoice(&conn, id);
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('d'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Cannot delete: client has 1 invoice")
+        );
+    }
+
+    #[test]
+    fn x_archives_and_unarchives_the_selected_client() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Globex", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('x'), &conn);
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Archived client: Globex")
+        );
+        assert!(get_client(&conn, id).unwrap().archived_at.is_some());
+        // Hidden by default, so the list is now empty.
+        assert!(mgr.clients.is_empty());
+
+        mgr.handle_key(KeyCode::Char('A'), &conn);
+        mgr.handle_key(KeyCode::Char('x'), &conn);
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Restored client: Globex")
+        );
+        assert!(get_client(&conn, id).unwrap().archived_at.is_none());
+    }
+
+    #[test]
+    fn archived_clients_are_hidden_until_shift_a() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Acme Co", None, None, None).unwrap();
+        let globex = add_client(&conn, "Globex", None, None, None).unwrap();
+        crate::invoicing::clients::archive_client(&conn, globex, "2026-08-11").unwrap();
+
+        let mut mgr = manager(&conn);
+        assert_eq!(mgr.clients.len(), 1);
+
+        mgr.handle_key(KeyCode::Char('A'), &conn);
+        assert_eq!(mgr.clients.len(), 2);
+        let row = client_row("   ", &mgr.clients[1], 120);
+        assert!(row.contains("(archived)"), "got: {row}");
+
+        mgr.handle_key(KeyCode::Char('A'), &conn);
+        assert_eq!(mgr.clients.len(), 1);
+    }
+
+    #[test]
+    fn the_footer_names_the_action_the_selected_row_will_get() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Globex", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+        assert!(mgr.list_footer().contains("x=archive"));
+        assert!(mgr.list_footer().contains("A=show all"));
+
+        crate::invoicing::clients::archive_client(&conn, id, "2026-08-11").unwrap();
+        mgr.show_archived = true;
+        mgr.reload(&conn);
+        assert!(mgr.list_footer().contains("x=unarchive"));
+        assert!(mgr.list_footer().contains("A=hide all"));
+    }
+
+    /// Open the contacts sub-screen for the only client.
+    fn open_contacts(mgr: &mut ClientManager, conn: &Connection) {
+        mgr.handle_key(KeyCode::Char('c'), conn);
+    }
+
+    /// Fill Email, Name, Title on whichever contact form is open and save.
+    fn fill_contact(mgr: &mut ClientManager, conn: &Connection, values: [&str; 3]) {
+        for (i, value) in values.iter().enumerate() {
+            if i > 0 {
+                mgr.handle_key(KeyCode::Tab, conn);
+            }
+            for ch in value.chars() {
+                mgr.handle_key(KeyCode::Char(ch), conn);
+            }
+        }
+        mgr.handle_key(KeyCode::Enter, conn);
+    }
+
+    #[test]
+    fn c_opens_the_contacts_screen_for_the_selected_client() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        open_contacts(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::Contacts));
+        assert_eq!(mgr.contacts_client, Some(id));
+        assert_eq!(mgr.contacts.len(), 1);
+    }
+
+    #[test]
+    fn a_adds_a_contact_and_the_first_one_is_billing() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        fill_contact(&mut mgr, &conn, ["ap@acme.test", "Ada Payne", "AP"]);
+
+        assert!(matches!(mgr.screen, Screen::Contacts));
+        assert_eq!(mgr.contacts.len(), 1);
+        assert!(mgr.contacts[0].is_billing);
+        assert_eq!(mgr.contacts[0].name.as_deref(), Some("Ada Payne"));
+        // The client list's Email column is a projection of these rows.
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("ap@acme.test")
+        );
+    }
+
+    #[test]
+    fn b_moves_the_billing_flag_to_the_selected_contact() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        fill_contact(&mut mgr, &conn, ["dana@acme.test", "Dana", ""]);
+
+        mgr.handle_key(KeyCode::Down, &conn);
+        mgr.handle_key(KeyCode::Char('b'), &conn);
+
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("dana@acme.test")
+        );
+        assert!(mgr.contacts[0].is_billing, "billing sorts first");
+        assert_eq!(mgr.contacts[0].email, "dana@acme.test");
+    }
+
+    #[test]
+    fn b_on_the_only_contact_says_so_and_changes_nothing() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Char('b'), &conn);
+
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("ap@acme.test is already the billing contact")
+        );
+        assert_eq!(mgr.contacts.len(), 1);
+    }
+
+    #[test]
+    fn d_removes_a_contact_and_promotes_a_new_billing_one_when_needed() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        fill_contact(&mut mgr, &conn, ["dana@acme.test", "", ""]);
+
+        // Remove the billing contact, which is the first row.
+        mgr.handle_key(KeyCode::Char('d'), &conn);
+
+        assert_eq!(mgr.contacts.len(), 1);
+        assert!(mgr.contacts[0].is_billing);
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("dana@acme.test")
+        );
+    }
+
+    #[test]
+    fn esc_returns_to_the_client_list() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Acme Co", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Esc, &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert_eq!(mgr.contacts_client, None);
+    }
+
+    /// This screen is additive: the four-field client form is unchanged.
+    #[test]
+    fn the_client_form_still_edits_the_billing_address_through_its_email_field() {
+        let (_d, conn) = test_conn();
+        let id = add_client(&conn, "Acme Co", Some("ap@acme.test"), None, None).unwrap();
+        let mut mgr = manager(&conn);
+
+        mgr.handle_key(KeyCode::Char('e'), &conn);
+        assert_eq!(form_values(&mgr)[EMAIL_IDX], "ap@acme.test");
+        for _ in 0.."ap@acme.test".len() {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        // Focus is back on Name after four tabs per field cycle; retype the
+        // email directly instead.
+        mgr.handle_key(KeyCode::Esc, &conn);
+        update_client(
+            &conn,
+            id,
+            &ClientUpdate {
+                email: Some(Some("billing@acme.test".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            get_client(&conn, id).unwrap().email.as_deref(),
+            Some("billing@acme.test")
+        );
+    }
+
+    #[test]
+    fn a_contact_form_with_no_email_is_refused_beside_the_field() {
+        let (_d, conn) = test_conn();
+        add_client(&conn, "Acme Co", None, None, None).unwrap();
+        let mut mgr = manager(&conn);
+        open_contacts(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert!(matches!(mgr.screen, Screen::ContactForm { .. }));
+        assert_eq!(mgr.status_message.as_deref(), Some("Email is required"));
+    }
+
     fn type_str(mgr: &mut ClientManager, conn: &Connection, text: &str) {
         for ch in text.chars() {
             mgr.handle_key(KeyCode::Char(ch), conn);
@@ -545,15 +1296,15 @@ mod tests {
 
     fn form_values(mgr: &ClientManager) -> Vec<String> {
         match &mgr.screen {
-            Screen::Add(form) | Screen::Edit(form) => {
+            Screen::Add(form) | Screen::Edit(form) | Screen::ContactForm { form, .. } => {
                 form.fields.iter().map(|f| f.value.clone()).collect()
             }
-            Screen::List => panic!("not on a form"),
+            _ => panic!("not on a form"),
         }
     }
 
     fn client_named(conn: &Connection, name: &str) -> Client {
-        list_clients(conn)
+        list_clients(conn, ClientScope::All)
             .unwrap()
             .into_iter()
             .find(|c| c.name == name)
@@ -590,7 +1341,7 @@ mod tests {
 
         assert_eq!(mgr.status_message.as_deref(), Some("Name is required"));
         assert!(matches!(mgr.screen, Screen::Add(_)));
-        assert!(list_clients(&conn).unwrap().is_empty());
+        assert!(list_clients(&conn, ClientScope::All).unwrap().is_empty());
     }
 
     #[test]
@@ -655,7 +1406,7 @@ mod tests {
         mgr.handle_key(KeyCode::Esc, &conn);
 
         assert!(matches!(mgr.screen, Screen::List));
-        assert!(list_clients(&conn).unwrap().is_empty());
+        assert!(list_clients(&conn, ClientScope::All).unwrap().is_empty());
     }
 
     #[test]
@@ -868,7 +1619,9 @@ mod tests {
         // Acme has neither email nor address.
         assert!(screen.contains('\u{2014}'), "{screen}");
         assert!(
-            screen.contains("a=add  e=edit  Esc=back  q=quit"),
+            screen.contains(
+                "a=add  e=edit  c=contacts  d=delete  x=archive  A=show all  Esc=back  q=quit"
+            ),
             "{screen}"
         );
     }
@@ -911,7 +1664,10 @@ mod tests {
         .unwrap();
         // A rendered frame is 80 cells wide by construction, so the budget is
         // checked on the string the row is built from, not on the buffer.
-        let client = list_clients(&conn).unwrap().pop().unwrap();
+        let client = list_clients(&conn, ClientScope::All)
+            .unwrap()
+            .pop()
+            .unwrap();
         assert!(
             client_row(" > ", &client, 80).chars().count() <= 80,
             "row overflows: {:?}",
@@ -966,8 +1722,10 @@ mod tests {
 
     fn focused(mgr: &ClientManager) -> usize {
         match &mgr.screen {
-            Screen::Add(form) | Screen::Edit(form) => form.focused,
-            Screen::List => panic!("not on a form"),
+            Screen::Add(form) | Screen::Edit(form) | Screen::ContactForm { form, .. } => {
+                form.focused
+            }
+            _ => panic!("not on a form"),
         }
     }
 

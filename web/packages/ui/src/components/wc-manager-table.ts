@@ -2,6 +2,8 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
+import { controlsCss } from '@nigel/theme';
+import './wc-row-badge.js';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
 export interface ManagerColumn {
@@ -26,6 +28,18 @@ export interface ManagerRow {
   /** One per column, in column order. `null` renders as an em dash. */
   cells: (string | number | null)[];
   /**
+   * A state worth marking but not worth a column — "Archived" on a client.
+   * Rendered beside the first cell, because that is the one every list keys
+   * its rows by.
+   */
+  badge?: string;
+  /**
+   * This row's buttons, replacing the table's own. For a list where the verb
+   * depends on the row's state — Archive on an active client, Unarchive on an
+   * archived one — which one array for the whole table cannot express.
+   */
+  actions?: ManagerAction[];
+  /**
    * What this row is called, for the action buttons' labels. A column of
    * buttons that all read "Delete" is unusable with a screen reader.
    */
@@ -47,72 +61,75 @@ export interface NcManagerActionDetail {
  */
 @customElement('wc-manager-table')
 export class WcManagerTable extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      overflow-x: auto;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        overflow-x: auto;
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-text);
-    }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-text);
+      }
 
-    caption {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      caption {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    th,
-    td {
-      text-align: start;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-bottom: 1px solid var(--wa-color-border);
-      vertical-align: top;
-    }
+      th,
+      td {
+        text-align: start;
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-bottom: 1px solid var(--wa-color-border);
+        vertical-align: top;
+      }
 
-    th {
-      font-weight: var(--wa-font-weight-medium, 500);
-      color: var(--wa-color-muted);
-      white-space: nowrap;
-    }
+      th {
+        font-weight: var(--wa-font-weight-medium, 500);
+        color: var(--wa-color-muted);
+        white-space: nowrap;
+      }
 
-    td.end,
-    th.end {
-      text-align: end;
-      font-variant-numeric: tabular-nums;
-    }
+      td.end,
+      th.end {
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+      }
 
-    td.mono {
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-      overflow-wrap: anywhere;
-    }
+      td.mono {
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        overflow-wrap: anywhere;
+      }
 
-    .muted {
-      color: var(--wa-color-muted);
-    }
+      .muted {
+        color: var(--wa-color-muted);
+      }
 
-    tr[aria-busy='true'] {
-      opacity: 0.6;
-    }
+      tr[aria-busy='true'] {
+        opacity: 0.6;
+      }
 
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--wa-space-2xs, 4px);
-      white-space: nowrap;
-    }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--wa-space-2xs, 4px);
+        white-space: nowrap;
+      }
 
-    th.actions-header {
-      text-align: end;
-    }
-  `;
+      th.actions-header {
+        text-align: end;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   columns: ManagerColumn[] = [];
@@ -142,6 +159,12 @@ export class WcManagerTable extends LitElement {
   }
 
   render() {
+    // Whether there is an Actions column at all: this table's own buttons, or
+    // any row's. Computed once and passed down, because a getter that walks
+    // every row from inside every row is quadratic.
+    const hasActions =
+      this.actions.length > 0 || this.rows.some((row) => (row.actions?.length ?? 0) > 0);
+
     return html`
       <table>
         ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
@@ -154,20 +177,21 @@ export class WcManagerTable extends LitElement {
                 </th>
               `,
             )}
-            ${this.actions.length > 0
+            ${hasActions
               ? html`<th scope="col" class="actions-header">Actions</th>`
               : nothing}
           </tr>
         </thead>
         <tbody>
-          ${this.rows.map((row) => this.renderRow(row))}
+          ${this.rows.map((row) => this.renderRow(row, hasActions))}
         </tbody>
       </table>
     `;
   }
 
-  private renderRow(row: ManagerRow) {
+  private renderRow(row: ManagerRow, hasActions: boolean) {
     const busy = this.busyId === row.id;
+    const actions = row.actions ?? this.actions;
 
     return html`
       <tr data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
@@ -180,13 +204,18 @@ export class WcManagerTable extends LitElement {
           ]
             .filter(Boolean)
             .join(' ');
-          return html`<td class=${classes}>${value === null ? '—' : value}</td>`;
+          return html`<td class=${classes}>
+            ${value === null ? '—' : value}
+            ${index === 0 && row.badge
+              ? html`<wc-row-badge label=${row.badge}></wc-row-badge>`
+              : nothing}
+          </td>`;
         })}
-        ${this.actions.length > 0
+        ${hasActions
           ? html`
               <td>
                 <div class="actions">
-                  ${this.actions.map(
+                  ${actions.map(
                     (action) => html`
                       <wa-button
                         data-action=${action.name}

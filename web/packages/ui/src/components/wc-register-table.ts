@@ -5,6 +5,7 @@ import '../icons/icons.js';
 import './wc-money.js';
 import './wc-empty-state.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
+import { controlsCss } from '@nigel/theme';
 
 export type { CategoryOption };
 
@@ -63,222 +64,225 @@ const DEFAULT_PAGE_ROWS = 20;
  */
 @customElement('wc-register-table')
 export class WcRegisterTable extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-      min-height: 0;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+        min-height: 0;
+      }
 
-    .scroller {
-      overflow: auto;
-      max-height: var(--nc-register-height, 60vh);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-md, 8px);
-    }
+      .scroller {
+        overflow: auto;
+        max-height: var(--nc-register-height, 60vh);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-md, 8px);
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
 
-    caption {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      caption {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    th {
-      position: sticky;
-      top: 0;
-      z-index: 1;
-      text-align: left;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      color: var(--wa-color-muted);
-      background: var(--wa-color-surface);
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-bottom: 1px solid var(--wa-color-border);
-      white-space: nowrap;
-    }
+      th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        text-align: left;
+        font-size: var(--wa-font-size-s, 13px);
+        font-weight: var(--wa-font-weight-medium, 500);
+        color: var(--wa-color-muted);
+        background: var(--wa-color-surface);
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-bottom: 1px solid var(--wa-color-border);
+        white-space: nowrap;
+      }
 
-    td {
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
-      vertical-align: top;
-    }
+      td {
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
+        vertical-align: top;
+      }
 
-    :host([dense]) td {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-    }
+      :host([dense]) td {
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      }
 
-    th.amount,
-    td.amount {
-      text-align: right;
-      width: 12ch;
-    }
+      th.amount,
+      td.amount {
+        text-align: right;
+        width: 12ch;
+      }
 
-    td.date {
-      white-space: nowrap;
-      font-variant-numeric: tabular-nums;
-    }
+      td.date {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
 
-    th.flag,
-    td.flag {
-      width: 2.5rem;
-      text-align: center;
-    }
+      th.flag,
+      td.flag {
+        width: 2.5rem;
+        text-align: center;
+      }
 
-    tbody tr[aria-selected='true'] {
-      background: var(--wa-color-surface-alt, rgba(120, 120, 160, 0.18));
-    }
+      tbody tr[aria-selected='true'] {
+        background: var(--wa-color-surface-alt, rgba(120, 120, 160, 0.18));
+      }
 
-    tbody tr[data-flagged='true'] td.date {
-      box-shadow: inset 3px 0 0 var(--nc-color-flagged, #e0a13a);
-    }
+      tbody tr[data-flagged='true'] td.date {
+        box-shadow: inset 3px 0 0 var(--nc-color-flagged, #e0a13a);
+      }
 
-    tbody tr:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: -2px;
-    }
+      tbody tr:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: -2px;
+      }
 
-    tbody tr[aria-busy='true'] {
-      opacity: 0.6;
-    }
+      tbody tr[aria-busy='true'] {
+        opacity: 0.6;
+      }
 
-    .muted {
-      color: var(--wa-color-muted);
-    }
+      .muted {
+        color: var(--wa-color-muted);
+      }
 
-    .icon-button {
-      font: inherit;
-      color: var(--wa-color-muted);
-      background: none;
-      border: none;
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: 2px;
-      cursor: pointer;
-      line-height: 0;
-    }
+      .icon-button {
+        font: inherit;
+        color: var(--wa-color-muted);
+        background: none;
+        border: none;
+        border-radius: var(--wa-radius-sm, 6px);
+        padding: 2px;
+        cursor: pointer;
+        line-height: 0;
+      }
 
-    .icon-button[aria-pressed='true'] {
-      color: var(--nc-color-flagged, #e0a13a);
-    }
+      .icon-button[aria-pressed='true'] {
+        color: var(--nc-color-flagged, #e0a13a);
+      }
 
-    .icon-button:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
+      .icon-button:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
 
-    tfoot td {
-      border-bottom: none;
-      border-top: 2px solid var(--wa-color-border);
-      font-weight: var(--wa-font-weight-bold, 700);
-      position: sticky;
-      bottom: 0;
-      background: var(--wa-color-surface);
-    }
+      tfoot td {
+        border-bottom: none;
+        border-top: 2px solid var(--wa-color-border);
+        font-weight: var(--wa-font-weight-bold, 700);
+        position: sticky;
+        bottom: 0;
+        background: var(--wa-color-surface);
+      }
 
-    .note {
-      font-weight: var(--wa-font-weight-normal, 400);
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .note {
+        font-weight: var(--wa-font-weight-normal, 400);
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    /* -- the inline editors -- */
+      /* -- the inline editors -- */
 
-    .combobox {
-      position: relative;
-    }
+      .combobox {
+        position: relative;
+      }
 
-    .combobox input {
-      font: inherit;
-      width: 100%;
-      min-width: 12ch;
-      color: var(--wa-color-text);
-      background: var(--wa-color-bg);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-    }
+      .combobox input {
+        font: inherit;
+        width: 100%;
+        min-width: 12ch;
+        color: var(--wa-color-text);
+        background: var(--wa-color-bg);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-sm, 6px);
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+      }
 
-    .combobox input:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
+      .combobox input:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
 
-    .options {
-      position: absolute;
-      z-index: 2;
-      margin: 2px 0 0;
-      padding: 0;
-      list-style: none;
-      max-height: 12rem;
-      overflow: auto;
-      min-width: 100%;
-      background: var(--wa-color-surface);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      box-shadow: var(--wa-shadow-m, 0 4px 12px rgba(0, 0, 0, 0.25));
-    }
+      .options {
+        position: absolute;
+        z-index: 2;
+        margin: 2px 0 0;
+        padding: 0;
+        list-style: none;
+        max-height: 12rem;
+        overflow: auto;
+        min-width: 100%;
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-sm, 6px);
+        box-shadow: var(--wa-shadow-m, 0 4px 12px rgba(0, 0, 0, 0.25));
+      }
 
-    .options li {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      cursor: pointer;
-      white-space: nowrap;
-    }
+      .options li {
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        cursor: pointer;
+        white-space: nowrap;
+      }
 
-    .options li[aria-selected='true'] {
-      background: var(--wa-color-brand, #4a6cf7);
-      color: var(--wa-color-on-brand, #fff);
-    }
+      .options li[aria-selected='true'] {
+        background: var(--wa-color-brand, #4a6cf7);
+        color: var(--wa-color-on-brand, #fff);
+      }
 
-    /* The label names the field for a screen reader; the column header shows
-       a sighted user the same thing, so it does not need the space. */
-    .vendor-input::part(form-control-label) {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      /* The label names the field for a screen reader; the column header shows
+         a sighted user the same thing, so it does not need the space. */
+      .vendor-input::part(form-control-label) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    .edit-actions {
-      display: flex;
-      gap: var(--wa-space-2xs, 4px);
-      justify-content: flex-end;
-    }
+      .edit-actions {
+        display: flex;
+        gap: var(--wa-space-2xs, 4px);
+        justify-content: flex-end;
+      }
 
-    .edit-actions button {
-      font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
-      color: inherit;
-      background: none;
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: 2px var(--wa-space-xs, 6px);
-      cursor: pointer;
-    }
+      .edit-actions button {
+        font: inherit;
+        font-size: var(--wa-font-size-s, 13px);
+        color: inherit;
+        background: none;
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-sm, 6px);
+        padding: 2px var(--wa-space-xs, 6px);
+        cursor: pointer;
+      }
 
-    .edit-actions button:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
-  `;
+      .edit-actions button:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   rows: RegisterTableRow[] = [];

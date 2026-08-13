@@ -359,6 +359,8 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         this.rows = rows;
         this.aging = aging;
       } else if (view === 'new') {
+        // Active only: `create_invoice` refuses an archived client, so the
+        // picker must not offer one.
         const [clients, next] = await Promise.all([
           this.client.getClients(),
           this.client.getNextInvoiceNumber(),
@@ -375,7 +377,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         if (seq !== this.loadSeq) return;
         this.detail = detail;
         if (view === 'edit') {
-          this.clients = await this.client.getClients();
+          // Archived included, because an invoice raised before its client was
+          // archived still names it: a list without it would render the Client
+          // select blank. The select is disabled in edit mode — an invoice
+          // stays with the client it was raised for — so nothing archived
+          // becomes choosable here.
+          this.clients = await this.client.getClients(true);
           if (seq !== this.loadSeq) return;
           this.form = invoiceFormFrom(detail);
           this.formErrors = {};

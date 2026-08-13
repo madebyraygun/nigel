@@ -39,7 +39,19 @@ pub trait AssetPublisher {
 }
 
 pub trait Mailer {
-    fn send_invoice(&self, to: &str, subject: &str, html: &str, pdf: &[u8]) -> Result<()>;
+    /// One message to the billing contact with every other contact copied.
+    ///
+    /// Each entry is already a formatted header value, so a name carrying a
+    /// comma is quoted before it gets here — `mailgun::format_address` is the
+    /// one place that happens, for a recipient as much as for the sender.
+    fn send_invoice(
+        &self,
+        to: &str,
+        cc: &[String],
+        subject: &str,
+        html: &str,
+        pdf: &[u8],
+    ) -> Result<()>;
 }
 
 #[cfg(test)]

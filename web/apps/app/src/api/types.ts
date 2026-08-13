@@ -571,6 +571,7 @@ export const CONFLICT_REASONS = [
   'invoice_not_payable',
   'send_not_configured',
   'send_misconfigured',
+  'client_archived',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -845,6 +846,8 @@ export interface Client {
   email: string | null;
   billingAddress: string | null;
   notes: string | null;
+  /** When the client was archived, or `null` while they are active. */
+  archivedAt: string | null;
 }
 
 /** One row of a client's invoice history. */
@@ -861,7 +864,33 @@ export interface ClientInvoiceRow {
  * `GET /api/clients/{id}` — the client's own fields flattened beside its
  * history, which is why this extends `Client` rather than nesting one.
  */
+/**
+ * One address a client can be reached at.
+ *
+ * Exactly one row per client carries `isBilling`, and that one is the address
+ * `Client.email` projects and the invoice's `To`; the rest are copied.
+ */
+export interface ClientContact {
+  id: number;
+  clientId: number;
+  name: string | null;
+  email: string;
+  title: string | null;
+  isBilling: boolean;
+  position: number;
+}
+
+/** A contact as it is sent. No `id`: the write replaces the whole list. */
+export interface NewContact {
+  email: string;
+  name?: string | null;
+  title?: string | null;
+  isBilling?: boolean;
+}
+
 export interface ClientDetail extends Client {
+  /** Every address, billing first. Not on the list row, which stays one query. */
+  contacts: ClientContact[];
   /** Newest number first. */
   invoices: ClientInvoiceRow[];
   /** Open invoices only, clamped per invoice so no overpayment leaks across. */
@@ -1036,6 +1065,8 @@ export interface NewClientRequest {
   email?: string | null;
   billingAddress?: string | null;
   notes?: string | null;
+  /** Replaces the whole list. Sending it with `email` is a 400. */
+  contacts?: NewContact[];
 }
 
 /**
@@ -1048,6 +1079,8 @@ export interface ClientPatch {
   email?: string | null;
   billingAddress?: string | null;
   notes?: string | null;
+  /** Absent leaves the list alone, present replaces it whole — like `items`. */
+  contacts?: NewContact[];
 }
 
 /**
