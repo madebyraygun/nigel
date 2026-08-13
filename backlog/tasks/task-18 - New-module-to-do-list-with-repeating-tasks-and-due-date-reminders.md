@@ -8,7 +8,7 @@ labels:
   - enhancement
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/160'
+  - 'archived issue #160'
 ---
 
 ## Description
@@ -62,5 +62,5 @@ Add a `todos` table via a new schema migration with columns for title, descripti
 - [ ] **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 
 ---
-*Migrated from [GitHub issue #160](https://github.com/madebyraygun/nigel-keeps-your-books/issues/160)*
+*Migrated from archived GitHub issue #160*
 <!-- SECTION:DESCRIPTION:END -->

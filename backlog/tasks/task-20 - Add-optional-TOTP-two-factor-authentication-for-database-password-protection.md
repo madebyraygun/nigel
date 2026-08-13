@@ -8,7 +8,7 @@ updated_date: '2026-08-11 17:08'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/166'
+  - 'archived issue #166'
 ---
 
 ## Description

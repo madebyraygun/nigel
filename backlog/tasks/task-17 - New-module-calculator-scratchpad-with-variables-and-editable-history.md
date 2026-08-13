@@ -8,7 +8,7 @@ labels:
   - enhancement
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/158'
+  - 'archived issue #158'
 ---
 
 ## Description
@@ -59,5 +59,5 @@ Add a new `cli/calc.rs` module implementing the calculator as a ratatui TUI scre
 - [ ] **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 
 ---
-*Migrated from [GitHub issue #158](https://github.com/madebyraygun/nigel-keeps-your-books/issues/158)*
+*Migrated from archived GitHub issue #158*
 <!-- SECTION:DESCRIPTION:END -->

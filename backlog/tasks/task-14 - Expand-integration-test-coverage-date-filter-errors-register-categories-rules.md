@@ -12,7 +12,7 @@ labels:
   - reliability
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/122'
+  - 'archived issue #122'
 priority: low
 ---
 
@@ -33,5 +33,5 @@ PR #110 added 15 integration tests covering the main CLI dispatch paths. The fol
 Follow-up from PR #110 review.
 
 ---
-*Migrated from [GitHub issue #122](https://github.com/madebyraygun/nigel-keeps-your-books/issues/122)*
+*Migrated from archived GitHub issue #122*
 <!-- SECTION:DESCRIPTION:END -->

@@ -7,7 +7,7 @@ created_date: '2026-04-25 18:05'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/30'
+  - 'archived issue #30'
 ---
 
 ## Description
@@ -16,5 +16,5 @@ references:
 (no description on original issue)
 
 ---
-*Migrated from [GitHub issue #30](https://github.com/madebyraygun/nigel-keeps-your-books/issues/30)*
+*Migrated from archived GitHub issue #30*
 <!-- SECTION:DESCRIPTION:END -->

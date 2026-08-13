@@ -86,7 +86,7 @@ This intentionally changes existing `--account` export output, so that both filt
 - `report register`'s interactive header now lists year alongside the other filters, matching `browse register`; previously account suppressed the year entirely.
 - Verified end-to-end against demo data: filtered text and PDF export headers and filenames, uncategorized selection, unknown-category exit code, clap conflict message, and the browse TUI footer captured in a pty.
 
-Draft PR: https://github.com/madebyraygun/nigel-keeps-your-books/pull/181
+Draft PR: archived PR #181
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

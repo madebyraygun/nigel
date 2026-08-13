@@ -10,7 +10,7 @@ labels:
   - architecture
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/81'
+  - 'archived issue #81'
 priority: medium
 ---
 

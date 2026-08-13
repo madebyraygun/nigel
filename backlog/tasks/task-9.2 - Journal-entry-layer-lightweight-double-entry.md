@@ -11,7 +11,7 @@ dependencies:
   - TASK-9.1
 parent_task_id: TASK-9
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/81'
+  - 'archived issue #81'
 priority: low
 ---
 
@@ -52,7 +52,7 @@ Depends on TASK-9.1 for the class vocabulary. Nothing in TASK-102 depends on thi
 TASK-27 (trial balance) does **not** wait on this — it is derivable from single-entry data today and TASK-27 says so explicitly. The old sequencing note here claimed the opposite; that contradiction is resolved in TASK-27's favour. If this layer lands later, TASK-27's report should be reimplemented as a straight query over journal lines and its derivation logic dropped.
 
 ---
-*Migrated from [GitHub issue #81](https://github.com/madebyraygun/nigel-keeps-your-books/issues/81)*
+*Migrated from archived GitHub issue #81*
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

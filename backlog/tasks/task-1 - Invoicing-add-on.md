@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/24'
+  - 'archived issue #24'
 ---
 
 ## Description
@@ -27,5 +27,5 @@ Add the ability to create, send, and track invoices. This is the natural trigger
 **Architectural note:** This should ship alongside a journal entry layer. Each invoice creates a journal entry (debit AR, credit revenue). When payment is matched, a second entry clears AR (debit cash, credit AR). Existing bank-import workflows continue unchanged — the journal entries are generated behind the scenes. See discussion in [link to double-entry design doc when created].
 
 ---
-*Migrated from [GitHub issue #24](https://github.com/madebyraygun/nigel-keeps-your-books/issues/24)*
+*Migrated from archived GitHub issue #24*
 <!-- SECTION:DESCRIPTION:END -->

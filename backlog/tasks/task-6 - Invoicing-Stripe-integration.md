@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/29'
+  - 'archived issue #29'
 ---
 
 ## Description
@@ -17,5 +17,5 @@ references:
 Generate online payment links (requires Stripe API key)
 
 ---
-*Migrated from [GitHub issue #29](https://github.com/madebyraygun/nigel-keeps-your-books/issues/29)*
+*Migrated from archived GitHub issue #29*
 <!-- SECTION:DESCRIPTION:END -->

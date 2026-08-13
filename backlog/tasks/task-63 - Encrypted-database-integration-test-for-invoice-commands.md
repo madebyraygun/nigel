@@ -11,7 +11,7 @@ labels:
   - testing
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/pull/172'
+  - 'archived PR #172'
 documentation:
   - >-
     docs/superpowers/specs/2026-08-11-task-69-71-63-70-invoice-correctness-design.md

@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/26'
+  - 'archived issue #26'
 ---
 
 ## Description
@@ -18,5 +18,5 @@ Create PDF invoices from the TUI or CLI.
 Includes template customization features.
 
 ---
-*Migrated from [GitHub issue #26](https://github.com/madebyraygun/nigel-keeps-your-books/issues/26)*
+*Migrated from archived GitHub issue #26*
 <!-- SECTION:DESCRIPTION:END -->

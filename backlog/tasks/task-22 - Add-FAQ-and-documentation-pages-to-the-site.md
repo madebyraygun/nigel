@@ -7,7 +7,7 @@ created_date: '2026-04-25 18:06'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/169'
+  - 'archived issue #169'
 ---
 
 ## Description
@@ -45,5 +45,5 @@ Create `site/faq.html` and `site/docs.html` using the same `styles.css` and visu
 - [ ] **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 
 ---
-*Migrated from [GitHub issue #169](https://github.com/madebyraygun/nigel-keeps-your-books/issues/169)*
+*Migrated from archived GitHub issue #169*
 <!-- SECTION:DESCRIPTION:END -->

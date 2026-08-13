@@ -9,7 +9,7 @@ labels:
   - invoicing
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/pull/172'
+  - 'archived PR #172'
 priority: medium
 ---
 

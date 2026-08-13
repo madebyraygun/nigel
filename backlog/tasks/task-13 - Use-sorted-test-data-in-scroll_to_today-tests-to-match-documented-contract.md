@@ -9,7 +9,7 @@ labels:
   - cleanup
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/121'
+  - 'archived issue #121'
 priority: low
 ---
 
@@ -29,5 +29,5 @@ Update the test to use a cleanly sorted dataset.
 Follow-up from PR #109 review.
 
 ---
-*Migrated from [GitHub issue #121](https://github.com/madebyraygun/nigel-keeps-your-books/issues/121)*
+*Migrated from archived GitHub issue #121*
 <!-- SECTION:DESCRIPTION:END -->
