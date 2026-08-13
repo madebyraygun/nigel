@@ -15,9 +15,9 @@ status=0
 # are already public — and the tree is clean, so any hit is a regression.
 # nigel.rygn.io is the project's own Pages domain and is deliberately kept.
 gate='Raygun|RAYGUN|\bDalton\b|\bRooney\b|(^|[^.a-z])rygn\.io|/Users/[a-z]|P\.O\. Box'
-# The fixture address is allowed; anything else shaped like it is not. Stated as an
-# allowlist so the real value never has to appear in this file.
-allow='P\.O\. Box 1234'
+# Fixture and placeholder values are allowed; anything else shaped like them is not.
+# Stated as an allowlist so the real values never have to appear in this file.
+allow='P\.O\. Box 1234|/Users/(sam|you|<|\$)'
 
 # Real book figures are large and oddly precise; statutory and fixture amounts are
 # neither. Prose only — Rust test constants are not where this leaks. Advisory.
