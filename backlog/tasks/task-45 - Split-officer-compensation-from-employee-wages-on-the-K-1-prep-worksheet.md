@@ -4,11 +4,12 @@ title: Split officer compensation from employee wages on the K-1 prep worksheet
 status: To Do
 assignee: []
 created_date: '2026-08-06 22:35'
+updated_date: '2026-08-13 19:48'
 labels:
   - enhancement
   - tax
 dependencies: []
-priority: low
+priority: medium
 ---
 
 ## Description

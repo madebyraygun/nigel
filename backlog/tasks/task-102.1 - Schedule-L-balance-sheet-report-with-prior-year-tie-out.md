@@ -4,7 +4,7 @@ title: Schedule L balance sheet report with prior-year tie-out
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
-updated_date: '2026-08-13 17:30'
+updated_date: '2026-08-13 19:48'
 labels:
   - tax
   - reports
@@ -46,9 +46,10 @@ Coordinate with TASK-27 (trial balance): both need as-of-date balances from TASK
 - [ ] #2 Accounts are grouped into assets, liabilities and equity using the TASK-9.1 classification, with correct sign conventions for liability accounts
 - [ ] #3 Prior-year filed figures can be recorded and a variance column flags any beginning balance that does not tie to them
 - [ ] #4 Schedule L items Nigel does not track are named explicitly in the report rather than reported as zero
-- [ ] #5 The report is available in the interactive viewer and exports to PDF, text and CSV like other reports
-- [ ] #6 Update test coverage
-- [ ] #7 Create or update documentation, making sure to remove any out of date information
-- [ ] #8 All linting checks pass
-- [ ] #9 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
+- [ ] #5 Retained earnings is presented as a named residual, never a silent balancing plug, and is reconciled against TASK-102.3's ending AAA with any difference reported — a plug that always ties would conceal exactly the discrepancy this report exists to surface
+- [ ] #6 The report is available in the interactive viewer and exports to PDF, text and CSV like other reports
+- [ ] #7 Update test coverage
+- [ ] #8 Create or update documentation, making sure to remove any out of date information
+- [ ] #9 All linting checks pass
+- [ ] #10 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->

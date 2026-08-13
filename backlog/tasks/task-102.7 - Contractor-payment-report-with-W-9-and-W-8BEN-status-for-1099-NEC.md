@@ -4,7 +4,7 @@ title: Contractor payment report with W-9 and W-8BEN status for 1099-NEC
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
-updated_date: '2026-08-13 17:30'
+updated_date: '2026-08-13 19:49'
 labels:
   - tax
   - reports
@@ -18,7 +18,9 @@ priority: medium
 <!-- SECTION:DESCRIPTION:BEGIN -->
 1120-S Schedule B question 14a asks whether the corporation filed all required Forms 1099. For the 2025 return that was answered from memory, and initially answered wrong. Nigel holds every contractor payment already — `Contract Labor` carries the whole year of them — but has no way to total them per payee or to say which payees needed a form.
 
-The related problem is documentation status. One contractor is foreign, performed all work outside the United States, and is therefore outside 1099-NEC reporting and US withholding entirely under the service-source rule — but only because a signed Form W-8BEN is on file. That form expires at the end of the third full calendar year after signing, and the contractor has to be re-papered if the engagement outlives it. Nothing in the books records either fact.
+The threshold itself is not a constant. It was $600 through 2025 and rose for payments made after 31 December 2025, with inflation indexing after that — so a hardcoded figure is already wrong for the next filing. Store it per year, for the same reason TASK-102.4 stores the meals percentage per year rather than hardcoding 50%.
+
+The related problem is documentation status. One contractor is foreign, performed all work outside the United States, and is therefore outside 1099-NEC reporting and US withholding entirely under the service-source rule — chiefly because the services were performed abroad; the signed Form W-8BEN documents the payee's foreign status and protects the payer. (Foreign *entities* file W-8BEN-E rather than W-8BEN, so the register needs both.) That form expires at the end of the third full calendar year after signing, and the contractor has to be re-papered if the engagement outlives it. Nothing in the books records either fact.
 
 ## Proposal
 
@@ -34,8 +36,8 @@ Relevant code: `src/db.rs` (payee register + migration), `src/reports.rs`, `src/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `nigel report 1099 --year <Y>` totals payments per payee across reportable categories and flags those at or above the $600 threshold
-- [ ] #2 Payee tax documentation (W-9, W-8BEN, none) and its signing date can be recorded, with W-8BEN expiry computed
+- [ ] #1 `nigel report 1099 --year <Y>` totals payments per payee across reportable categories and flags those at or above the reporting threshold **for that year**; the threshold is a per-year value, not a constant — it was $600 through 2025 and rose for payments made after 31 December 2025, so a hardcoded figure is already wrong for the next filing
+- [ ] #2 Payee tax documentation can be recorded with its signing date — W-9 for US persons, W-8BEN for foreign individuals, W-8BEN-E for foreign entities, or none — with W-8BEN/W-8BEN-E expiry computed as 31 December of the third succeeding calendar year
 - [ ] #3 The report flags payees over the threshold with missing documentation, and documentation expiring before the next filing season
 - [ ] #4 Payments made by credit card or third-party payment network are identified so they can be excluded from 1099-NEC reporting deliberately
 - [ ] #5 Vendor names group reliably, whether by normalisation or a first-class payee record

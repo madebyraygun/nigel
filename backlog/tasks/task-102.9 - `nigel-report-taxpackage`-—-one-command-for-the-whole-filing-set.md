@@ -4,6 +4,7 @@ title: '`nigel report taxpackage` — one command for the whole filing set'
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
+updated_date: '2026-08-13 19:49'
 labels:
   - tax
   - reports
@@ -15,6 +16,8 @@ dependencies:
   - TASK-102.5
   - TASK-102.6
   - TASK-102.7
+  - TASK-102.8
+  - TASK-45
 parent_task_id: TASK-102
 priority: medium
 ---
@@ -27,7 +30,7 @@ The capstone. Once the sibling tasks land, the 1120-S filing set is a collection
 1. P&L mapped to 1120-S lines (K-1 prep worksheet)
 2. Schedule L balance sheet with prior-year tie-out
 3. Schedule M-2 / AAA rollforward
-4. Officer compensation vs. employee wages
+4. Officer compensation vs. employee wages (from TASK-45 and TASK-102.8, both prerequisites)
 5. Fixed asset register and §179 detail for Form 4562
 6. Tax payments ledger
 7. 1099 / contractor roster with documentation status
