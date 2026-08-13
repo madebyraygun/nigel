@@ -17,10 +17,10 @@ Verifying against real books is fine. **Write the step, not the numbers**: "must
 Sweep any commit touching `backlog/`, `docs/`, `CLAUDE.md` or `README.md`:
 
 ```bash
-git diff --cached -U0 | grep '^+' | grep -nE '\$[0-9][0-9,]{2,}|[0-9]{2}-[0-9]{7}|[0-9]{3}-[0-9]{2}-[0-9]{4}'
+./scripts/check-no-real-data.sh --staged    # or with no argument to scan the tree
 ```
 
-Every hit must be statutory or fixture data.
+It hard-fails on identity strings and warns on figures shaped like real book data; every warning must be statutory or fixture data. CI runs the same script on every push and pull request.
 
 If real data does reach a commit, stop and tell the operator. A force-push does not remove it — the object stays retrievable by SHA through the web UI and API, deleting the branch does not help, and a pull request cannot be deleted at all. Only a GitHub Support purge finishes the job.
 

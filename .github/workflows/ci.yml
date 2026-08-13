@@ -10,6 +10,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+
+  no-real-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for real book data
+        run: ./scripts/check-no-real-data.sh
+
   check:
     strategy:
       matrix:
