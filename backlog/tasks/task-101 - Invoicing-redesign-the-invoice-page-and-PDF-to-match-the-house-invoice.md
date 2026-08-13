@@ -4,12 +4,16 @@ title: 'Invoicing: redesign the invoice page and PDF to match the house invoice'
 status: To Do
 assignee: []
 created_date: '2026-08-12 23:53'
+updated_date: '2026-08-13 00:10'
 labels:
   - invoicing
   - pdf
   - ui
   - enhancement
 dependencies: []
+documentation:
+  - docs/superpowers/specs/2026-08-12-task-101-house-invoice-layout-design.md
+  - docs/superpowers/plans/2026-08-12-task-101-house-invoice-layout.md
 priority: high
 ---
 
