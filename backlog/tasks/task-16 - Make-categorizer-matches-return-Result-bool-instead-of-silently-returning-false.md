@@ -11,7 +11,7 @@ labels:
   - P2
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/136'
+  - 'archived issue #136'
 priority: low
 ---
 
@@ -36,5 +36,5 @@ Change signature from `fn matches(...) -> bool` to `fn matches(...) -> Result<bo
 Identified during PR #132 review (silent-failure-hunter agent). Currently mitigated by caller pre-validation in `rules::test()`, but the function itself encodes a "failure looks like no match" contract.
 
 ---
-*Migrated from [GitHub issue #136](https://github.com/madebyraygun/nigel-keeps-your-books/issues/136)*
+*Migrated from archived GitHub issue #136*
 <!-- SECTION:DESCRIPTION:END -->

@@ -6,6 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Nigel — a Rust CLI bookkeeping tool to replace QuickBooks for small consultancies, usable for personal finances as well. Cash-basis, single-entry accounting with bank CSV/XLSX imports, rules-based categorization, and SQLite storage. A database keeps books under a **profile** — `business` (the default, Schedule C / 1120-S chart of accounts) or `personal` (a household chart with no tax mapping) — chosen at `nigel init --profile` or in onboarding and stored in the `metadata` table.
 
+## ⛔ Public repository — no real book data (MANDATORY)
+
+This repo is public and Nigel is developed against the operator's live books. Never commit anything read off them, in any file or commit message: amounts (revenue, COGS, payroll, distributions, balances, discrepancies), real people's names, client or vendor names and their reference numbers, addresses, EINs, SSNs, bank details, ownership splits.
+
+Allowed: statutory figures every filer shares (the CA $800 minimum, the 1099 threshold, the $2,500 de minimis safe harbour, the 50% meals limit), and the fictional fixture cast — Acme, Cedar Systems, Juniper Labs, Harbor & Vale, Globex, Initech — with invented amounts.
+
+Verifying against real books is fine. **Write the step, not the numbers**: "must show positive ordinary business income rather than a loss — compare locally against the filed return." An acceptance criterion only the operator can discharge is a defect in the criterion; use a fixture instead.
+
+Sweep any commit touching `backlog/`, `docs/`, `CLAUDE.md` or `README.md`:
+
+```bash
+./scripts/check-no-real-data.sh --staged    # or with no argument to scan the tree
+```
+
+It hard-fails on identity strings and warns on figures shaped like real book data; every warning must be statutory or fixture data. CI runs the same script on every push and pull request.
+
+If real data does reach a commit, stop and tell the operator. A force-push does not remove it — the object stays retrievable by SHA through the web UI and API, deleting the branch does not help, and a pull request cannot be deleted at all. Only a GitHub Support purge finishes the job.
+
+Features stay general-purpose: no compiled-in payroll column labels, cap tables, or single-state tax rules. Those belong in configuration or an editable default.
+
 ## Architecture
 
 - **Crate layout:** lib + bin. `src/lib.rs` exposes every module (`db`, `models`, `reports`, `reviewer`, `importer`, `invoicing`, `categorizer`, `reconciler`, `migrations`, `settings`, `error`, `fmt`, `browser`, `tui`, `effects`, `pdf`, `cli`) as the `nigel` library; `src/main.rs` is the `nigel` binary and holds only clap parsing, the ratatui panic hook, and the dispatch pre-flight, calling into the library via `nigel::`

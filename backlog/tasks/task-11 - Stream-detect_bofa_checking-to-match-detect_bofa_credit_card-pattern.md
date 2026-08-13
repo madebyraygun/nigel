@@ -10,7 +10,7 @@ labels:
   - importers
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/117'
+  - 'archived issue #117'
 priority: low
 ---
 
@@ -24,5 +24,5 @@ PR #108 changed `detect_bofa_credit_card` to use `BufReader` streaming instead o
 Follow-up from PR #108 review.
 
 ---
-*Migrated from [GitHub issue #117](https://github.com/madebyraygun/nigel-keeps-your-books/issues/117)*
+*Migrated from archived GitHub issue #117*
 <!-- SECTION:DESCRIPTION:END -->

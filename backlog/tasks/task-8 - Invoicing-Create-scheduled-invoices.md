@@ -7,7 +7,7 @@ created_date: '2026-04-25 18:05'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/31'
+  - 'archived issue #31'
 ---
 
 ## Description
@@ -16,5 +16,5 @@ references:
 Invoices that can auto-spawn based on a template and schedule, saved as draft and ready to send
 
 ---
-*Migrated from [GitHub issue #31](https://github.com/madebyraygun/nigel-keeps-your-books/issues/31)*
+*Migrated from archived GitHub issue #31*
 <!-- SECTION:DESCRIPTION:END -->

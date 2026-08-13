@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/28'
+  - 'archived issue #28'
 ---
 
 ## Description
@@ -17,5 +17,5 @@ references:
 Configure and send payment reminders for outstanding invoices automatically
 
 ---
-*Migrated from [GitHub issue #28](https://github.com/madebyraygun/nigel-keeps-your-books/issues/28)*
+*Migrated from archived GitHub issue #28*
 <!-- SECTION:DESCRIPTION:END -->

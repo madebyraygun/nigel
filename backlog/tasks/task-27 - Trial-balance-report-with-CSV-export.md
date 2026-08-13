@@ -4,7 +4,7 @@ title: Trial balance report with CSV export
 status: To Do
 assignee: []
 created_date: '2026-08-05 23:26'
-updated_date: '2026-08-05 23:30'
+updated_date: '2026-08-13 15:45'
 labels:
   - enhancement
   - reports
@@ -26,13 +26,15 @@ Nigel is cash-basis single-entry, but a balancing trial balance is derivable fro
 Every transaction hits exactly one account and one category, so the two sides tie automatically as long as nothing is uncategorized. What is missing today:
 
 - `get_balance()` in src/reports.rs has no date filter. It reports balances as of today, so it cannot produce year-end balance-sheet figures. An as-of-date balance function is the main new primitive, and `get_balance()` would benefit from it regardless.
-- There is no equity concept. Prior-year retained earnings has to be computed as a plug row.
-- Owner distributions/contributions currently live as expense categories, so they would import into tax software as deductions and overstate expenses. They belong in the equity section.
+- There is no equity concept. Prior-year retained earnings has to be computed as a plug row. (Addressed by TASK-9.1.)
+- Owner distributions/contributions currently live as expense categories, so they would import into tax software as deductions and overstate expenses. They belong in the equity section. (Addressed by TASK-9.1 and TASK-102.2.)
 - Reports support --format pdf|text only. CSV is a new output format.
 
 ## Relationship to TASK-9
 
-TASK-9 (journal entry layer) lists trial balance as something it enables. This task deliberately does not wait for it: the numbers are derivable from single-entry today, and TASK-9 is a large architectural change with no date. If TASK-9 lands later, this report should be reimplemented as a straight query over journal lines and the derivation logic dropped. Not a blocking dependency in either direction.
+TASK-9 has been split. **TASK-9.1 (account classification)** now supplies the asset/liability/equity vocabulary this report needs, and the equity treatment that keeps owner distributions out of the deduction totals — so the two bullets below about missing equity and misplaced distributions are answered there rather than worked around here. Treat TASK-9.1 as a soft prerequisite: this report is much simpler after it, and duplicating its classification logic locally would be waste.
+
+**TASK-9.2 (journal lines)** is not a dependency in either direction, and the contradiction between the old TASK-9 sequencing note and this paragraph is resolved in this task's favour. The numbers are derivable from single-entry today. If TASK-9.2 lands later, this report should be reimplemented as a straight query over journal lines and the derivation logic dropped.
 
 ## Priority caveat
 
@@ -40,7 +42,11 @@ TaxAct does not publish a required column format ("generally Account or Descript
 
 ## Out of scope
 
-Schedule L balance-sheet items Nigel does not track: fixed assets, depreciation, A/R, A/P, loan principal. Those stay manual.
+Schedule L balance-sheet items Nigel does not track: fixed assets, depreciation, A/R, A/P, loan principal. Fixed assets are picked up separately by TASK-102.5; the rest stay manual.
+
+## Overlap with TASK-102.1
+
+TASK-102.1 (Schedule L report) needs the same as-of-date balances and the same classification. Whichever of the two starts first should build the shared primitive rather than each deriving balances its own way.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -61,4 +67,6 @@ Schedule L balance-sheet items Nigel does not track: fixed assets, depreciation,
 
 <!-- SECTION:NOTES:BEGIN -->
 TASK-28 (CSV output format for all reports) now covers the generic CSV writer. If TASK-28 lands first, AC #7 here narrows to defining the trial-balance column set and AC #8 drops entirely.
+
+TASK-9.1 (account classification) supplies equity and liability classes; AC #3 and AC #4 become straightforward reads rather than special cases once it lands.
 <!-- SECTION:NOTES:END -->

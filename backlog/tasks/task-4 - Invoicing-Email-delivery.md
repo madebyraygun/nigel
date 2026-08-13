@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/27'
+  - 'archived issue #27'
 ---
 
 ## Description
@@ -17,5 +17,5 @@ references:
 Send invoices via configured email client or via API (Mailgun or similar)
 
 ---
-*Migrated from [GitHub issue #27](https://github.com/madebyraygun/nigel-keeps-your-books/issues/27)*
+*Migrated from archived GitHub issue #27*
 <!-- SECTION:DESCRIPTION:END -->

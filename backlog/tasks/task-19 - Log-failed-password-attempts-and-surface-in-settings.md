@@ -8,7 +8,7 @@ labels:
   - enhancement
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/162'
+  - 'archived issue #162'
 ---
 
 ## Description
@@ -50,5 +50,5 @@ Store failed attempt data in the database (metadata table or new table) and disp
 - [ ] **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 
 ---
-*Migrated from [GitHub issue #162](https://github.com/madebyraygun/nigel-keeps-your-books/issues/162)*
+*Migrated from archived GitHub issue #162*
 <!-- SECTION:DESCRIPTION:END -->

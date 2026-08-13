@@ -9,7 +9,7 @@ labels:
   - cleanup
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/112'
+  - 'archived issue #112'
 priority: low
 ---
 
@@ -29,5 +29,5 @@ Remove the manual character validation and rely on `parse_amount` returning `Non
 Follow-up from PR #108 review.
 
 ---
-*Migrated from [GitHub issue #112](https://github.com/madebyraygun/nigel-keeps-your-books/issues/112)*
+*Migrated from archived GitHub issue #112*
 <!-- SECTION:DESCRIPTION:END -->

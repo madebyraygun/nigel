@@ -9,7 +9,7 @@ labels:
   - P2
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/135'
+  - 'archived issue #135'
 priority: low
 ---
 
@@ -44,5 +44,5 @@ Use it in `RulesCommands::Add`, `RulesCommands::Update`, `RulesCommands::Test`, 
 Identified during PR #132 review (silent-failure-hunter agent).
 
 ---
-*Migrated from [GitHub issue #135](https://github.com/madebyraygun/nigel-keeps-your-books/issues/135)*
+*Migrated from archived GitHub issue #135*
 <!-- SECTION:DESCRIPTION:END -->

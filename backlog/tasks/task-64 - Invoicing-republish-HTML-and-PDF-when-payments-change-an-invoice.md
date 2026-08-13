@@ -10,7 +10,7 @@ labels:
   - invoicing
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/pull/172'
+  - 'archived PR #172'
 documentation:
   - docs/superpowers/specs/2026-08-11-task-67-64-publish-pipeline-design.md
   - docs/superpowers/plans/2026-08-11-task-67-64-publish-pipeline.md

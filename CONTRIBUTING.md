@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/madebyraygun/nigel-keeps-your-books.git
-cd nigel-keeps-your-books
+git clone https://github.com/madebyraygun/nigel.git
+cd nigel
 cargo build
 ```
 

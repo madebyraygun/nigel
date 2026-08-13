@@ -4,10 +4,11 @@ title: Support point-in-time balances via --as-of date and opening balances
 status: To Do
 assignee: []
 created_date: '2026-08-06 23:05'
+updated_date: '2026-08-13 19:48'
 labels:
   - enhancement
 dependencies: []
-priority: medium
+priority: high
 ---
 
 ## Description

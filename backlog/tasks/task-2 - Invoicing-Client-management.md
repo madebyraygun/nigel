@@ -8,7 +8,7 @@ updated_date: '2026-08-11 19:36'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/25'
+  - 'archived issue #25'
 ---
 
 ## Description
@@ -17,5 +17,5 @@ references:
 Maintain a list of clients with contact details and billing info. Track invoice payment history per client for rich reporting.
 
 ---
-*Migrated from [GitHub issue #25](https://github.com/madebyraygun/nigel-keeps-your-books/issues/25)*
+*Migrated from archived GitHub issue #25*
 <!-- SECTION:DESCRIPTION:END -->

@@ -7,7 +7,7 @@ created_date: '2026-04-25 18:06'
 labels: []
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/168'
+  - 'archived issue #168'
 ---
 
 ## Description
@@ -61,5 +61,5 @@ Add `import` and `export` subcommands to the existing `nigel rules` command. The
 - [ ] **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 
 ---
-*Migrated from [GitHub issue #168](https://github.com/madebyraygun/nigel-keeps-your-books/issues/168)*
+*Migrated from archived GitHub issue #168*
 <!-- SECTION:DESCRIPTION:END -->

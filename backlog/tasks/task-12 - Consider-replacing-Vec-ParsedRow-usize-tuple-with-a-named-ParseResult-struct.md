@@ -12,7 +12,7 @@ labels:
   - importers
 dependencies: []
 references:
-  - 'https://github.com/madebyraygun/nigel-keeps-your-books/issues/118'
+  - 'archived issue #118'
 priority: low
 ---
 
@@ -35,5 +35,5 @@ struct ParseResult {
 Follow-up from PR #108 review.
 
 ---
-*Migrated from [GitHub issue #118](https://github.com/madebyraygun/nigel-keeps-your-books/issues/118)*
+*Migrated from archived GitHub issue #118*
 <!-- SECTION:DESCRIPTION:END -->
