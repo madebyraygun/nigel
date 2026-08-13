@@ -1652,6 +1652,31 @@ mod tests {
         }
     }
 
+    /// The letterhead holds two fragments, so neither can own the wrapper the
+    /// way `{{COMPANY_BLOCK}}` owns its own `.party` div. An installation with
+    /// no logo and no company would otherwise reserve the band's whole margin
+    /// above the title for nothing, where the PDF draws nothing at all.
+    #[test]
+    fn an_empty_letterhead_takes_up_no_room_on_the_stock_page() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<header class=\"letterhead\"></header>"),
+            "nothing to draw: {html}"
+        );
+        assert!(
+            html.contains(".letterhead:empty{display:none}"),
+            "and so nothing is drawn: {html}"
+        );
+    }
+
     #[test]
     fn the_stock_page_and_the_money_lines_agree() {
         let (mut inv, client, items) = sample();
@@ -1860,6 +1885,51 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;bo
         assert!(html.contains("Billed to: Acme"), "got: {html}");
         assert!(html.contains("Total: USD 250.00"), "got: {html}");
         assert!(!html.contains("{{"), "no unexpanded placeholder: {html}");
+    }
+
+    /// The house layout added seven placeholders and rewrote the stock page. A
+    /// template exported before any of that carries none of the new keys, and
+    /// every key it does carry has to render what it always rendered — so the
+    /// upgrade is invisible to an operator who owns their own template.
+    #[test]
+    fn the_pre_204_template_gains_nothing_and_loses_nothing_from_the_house_layout() {
+        let (mut inv, client, items) = sample();
+        inv.due_date = Some("2026-09-05".into());
+        inv.terms = Some("Net 30".into());
+
+        let html = render_invoice_html(
+            &brand_with(LEGACY_TEMPLATE, "ap@acme.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+
+        assert!(html.contains("Billed to: Acme"), "got: {html}");
+        assert!(
+            html.contains("Due: 2026-09-05"),
+            "the old {{{{DUE}}}} shape, unchanged: {html}"
+        );
+        assert!(
+            !html.contains("(Net 30)"),
+            "{{{{DUE}}}} did not gain the parenthetical: {html}"
+        );
+        assert!(
+            html.contains("<h3>Terms</h3>"),
+            "the old {{{{TERMS}}}} block, unchanged: {html}"
+        );
+        assert!(html.contains("ap@acme.test"), "{{{{CONTACT}}}}: {html}");
+        assert!(!html.contains("{{"), "no unexpanded placeholder: {html}");
+    }
+
+    /// The list a template must satisfy never grows: every placeholder the
+    /// house layout added is optional, which is what makes the test above hold
+    /// for every template exported from every earlier release.
+    #[test]
+    fn required_is_still_exactly_four_keys() {
+        assert_eq!(REQUIRED, &["NUMBER", "CLIENT", "ROWS", "TOTAL"]);
+        assert_eq!(REQUIRED_ALTERNATIVES, &[("TOTAL", "TOTALS")]);
     }
 
     #[test]

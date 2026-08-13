@@ -109,6 +109,54 @@ permissions on Unix. Use Stripe test keys (`sk_test_…`) while trying things ou
 }
 ```
 
+### The letterhead
+
+Who the invoice is *from* is not a secret and not an endpoint, so it lives in the
+books rather than in `settings.json` — five `metadata` keys in the database,
+edited from either front end:
+
+| Metadata key | What it is |
+|---|---|
+| `company_name` | Your business name. The From block's first line, the PDF's wordmark and document title, and the name `/api/status` reports |
+| `company_address` | Your address, one line per line |
+| `company_phone` | Your phone. Printed as `ph. 619.555.0123` |
+| `company_logo` | A PNG or JPEG as a `data:` URI |
+| `payment_instructions` | Your own text about how to pay — see below |
+
+```bash
+nigel                          # dashboard -> p (Settings)
+nigel serve                    # web UI -> Settings
+```
+
+The TUI's fields are single-line, so the address and the payment instructions
+take `\n` as a two-character escape and store real newlines; reopening a field
+shows the escape again. The web UI gives both a textarea and needs no escape.
+The logo field takes a **path to an image file** in the terminal and a file
+picker in the browser; either way the bytes are read, checked and stored as a
+`data:` URI, so the image is part of the books and moves with them.
+
+A logo must be a **PNG or a JPEG** and at most **128 KiB**. Nothing else is
+accepted: a stored logo is base64-inflated by a third into every email body and
+every published page, SVG will not render in most mail clients and cannot be
+embedded in the PDF at all, and a file whose extension disagrees with its bytes
+is refused rather than mislabelled into somebody's inbox. A refusal names the
+problem and leaves the stored value alone.
+
+**The Gmail caveat.** The page is the email body, and the logo travels in it as
+a `data:` URI. Gmail does not render those. A Gmail reader therefore sees the
+business name — the image's `alt` text — where the logo would be, while the PDF
+attached beside it carries the real image. Everything else in the body renders
+normally. An operator who needs the logo visible in a Gmail body can host the
+image and put an absolute `<img src="https://…">` in their own
+`templates/invoice.html`; Nigel does not host images, because that would make
+sending an invoice depend on a second piece of infrastructure staying up.
+
+`payment_instructions` is your text, printed under the foot rule on **both**
+documents, one line per line, with a `Payment` heading. Set it to your bank
+details, or to "Checks payable to …", or leave it unset — an installation that
+takes no bank transfers prints nothing at all, no heading and no block. Nigel
+never writes a sentence about how to pay you.
+
 ## Clients
 
 ```bash
@@ -327,10 +375,12 @@ it is not, which is why the button is dropped even when the Stripe URL is still
 in the row.
 
 Preview is the one invoicing command that works on a fresh install: it needs no
-Stripe, R2, or Mailgun configuration and makes no network call. With neither
-`contact_email` nor `from_email` set the direct-deposit contact line renders
-`(contact_email not configured)` and the command says so on stderr — the page is still complete enough to check the
-figures and the layout.
+Stripe, R2, or Mailgun configuration and makes no network call. The stock page
+prints no contact line at all, so an unconfigured install previews cleanly. A
+custom template that uses `{{CONTACT}}` with neither `contact_email` nor
+`from_email` set renders `(contact_email not configured)` and the command says so
+on stderr — the page is still complete enough to check the figures and the
+layout.
 
 In a build without the `pdf` feature the HTML is written, no PDF is, and the exit
 status is still 0:
@@ -488,10 +538,11 @@ If any step fails the invoice stays a draft and no email goes out, so a failed
 send is safe to retry. The command prints the public URL on success:
 `Sent invoice #1248: https://billing.example.com/i/aBc123.../index.html`.
 
-The published page shows the line items, the total, any notes and terms, a Pay
-button linking to Stripe, and bank-transfer instructions. The direct-deposit line
-tells the client to get in touch at `contact_email`, which falls back to
-`from_email` when it is not set.
+The published page shows your letterhead, the invoice metadata, who it is for,
+the line items, the money block, a Pay button linking to Stripe, and — under the
+foot rule — the notes, the terms and whatever `payment_instructions` says. It
+carries no contact line unless a custom template asks for one with
+`{{CONTACT}}`.
 
 ### Who the email is from
 
@@ -503,7 +554,7 @@ four different jobs:
 | `from_email` | the address Mailgun sends from |
 | `from_name` | the display name beside it; unset means the business name |
 | `reply_to_email` | the `Reply-To`; unset means the message carries no such header |
-| `contact_email` | the address the published page's direct-deposit line prints |
+| `contact_email` | what `{{CONTACT}}` prints, for a custom template that uses it |
 
 ```
 From: Acme LLC <billing@mg.example.com>
@@ -644,10 +695,14 @@ nothing to say.
 | `{{CLIENT_ADDRESS}}` | text | Client billing address, empty when unset |
 | `{{CLIENT_ADDRESS_BLOCK}}` | fragment | One `<br>`-prefixed line per typed line, empty when unset or blank |
 | `{{COMPANY}}` | text | Your business name, empty when unset |
-| `{{COMPANY_BLOCK}}` | fragment | `<p class="company">…</p>`, empty when unset |
+| `{{COMPANY_ADDRESS}}` | text | Your address as typed, newlines and all, empty when unset |
+| `{{COMPANY_PHONE}}` | text | Your phone, empty when unset |
+| `{{COMPANY_BLOCK}}` | fragment | The whole ruled From block — name, address lines, `ph.` line — empty when name, address and phone are all unset |
+| `{{LOGO}}` | fragment | `<img class="logo" src="data:…">`, empty when no logo is configured or the stored one cannot be used |
 | `{{ISSUE}}` | text | Issue date |
 | `{{DUE_DATE}}` | text | Due date, empty when there is none |
 | `{{DUE}}` | fragment | `<br>Due: …`, empty when there is none |
+| `{{META_ROWS}}` | fragment | The invoice metadata as `<tr><th>Label</th><td>value</td></tr>` rows — Invoice ID, Issue Date, and Due Date when there is one. Never empty: an invoice always has a number and an issue date |
 | `{{ROWS}}` | fragment | The line-item `<tr>` rows (**required**) |
 | `{{CURRENCY}}` | text | Currency code |
 | `{{SUBTOTAL}}` | text | Subtotal, two decimals |
@@ -656,9 +711,12 @@ nothing to say.
 | `{{TOTALS}}` | fragment | The whole money block as `<tr>` rows — see below. Never empty: it always carries the total |
 | `{{NOTES}}` | fragment | Notes block, empty when unset |
 | `{{TERMS}}` | fragment | Terms block, empty when unset |
+| `{{TERMS_BLOCK}}` | fragment | Terms block, empty when unset **or** when the terms already rode beside the due date in `{{META_ROWS}}` |
+| `{{PAYMENT_INSTRUCTIONS}}` | text | Your payment instructions as typed, empty when unset |
+| `{{PAYMENT_BLOCK}}` | fragment | `<h3>Payment</h3>` and one line per typed line, empty when unset |
 | `{{PAY_URL}}` | text | Stripe payment link, empty when there is none |
 | `{{PAY}}` | fragment | The Pay button, empty when there is no link |
-| `{{CONTACT}}` | text | Direct-deposit contact address (`contact_email`, or `from_email`) |
+| `{{CONTACT}}` | text | Contact address (`contact_email`, or `from_email`) |
 
 **Text** placeholders are HTML-escaped values you can put in element content or
 inside a quoted attribute value. **Fragment**
@@ -667,8 +725,17 @@ attribute produces broken HTML. The two kinds pair up: the fragment is the block
 that vanishes when there is nothing to say, and the text key beside it is the
 escaped value for an author who would rather place it themselves. `{{DUE_DATE}}`
 / `{{DUE}}`, `{{COMPANY}}` / `{{COMPANY_BLOCK}}`, `{{CLIENT_ADDRESS}}` /
-`{{CLIENT_ADDRESS_BLOCK}}`, `{{CLIENT_EMAIL}}` / `{{CLIENT_EMAIL_BLOCK}}` and
-`{{PAY_URL}}` / `{{PAY}}` are all that pairing.
+`{{CLIENT_ADDRESS_BLOCK}}`, `{{CLIENT_EMAIL}}` / `{{CLIENT_EMAIL_BLOCK}}`,
+`{{PAYMENT_INSTRUCTIONS}}` / `{{PAYMENT_BLOCK}}` and `{{PAY_URL}}` / `{{PAY}}`
+are all that pairing.
+
+The stock page uses `{{META_ROWS}}`, `{{TERMS_BLOCK}}` and `{{PAYMENT_BLOCK}}`.
+`{{DUE}}`, `{{DUE_DATE}}`, `{{TERMS}}` and `{{CONTACT}}` are unchanged and remain
+available: a template that carries them renders exactly what it always rendered —
+`{{DUE}}` is still `<br>Due: 2026-09-05` with no terms folded into it, and
+`{{TERMS}}` is still the block whenever terms are set. The newer keys are the
+ones that keep the two documents saying the same thing, which is why the stock
+page moved to them.
 
 `{{TOTALS}}` is the money block: one `<tr><td colspan="3">Label</td><td>USD
 250.00</td></tr>` per line, the emphasised ones carrying `class="total"`. Which
@@ -730,26 +797,48 @@ template path` and `nigel invoice preview` both report the problem.
 
 ## Customizing the invoice PDF
 
-The PDF has no template. It is drawn by code, and the one thing it takes from
-you is your business name:
+The PDF has no template. It is drawn by code, from the same letterhead and the
+same shared decisions the page draws from, and it carries the same blocks in the
+same order:
 
 ```
-Invoice #1248                 <- the invoice number
-Bluepeak LLC                    <- your business name
-Billed to: Acme Co
-123 Main St                   <- the client's billing address, one row per line
-Springfield, IL 62704
-ap@acme.test                  <- the client's billing email
-Issued: 2026-08-04
-Due: 2026-09-03
+[logo]                          From
+                                | Bluepeak LLC
+                                | P.O. Box 1234
+                                | Springfield, CA 90001
+                                | ph. 619.555.0123
+Invoice #1248
+
+Invoice ID   1248               Invoice For
+Issue Date   2026-08-04         | Acme Co
+Due Date     2026-09-05         | 123 Main St
+             (Net 30)           | Springfield, IL 62704
+                                | ap@acme.test
+
+Description        Quantity  Unit Price     Amount
+--------------------------------------------------
+Design                    2     $100.00    $200.00
+--------------------------------------------------
+                                  Total (USD)  $200.00
+
+--------------------------------------------------
+Notes
+Terms
+Payment
 ```
 
-Each of those client lines is drawn only when there is one, so a client with a
-name and nothing else gets `Issued:` directly under the name — no empty row and
-no label with nothing after it. A billing address is drawn at most six lines
-deep, with `...` for the rest: this document has no page-break logic under that
-block, and a client block that runs off the bottom margin is never what anyone
-wanted. Both documents clamp identically, so the two still agree.
+Every block is drawn only when there is something in it. A client with a name
+and nothing else gets no empty rows and no labels with nothing after them; an
+installation with no letterhead gets no `From` heading, no rule and no bare
+`ph.`; an invoice with no due date has no Due Date row. The address is drawn at
+most six lines deep with `...` for the rest — this document has no page-break
+logic under that block, and a client block running off the bottom margin is
+never what anyone wanted. The page clamps identically, so the two still agree.
+
+Single-line terms ride beside the due date as `2026-09-05 (Net 30)` on both
+documents. Terms that run to a paragraph stay their own block under the foot
+rule instead, because a paragraph in parentheses after a date reads as neither.
+Whichever way they fall, they appear once.
 
 Below the line items the PDF prints the same money block the page does, from the
 same rule: Subtotal and Tax only when there is tax, Total always, Paid and
@@ -758,45 +847,56 @@ last three name the currency — `USD 60.00` — exactly as the page does, becau
 they are new to both documents and a bare `$` cannot say which currency it
 means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
 
-The PDF carries **no payment link**, deliberately. An emailed attachment cannot
-be recalled or republished, so a live charge link inside one would outlive the
-settlement it was created for — the same reasoning that makes voiding an invoice
-deactivate its Stripe link. Paying online belongs to the published page, which
-is the artifact Nigel can correct after the fact.
-
-That name is the `company_name` the rest of Nigel already knows — the same value
-`{{COMPANY}}` renders on the HTML page — so setting it once brands both:
-
-```bash
-nigel                          # dashboard -> p (Settings) -> Business name
-```
-
-It also becomes the PDF's document title (`Bluepeak LLC - Invoice #1248`), which is
-what a viewer puts in its window and what a browser suggests as a filename. Leave
-`company_name` unset and the document is headed by the invoice number alone —
-nothing is invented and no placeholder appears.
+`company_name` also becomes the PDF's document title (`Bluepeak LLC - Invoice
+#1248`), which is what a viewer puts in its window and what a browser suggests as
+a filename. Leave it unset and the document is headed by the invoice number
+alone — nothing is invented and no placeholder appears.
 
 Everything else about the PDF — typography, column widths, the order of the
 blocks — is fixed. Customize the HTML page instead; it is the artifact clients
 open, and the PDF rides along as the attachment.
 
-### Why there is no logo
+### The logo in the PDF
 
-A logo would mean embedding an image, and neither route is worth its price:
+The PDF embeds the **real logo**, top left, fitted into a 60 × 16 mm box with
+its aspect ratio kept — a wide wordmark fills the width and a tall mark fills the
+height, and neither is stretched. It ends level with the From block beside it.
 
-- **`printpdf`'s image support** (`embedded_images`) pulls in nine crates —
-  `image`, `png`, `gif`, `jpeg-decoder`, `tiff`, and friends — because its
-  `image` dependency hard-enables every format. There is no way to take PNG
-  alone. Its soft-mask path also sizes a transparent image's mask from the
-  image's *width*, so a wide logo — the shape a logo actually is — embeds
-  wrong; working around that means building the image object and splitting the
-  alpha channel by hand.
-- **HTML-to-PDF** (headless browser, Typst, WeasyPrint) would make the page and
-  the PDF one document, but Nigel ships as a single static binary with nothing
-  to install, and none of those three can be carried inside one.
+Two things made that affordable:
 
-So the PDF stays text. Put your logo on the HTML page, where an `<img>` costs
-nothing.
+- **Cost, measured rather than estimated.** `printpdf`'s `embedded_images`
+  feature pulls nine crates — `image`, `png`, `gif`, `jpeg-decoder`, `tiff`,
+  `color_quant`, `fdeflate`, `bytemuck` and `bitflags` — because its `image`
+  dependency hard-enables every format; PNG alone is not on offer. On identical
+  source, turning the feature on cost **84,352 bytes** of release binary
+  (25,317,000 → 25,401,352), and the whole change — the feature plus the code
+  that actually decodes, flattens and embeds an image — cost **1,015,728 bytes**,
+  about 992 KiB, on a 24 MiB binary.
+- **The soft-mask defect, made unreachable.** printpdf 0.7 sizes a transparent
+  image's mask from the image's *width*, so a wide transparent wordmark — the
+  shape a logo actually is — embeds wrong. Nothing here ever hands printpdf an
+  RGBA image: any alpha is composited onto white first, in the one function that
+  builds what printpdf receives, so the broken path is not reachable rather than
+  merely avoided. White because a PDF page is white, and compositing onto the
+  surface the image will sit on is the only choice that is not an invention about
+  someone's brand.
+
+**A logo problem never fails a render or a send.** A stored value that is not a
+data URI, not a PNG or JPEG, over the size cap, undecodable, or zero-sized, and
+an image the encoder will not take, all end the same way: the PDF draws the
+business name as a text wordmark and the page renders no `<img>` at all. An
+invoice is a document about money; a logo is decoration on it, and decoration
+does not get to stop the money.
+
+The PDF carries **no payment link and no URL of any kind**, deliberately. An
+emailed attachment cannot be recalled or republished, so a live charge link
+inside one would outlive the settlement it was created for — the same reasoning
+that makes voiding an invoice deactivate its Stripe link, and nothing deactivates
+a link when an invoice is paid. Printing the page's address instead was
+considered and rejected: a tokenized URL as unclickable text is sixty characters
+of noise beside the figure that matters, and the email already carries the link.
+Paying online belongs to the published page, which is the artifact Nigel can
+correct after the fact.
 
 ## Recording payments
 

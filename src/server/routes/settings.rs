@@ -1,4 +1,4 @@
-//! Settings: the business name, the auto-update toggle, the active data
+//! Settings: the letterhead, the auto-update toggle, the active data
 //! directory, and the database password.
 //!
 //! Parity target is `cli/settings_manager.rs` plus `nigel load`. The four
@@ -7,8 +7,8 @@
 //! and `decrypt_database` finish with a rename and drop the `-wal`/`-shm`
 //! sidecars, which a live connection elsewhere would not survive.
 //!
-//! Every route here sits behind the locked guard. `company-name` plainly needs
-//! the key; `settings/app` does not, but nothing on the unlock screen reads it,
+//! Every route here sits behind the locked guard. `settings/company` plainly
+//! needs the key; `settings/app` does not, but nothing on the unlock screen reads it,
 //! and exempting a route to serve a screen that does not exist is how a guard
 //! rots. `password/change` and `password/remove` carry the current password in
 //! the body and would technically work while locked — exempting them would hand

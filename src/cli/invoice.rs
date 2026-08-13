@@ -468,10 +468,9 @@ pub fn show(number: i64) -> Result<()> {
     Ok(())
 }
 
-/// The direct-deposit contact line when neither `contact_email` nor
-/// `from_email` is configured. Preview is the one invoicing command that runs
-/// without any configuration, so it renders a visible stand-in rather than
-/// refusing.
+/// What `{{CONTACT}}` prints when neither `contact_email` nor `from_email` is
+/// configured. Preview is the one invoicing command that runs without any
+/// configuration, so it renders a visible stand-in rather than refusing.
 const PREVIEW_CONTACT_PLACEHOLDER: &str = "(contact_email not configured)";
 
 /// The placeholder a template uses to print the contact address. The stock page

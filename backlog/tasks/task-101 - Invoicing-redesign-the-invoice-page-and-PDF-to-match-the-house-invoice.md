@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 17:43'
+updated_date: '2026-08-13 20:02'
 labels:
   - invoicing
   - pdf
@@ -46,18 +46,18 @@ Note the email body is the invoice page itself — mailgun is handed render_invo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both documents render the house layout: logo or wordmark, From block, invoice metadata, Invoice For block, ruled item table, Amount Due, Notes
-- [ ] #2 The company address and phone are configurable, resolved from one place, and rendered on both documents
-- [ ] #3 A logo can be configured and appears on the page; the PDF's treatment is decided explicitly and documented
-- [ ] #4 Due date renders with its terms when terms are set, and without them when they are not
-- [ ] #5 A missing value omits its block rather than printing an empty label, as the current renderers already do
-- [ ] #6 The page and the PDF agree on every figure and every block they both carry
-- [ ] #7 A custom template exported before this change still loads, and REQUIRED does not grow
-- [ ] #8 The pay-link-in-PDF rule is either upheld or reversed on the record, with the reasoning written down
+- [x] #1 Both documents render the house layout: logo or wordmark, From block, invoice metadata, Invoice For block, ruled item table, Amount Due, Notes
+- [x] #2 The company address and phone are configurable, resolved from one place, and rendered on both documents
+- [x] #3 A logo can be configured and appears on the page; the PDF's treatment is decided explicitly and documented
+- [x] #4 Due date renders with its terms when terms are set, and without them when they are not
+- [x] #5 A missing value omits its block rather than printing an empty label, as the current renderers already do
+- [x] #6 The page and the PDF agree on every figure and every block they both carry
+- [x] #7 A custom template exported before this change still loads, and REQUIRED does not grow
+- [x] #8 The pay-link-in-PDF rule is either upheld or reversed on the record, with the reasoning written down
 - [ ] #9 A rendered example of both documents is reviewed side by side before this is called done
-- [ ] #10 Payment instructions are configurable text, not a sentence hardcoded in the stock template
-- [ ] #11 Payment instructions render on both the page and the PDF, or on neither
-- [ ] #12 An installation that takes no bank transfers can omit the block entirely
+- [x] #10 Payment instructions are configurable text, not a sentence hardcoded in the stock template
+- [x] #11 Payment instructions render on both the page and the PDF, or on neither
+- [x] #12 An installation that takes no bank transfers can omit the block entirely
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -65,10 +65,25 @@ Note the email body is the invoice page itself — mailgun is handed render_invo
 <!-- SECTION:NOTES:BEGIN -->
 Payment-instructions gap found while reviewing #204, folded into this task rather than filed separately since it lives in the same blocks this redesign rewrites.
 
-- The "Direct deposit / To pay by bank transfer, reference invoice #N. Contact <address> for account details." sentence is hardcoded English in src/invoicing/templates/invoice.html:19-20. Only the address is variable ({{CONTACT}}, resolved by cli::invoice::contact_address as contact_email falling back to from_email).
-- src/pdf.rs has no equivalent block at all, so the two documents disagree. TASK-78 did not close this: its parity work covered the company, client address, client email and money blocks.
-- The block is unconditional in the stock page, so an installation that never takes a bank transfer still advertises one.
-- Editing the wording today means exporting a custom template and owning it forever, and even then the PDF is unreachable because it has no template.
+## What is done
 
-The reference invoice puts the same idea in its Notes footer ("If you have any questions, please contact us at ... or call ..."), so the redesign should treat it as one configurable block in the company-profile family beside company_address and company_phone.
+The document layer, both renderers, the seam, the storage and editing surfaces, the pre-#204 compatibility regression, and the documentation. Plan tasks 1-9 and 11 are complete; task 10 is the halt.
+
+- **document.rs** is the single place every shared decision lives: `CompanyBlock`/`company_block`, `MetaRow`/`meta_rows`, `due_value`/`terms_block_text`, `payment_lines`, `parse_logo`/`Logo`/`MAX_LOGO_BYTES`, beside the `MoneySummary` and `address_lines` that were already there. Both renderers consume them, so the page and the PDF agree by construction.
+- **The page** gained `LOGO`, `META_ROWS`, `TERMS_BLOCK`, `PAYMENT_BLOCK`, `COMPANY_ADDRESS`, `COMPANY_PHONE` and `PAYMENT_INSTRUCTIONS`. `REQUIRED` is unchanged and no shipped key changed meaning.
+- **The PDF** draws the same blocks from the same functions, embeds the real logo, and prints no URL of any kind.
+- **The letterhead** is five metadata keys resolved once by `cli::invoice::company_profile`, edited from the TUI settings screen and from `GET`/`PUT /api/settings/company` (replacing `PUT /api/settings/company-name`).
+- **Docs**: docs/invoicing.md (placeholder table, a Letterhead section with the Gmail caveat, a rewritten PDF section), docs/api.md, CLAUDE.md, README.md.
+
+## Measured, not estimated
+
+`printpdf`'s `embedded_images` adds nine crates (240 -> 249 in `cargo tree --no-default-features --features pdf`). Release binary: 25,317,000 bytes on main with the feature off, 25,401,352 with it on and nothing using it, 26,332,728 on this branch with it on and used. The flag alone costs 84,352 bytes; the whole change costs 1,015,728 bytes, about 992 KiB on a 24 MiB binary, against a ~984 KiB estimate. `base64` named directly added no crate: 0.22.1 was already in the graph via hyper-util and reqwest.
+
+## What the reviewer has to look at
+
+AC #9 is not something an implementer can sign. Four rendered pairs, plus a fifth from a data directory with no letterhead at all, are what the PR body's reproduction steps produce. Three things to look at first:
+
+1. Line-item figures read differently on the two documents: the page prints `150.00`, the PDF prints `$150.00`. This predates this branch (`{{ROWS}}` has always been raw decimals with the currency named once in the total row) and belongs to TASK-87, but it is the first difference the eye lands on.
+2. The foot rule prints on a sparse invoice with nothing under it, identically on both documents. It is a literal element of the stock template rather than a renderer decision.
+3. The TUI's `\n` escape: a two-line address is typed as `Line one\nLine two` in a single-line field. The web form uses a textarea and needs no escape.
 <!-- SECTION:NOTES:END -->
