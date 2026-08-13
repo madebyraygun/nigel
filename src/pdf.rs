@@ -1090,6 +1090,7 @@ mod invoice_pdf_tests {
             email: Some("ap@acme.test".into()),
             billing_address: Some("123 Main St\nSpringfield, IL 62704".into()),
             notes: None,
+            archived_at: None,
         }
     }
 
