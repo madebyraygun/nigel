@@ -1,4 +1,5 @@
 pub mod clients;
+pub mod document;
 pub mod gateway;
 pub mod import_invoiceshelf;
 pub mod invoices;

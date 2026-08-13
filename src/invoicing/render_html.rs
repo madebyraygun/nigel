@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::error::{NigelError, Result};
+use crate::invoicing::document::{address_lines, email_line, MoneySummary};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 
 /// The page Nigel renders when the data directory holds no template of its own.
@@ -13,8 +14,11 @@ pub const PLACEHOLDERS: &[&str] = &[
     "NUMBER",
     "CLIENT",
     "CLIENT_EMAIL",
+    "CLIENT_EMAIL_BLOCK",
     "CLIENT_ADDRESS",
+    "CLIENT_ADDRESS_BLOCK",
     "COMPANY",
+    "COMPANY_BLOCK",
     "ISSUE",
     "DUE_DATE",
     "DUE",
@@ -23,6 +27,7 @@ pub const PLACEHOLDERS: &[&str] = &[
     "SUBTOTAL",
     "TAX",
     "TOTAL",
+    "TOTALS",
     "NOTES",
     "TERMS",
     "PAY_URL",
@@ -32,7 +37,25 @@ pub const PLACEHOLDERS: &[&str] = &[
 
 /// What an invoice is: which invoice, who owes, for what, how much. A template
 /// without these renders a document that is wrong about money.
+///
+/// **This list does not grow.** Every key added to `PLACEHOLDERS` after a
+/// release is optional, so a template exported from an older Nigel keeps
+/// validating and keeps rendering exactly what it always did.
 const REQUIRED: &[&str] = &["NUMBER", "CLIENT", "ROWS", "TOTAL"];
+
+/// A required key another key stands in for.
+///
+/// `{{TOTALS}}` is the money block, and the total is one line of it, so a
+/// template printing the block says what is owed just as `{{TOTAL}}` alone
+/// does — which is the whole of what `REQUIRED` asks for.
+const REQUIRED_ALTERNATIVES: &[(&str, &str)] = &[("TOTAL", "TOTALS")];
+
+fn satisfies(found: &[&str], key: &str) -> bool {
+    found.contains(&key)
+        || REQUIRED_ALTERNATIVES
+            .iter()
+            .any(|(required, instead)| *required == key && found.contains(instead))
+}
 
 const MAX_TEMPLATE_BYTES: usize = 1024 * 1024;
 
@@ -132,7 +155,7 @@ fn validate_template(source: &str, path: &Path) -> Result<()> {
 
     let missing: Vec<&str> = REQUIRED
         .iter()
-        .filter(|k| !found.contains(*k))
+        .filter(|k| !satisfies(&found, k))
         .copied()
         .collect();
     if !missing.is_empty() {
@@ -253,6 +276,7 @@ pub fn render_invoice_html(
     invoice: &Invoice,
     client: &Client,
     items: &[InvoiceLineItem],
+    money: &MoneySummary,
     pay: PayButton<'_>,
 ) -> String {
     let rows: String = items
@@ -294,6 +318,47 @@ pub fn render_invoice_html(
         _ => String::new(),
     };
 
+    let company_block = match branding.company.trim() {
+        "" => String::new(),
+        name => format!("<p class=\"company\">{}</p>", esc(name)),
+    };
+    // One `<br>`-prefixed line per typed line, so a two-line address stays two
+    // lines and an absent one contributes nothing at all — not even a break.
+    let address_block: String = client
+        .billing_address
+        .as_deref()
+        .map(|address| {
+            address_lines(address)
+                .iter()
+                .map(|line| format!("<br>{}", esc(line)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let email_block = match email_line(client.email.as_deref()) {
+        Some(email) => format!("<br>{}", esc(email)),
+        None => String::new(),
+    };
+
+    // The money block, from the one function that decides which lines exist.
+    // The PDF asks the same question, which is what keeps the two documents
+    // from disagreeing about the same invoice.
+    let currency = esc(&invoice.currency);
+    let totals: String = money
+        .lines()
+        .iter()
+        .map(|line| {
+            let class = if line.emphasis {
+                " class=\"total\""
+            } else {
+                ""
+            };
+            format!(
+                "<tr{class}><td colspan=\"3\">{}</td><td>{currency} {:.2}</td></tr>",
+                line.label, line.amount
+            )
+        })
+        .collect();
+
     expand(
         branding.template,
         &[
@@ -303,19 +368,23 @@ pub fn render_invoice_html(
                 "CLIENT_EMAIL",
                 &esc(client.email.as_deref().unwrap_or_default()),
             ),
+            ("CLIENT_EMAIL_BLOCK", &email_block),
             (
                 "CLIENT_ADDRESS",
                 &esc(client.billing_address.as_deref().unwrap_or_default()),
             ),
+            ("CLIENT_ADDRESS_BLOCK", &address_block),
             ("COMPANY", &esc(branding.company)),
+            ("COMPANY_BLOCK", &company_block),
             ("ISSUE", &esc(&invoice.issue_date)),
             ("DUE_DATE", &due_date),
             ("DUE", &due),
             ("ROWS", &rows),
-            ("CURRENCY", &esc(&invoice.currency)),
+            ("CURRENCY", &currency),
             ("SUBTOTAL", &format!("{:.2}", invoice.subtotal)),
             ("TAX", &format!("{:.2}", invoice.tax)),
             ("TOTAL", &format!("{:.2}", invoice.total)),
+            ("TOTALS", &totals),
             ("NOTES", &block("Notes", invoice.notes.as_ref())),
             ("TERMS", &block("Terms", invoice.terms.as_ref())),
             ("PAY_URL", &esc(pay_url)),
@@ -329,6 +398,12 @@ pub fn render_invoice_html(
 mod tests {
     use super::*;
     use crate::models::{Client, Invoice, InvoiceLineItem};
+
+    /// The money block for an invoice nobody has paid against, which is what
+    /// every test that is about something else wants.
+    fn money(invoice: &Invoice) -> MoneySummary {
+        MoneySummary::of(invoice, 0.0)
+    }
 
     fn sample() -> (Invoice, Client, Vec<InvoiceLineItem>) {
         let inv = Invoice {
@@ -378,6 +453,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.stripe.test/x"),
         );
         assert!(html.contains("1248"));
@@ -396,6 +472,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("Contact ap@acme.test for account details"));
@@ -410,6 +487,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("&lt;script&gt;"));
@@ -425,6 +503,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.stripe.test/x"),
         );
         assert!(html.contains("Acme {{ROWS}} {{PAY}} Co"));
@@ -440,6 +519,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.stripe.test/x\"onmouseover=\"alert(1)"),
         );
         assert!(html.contains("&quot;onmouseover"));
@@ -454,6 +534,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Placeholder,
         );
         assert!(html.contains("<span class=\"pay pay-placeholder\""));
@@ -476,6 +557,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.test/x"),
         );
         let pending = render_invoice_html(
@@ -483,6 +565,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Placeholder,
         );
         // `{{PAY}}` sits alone on its own line in the template, which is what
@@ -611,6 +694,23 @@ mod tests {
         assert!(err.contains("/tmp/t.html"), "got: {err}");
     }
 
+    /// Either form of the money block satisfies the requirement; neither is a
+    /// refusal, and a page with no figure at all still is.
+    #[test]
+    fn the_totals_block_stands_in_for_the_bare_total() {
+        let path = Path::new("/tmp/t.html");
+        assert!(
+            validate_template("<p>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTALS}}</p>", path).is_ok(),
+            "the money block says what is owed"
+        );
+        assert!(validate_template("<p>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}</p>", path).is_ok());
+
+        let err = validate_template("<p>{{NUMBER}}{{CLIENT}}{{ROWS}}</p>", path)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("{{TOTAL}}"), "got: {err}");
+    }
+
     #[test]
     fn a_template_missing_a_required_placeholder_is_rejected() {
         let err = validate_template(
@@ -660,6 +760,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(!html.contains("Pay online"));
@@ -674,6 +775,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.starts_with("<h1>1248</h1>"), "got: {html}");
@@ -689,6 +791,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.test/x"),
         );
         assert!(html.contains("Acme {{ROWS}} {{PAY}} Co"), "got: {html}");
@@ -707,6 +810,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("&quot;"), "got: {html}");
@@ -721,7 +825,14 @@ mod tests {
             company: "A & B <Co>",
             contact_email: "b@e.test",
         };
-        let html = render_invoice_html(&branding, &inv, &client, &items, PayButton::Omitted);
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
         assert!(html.contains("A &amp; B &lt;Co&gt;"), "got: {html}");
     }
 
@@ -736,9 +847,305 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.starts_with("<h1></h1>"), "got: {html}");
+    }
+
+    /// Every fragment placed on one line, so a test can read exactly what a
+    /// block expanded to and exactly what it did not.
+    const FRAGMENTS: &str =
+        "[{{COMPANY_BLOCK}}][{{CLIENT_ADDRESS_BLOCK}}][{{CLIENT_EMAIL_BLOCK}}][{{TOTALS}}]\
+         {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}";
+
+    #[test]
+    fn the_company_block_carries_the_name_and_disappears_without_one() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            template: FRAGMENTS,
+            company: "A & B <Co>",
+            contact_email: "b@e.test",
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.starts_with("[<p class=\"company\">A &amp; B &lt;Co&gt;</p>]"),
+            "got: {html}"
+        );
+
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.starts_with("[]"), "got: {html}");
+    }
+
+    #[test]
+    fn the_client_address_block_is_br_joined_and_escaped() {
+        let (inv, mut client, items) = sample();
+        client.billing_address = Some("123 <Main> St\nSpringfield".into());
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("[<br>123 &lt;Main&gt; St<br>Springfield]"),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn the_client_email_block_carries_the_address() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.contains("[<br>a@b.test]"), "got: {html}");
+    }
+
+    #[test]
+    fn an_absent_address_or_email_renders_nothing_at_all() {
+        let (inv, mut client, items) = sample();
+        client.email = None;
+        client.billing_address = Some("   \n  ".into());
+
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        // No stray `<br>`, no empty paragraph, no label with nothing after it.
+        assert!(html.starts_with("[][][]["), "got: {html}");
+    }
+
+    #[test]
+    fn the_totals_fragment_is_table_rows_in_the_shared_order() {
+        let (inv, client, items) = sample();
+        let summary = MoneySummary::of(&inv, 100.0);
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &summary,
+            PayButton::Omitted,
+        );
+
+        let totals = html
+            .split("][")
+            .nth(3)
+            .expect("the totals fragment")
+            .to_string();
+        // Same labels, same order as the one function that decides them.
+        let labels: Vec<&str> = summary.lines().iter().map(|l| l.label).collect();
+        assert_eq!(labels, vec!["Total", "Paid", "Balance due"]);
+        let mut at = 0;
+        for label in &labels {
+            let found = totals[at..]
+                .find(label)
+                .unwrap_or_else(|| panic!("{label} missing or out of order in: {totals}"));
+            at += found + label.len();
+        }
+        for emphasised in [
+            "<tr class=\"total\"><td colspan=\"3\">Total</td><td>USD 250.00</td></tr>",
+            "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>USD 150.00</td></tr>",
+        ] {
+            assert!(
+                totals.contains(emphasised),
+                "the emphasised rows carry the existing class: {totals}"
+            );
+        }
+        assert!(
+            totals.contains("<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>"),
+            "Paid is not the line the eye lands on: {totals}"
+        );
+    }
+
+    #[test]
+    fn an_overpaid_invoice_shows_a_credit_and_never_a_negative_balance() {
+        let (inv, client, items) = sample();
+        let summary = MoneySummary::of(&inv, 300.0);
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &summary,
+            PayButton::Omitted,
+        );
+        assert!(html.contains("Balance due</td><td>USD 0.00"), "got: {html}");
+        assert!(html.contains("Credit</td><td>USD 50.00"), "got: {html}");
+        assert!(!html.contains("USD -"), "no negative figure: {html}");
+    }
+
+    #[test]
+    fn a_very_long_address_block_is_clamped_the_way_the_pdf_clamps_it() {
+        let (inv, mut client, items) = sample();
+        client.billing_address = Some(
+            (1..=12)
+                .map(|n| format!("Line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let html = render_invoice_html(
+            &brand_with(FRAGMENTS, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+
+        assert!(html.contains("<br>Line 1<br>"), "got: {html}");
+        assert!(!html.contains("Line 12"), "clamped: {html}");
+        let block = html.split("][").nth(1).expect("the address fragment");
+        assert_eq!(
+            block.matches("<br>").count(),
+            crate::invoicing::document::MAX_ADDRESS_LINES,
+            "one break per drawn line, and no more: {block}"
+        );
+        assert!(
+            html.contains(crate::invoicing::document::ADDRESS_TRUNCATED),
+            "the cut is shown: {html}"
+        );
+    }
+
+    #[test]
+    fn the_bare_text_keys_did_not_change_meaning() {
+        let (mut inv, mut client, items) = sample();
+        inv.subtotal = 240.0;
+        inv.tax = 10.0;
+        client.billing_address = Some("123 Main St".into());
+
+        let branding = Branding {
+            template: "[{{SUBTOTAL}}][{{TAX}}][{{COMPANY}}][{{CLIENT_ADDRESS}}][{{CLIENT_EMAIL}}]\
+                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            company: "Bluepeak LLC",
+            contact_email: "b@e.test",
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.starts_with("[240.00][10.00][Bluepeak LLC][123 Main St][a@b.test]"),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn the_stock_page_shows_the_company_the_address_and_the_email() {
+        let (inv, mut client, items) = sample();
+        client.billing_address = Some("123 Main St\nSpringfield, IL 62704".into());
+        let branding = Branding {
+            template: DEFAULT_TEMPLATE,
+            company: "Bluepeak LLC",
+            contact_email: "b@e.test",
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+
+        let at = |needle: &str| {
+            html.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {html}"))
+        };
+        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
+        assert!(at("Billed to:") < at("123 Main St"));
+        assert!(at("123 Main St") < at("Springfield, IL 62704"));
+        assert!(at("Springfield, IL 62704") < at("a@b.test"));
+        assert!(at("a@b.test") < at("Issued:"));
+    }
+
+    #[test]
+    fn the_stock_page_of_a_sparse_invoice_prints_no_empty_labels() {
+        let (mut inv, mut client, items) = sample();
+        inv.due_date = None;
+        inv.notes = None;
+        inv.terms = None;
+        inv.tax = 0.0;
+        client.email = None;
+        client.billing_address = None;
+
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        for absence in [
+            "<p></p>",
+            "<h3></h3>",
+            "Due:",
+            "<br><br>",
+            "Notes",
+            "Terms",
+            "class=\"company\"",
+            "Subtotal",
+            "Tax",
+            "Paid",
+        ] {
+            assert!(!html.contains(absence), "{absence} survived in: {html}");
+        }
+    }
+
+    #[test]
+    fn the_stock_page_and_the_money_lines_agree() {
+        let (mut inv, client, items) = sample();
+        inv.subtotal = 240.0;
+        inv.tax = 10.0;
+        let summary = MoneySummary::of(&inv, 50.0);
+
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &summary,
+            PayButton::Omitted,
+        );
+        let mut at = 0;
+        for line in summary.lines() {
+            let found = html[at..]
+                .find(line.label)
+                .unwrap_or_else(|| panic!("{} missing or out of order: {html}", line.label));
+            at += found + line.label.len();
+        }
+        assert_eq!(html.matches("Balance due").count(), 1, "got: {html}");
     }
 
     #[test]
@@ -754,6 +1161,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.test/x"),
         );
         assert!(!html.contains("{{"), "unexpanded placeholder in: {html}");
@@ -773,6 +1181,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(!html.contains("Due:"), "got: {html}");
@@ -792,6 +1201,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("&lt;b&gt;thanks&lt;/b&gt;"), "got: {html}");
@@ -810,6 +1220,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(
@@ -827,6 +1238,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Link("https://pay.test/x"),
         );
         assert!(linked.starts_with("[https://pay.test/x]"), "got: {linked}");
@@ -837,6 +1249,7 @@ mod tests {
                 &inv,
                 &client,
                 &items,
+                &money(&inv),
                 pay,
             );
             assert!(html.starts_with("[]"), "got: {html}");
@@ -854,6 +1267,7 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("Thanks for the work"), "got: {html}");
@@ -871,9 +1285,52 @@ mod tests {
             &inv,
             &client,
             &items,
+            &money(&inv),
             PayButton::Omitted,
         );
         assert!(html.contains("<script>alert(1)</script>"));
+    }
+
+    /// The stock page as it shipped before the money block existed, pasted
+    /// verbatim. An operator who ran `nigel invoice template` against that
+    /// release has this file in their data directory.
+    const LEGACY_TEMPLATE: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Invoice {{NUMBER}}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;border-bottom:1px solid #ddd}
+.total{font-weight:700}.pay{display:inline-block;margin:1rem 0;padding:.6rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:.4rem}</style>
+</head><body>
+<h1>Invoice #{{NUMBER}}</h1>
+<p>Billed to: {{CLIENT}}<br>Issued: {{ISSUE}}{{DUE}}</p>
+<table><thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
+<tbody>{{ROWS}}</tbody></table>
+<p class="total">Total: {{CURRENCY}} {{TOTAL}}</p>
+{{PAY}}
+{{NOTES}}
+{{TERMS}}
+<h3>Direct deposit</h3>
+<p>To pay by bank transfer, reference invoice <strong>#{{NUMBER}}</strong>. Contact {{CONTACT}} for account details.</p>
+</body></html>
+"#;
+
+    #[test]
+    fn a_template_exported_before_the_field_parity_change_still_loads_and_renders() {
+        let (inv, client, items) = sample();
+        let dir = tempfile::tempdir().unwrap();
+        write_override(dir.path(), LEGACY_TEMPLATE);
+
+        let loaded = load_template(dir.path()).expect("an older export must keep working");
+        let html = render_invoice_html(
+            &brand_with(&loaded, "b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.contains("Billed to: Acme"), "got: {html}");
+        assert!(html.contains("Total: USD 250.00"), "got: {html}");
+        assert!(!html.contains("{{"), "no unexpanded placeholder: {html}");
     }
 
     #[test]

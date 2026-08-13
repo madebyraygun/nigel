@@ -19,7 +19,7 @@ use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{
     create_invoice, ensure_not_void, ensure_voidable, get_invoice, is_void, line_items,
     list_invoices, paid_amount, payment_amount, payments, record_payment, validate_currency,
-    validate_date, validate_items, InvoiceListRow, NewLineItem,
+    validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::send_invoice;
@@ -72,7 +72,7 @@ impl PayForm {
     /// opens with an empty amount rather than a zero to delete.
     fn new(balance: f64, today: &str) -> Self {
         Self {
-            amount: if balance < 0.005 {
+            amount: if balance < CENT_SLACK {
                 String::new()
             } else {
                 format!("{balance:.2}")

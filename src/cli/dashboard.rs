@@ -158,14 +158,18 @@ struct ArSummary {
 }
 
 /// `None` when nothing is outstanding — the home screen then renders exactly
-/// as it did before invoicing existed. Half a cent of slack, the same the rest
-/// of invoicing settles balances with.
+/// as it did before invoicing existed. `CENT_SLACK` is the slack every other
+/// invoicing surface settles a balance with.
 fn ar_summary(report: &crate::invoicing::invoices::AgingReport) -> Option<ArSummary> {
-    if report.outstanding < 0.005 {
+    if report.outstanding < crate::invoicing::invoices::CENT_SLACK {
         return None;
     }
     // The buckets run current → 90+, so the oldest with money in it is the last.
-    let oldest = report.buckets.iter().rev().find(|b| b.total > 0.005)?;
+    let oldest = report
+        .buckets
+        .iter()
+        .rev()
+        .find(|b| b.total > crate::invoicing::invoices::CENT_SLACK)?;
     Some(ArSummary {
         outstanding: report.outstanding,
         oldest_bucket: oldest.label,

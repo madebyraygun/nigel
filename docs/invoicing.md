@@ -607,8 +607,11 @@ nothing to say.
 | `{{NUMBER}}` | text | Invoice number (**required**) |
 | `{{CLIENT}}` | text | Client name (**required**) |
 | `{{CLIENT_EMAIL}}` | text | The billing contact's address, empty when the client has none |
+| `{{CLIENT_EMAIL_BLOCK}}` | fragment | `<br>ap@acme.test`, empty when the client has none |
 | `{{CLIENT_ADDRESS}}` | text | Client billing address, empty when unset |
+| `{{CLIENT_ADDRESS_BLOCK}}` | fragment | One `<br>`-prefixed line per typed line, empty when unset or blank |
 | `{{COMPANY}}` | text | Your business name, empty when unset |
+| `{{COMPANY_BLOCK}}` | fragment | `<p class="company">…</p>`, empty when unset |
 | `{{ISSUE}}` | text | Issue date |
 | `{{DUE_DATE}}` | text | Due date, empty when there is none |
 | `{{DUE}}` | fragment | `<br>Due: …`, empty when there is none |
@@ -616,7 +619,8 @@ nothing to say.
 | `{{CURRENCY}}` | text | Currency code |
 | `{{SUBTOTAL}}` | text | Subtotal, two decimals |
 | `{{TAX}}` | text | Tax, two decimals |
-| `{{TOTAL}}` | text | Total, two decimals (**required**) |
+| `{{TOTAL}}` | text | Total, two decimals (**required**, or `{{TOTALS}}`) |
+| `{{TOTALS}}` | fragment | The whole money block as `<tr>` rows — see below. Never empty: it always carries the total |
 | `{{NOTES}}` | fragment | Notes block, empty when unset |
 | `{{TERMS}}` | fragment | Terms block, empty when unset |
 | `{{PAY_URL}}` | text | Stripe payment link, empty when there is none |
@@ -626,8 +630,30 @@ nothing to say.
 **Text** placeholders are HTML-escaped values you can put in element content or
 inside a quoted attribute value. **Fragment**
 placeholders are pre-built markup and are content-only — putting one in an
-attribute produces broken HTML. `{{DUE_DATE}}` and `{{PAY_URL}}` are the escaped
-text alternatives for authors who want to place those two values themselves.
+attribute produces broken HTML. The two kinds pair up: the fragment is the block
+that vanishes when there is nothing to say, and the text key beside it is the
+escaped value for an author who would rather place it themselves. `{{DUE_DATE}}`
+/ `{{DUE}}`, `{{COMPANY}}` / `{{COMPANY_BLOCK}}`, `{{CLIENT_ADDRESS}}` /
+`{{CLIENT_ADDRESS_BLOCK}}`, `{{CLIENT_EMAIL}}` / `{{CLIENT_EMAIL_BLOCK}}` and
+`{{PAY_URL}}` / `{{PAY}}` are all that pairing.
+
+`{{TOTALS}}` is the money block: one `<tr><td colspan="3">Label</td><td>USD
+250.00</td></tr>` per line, the emphasised ones carrying `class="total"`. Which
+lines exist is decided in one place for both documents — Subtotal and Tax only
+when there is tax, Total always, Paid and Balance due once anything has been
+paid, and Credit when someone has paid more than the invoice asked for — so the
+page and the PDF cannot disagree about the same invoice. The stock page puts it
+in a `<tfoot>` of the line-item table, which is what lines the amounts up under
+the Amount column.
+
+A balance is never negative. An invoice settled to within half a cent is settled
+— the same test `refresh_status` uses to call it `paid`, so a page can never
+print a balance under a status that says otherwise — and anything paid beyond
+the total is a **Credit** line rather than a minus sign on the amount owed.
+
+`{{TOTAL}}` remains available and remains what a template must carry, except
+that a template using `{{TOTALS}}` satisfies that requirement too: the block is
+the total, plus whatever else is true.
 
 Where a placeholder may go:
 
@@ -653,12 +679,16 @@ upload, no email.
 | Cannot be read (permissions, a directory, invalid UTF-8) | `Cannot read invoice template <path>: …` |
 | Empty or whitespace only | `Invoice template <path> is empty.` |
 | Larger than 1 MiB | `Invoice template <path> is <n> bytes; the limit is 1 MiB.` |
-| Missing `{{NUMBER}}`, `{{CLIENT}}`, `{{ROWS}}` or `{{TOTAL}}` | `… is missing required placeholder(s): {{TOTAL}}. …` |
+| Missing `{{NUMBER}}`, `{{CLIENT}}`, `{{ROWS}}`, or both `{{TOTAL}}` and `{{TOTALS}}` | `… is missing required placeholder(s): {{TOTAL}}. …` |
 | Uses a `{{KEY}}` that is not in the table above | `… uses unknown placeholder(s): {{TOTL}}. …` |
 
 The four required placeholders are what an invoice is — which invoice, who owes,
 for what, how much. An unknown one is always a typo, and refusing is how you find
 out before `{{TOTL}}` appears on a page someone is reading.
+
+That list does not grow. New placeholders are always optional, so a template you
+exported from an older Nigel keeps loading and keeps rendering exactly what it
+rendered before — it simply gains nothing until you edit it in.
 
 Only `{{` + `SCREAMING_SNAKE` + `}}` counts as a placeholder, so a CSS rule, a JS
 template literal, or a `{{ not a key }}` aside passes through as literal text.
@@ -671,11 +701,35 @@ The PDF has no template. It is drawn by code, and the one thing it takes from
 you is your business name:
 
 ```
-Invoice #1248        <- the invoice number
-Bluepeak LLC           <- your business name
+Invoice #1248                 <- the invoice number
+Bluepeak LLC                    <- your business name
 Billed to: Acme Co
+123 Main St                   <- the client's billing address, one row per line
+Springfield, IL 62704
+ap@acme.test                  <- the client's billing email
 Issued: 2026-08-04
+Due: 2026-09-03
 ```
+
+Each of those client lines is drawn only when there is one, so a client with a
+name and nothing else gets `Issued:` directly under the name — no empty row and
+no label with nothing after it. A billing address is drawn at most six lines
+deep, with `...` for the rest: this document has no page-break logic under that
+block, and a client block that runs off the bottom margin is never what anyone
+wanted. Both documents clamp identically, so the two still agree.
+
+Below the line items the PDF prints the same money block the page does, from the
+same rule: Subtotal and Tax only when there is tax, Total always, Paid and
+Balance due once anything has been paid, and Credit on an overpayment. Those
+last three name the currency — `USD 60.00` — exactly as the page does, because
+they are new to both documents and a bare `$` cannot say which currency it
+means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
+
+The PDF carries **no payment link**, deliberately. An emailed attachment cannot
+be recalled or republished, so a live charge link inside one would outlive the
+settlement it was created for — the same reasoning that makes voiding an invoice
+deactivate its Stripe link. Paying online belongs to the published page, which
+is the artifact Nigel can correct after the fact.
 
 That name is the `company_name` the rest of Nigel already knows — the same value
 `{{COMPANY}}` renders on the HTML page — so setting it once brands both:

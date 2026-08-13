@@ -215,6 +215,20 @@ pub fn paid_amount(conn: &Connection, invoice_id: i64) -> Result<f64> {
     Ok(sum.unwrap_or(0.0))
 }
 
+/// Half a cent, the finest any real balance is ever settled to.
+///
+/// Payments that should sum to the total land a hair under it in binary
+/// floating point, so every place that asks "is this paid?" has to allow for
+/// the gap. It is defined once here and used everywhere, because a document
+/// that disagreed with `refresh_status` about the same invoice would print
+/// "Balance due $0.01" on a page whose status says `paid`.
+pub const CENT_SLACK: f64 = 0.005;
+
+/// Is this invoice paid in full? The one settled test, inclusive at the edge.
+pub fn is_settled(total: f64, paid: f64) -> bool {
+    paid >= total - CENT_SLACK
+}
+
 pub fn record_payment(
     conn: &Connection,
     invoice_id: i64,
@@ -261,9 +275,7 @@ pub fn refresh_status(conn: &Connection, invoice_id: i64, today: &str) -> Result
     let published = inv.published_at.is_some();
     let owing = inv.total - paid;
 
-    // Half a cent of slack: payments that should sum to the total can land a hair under
-    // it in binary floating point, and no real balance is ever settled to finer than 1c.
-    let status = if paid >= inv.total - 0.005 && inv.total > 0.0 {
+    let status = if is_settled(inv.total, paid) && inv.total > 0.0 {
         InvoiceStatus::Paid
     } else if !published {
         InvoiceStatus::Draft
@@ -590,10 +602,9 @@ pub fn payment_amount(invoice: &Invoice, paid: f64, requested: Option<f64>) -> R
         ))),
         Some(amount) => Ok(amount),
         None => {
-            let outstanding = invoice.total - paid;
-            // Same half-cent slack `refresh_status` settles with: anything under
-            // it is already paid in full, not a balance worth recording.
-            if outstanding < 0.005 {
+            // The same question `refresh_status` asks: anything settled is paid
+            // in full, not a balance worth recording.
+            if is_settled(invoice.total, paid) {
                 return Err(NigelError::Conflict {
                     code: "no_balance",
                     message: format!(
@@ -602,7 +613,7 @@ pub fn payment_amount(invoice: &Invoice, paid: f64, requested: Option<f64>) -> R
                     ),
                 });
             }
-            Ok(outstanding)
+            Ok(invoice.total - paid)
         }
     }
 }
