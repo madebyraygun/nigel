@@ -829,7 +829,9 @@ mod tests {
         );
         assert_eq!(first.status, "sent");
         assert_eq!(first.payment_link_url.as_deref(), Some("https://pay/x"));
-        assert!(first.public_url.starts_with("https://billing.example.com/i/"));
+        assert!(first
+            .public_url
+            .starts_with("https://billing.example.com/i/"));
 
         let again = send_invoice_traced(
             &conn,

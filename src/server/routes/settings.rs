@@ -439,7 +439,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["companyName"], "Bluepeak LLC", "not trimmed");
 
-        assert_eq!(status_json(&app, &token).await["companyName"], "Bluepeak LLC");
+        assert_eq!(
+            status_json(&app, &token).await["companyName"],
+            "Bluepeak LLC"
+        );
     }
 
     #[tokio::test]

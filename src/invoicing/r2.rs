@@ -281,8 +281,14 @@ mod tests {
             !warning.contains("billing.example.com"),
             "status carries no values: {warning}"
         );
-        assert_eq!(public_base_url_warning("https://billing.example.com/i"), None);
-        assert_eq!(public_base_url_warning("https://billing.example.com/i/"), None);
+        assert_eq!(
+            public_base_url_warning("https://billing.example.com/i"),
+            None
+        );
+        assert_eq!(
+            public_base_url_warning("https://billing.example.com/i/"),
+            None
+        );
         assert!(public_base_url_warning("https://billing.example.com/invoices").is_some());
     }
 
