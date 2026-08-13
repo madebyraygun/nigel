@@ -6,7 +6,16 @@
     "declarationMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "allowImportingTsExtensions": false
+    "allowImportingTsExtensions": false,
+    // The root config points @nigel/theme at its source so editors and vitest
+    // read the package being edited. Declaration emit cannot: rootDir is ./src
+    // and theme's source is outside it, so every token module would be a
+    // TS6059. The workspace build runs theme first, so its types are on disk
+    // by the time this runs — which is also what a consumer of the built
+    // package resolves.
+    "paths": {
+      "@nigel/theme": ["../theme/dist/index.d.ts"]
+    }
   },
   "include": ["src"],
   "exclude": [

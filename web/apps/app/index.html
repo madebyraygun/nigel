@@ -4,6 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Nigel</title>
+    <!--
+      Blocking, and before the styles below, because those paint from the
+      tokens and main.ts is a module script that runs after parsing. Without
+      this, anyone whose stored choice differs from their OS setting sees a
+      frame of the wrong palette on every load.
+
+      The key and the class names are duplicated from @nigel/theme's
+      color-mode.ts; src/__tests__/color-mode-bootstrap.test.ts fails if they
+      drift. They are spelled out rather than built from the stored value,
+      so that test has something to match. No class is added when the stored
+      value is anything else — the media query handles that case, and the
+      module makes the same choice when it takes over.
+    -->
+    <script>
+      try {
+        var m = localStorage.getItem('nigel.color-mode');
+        if (m === 'light') document.documentElement.classList.add('light-mode');
+        else if (m === 'dark') document.documentElement.classList.add('dark-mode');
+      } catch (e) {
+        /* storage refused: fall through to the OS preference */
+      }
+    </script>
     <style>
       * {
         box-sizing: border-box;
@@ -15,7 +37,7 @@
         min-height: 100vh;
         background: var(--wa-color-bg, #fdfcfb);
         color: var(--wa-color-text, #2b2b33);
-        font-family: var(--wa-font-family-sans, ui-sans-serif, system-ui, sans-serif);
+        font-family: var(--wa-font-family-sans, ui-monospace, SFMono-Regular, Menlo, monospace);
         font-size: var(--wa-font-size-base, 14px);
         line-height: var(--wa-line-height, 1.5);
       }

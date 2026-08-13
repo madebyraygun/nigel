@@ -22,7 +22,7 @@ export class WcNavSidebar extends LitElement {
       display: block;
       width: var(--nc-sidebar-width, 232px);
       flex-shrink: 0;
-      background: var(--wa-color-surface);
+      background: var(--nc-color-sidebar-bg, var(--wa-color-surface));
       border-right: 1px solid var(--wa-color-border);
       font-family: var(--wa-font-family-sans);
       overflow-y: auto;
@@ -45,7 +45,7 @@ export class WcNavSidebar extends LitElement {
     .brand-name {
       font-weight: var(--wa-font-weight-bold, 600);
       font-size: var(--wa-font-size-lg, 16px);
-      background: var(--nc-grad-brand);
+      background: var(--nc-grad-brand-text, var(--nc-grad-brand));
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
@@ -101,6 +101,16 @@ export class WcNavSidebar extends LitElement {
     :host([collapsed]) button {
       justify-content: center;
       padding: 8px 0;
+    }
+
+    /* Screen chrome, not part of the report. This lives here rather than in
+       @nigel/theme's print sheet because a rule that hides an element has to
+       be in the tree that element is in, and every wc-* here sits inside
+       nigel-app's shadow root where a document rule cannot reach it. */
+    @media print {
+      :host {
+        display: none;
+      }
     }
   `;
 

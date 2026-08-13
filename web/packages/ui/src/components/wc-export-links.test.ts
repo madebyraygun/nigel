@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-export-links.js';
-import type { WcExportLinks } from './wc-export-links.js';
+import { WcExportLinks } from './wc-export-links.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-export-links.preview.js';
 
@@ -89,3 +90,5 @@ describe('wc-export-links', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcExportLinks, ':host');

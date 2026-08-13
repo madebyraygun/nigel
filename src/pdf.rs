@@ -1054,6 +1054,7 @@ mod invoice_pdf_tests {
             email: None,
             billing_address: None,
             notes: None,
+            archived_at: None,
         }
     }
 

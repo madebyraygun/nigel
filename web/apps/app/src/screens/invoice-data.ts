@@ -11,12 +11,14 @@ import {
 
 import type {
   Client,
+  ClientContact,
   ClientPatch,
   InvoiceDetail,
   InvoiceListParams,
   InvoiceListRow,
   InvoicePatch,
   NewClientRequest,
+  NewContact,
   NewInvoiceRequest,
   NewLineItem,
   PayInvoiceRequest,
@@ -201,24 +203,66 @@ function orNull(value: string): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+/**
+ * The form's rows as the server takes them: trimmed, blank rows dropped, and
+ * exactly one `isBilling`.
+ *
+ * `email` is never sent alongside `contacts` — the route refuses both — so a
+ * screen built on this form always speaks in whole lists.
+ */
+export function contactsRequest(value: ClientFormValue): NewContact[] {
+  const rows = value.contacts
+    .map((contact, index) => ({ contact, index }))
+    .filter(({ contact }) => contact.email.trim() !== '');
+  const billing = rows.find(({ index }) => index === value.billingIndex) ?? rows[0];
+
+  return rows.map(({ contact, index }) => ({
+    email: contact.email.trim(),
+    name: orNull(contact.name),
+    title: orNull(contact.title),
+    isBilling: index === billing?.index,
+  }));
+}
+
 export function newClientRequest(value: ClientFormValue): NewClientRequest {
+  const contacts = contactsRequest(value);
   return {
     name: value.name.trim(),
-    email: orNull(value.email),
     billingAddress: orNull(value.billingAddress),
     notes: orNull(value.notes),
+    ...(contacts.length > 0 ? { contacts } : {}),
   };
 }
 
+/** Two contact lists that would write the same rows in the same order. */
+function sameContacts(a: NewContact[], b: NewContact[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((left, i) => {
+    const right = b[i];
+    return (
+      left.email === right.email &&
+      (left.name ?? null) === (right.name ?? null) &&
+      (left.title ?? null) === (right.title ?? null) &&
+      Boolean(left.isBilling) === Boolean(right.isBilling)
+    );
+  });
+}
+
 /** Only the fields that moved, for the same reason `invoicePatch` sends only those. */
-export function clientPatch(current: Client, value: ClientFormValue): ClientPatch {
+export function clientPatch(
+  current: Client,
+  value: ClientFormValue,
+  currentContacts: ClientContact[] = [],
+): ClientPatch {
   const patch: ClientPatch = {};
 
   const name = value.name.trim();
   if (name !== current.name) patch.name = name;
 
-  const email = orNull(value.email);
-  if (email !== current.email) patch.email = email;
+  const contacts = contactsRequest(value);
+  if (!sameContacts(contacts, contactsRequest(clientFormFrom(current, currentContacts)))) {
+    patch.contacts = contacts;
+  }
 
   const billingAddress = orNull(value.billingAddress);
   if (billingAddress !== current.billingAddress) patch.billingAddress = billingAddress;
@@ -229,10 +273,26 @@ export function clientPatch(current: Client, value: ClientFormValue): ClientPatc
   return patch;
 }
 
-export function clientFormFrom(client: Client): ClientFormValue {
+/**
+ * The form for one client. Contacts come from the detail route, because the
+ * list row is a bare `Client` and does not carry them.
+ */
+export function clientFormFrom(
+  client: Client,
+  contacts: ClientContact[] = [],
+): ClientFormValue {
+  const billingIndex = Math.max(
+    contacts.findIndex((contact) => contact.isBilling),
+    0,
+  );
   return {
     name: client.name,
-    email: client.email ?? '',
+    contacts: contacts.map((contact) => ({
+      email: contact.email,
+      name: contact.name ?? '',
+      title: contact.title ?? '',
+    })),
+    billingIndex,
     billingAddress: client.billingAddress ?? '',
     notes: client.notes ?? '',
   };

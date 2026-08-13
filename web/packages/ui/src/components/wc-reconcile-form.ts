@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 
 export interface ReconcileFormValue {
   /** Account name — the reconcile route addresses accounts by name. */
@@ -108,58 +109,61 @@ export function validateReconcileForm(value: ReconcileFormValue): ReconcileFormE
  */
 @customElement('wc-reconcile-form')
 export class WcReconcileForm extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    form {
-      display: grid;
-      gap: var(--wa-space-m, 12px);
-    }
+      form {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--wa-space-m, 12px);
-    }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--wa-space-m, 12px);
+      }
 
-    .row > * {
-      flex: 1 1 12rem;
-      min-width: 0;
-    }
+      .row > * {
+        flex: 1 1 12rem;
+        min-width: 0;
+      }
 
-    /* Money reads as money: same face and same digit widths as wc-money. */
-    wa-input.balance::part(input) {
-      font-family: var(--nc-font-money, ui-monospace, monospace);
-      font-variant-numeric: tabular-nums;
-      text-align: end;
-    }
+      /* Money reads as money: same face and same digit widths as wc-money. */
+      wa-input.balance::part(input) {
+        font-family: var(--nc-font-money, ui-monospace, monospace);
+        font-variant-numeric: tabular-nums;
+        text-align: end;
+      }
 
-    .prefix {
-      color: var(--wa-color-muted);
-      padding-inline-start: var(--wa-space-s, 8px);
-    }
+      .prefix {
+        color: var(--wa-color-muted);
+        padding-inline-start: var(--wa-space-s, 8px);
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-danger);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-danger);
+      }
 
-    .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-muted);
-    }
+      .hint {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-muted);
+      }
 
-    .actions {
-      display: flex;
-      gap: var(--wa-space-s, 8px);
-    }
-  `;
+      .actions {
+        display: flex;
+        gap: var(--wa-space-s, 8px);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   accounts: string[] = [];

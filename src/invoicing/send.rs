@@ -117,6 +117,37 @@ pub fn require_email(client: &Client) -> Result<String> {
     })
 }
 
+/// Who one invoice email goes to: the billing contact, and everyone else on
+/// the client, already formatted as header values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recipients {
+    pub to: String,
+    pub cc: Vec<String>,
+}
+
+/// Every address a send reaches, or the refusal a client with none gets.
+///
+/// Wraps [`require_email`], so the refusal, its code and its sentence are the
+/// ones that already ship: a client with no contacts still reads as "has no
+/// email", which is what it is.
+pub fn require_recipients(conn: &Connection, client: &Client) -> Result<Recipients> {
+    let billing = require_email(client)?;
+    let contacts = crate::invoicing::clients::list_contacts(conn, client.id)?;
+
+    let mut to = billing.clone();
+    let mut cc = Vec::new();
+    for contact in &contacts {
+        let formatted =
+            crate::invoicing::mailgun::format_address(contact.name.as_deref(), &contact.email);
+        if contact.is_billing {
+            to = formatted;
+        } else {
+            cc.push(formatted);
+        }
+    }
+    Ok(Recipients { to, cc })
+}
+
 /// An invoice worth sending has something to charge for.
 pub fn ensure_payable(invoice: &crate::models::Invoice) -> Result<()> {
     if invoice.total > 0.0 {
@@ -207,7 +238,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // Before the Stripe link, so a void invoice or a client with no address
     // costs no network call.
     ensure_not_void(&invoice, "sent").map_err(|e| (Precheck, e))?;
-    let email = require_email(&client).map_err(|e| (Precheck, e))?;
+    let recipients = require_recipients(conn, &client).map_err(|e| (Precheck, e))?;
     ensure_payable(&invoice).map_err(|e| (Precheck, e))?;
     trace.done(Precheck, StepOutcome::Ok);
 
@@ -246,7 +277,13 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         company => format!("Invoice #{} from {company}", invoice.number),
     };
     mailer
-        .send_invoice(&email, &subject, &rendered.html, &pdf)
+        .send_invoice(
+            &recipients.to,
+            &recipients.cc,
+            &subject,
+            &rendered.html,
+            &pdf,
+        )
         .map_err(|e| (Email, e))?;
     trace.done(Email, StepOutcome::Ok);
 
@@ -368,11 +405,24 @@ mod tests {
     struct FakeMail {
         sent: RefCell<u32>,
         subject: RefCell<String>,
+        /// Who the message went to, which is how the cc list is asserted
+        /// without a network call.
+        to: RefCell<String>,
+        cc: RefCell<Vec<String>>,
     }
     impl Mailer for FakeMail {
-        fn send_invoice(&self, _to: &str, s: &str, _h: &str, _p: &[u8]) -> Result<()> {
+        fn send_invoice(
+            &self,
+            to: &str,
+            cc: &[String],
+            s: &str,
+            _h: &str,
+            _p: &[u8],
+        ) -> Result<()> {
             *self.sent.borrow_mut() += 1;
             *self.subject.borrow_mut() = s.to_string();
+            *self.to.borrow_mut() = to.to_string();
+            *self.cc.borrow_mut() = cc.to_vec();
             Ok(())
         }
     }
@@ -410,6 +460,166 @@ mod tests {
         assert_eq!(inv.status, "sent");
         assert_eq!(inv.stripe_payment_link_id.as_deref(), Some("pl_1"));
         assert_eq!(*mail.sent.borrow(), 1);
+    }
+
+    /// AC #3: every contact is reached, the billing one as the `To`.
+    #[test]
+    fn a_send_reaches_every_contact_with_the_to_first() {
+        use crate::invoicing::clients::{set_contacts, NewContact};
+
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let client_id = get_invoice(&conn, id).unwrap().client_id;
+        set_contacts(
+            &conn,
+            client_id,
+            &[
+                NewContact {
+                    email: "ap@acme.test".into(),
+                    name: Some("Ada Payne".into()),
+                    is_billing: true,
+                    ..Default::default()
+                },
+                NewContact {
+                    email: "dana@acme.test".into(),
+                    name: Some("Dana Chen".into()),
+                    ..Default::default()
+                },
+                NewContact {
+                    email: "sam@acme.test".into(),
+                    ..Default::default()
+                },
+            ],
+        )
+        .unwrap();
+
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &brand("billing@example.test"),
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
+
+        assert_eq!(*mail.to.borrow(), "Ada Payne <ap@acme.test>");
+        assert_eq!(
+            *mail.cc.borrow(),
+            vec![
+                "Dana Chen <dana@acme.test>".to_string(),
+                "sam@acme.test".to_string()
+            ],
+            "in position order, the billing contact excluded"
+        );
+    }
+
+    #[test]
+    fn a_client_with_one_contact_sends_with_no_cc() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &brand("billing@example.test"),
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
+
+        assert_eq!(*mail.to.borrow(), "a@b.test");
+        assert!(mail.cc.borrow().is_empty(), "an empty cc, never [\"\"]");
+    }
+
+    /// `format_address` applied to a recipient, not only to a sender.
+    #[test]
+    fn a_contact_name_with_a_comma_is_quoted_in_the_recipient_header() {
+        use crate::invoicing::clients::{set_contacts, NewContact};
+
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let client_id = get_invoice(&conn, id).unwrap().client_id;
+        set_contacts(
+            &conn,
+            client_id,
+            &[NewContact {
+                email: "ap@acme.test".into(),
+                name: Some("Payne, Ada".into()),
+                is_billing: true,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &brand("billing@example.test"),
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
+
+        assert_eq!(*mail.to.borrow(), "\"Payne, Ada\" <ap@acme.test>");
+    }
+
+    /// The refusal a client with no address gets is the one that already ships.
+    #[test]
+    fn a_client_with_no_contacts_still_refuses_at_precheck_with_the_same_code() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Globex", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
+
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let err = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &brand("billing@example.test"),
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                NigelError::Conflict {
+                    code: "client_missing_email",
+                    ..
+                }
+            ),
+            "got: {err:?}"
+        );
+        assert_eq!(err.to_string(), "client 'Globex' has no email");
+        assert_eq!(*gw.create_calls.borrow(), 0, "no gateway call was made");
+        assert_eq!(*mail.sent.borrow(), 0);
     }
 
     #[test]
@@ -555,7 +765,14 @@ mod tests {
 
     struct FailMail;
     impl Mailer for FailMail {
-        fn send_invoice(&self, _t: &str, _s: &str, _h: &str, _p: &[u8]) -> Result<()> {
+        fn send_invoice(
+            &self,
+            _t: &str,
+            _cc: &[String],
+            _s: &str,
+            _h: &str,
+            _p: &[u8],
+        ) -> Result<()> {
             Err(NigelError::Other("mailgun 401: Invalid private key".into()))
         }
     }

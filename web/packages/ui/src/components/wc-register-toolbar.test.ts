@@ -6,7 +6,9 @@ import type {
   NcSearchChangeDetail,
   WcRegisterToolbar,
 } from './wc-register-toolbar.js';
+import { WcRegisterToolbar as WcRegisterToolbarCtor } from './wc-register-toolbar.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
 import preview from './wc-register-toolbar.preview.js';
 
 const accounts: AccountOption[] = [
@@ -128,3 +130,5 @@ describe('wc-register-toolbar', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcRegisterToolbarCtor, ':host');

@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * The frame around a manager's add/edit form: heading, fields, an error line,
@@ -21,26 +22,29 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
  */
 @customElement('wc-manager-dialog')
 export class WcManagerDialog extends LitElement {
-  static styles = css`
-    :host {
-      font-family: var(--wa-font-family-sans);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        font-family: var(--wa-font-family-sans);
+      }
 
-    .error {
-      margin: 0 0 var(--wa-space-m, 12px);
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: 0 0 var(--wa-space-m, 12px);
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--wa-space-s, 8px);
-    }
-  `;
+      .footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--wa-space-s, 8px);
+      }
+    `,
+  ];
 
   @property({ type: Boolean, reflect: true })
   open = false;

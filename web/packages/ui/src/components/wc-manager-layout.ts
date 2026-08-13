@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import './wc-spinner.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * The frame the three manager screens share: heading, an Add button, a list,
@@ -19,78 +20,81 @@ import './wc-spinner.js';
  */
 @customElement('wc-manager-layout')
 export class WcManagerLayout extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      padding: var(--wa-space-l, 16px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        padding: var(--wa-space-l, 16px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: var(--wa-space-m, 12px);
-      margin-bottom: var(--wa-space-m, 12px);
-    }
+      header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--wa-space-m, 12px);
+        margin-bottom: var(--wa-space-m, 12px);
+      }
 
-    .heading {
-      margin: 0;
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-semibold, 600);
-    }
+      .heading {
+        margin: 0;
+        font-size: var(--wa-font-size-lg, 16px);
+        font-weight: var(--wa-font-weight-semibold, 600);
+      }
 
-    .count {
-      color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-normal, 400);
-    }
+      .count {
+        color: var(--wa-color-muted);
+        font-weight: var(--wa-font-weight-normal, 400);
+      }
 
-    .description {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-      max-width: 68ch;
-    }
+      .description {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+        max-width: 68ch;
+      }
 
-    .error {
-      display: flex;
-      align-items: flex-start;
-      gap: var(--wa-space-s, 8px);
-      margin-bottom: var(--wa-space-m, 12px);
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-      border: 1px solid var(--wa-color-danger, #b3261e);
-      border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--wa-space-s, 8px);
+        margin-bottom: var(--wa-space-m, 12px);
+        padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+        border: 1px solid var(--wa-color-danger, #b3261e);
+        border-radius: var(--wa-radius-m, 8px);
+        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .error p {
-      margin: 0;
-      flex: 1 1 auto;
-    }
+      .error p {
+        margin: 0;
+        flex: 1 1 auto;
+      }
 
-    .error-actions {
-      display: flex;
-      gap: var(--wa-space-xs, 6px);
-      flex: 0 0 auto;
-    }
+      .error-actions {
+        display: flex;
+        gap: var(--wa-space-xs, 6px);
+        flex: 0 0 auto;
+      }
 
-    .toolbar {
-      margin-bottom: var(--wa-space-s, 8px);
-    }
+      .toolbar {
+        margin-bottom: var(--wa-space-s, 8px);
+      }
 
-    /* Nothing slotted should not leave a gap where a filter chip would be. */
-    .toolbar:not(:has(*)) {
-      display: none;
-    }
+      /* Nothing slotted should not leave a gap where a filter chip would be. */
+      .toolbar:not(:has(*)) {
+        display: none;
+      }
 
-    .busy {
-      display: flex;
-      justify-content: center;
-      padding: var(--wa-space-xl, 24px);
-    }
-  `;
+      .busy {
+        display: flex;
+        justify-content: center;
+        padding: var(--wa-space-xl, 24px);
+      }
+    `,
+  ];
 
   @property({ type: String })
   heading = '';

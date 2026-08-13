@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-empty-state.js';
 import './wc-notice-bar.js';
 import './wc-spinner.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * One import, as `GET /api/imports` lists it.
@@ -38,73 +39,76 @@ export function transactionCountLabel(count: number): string {
  */
 @customElement('wc-import-history')
 export class WcImportHistory extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      overflow-x: auto;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        overflow-x: auto;
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-text);
-      font-family: var(--wa-font-family-sans);
-    }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--wa-font-size-s, 13px);
+        color: var(--wa-color-text);
+        font-family: var(--wa-font-family-sans);
+      }
 
-    caption {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      caption {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    th,
-    td {
-      text-align: start;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-      border-bottom: 1px solid var(--wa-color-border);
-      vertical-align: top;
-    }
+      th,
+      td {
+        text-align: start;
+        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-bottom: 1px solid var(--wa-color-border);
+        vertical-align: top;
+      }
 
-    th {
-      font-weight: var(--wa-font-weight-medium, 500);
-      color: var(--wa-color-muted);
-      white-space: nowrap;
-    }
+      th {
+        font-weight: var(--wa-font-weight-medium, 500);
+        color: var(--wa-color-muted);
+        white-space: nowrap;
+      }
 
-    td.file {
-      font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-      overflow-wrap: anywhere;
-    }
+      td.file {
+        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        overflow-wrap: anywhere;
+      }
 
-    td.count,
-    th.count {
-      text-align: end;
-      font-variant-numeric: tabular-nums;
-    }
+      td.count,
+      th.count {
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+      }
 
-    td.actions {
-      text-align: end;
-      white-space: nowrap;
-    }
+      td.actions {
+        text-align: end;
+        white-space: nowrap;
+      }
 
-    th.actions {
-      text-align: end;
-    }
+      th.actions {
+        text-align: end;
+      }
 
-    tr[aria-busy='true'] {
-      opacity: 0.6;
-    }
+      tr[aria-busy='true'] {
+        opacity: 0.6;
+      }
 
-    .loading {
-      display: grid;
-      place-items: center;
-      padding: var(--wa-space-l, 16px);
-    }
-  `;
+      .loading {
+        display: grid;
+        place-items: center;
+        padding: var(--wa-space-l, 16px);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   imports: ImportHistoryRow[] = [];

@@ -14,7 +14,7 @@ use crate::cli::invoice::{
 };
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
-use crate::invoicing::clients::{get_client, list_clients};
+use crate::invoicing::clients::{get_client, list_clients, ClientScope};
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{
     create_invoice, ensure_not_void, ensure_voidable, get_invoice, is_void, line_items,
@@ -1488,7 +1488,9 @@ impl InvoiceManager {
         // Reported rather than defaulted: an unreadable clients table and an
         // empty one are opposite problems, and "No clients yet" is advice that
         // would send someone to add the client they already have.
-        let clients = match list_clients(conn) {
+        // Active only: `create_invoice` refuses an archived client, so the
+        // selector must not offer one.
+        let clients = match list_clients(conn, ClientScope::Active) {
             Ok(clients) => clients,
             Err(e) => {
                 self.set_status(e.to_string());
@@ -3230,7 +3232,14 @@ mod tests {
             sent: RefCell<u32>,
         }
         impl Mailer for FakeMail {
-            fn send_invoice(&self, _to: &str, _s: &str, _h: &str, _p: &[u8]) -> Result<()> {
+            fn send_invoice(
+                &self,
+                _to: &str,
+                _cc: &[String],
+                _s: &str,
+                _h: &str,
+                _p: &[u8],
+            ) -> Result<()> {
                 *self.sent.borrow_mut() += 1;
                 Ok(())
             }

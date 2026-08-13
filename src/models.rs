@@ -113,6 +113,9 @@ pub struct Client {
     pub email: Option<String>,
     pub billing_address: Option<String>,
     pub notes: Option<String>,
+    /// When this client stopped being billed, or `None` while they are active.
+    /// A timestamp rather than a flag, the way `voided_at` is.
+    pub archived_at: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -214,6 +217,7 @@ mod tests {
             email: Some("ap@acme.test".into()),
             billing_address: Some("1 Main St".into()),
             notes: None,
+            archived_at: None,
         };
         let value = serde_json::to_value(client).unwrap();
         assert!(value.get("billingAddress").is_some(), "got {value}");
