@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 20:13'
+updated_date: '2026-08-13 21:04'
 labels:
   - invoicing
   - pdf
@@ -86,6 +86,20 @@ AC #9 is not something an implementer can sign. Four rendered pairs, plus a fift
 1. Line-item figures read differently on the two documents: the page prints `150.00`, the PDF prints `$150.00`. This predates this branch (`{{ROWS}}` has always been raw decimals with the currency named once in the total row) and belongs to TASK-87, but it is the first difference the eye lands on.
 2. The foot rule prints on a sparse invoice with nothing under it, identically on both documents. It is a literal element of the stock template rather than a renderer decision.
 3. The TUI's `\n` escape: a two-line address is typed as `Line one\nLine two` in a single-line field. The web form uses a textarea and needs no escape.
+
+## Review round — 13 findings, all fixed
+
+The one that mattered: deleting the stock page's hardcoded bank-transfer paragraph was a silent regression. Migration **v9** now seeds `payment_instructions` from that sentence for a database that was already invoicing (address from the same `contact_email` -> `from_email` fallback `{{CONTACT}}` used; nothing written when the key is set, when there is no address, or when the books have never invoiced), and `cli::invoice::payment_instructions_notice` puts one stderr line on `preview`/`send` when a document would go out with no way to pay on it.
+
+PDF geometry: the phone joined the From block's lines (labelled block for a phone-only company, rule brackets everything); party lines wrap in their column; the wordmark shrinks then cuts; metadata values are cut at the party column; the divider guard compares the page the table started on. Two new `cfg(test)` seams — `drawn_text` and `drawn_lines` — make those geometry assertions rather than text assertions.
+
+The logo verdict is reached once: `parse_logo` gained the `IEND`/`FFD9` completeness check (no decoder, holds in every build), `pdf::logo_is_embeddable` is the decode, and `render_invoice` clears `Branding.logo` on failure so the page cannot disagree with the PDF.
+
+SPA: client-side `MAX_LOGO_BYTES` check, a load-failure state with retry, hoisted field handlers, and a new mode-independent `--nc-color-document-bg` token in place of an inline white. TUI: the `\n` escape is symmetric. `Branding` lost `Default`.
+
+**Binary measurement corrected.** The first-round baseline embedded the placeholder SPA while the branch embedded the real one, so ~740 KiB of web assets sat inside a number meant to be about printpdf. Like for like: feature off 26,075,256; feature on, unused 26,159,752 (**+84,496**); this branch 27,064,640 (+989,384, every line of the task).
+
+Verified after the fixes: 1343+117 / 995+117 / 1268+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
