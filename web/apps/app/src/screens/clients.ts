@@ -1,5 +1,15 @@
-import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
+import {
+  LitElement,
+  html,
+  css,
+  nothing,
+  type PropertyValues,
+  type TemplateResult,
+} from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -15,7 +25,7 @@ import {
 } from '@nigel/ui';
 
 import { ApiError, type ApiClient } from '../api/index.js';
-import type { Client } from '../api/types.js';
+import type { Client, ClientContact } from '../api/types.js';
 import { clientFormFrom, clientPatch, newClientRequest } from './invoice-data.js';
 import {
   invoicingGuardrailAction,
@@ -30,17 +40,46 @@ const COLUMNS: ManagerColumn[] = [
   { key: 'billingAddress', label: 'Billing address' },
 ];
 
-const ACTIONS: ManagerAction[] = [
-  { name: 'invoices', label: 'Invoices' },
-  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
-  { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
-];
+/**
+ * The row buttons. Archive and Unarchive are the same button with the verb the
+ * row's own state calls for, which is why they are per-row rather than one
+ * array for the whole table.
+ */
+function actionsFor(client: Client): ManagerAction[] {
+  return [
+    { name: 'invoices', label: 'Invoices' },
+    { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
+    client.archivedAt === null
+      ? { name: 'archive', label: 'Archive' }
+      : { name: 'unarchive', label: 'Unarchive' },
+    { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
+  ];
+}
+
+/** `#/clients?archived=1` is the filtered list — a filter is a URL. */
+export function showsArchived(params: URLSearchParams): boolean {
+  return params.get('archived') === '1';
+}
 
 interface Editor {
   mode: 'create' | 'edit';
   /** The client being edited; absent when creating. */
   id?: number;
   value: ClientFormValue;
+  /**
+   * The contacts the dialog opened with, so the patch can send `contacts` only
+   * when the list actually changed — an all-absent PATCH is a 400.
+   */
+  contacts: ClientContact[];
+  /** The detail request is still in flight. */
+  loading?: boolean;
+  /**
+   * The detail could not be loaded. The dialog shows the failure and a retry,
+   * never a form: an editable form here would carry an empty contacts
+   * baseline, and saving it would whole-list-replace — that is, delete — every
+   * address the client actually has.
+   */
+  loadFailed?: boolean;
 }
 
 /**
@@ -58,14 +97,22 @@ interface Editor {
  */
 @customElement('nigel-clients-screen')
 export class NigelClientsScreen extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-    }
-  `;
+  // `controlsCss` because the screen renders a `wa-switch` of its own: a
+  // document-level ::part() rule cannot reach into a component's shadow root.
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   client!: ApiClient;
+
+  @property({ attribute: false })
+  params: URLSearchParams = new URLSearchParams();
 
   @property({ attribute: false })
   navigate?: (screen: ScreenId, params?: URLSearchParams) => void;
@@ -79,15 +126,23 @@ export class NigelClientsScreen extends LitElement {
   @state() private saving = false;
   @state() private dialogError: string | null = null;
   @state() private busyId: number | null = null;
+  /** The route the current list was fetched for. */
+  private loadedKey: string | null = null;
 
-  firstUpdated(): void {
+  /// The first render counts as a route change, so the initial load and every
+  /// later one come through the same door — `invoices.ts`'s arrangement.
+  willUpdate(changed: PropertyValues<this>): void {
+    if (!changed.has('params')) return;
+    const key = this.params.toString();
+    if (key === this.loadedKey) return;
+    this.loadedKey = key;
     void this.load();
   }
 
   private async load(): Promise<void> {
     this.loading = true;
     try {
-      this.clients = await this.client.getClients();
+      this.clients = await this.client.getClients(showsArchived(this.params));
       this.error = null;
       this.errorAction = null;
     } catch (error) {
@@ -105,15 +160,62 @@ export class NigelClientsScreen extends LitElement {
       id: client.id,
       label: client.name,
       cells: [client.name, client.email, client.billingAddress],
+      badge: client.archivedAt === null ? undefined : 'Archived',
+      actions: actionsFor(client),
     }));
   }
 
   // -- editing --------------------------------------------------------------
 
   private openCreate = (): void => {
-    this.editor = { mode: 'create', value: EMPTY_CLIENT_FORM };
+    this.editor = { mode: 'create', value: EMPTY_CLIENT_FORM, contacts: [] };
     this.formErrors = {};
     this.dialogError = null;
+  };
+
+  /**
+   * Opening Edit fetches the detail first: the list row is a bare `Client` and
+   * carries no contacts, and putting them on every row would cost the one
+   * screen that must stay one query and one cheap payload. One request, on a
+   * deliberate click, with a loading state in the dialog.
+   */
+  private async openEdit(client: Client): Promise<void> {
+    this.editor = {
+      mode: 'edit',
+      id: client.id,
+      value: clientFormFrom(client),
+      contacts: [],
+      loading: true,
+    };
+    this.formErrors = {};
+    this.dialogError = null;
+    await this.loadEditor(client.id);
+  }
+
+  private async loadEditor(id: number): Promise<void> {
+    this.editor = { ...this.editor!, loading: true, loadFailed: false };
+    this.dialogError = null;
+
+    try {
+      const detail = await this.client.getClient(id);
+      // The route may have moved on while the request was in flight.
+      if (this.editor?.id !== id) return;
+      this.editor = {
+        ...this.editor,
+        value: clientFormFrom(detail, detail.contacts),
+        contacts: detail.contacts,
+        loading: false,
+        loadFailed: false,
+      };
+    } catch (error) {
+      if (this.editor?.id !== id) return;
+      this.editor = { ...this.editor, loading: false, loadFailed: true };
+      this.dialogError = invoicingGuardrailMessage(error, 'client');
+    }
+  }
+
+  private retryEditor = (): void => {
+    if (this.editor?.id !== undefined) void this.loadEditor(this.editor.id);
   };
 
   private closeEditor = (): void => {
@@ -138,17 +240,56 @@ export class NigelClientsScreen extends LitElement {
       return;
     }
     if (action === 'edit') {
-      this.editor = { mode: 'edit', id, value: clientFormFrom(client) };
-      this.formErrors = {};
-      this.dialogError = null;
+      void this.openEdit(client);
+      return;
+    }
+    if (action === 'archive' || action === 'unarchive') {
+      void this.setArchived(client, action === 'archive');
       return;
     }
     if (action === 'delete') void this.confirmDelete(client);
   };
 
+  /**
+   * Archive is not confirmed: it is reversible in one click, and the
+   * confirmations in this app are for the things that are not. The list is
+   * refetched rather than spliced — the managers' rule, and here it is what
+   * makes the row disappear from the unfiltered list.
+   */
+  private async setArchived(client: Client, archive: boolean): Promise<void> {
+    this.busyId = client.id;
+    try {
+      if (archive) {
+        await this.client.archiveClient(client.id);
+      } else {
+        await this.client.unarchiveClient(client.id);
+      }
+      this.error = null;
+      this.errorAction = null;
+      await this.load();
+    } catch (error) {
+      this.error = invoicingGuardrailMessage(error, 'client');
+      this.errorAction = null;
+    } finally {
+      this.busyId = null;
+    }
+  }
+
+  private toggleArchivedFilter = (): void => {
+    const params = new URLSearchParams(this.params);
+    if (showsArchived(this.params)) {
+      params.delete('archived');
+    } else {
+      params.set('archived', '1');
+    }
+    this.navigate?.('clients', params);
+  };
+
   private handleSave = async (): Promise<void> => {
     const editor = this.editor;
-    if (!editor || this.saving) return;
+    // A form that never loaded holds no baseline to compare against, so there
+    // is nothing here that could be a save.
+    if (!editor || this.saving || editor.loading || editor.loadFailed) return;
 
     const errors = validateClientForm(editor.value);
     this.formErrors = errors;
@@ -161,7 +302,7 @@ export class NigelClientsScreen extends LitElement {
         await this.client.createClient(newClientRequest(editor.value));
       } else if (editor.id !== undefined) {
         const current = this.clients.find((candidate) => candidate.id === editor.id);
-        const patch = current ? clientPatch(current, editor.value) : {};
+        const patch = current ? clientPatch(current, editor.value, editor.contacts) : {};
         // An all-absent PATCH is a 400: a save with nothing changed is a close.
         if (Object.keys(patch).length === 0) {
           this.closeEditor();
@@ -237,11 +378,17 @@ export class NigelClientsScreen extends LitElement {
         @nc-manager-error-action=${this.handleErrorAction}
         @nc-manager-error-dismiss=${this.handleErrorDismiss}
       >
+        <wa-switch
+          data-archived-toggle
+          ?checked=${showsArchived(this.params)}
+          @change=${this.toggleArchivedFilter}
+          >Show archived</wa-switch
+        >
+
         <wc-manager-table
           caption="Clients"
           .columns=${COLUMNS}
           .rows=${this.rows}
-          .actions=${ACTIONS}
           .busyId=${this.busyId}
           @nc-manager-action=${this.handleAction}
         ></wc-manager-table>
@@ -270,17 +417,21 @@ export class NigelClientsScreen extends LitElement {
         open
         heading=${creating ? 'Add client' : 'Edit client'}
         confirm-label=${creating ? 'Add client' : 'Save'}
-        ?busy=${this.saving}
+        ?busy=${this.saving || editor.loading === true || editor.loadFailed === true}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
       >
-        <wc-client-form
-          .value=${editor.value}
-          .errors=${this.formErrors}
-          ?disabled=${this.saving}
-          @nc-client-form-change=${this.handleFormChange}
-        ></wc-client-form>
+        ${editor.loadFailed
+          ? html`<wa-button data-retry-editor @click=${this.retryEditor}>Try again</wa-button>`
+          : editor.loading
+            ? html`<wc-spinner show-label label="Loading contacts"></wc-spinner>`
+            : html`<wc-client-form
+                .value=${editor.value}
+                .errors=${this.formErrors}
+                ?disabled=${this.saving}
+                @nc-client-form-change=${this.handleFormChange}
+              ></wc-client-form>`}
       </wc-manager-dialog>
     `;
   }
@@ -290,6 +441,7 @@ export function renderClients(ctx: ScreenContext): TemplateResult {
   return html`
     <nigel-clients-screen
       .client=${ctx.client}
+      .params=${ctx.params}
       .navigate=${ctx.navigate}
     ></nigel-clients-screen>
   `;

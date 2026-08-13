@@ -1,18 +1,12 @@
 import { css } from 'lit';
 
-/**
- * System stacks only — nigel bundles no webfonts, so nothing is added to the
- * embedded binary and nothing is fetched at runtime (the CSP-free localhost
- * server has no CDN to reach anyway). The mono stack is what money columns
- * align on.
- */
 export const typographyCss = css`
   :root {
-    --wa-font-family-sans: ui-sans-serif, system-ui, -apple-system,
-      BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --wa-font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
-      Consolas, monospace;
-    --wa-font-size-s: 12px;
+    --wa-font-family-sans: 'IBM Plex Mono', ui-monospace, SFMono-Regular,
+      'SF Mono', Menlo, Consolas, monospace;
+    --wa-font-family-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular,
+      'SF Mono', Menlo, Consolas, monospace;
+    --wa-font-size-s: 13px;
     --wa-font-size-base: 14px;
     --wa-font-size-lg: 16px;
     --wa-font-size-xl: 20px;
@@ -22,6 +16,9 @@ export const typographyCss = css`
     --wa-font-weight-bold: 600;
     --wa-line-height: 1.5;
 
+    /* Now the same stack as everything else, and kept anyway: it names an
+       intent — figures that have to align in a column — which a UI that ever
+       moves back to a proportional face would need again. */
     --nc-font-money: var(--wa-font-family-mono);
   }
 `;

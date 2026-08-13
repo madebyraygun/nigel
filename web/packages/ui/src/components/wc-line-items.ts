@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import './wc-money.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * One line as it is being edited.
@@ -87,139 +88,142 @@ export function isBlankLineItem(item: LineItemValue): boolean {
  */
 @customElement('wc-line-items')
 export class WcLineItems extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .scroll {
-      overflow-x: auto;
-    }
+      .scroll {
+        overflow-x: auto;
+      }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    caption {
-      text-align: start;
-      font-weight: var(--wa-font-weight-medium, 500);
-      padding-bottom: var(--wa-space-xs, 6px);
-    }
+      caption {
+        text-align: start;
+        font-weight: var(--wa-font-weight-medium, 500);
+        padding-bottom: var(--wa-space-xs, 6px);
+      }
 
-    caption.visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
+      caption.visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
 
-    th,
-    td {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      border-bottom: 1px solid var(--wa-color-border);
-      text-align: start;
-      vertical-align: top;
-    }
+      th,
+      td {
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        border-bottom: 1px solid var(--wa-color-border);
+        text-align: start;
+        vertical-align: top;
+      }
 
-    th {
-      color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium, 500);
-      white-space: nowrap;
-    }
+      th {
+        color: var(--wa-color-muted);
+        font-weight: var(--wa-font-weight-medium, 500);
+        white-space: nowrap;
+      }
 
-    td.end,
-    th.end {
-      text-align: end;
-    }
+      td.end,
+      th.end {
+        text-align: end;
+      }
 
-    input {
-      font: inherit;
-      width: 100%;
-      min-width: 5rem;
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      background: var(--wa-color-surface);
-      color: inherit;
-    }
+      input {
+        font: inherit;
+        width: 100%;
+        min-width: 5rem;
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-sm, 6px);
+        background: var(--wa-color-surface);
+        color: inherit;
+      }
 
-    input:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
-    }
+      input:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 1px;
+      }
 
-    td.description input {
-      min-width: 12rem;
-    }
+      td.description input {
+        min-width: 12rem;
+      }
 
-    td.figure input {
-      text-align: end;
-      font-variant-numeric: tabular-nums;
-    }
+      td.figure input {
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+      }
 
-    .money-input {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-2xs, 4px);
-    }
+      .money-input {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-2xs, 4px);
+      }
 
-    .prefix {
-      color: var(--wa-color-muted);
-    }
+      .prefix {
+        color: var(--wa-color-muted);
+      }
 
-    .error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .error {
+        margin: var(--wa-space-2xs, 4px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    .row-actions {
-      display: flex;
-      gap: var(--wa-space-2xs, 4px);
-      justify-content: flex-end;
-      white-space: nowrap;
-    }
+      .row-actions {
+        display: flex;
+        gap: var(--wa-space-2xs, 4px);
+        justify-content: flex-end;
+        white-space: nowrap;
+      }
 
-    tr[data-emphasis] td {
-      font-weight: var(--wa-font-weight-medium, 500);
-      border-bottom: 0;
-    }
+      tr[data-emphasis] td {
+        font-weight: var(--wa-font-weight-medium, 500);
+        border-bottom: 0;
+      }
 
-    tr[data-emphasis='total'] td {
-      font-weight: var(--wa-font-weight-bold, 700);
-      border-top: 2px solid var(--wa-color-border);
-    }
+      tr[data-emphasis='total'] td {
+        font-weight: var(--wa-font-weight-bold, 700);
+        border-top: 2px solid var(--wa-color-border);
+      }
 
-    footer {
-      margin-top: var(--wa-space-s, 8px);
-    }
+      footer {
+        margin-top: var(--wa-space-s, 8px);
+      }
 
-    .list-error {
-      margin: var(--wa-space-xs, 6px) 0 0;
-      color: var(--wa-color-danger, #b3261e);
-      font-size: var(--wa-font-size-s, 13px);
-    }
+      .list-error {
+        margin: var(--wa-space-xs, 6px) 0 0;
+        color: var(--wa-color-danger, #b3261e);
+        font-size: var(--wa-font-size-s, 13px);
+      }
 
-    /*
-     * The row buttons are glyphs, and a glyph is not a name. The name is
-     * slotted text so it reaches the button Web Awesome renders inside its own
-     * shadow root — an aria-label on the host would never get there.
-     */
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
-  `;
+      /*
+       * The row buttons are glyphs, and a glyph is not a name. The name is
+       * slotted text so it reaches the button Web Awesome renders inside its own
+       * shadow root — an aria-label on the host would never get there.
+       */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   items: LineItemValue[] = [];

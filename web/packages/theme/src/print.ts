@@ -7,13 +7,19 @@ import { css } from 'lit';
  * the report and nothing else: no sidebar, no toolbars, no export buttons, no
  * screen-sized colour.
  *
- * The recolouring works by redefining the tokens at `:root` rather than by
- * restyling components. Custom properties inherit through shadow boundaries,
- * which is the one thing that reaches inside every `wc-*` element at once — a
- * print sheet cannot select into a shadow root, but it can change what the
- * shadow root reads. Everything else here is either `::part()` (the other way
- * through the boundary, which is why `wc-app-shell` exposes its furniture) or a
- * plain element selector, since slotted content stays in the document.
+ * This sheet does the half of that a document-level stylesheet can actually
+ * do: redefine the tokens at `:root`. Custom properties inherit through shadow
+ * boundaries, which is the one thing that reaches inside every `wc-*` element
+ * at once — a print sheet cannot select into a shadow root, but it can change
+ * what the shadow root reads.
+ *
+ * Hiding the chrome is the other half and is *not* here, because a rule that
+ * hides an element has to live in the tree that element is in. `wc-app-shell`
+ * hides its own header, banner and sidebar slot; `wc-nav-sidebar`, `wc-toast`,
+ * `wc-export-links`, `wc-period-nav` and `wc-register-toolbar` each hide
+ * themselves; and `controlsCss` carries the `wa-button`/`wa-select` and table
+ * rules into every root that hosts a control. What stays here is what applies
+ * to content in the document itself.
  */
 export const printCss = css`
   @page {
@@ -21,7 +27,12 @@ export const printCss = css`
   }
 
   @media print {
-    :root {
+    /* :root:root, not :root. The dark palette is selected by
+       :root:not(.light-mode) and :root.dark-mode, both (0,2,0); a bare :root is
+       (0,1,0) and loses to them wherever it sits in the sheet, which is why a
+       dark OS printed dark pages. Doubling the selector ties the specificity,
+       and this sheet composes last, so print wins. Do not simplify it back. */
+    :root:root {
       color-scheme: light;
 
       --wa-color-bg: #ffffff;
@@ -44,10 +55,19 @@ export const printCss = css`
       --nc-color-income: #000000;
       --nc-color-expense: #000000;
       --nc-color-flagged: #000000;
+
+      /* The bar fills follow the figures to black, which is what a chart
+         printed from this app has always done. They are separate tokens on
+         screen only so the bars can sit lighter than the numbers. */
+      --nc-color-income-fill: #000000;
+      --nc-color-expense-fill: #000000;
+
+      --nc-color-sidebar-bg: #ffffff;
       --nc-color-selected-bg: transparent;
 
       --nc-grad-brand: none;
       --nc-grad-brand-hover: none;
+      --nc-grad-brand-text: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;
@@ -60,29 +80,8 @@ export const printCss = css`
       color: #000000;
     }
 
-    /* The shell's own furniture, reached through the parts it exposes. */
-    wc-app-shell::part(sidebar),
-    wc-app-shell::part(header),
-    wc-app-shell::part(banner) {
-      display: none;
-    }
-
-    wc-app-shell::part(content) {
-      display: block;
-      padding: 0;
-      overflow: visible;
-    }
-
-    /* Slotted and top-level chrome, which stays in the document. */
-    wc-nav-sidebar,
-    wc-toast,
-    wc-export-links,
-    wc-period-nav,
-    wc-register-toolbar,
-    wa-button,
-    wa-select,
     [data-print='hide'] {
-      display: none !important;
+      display: none;
     }
 
     /* A report that runs over a page break keeps its column headings. */

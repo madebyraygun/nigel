@@ -37,6 +37,19 @@ describe('invoicingGuardrailMessage', () => {
     );
   });
 
+  it('explains an archived client without the server’s sentence', () => {
+    // A recognized 409 reason is always our words: the server says
+    // "client 'Globex' is archived — unarchive it before invoicing".
+    const message = invoicingGuardrailMessage(
+      conflict('client_archived', {}, "client 'Globex' is archived — unarchive it"),
+      'invoice',
+    );
+    expect(message).toBe(
+      'This client is archived. Unarchive it before raising a new invoice.',
+    );
+    expect(message).not.toContain('unarchive it before invoicing');
+  });
+
   it('names the status that blocked an edit', () => {
     expect(
       invoicingGuardrailMessage(conflict('not_draft', { status: 'sent' }), 'invoice'),

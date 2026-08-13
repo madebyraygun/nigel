@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 
 export type WcConfirmVariant = 'default' | 'danger';
 
@@ -23,22 +24,25 @@ export interface ConfirmOptions {
  */
 @customElement('wc-confirm')
 export class WcConfirm extends LitElement {
-  static styles = css`
-    :host {
-      font-family: var(--wa-font-family-sans);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        font-family: var(--wa-font-family-sans);
+      }
 
-    .message {
-      margin: 0;
-      color: var(--wa-color-text);
-    }
+      .message {
+        margin: 0;
+        color: var(--wa-color-text);
+      }
 
-    .footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: var(--wa-space-s, 8px);
-    }
-  `;
+      .footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--wa-space-s, 8px);
+      }
+    `,
+  ];
 
   @property({ type: Boolean, reflect: true })
   open = false;

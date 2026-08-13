@@ -131,6 +131,7 @@ pub fn validate_bare_address(address: &str, what: &str) -> Result<()> {
 pub fn message_fields(
     envelope: &EmailEnvelope,
     to: &str,
+    cc: &[String],
     subject: &str,
     html: &str,
 ) -> Vec<(String, String)> {
@@ -143,6 +144,11 @@ pub fn message_fields(
         ("subject".into(), subject.to_string()),
         ("html".into(), html.to_string()),
     ];
+    // Mailgun documents a recipient list as one comma-joined field. An empty
+    // one emits no field at all rather than an empty header.
+    if !cc.is_empty() {
+        fields.push(("cc".into(), cc.join(", ")));
+    }
     // Mailgun's form field for a custom header. An unset reply-to emits no
     // field at all rather than an empty one.
     if let Some(reply_to) = &envelope.reply_to {
@@ -165,11 +171,18 @@ pub struct MailgunClient {
 }
 
 impl Mailer for MailgunClient {
-    fn send_invoice(&self, to: &str, subject: &str, html: &str, pdf: &[u8]) -> Result<()> {
+    fn send_invoice(
+        &self,
+        to: &str,
+        cc: &[String],
+        subject: &str,
+        html: &str,
+        pdf: &[u8],
+    ) -> Result<()> {
         let url = format!("https://api.mailgun.net/v3/{}/messages", self.domain);
 
         let mut form = reqwest::blocking::multipart::Form::new();
-        for (name, value) in message_fields(&self.envelope, to, subject, html) {
+        for (name, value) in message_fields(&self.envelope, to, cc, subject, html) {
             form = form.text(name, value);
         }
         let part = reqwest::blocking::multipart::Part::bytes(pdf.to_vec())
@@ -207,6 +220,7 @@ mod tests {
         let f = message_fields(
             &envelope(None, None),
             "a@b.test",
+            &[],
             "Invoice #1248",
             "<p>hi</p>",
         );
@@ -352,18 +366,40 @@ mod tests {
         let with = message_fields(
             &envelope(Some("Bluepeak"), Some("sam@example.com")),
             "a@b.test",
+            &[],
             "Invoice #1248",
             "<p>hi</p>",
         );
         assert!(with.contains(&("from".into(), "Bluepeak <billing@mg.example.com>".into())));
         assert!(with.contains(&("h:Reply-To".into(), "sam@example.com".into())));
 
-        let without = message_fields(&envelope(None, None), "a@b.test", "s", "<p>hi</p>");
+        let without = message_fields(&envelope(None, None), "a@b.test", &[], "s", "<p>hi</p>");
         assert!(
             without.iter().all(|(k, _)| k != "h:Reply-To"),
             "an unset reply-to emits no field at all"
         );
         assert!(without.contains(&("from".into(), "billing@mg.example.com".into())));
+    }
+
+    #[test]
+    fn cc_recipients_travel_as_one_comma_joined_field() {
+        let f = message_fields(
+            &envelope(Some("Bluepeak"), None),
+            "ap@acme.test",
+            &["Dana Chen <dana@acme.test>".into(), "sam@acme.test".into()],
+            "Invoice #1248",
+            "<p>hi</p>",
+        );
+        assert!(f.contains(&(
+            "cc".into(),
+            "Dana Chen <dana@acme.test>, sam@acme.test".into()
+        )));
+    }
+
+    #[test]
+    fn no_cc_recipients_emits_no_cc_field() {
+        let f = message_fields(&envelope(None, None), "a@b.test", &[], "s", "<p>hi</p>");
+        assert!(f.iter().all(|(k, _)| k != "cc"));
     }
 
     #[test]

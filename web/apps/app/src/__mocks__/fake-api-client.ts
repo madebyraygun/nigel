@@ -20,6 +20,7 @@ import type {
   CategoryRow,
   ChangePasswordRequest,
   Client,
+  ClientContact,
   ClientDetail,
   ClientPatch,
   CompanyNameResponse,
@@ -45,6 +46,7 @@ import type {
   NewAccountRequest,
   NewCategoryRequest,
   NewClientRequest,
+  NewContact,
   NewInvoiceRequest,
   NewRuleRequest,
   NextInvoiceNumber,
@@ -918,6 +920,13 @@ export class FakeApiClient implements ApiClient {
 
   clients: Client[] = [];
   clientDetails: Record<number, ClientDetail> = {};
+  /**
+   * Contacts per client. Kept beside `clients` rather than folded into
+   * `clientDetails`, so a test can prime a list without writing out a whole
+   * detail — and so a client seeded with only an `email` still answers the one
+   * contact the projection implies.
+   */
+  clientContacts: Record<number, ClientContact[]> = {};
   invoices: InvoiceListRow[] = [];
   invoiceDetails: Record<number, InvoiceDetail> = {};
   aging: AgingReport = EMPTY_AGING;
@@ -937,6 +946,7 @@ export class FakeApiClient implements ApiClient {
   createClientError: Error | null = null;
   updateClientError: Error | null = null;
   deleteClientError: Error | null = null;
+  archiveClientError: Error | null = null;
 
   invoicesError: Error | null = null;
   invoiceError: Error | null = null;
@@ -956,18 +966,95 @@ export class FakeApiClient implements ApiClient {
 
   private nextClientId = 900;
 
-  async getClients(): Promise<Client[]> {
-    this.calls.push('getClients');
+  async getClients(includeArchived = false): Promise<Client[]> {
+    this.calls.push(includeArchived ? 'getClients:all' : 'getClients');
     if (this.clientsError) throw this.clientsError;
-    return [...this.clients].sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.clients]
+      .filter((client) => includeArchived || client.archivedAt === null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async archiveClient(id: number): Promise<Client> {
+    this.calls.push(`archiveClient:${id}`);
+    if (this.archiveClientError) throw this.archiveClientError;
+    return this.setArchived(id, '2026-08-11');
+  }
+
+  async unarchiveClient(id: number): Promise<Client> {
+    this.calls.push(`unarchiveClient:${id}`);
+    if (this.archiveClientError) throw this.archiveClientError;
+    return this.setArchived(id, null);
+  }
+
+  private setArchived(id: number, archivedAt: string | null): Client {
+    const current = this.clients.find((candidate) => candidate.id === id);
+    if (!current) throw notFoundError(`No client with ID ${id}`);
+    const updated: Client = { ...current, archivedAt };
+    this.clients = this.clients.map((c) => (c.id === id ? updated : c));
+    return updated;
   }
 
   async getClient(id: number): Promise<ClientDetail> {
     this.calls.push(`getClient:${id}`);
     if (this.clientError) throw this.clientError;
-    const detail = this.clientDetails[id];
+    const detail = this.clientDetails[id] ?? this.syntheticDetail(id);
     if (!detail) throw notFoundError(`No client with ID ${id}`);
     return detail;
+  }
+
+  /** The detail the server would build from the rows this fake holds. */
+  private syntheticDetail(id: number): ClientDetail | undefined {
+    const client = this.clients.find((candidate) => candidate.id === id);
+    if (!client) return undefined;
+    return {
+      ...client,
+      contacts: this.contactsOf(id),
+      invoices: [],
+      outstanding: 0,
+    };
+  }
+
+  /**
+   * A client seeded with only an `email` has exactly one billing contact
+   * carrying it and nothing else — which is what the server's projection
+   * means, and all it can mean. Nothing here invents a name or a title the
+   * real detail route would not answer.
+   */
+  private contactsOf(id: number): ClientContact[] {
+    const primed = this.clientContacts[id];
+    if (primed) return primed;
+    const client = this.clients.find((candidate) => candidate.id === id);
+    if (!client?.email) return [];
+    return [
+      {
+        id: id * 100,
+        clientId: id,
+        email: client.email,
+        name: null,
+        title: null,
+        isBilling: true,
+        position: 0,
+      },
+    ];
+  }
+
+  /** Store a whole list and project its billing address onto the client row. */
+  private writeContacts(id: number, contacts: NewContact[]): void {
+    const billingIndex = Math.max(
+      contacts.findIndex((contact) => contact.isBilling),
+      0,
+    );
+    this.clientContacts[id] = contacts.map((contact, index) => ({
+      id: id * 100 + index,
+      clientId: id,
+      email: contact.email,
+      name: contact.name ?? null,
+      title: contact.title ?? null,
+      isBilling: index === billingIndex,
+      position: index,
+    }));
+    const email = this.clientContacts[id].find((c) => c.isBilling)?.email ?? null;
+    this.clients = this.clients.map((c) => (c.id === id ? { ...c, email } : c));
   }
 
   async createClient(input: NewClientRequest): Promise<Client> {
@@ -981,9 +1068,11 @@ export class FakeApiClient implements ApiClient {
       email: input.email ?? null,
       billingAddress: input.billingAddress ?? null,
       notes: input.notes ?? null,
+      archivedAt: null,
     };
     this.clients = [...this.clients, created];
-    return created;
+    if (input.contacts) this.writeContacts(created.id, input.contacts);
+    return this.clients.find((c) => c.id === created.id) ?? created;
   }
 
   async updateClient(id: number, input: ClientPatch): Promise<Client> {
@@ -1006,7 +1095,8 @@ export class FakeApiClient implements ApiClient {
       ...(input.notes === undefined ? {} : { notes: input.notes }),
     };
     this.clients = this.clients.map((c) => (c.id === id ? updated : c));
-    return updated;
+    if (input.contacts) this.writeContacts(id, input.contacts);
+    return this.clients.find((c) => c.id === id) ?? updated;
   }
 
   async deleteClient(id: number): Promise<Deleted> {

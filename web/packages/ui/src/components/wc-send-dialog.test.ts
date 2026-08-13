@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-send-dialog.js';
-import type { SendStepView, WcSendDialog } from './wc-send-dialog.js';
+import { WcSendDialog, type SendStepView } from './wc-send-dialog.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-send-dialog.preview.js';
 
 const STEPS: SendStepView[] = [
@@ -299,3 +300,5 @@ describe('wc-send-dialog', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(WcSendDialog, 'wa-dialog::part(body)');

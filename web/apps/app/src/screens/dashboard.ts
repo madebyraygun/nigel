@@ -13,6 +13,7 @@ import {
 } from '../state/dashboard-store.js';
 import { cashflowBuckets } from './dashboard-data.js';
 import type { ScreenContext } from './context.js';
+import { controlsCss } from '@nigel/theme';
 
 /**
  * The web counterpart of the TUI's home screen: year-to-date profit and loss,
@@ -23,73 +24,76 @@ import type { ScreenContext } from './context.js';
  */
 @customElement('nigel-dashboard-screen')
 export class NigelDashboardScreen extends SignalWatcher(LitElement) {
-  static styles = css`
-    :host {
-      display: grid;
-      gap: var(--wa-space-l, 16px);
-      align-content: start;
-      padding: var(--wa-space-l, 16px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
-
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-s, 8px);
-      flex-wrap: wrap;
-    }
-
-    .spacer {
-      flex: 1 1 auto;
-    }
-
-    .flagged {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--wa-space-xs, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      border: 1px solid var(--nc-color-flagged);
-      border-radius: var(--wa-radius-pill, 999px);
-      color: var(--wa-color-text);
-      background: var(--wa-color-surface);
-      font-size: var(--wa-font-size-s, 13px);
-      text-decoration: none;
-    }
-
-    .flagged:hover {
-      background: var(--wa-color-surface-alt);
-    }
-
-    .flagged:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
-
-    .count {
-      font-weight: var(--wa-font-weight-bold, 700);
-      color: var(--nc-color-flagged);
-    }
-
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-      gap: var(--wa-space-m, 12px);
-    }
-
-    .panels {
-      display: grid;
-      grid-template-columns: minmax(18rem, 1fr) minmax(0, 2fr);
-      gap: var(--wa-space-m, 12px);
-      align-items: start;
-    }
-
-    @media (max-width: 60rem) {
-      .panels {
-        grid-template-columns: 1fr;
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: grid;
+        gap: var(--wa-space-l, 16px);
+        align-content: start;
+        padding: var(--wa-space-l, 16px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
       }
-    }
-  `;
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--wa-space-s, 8px);
+        flex-wrap: wrap;
+      }
+
+      .spacer {
+        flex: 1 1 auto;
+      }
+
+      .flagged {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--wa-space-xs, 6px);
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+        border: 1px solid var(--nc-color-flagged);
+        border-radius: var(--wa-radius-pill, 999px);
+        color: var(--wa-color-text);
+        background: var(--wa-color-surface);
+        font-size: var(--wa-font-size-s, 13px);
+        text-decoration: none;
+      }
+
+      .flagged:hover {
+        background: var(--wa-color-surface-alt);
+      }
+
+      .flagged:focus-visible {
+        outline: 2px solid var(--wa-color-focus);
+        outline-offset: 2px;
+      }
+
+      .count {
+        font-weight: var(--wa-font-weight-bold, 700);
+        color: var(--nc-color-flagged);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+        gap: var(--wa-space-m, 12px);
+      }
+
+      .panels {
+        display: grid;
+        grid-template-columns: minmax(18rem, 1fr) minmax(0, 2fr);
+        gap: var(--wa-space-m, 12px);
+        align-items: start;
+      }
+
+      @media (max-width: 60rem) {
+        .panels {
+          grid-template-columns: 1fr;
+        }
+      }
+    `,
+  ];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })

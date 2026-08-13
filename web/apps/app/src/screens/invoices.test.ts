@@ -25,6 +25,7 @@ const ACME: Client = {
   email: 'ap@acme.test',
   billingAddress: '1 Main St',
   notes: null,
+  archivedAt: null,
 };
 
 const GLOBEX: Client = {
@@ -33,6 +34,18 @@ const GLOBEX: Client = {
   email: null,
   billingAddress: null,
   notes: null,
+  archivedAt: null,
+};
+
+/** A client archived after it was billed, which is the state the editor must
+ * still be able to render. */
+const ARCHIVED: Client = {
+  id: 3,
+  name: 'Umbrella Corp',
+  email: 'ap@umbrella.test',
+  billingAddress: null,
+  notes: null,
+  archivedAt: '2026-03-01',
 };
 
 const ROWS: InvoiceListRow[] = [
@@ -158,7 +171,7 @@ const CONFIGURED: StatusResponse = {
 function client(status: StatusResponse = CONFIGURED): FakeApiClient {
   const fake = new FakeApiClient();
   fake.status = status;
-  fake.clients = [ACME, GLOBEX];
+  fake.clients = [ACME, GLOBEX, ARCHIVED];
   fake.invoices = ROWS;
   fake.aging = AGING;
   fake.invoiceDetails[1250] = detail();
@@ -902,6 +915,45 @@ describe('nigel-invoices-screen', () => {
     await settle(el);
 
     expect(fake.calls.some((call) => call.startsWith('createInvoice'))).toBe(false);
+  });
+
+  it('offers only active clients when raising a new invoice', async () => {
+    // `create_invoice` refuses an archived client, so a picker that offered one
+    // would be offering a 409.
+    const fake = client();
+    const { el } = await mount('new=1', fake);
+
+    expect(fake.calls).toContain('getClients');
+    expect(fake.calls).not.toContain('getClients:all');
+    const form = el.shadowRoot?.querySelector('wc-invoice-form') as HTMLElement & {
+      clients: { id: number }[];
+    };
+    expect(form.clients.map((c) => c.id)).not.toContain(ARCHIVED.id);
+  });
+
+  it('keeps the client on a draft billed to a client since archived', async () => {
+    // The list the editor is given must contain the invoice's own client, or
+    // the disabled Client select renders blank.
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({
+      number: 1252,
+      status: 'draft',
+      canEdit: true,
+      clientId: ARCHIVED.id,
+      client: ARCHIVED,
+      payments: [],
+      paid: 0,
+      balance: 3200,
+    });
+    const { el } = await mount('number=1252&edit=1', fake);
+
+    expect(fake.calls).toContain('getClients:all');
+    const form = el.shadowRoot?.querySelector('wc-invoice-form') as HTMLElement & {
+      clients: { id: number; name: string }[];
+      value: { clientId: string };
+    };
+    expect(form.clients.map((c) => c.id)).toContain(ARCHIVED.id);
+    expect(form.value.clientId).toBe(String(ARCHIVED.id));
   });
 
   it('edits a draft and sends only the fields that moved', async () => {

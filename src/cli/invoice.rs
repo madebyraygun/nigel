@@ -330,20 +330,14 @@ pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
 }
 
 fn confirm_void(invoice: &Invoice, yes: bool) -> Result<bool> {
-    if yes {
-        return Ok(true);
-    }
-    if !std::io::stdin().is_terminal() {
-        return Err(NigelError::Other(format!(
+    crate::cli::confirm_or_refuse(
+        "Void it? [y/N]",
+        &format!(
             "Refusing to void invoice #{} without confirmation. Pass --yes.",
             invoice.number
-        )));
-    }
-    print!("Void it? [y/N] ");
-    std::io::Write::flush(&mut std::io::stdout())?;
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    Ok(answer.trim().eq_ignore_ascii_case("y"))
+        ),
+        yes,
+    )
 }
 
 /// `nigel invoice list`, as text. Pure, so the parity fixtures can call it
@@ -848,6 +842,13 @@ pub fn import(db: &str) -> Result<()> {
             summary.unparsed_dates
         );
     }
+    if summary.unusable_emails > 0 {
+        eprintln!(
+            "Warning: {} email address(es) carry a character a mail header may not, and were \
+             copied as they stand. Sending to those clients will refuse until they are corrected.",
+            summary.unusable_emails
+        );
+    }
     Ok(())
 }
 
@@ -964,6 +965,7 @@ mod tests {
             email: Some("ap@acme.test".into()),
             billing_address: None,
             notes: None,
+            archived_at: None,
         };
         let item = |description: &str, quantity: f64, unit_amount: f64| InvoiceLineItem {
             id: None,
@@ -1169,6 +1171,7 @@ mod tests {
             email: Some("ap@acme.test".into()),
             billing_address: None,
             notes: None,
+            archived_at: None,
         }
     }
 

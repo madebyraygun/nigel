@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-nav-sidebar.js';
-import type { WcNavSidebar } from './wc-nav-sidebar.js';
+import { WcNavSidebar } from './wc-nav-sidebar.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
 import { NAV_ITEMS, NAV_ITEMS_WITH_DISABLED } from './__mocks__/nav.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-nav-sidebar.preview.js';
@@ -97,3 +98,5 @@ describe('wc-nav-sidebar', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcNavSidebar, ':host');

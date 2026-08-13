@@ -7,10 +7,11 @@ import {
   validateRuleForm,
   type NcRuleFormChangeDetail,
   type RuleFormValue,
-  type WcRuleForm,
+  WcRuleForm,
 } from './wc-rule-form.js';
 import type { CategoryOption } from './category-option.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-rule-form.preview.js';
 
 const categories: CategoryOption[] = [
@@ -170,3 +171,5 @@ describe('wc-rule-form', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(WcRuleForm, ':focus-visible');

@@ -239,7 +239,7 @@ table is what `report` holds. The list routes below it answer with a bare array.
 | `/api/imports` | — | `ImportListItem[]` |
 | `/api/imports/formats` | — | `ImporterFormat[]` |
 | `/api/csv-profiles` | — | `CsvProfile[]` |
-| `/api/clients` | — | `Client[]` |
+| `/api/clients` | `includeArchived` | `Client[]` |
 | `/api/clients/{id}` | — | `ClientDetail` |
 | `/api/invoices` | `status`, `clientId` | `InvoiceListRow[]` |
 | `/api/invoices/{number}` | — | `InvoiceDetail` |
@@ -309,8 +309,13 @@ pagination.
 ]
 ```
 
-- `/api/clients` — every invoicing client, by name. `email`,
-  `billingAddress` and `notes` are `null` when unset.
+- `/api/clients` — every active invoicing client, by name. `email`,
+  `billingAddress` and `notes` are `null` when unset, and `archivedAt` is
+  `null` on every row this route answers by default. `?includeArchived=true`
+  adds the archived clients, each carrying the date it was archived;
+  `?includeArchived=false` is the default spelled out, and any other value is a
+  `400`. The order is by name in both cases — an archived row does not sink to
+  the bottom.
 - `/api/invoices` — every invoice, number descending.
 
 ### Invoicing
@@ -328,6 +333,11 @@ the same round trip `nigel client show` makes:
 {
   "id": 1, "name": "Acme Co", "email": "ap@acme.test",
   "billingAddress": "1 Main St, Portland OR", "notes": null,
+  "archivedAt": null,
+  "contacts": [
+    { "id": 1, "clientId": 1, "email": "ap@acme.test", "name": "Ada Payne",
+      "title": "AP Manager", "isBilling": true, "position": 0 }
+  ],
   "invoices": [
     { "number": 1251, "status": "sent", "issueDate": "2026-03-06",
       "dueDate": "2026-04-06", "total": 1850.0, "paid": 0.0 }
@@ -508,9 +518,11 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/reconcile` | `POST` | `account`, `month`, `statementBalance` | `ReconcileResult` |
 | `/api/reconciliations` | `GET` | `account` (query) | `ReconciliationRecord[]` |
 | `/api/imports/:id` | `DELETE` | — | `{ id, deletedTransactions }` |
-| `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?` | `Client` (`201`) |
-| `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?` | `Client` |
+| `/api/clients` | `POST` | `name`, `email?`, `billingAddress?`, `notes?`, `contacts?` | `Client` (`201`) |
+| `/api/clients/:id` | `PATCH` | `name?`, `email?`, `billingAddress?`, `notes?`, `contacts?` | `Client` |
 | `/api/clients/:id` | `DELETE` | — | `{ id, deleted }` |
+| `/api/clients/:id/archive` | `POST` | — | `Client` |
+| `/api/clients/:id/unarchive` | `POST` | — | `Client` |
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
@@ -658,9 +670,34 @@ record — the way `nigel undo` rolls back the most recent one. It answers with
 
 `POST /api/clients` answers `201` with the created `Client`. An empty or
 whitespace-only `name` is `400`; a name another client already has is `409`
-`duplicate_name` carrying the `name`. `PATCH` takes the same four fields, all
+`duplicate_name` carrying the `name`. `PATCH` takes the same fields, all
 optional, with `email`, `billingAddress` and `notes` clearable by `null`; an
 all-absent body is `400`.
+
+`contacts` is a whole-list replacement — exactly `items` on
+`PATCH /api/invoices/{number}`. Absent leaves the list alone; an empty array
+clears it, which is why it is a plain optional and not a nullable one. Each
+entry is `{ email, name?, title?, isBilling? }` and positions come from the
+array order.
+
+`email` and `contacts` in one body is a `400` naming both: `email` sets the
+billing address alone, `contacts` replaces the collection, and applying both
+would make the order they were applied in visible. The check is on which
+fields *arrived*, not what they carried — `{"email": null, "contacts": […]}` is
+still both, because `null` clears the billing address. The CLI refuses the same
+pair through clap's `conflicts_with`.
+
+Both writes are one transaction over the client row and its addresses: a
+refused contact list leaves no client behind on `POST`, and no half-applied
+rename on `PATCH`.
+
+The data layer's own checks arrive as `400`s: a blank address, the same address
+twice on one client (case-insensitively), and more than one `isBilling`. A
+list naming no billing recipient is not refused — the first row becomes one, so
+a client with contacts and no billing address is not representable.
+
+Only `GET /api/clients/{id}` carries `contacts`. The list stays bare `Client`
+rows and one query; the edit dialog fetches the detail on a deliberate click.
 
 `DELETE /api/clients/:id` is a hard delete, and is refused while the client has
 **any** invoice — void and paid included, because those invoices still name the
@@ -676,8 +713,27 @@ client on a page that has already gone out:
 }
 ```
 
-There is no CLI equivalent: `nigel client` has no `delete`, and the TUI's client
-manager offers none for the same reason this route guards it.
+`nigel client delete <id>` and the TUI client manager's `d` refuse the same
+thing in the same words: all three call `delete_blocker` and print what it says.
+
+`POST /api/clients/:id/archive` and `…/unarchive` answer the refreshed
+`Client`. Archive is a state transition with a timestamp the server writes, so
+it is a verb of its own rather than a `PATCH` field — the same reasoning as
+`POST /api/invoices/:number/void`. Neither touches an invoice, a payment or a
+figure; what changes is that the client leaves the default list and a **new
+invoice for it is refused**:
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "message": "client 'Globex' is archived — unarchive it before invoicing",
+    "details": { "reason": "client_archived" }
+  }
+}
+```
+
+An unknown id is `404` `client_not_found` on both.
 
 #### Creating and editing an invoice
 

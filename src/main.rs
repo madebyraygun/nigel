@@ -211,7 +211,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 name,
                 email,
                 address,
-            } => cli::client::add(&name, email.as_deref(), address.as_deref()),
+                contacts,
+            } => cli::client::add(&name, email.as_deref(), address.as_deref(), &contacts),
             ClientCommands::Show { id } => cli::client::show(id),
             ClientCommands::Edit {
                 id,
@@ -219,8 +220,12 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 email,
                 address,
                 notes,
-            } => cli::client::edit(id, name, email, address, notes),
-            ClientCommands::List => cli::client::list(),
+                contacts,
+            } => cli::client::edit(id, name, email, address, notes, &contacts),
+            ClientCommands::Delete { id, yes } => cli::client::delete(id, yes),
+            ClientCommands::Archive { id } => cli::client::archive(id, &cli::today()),
+            ClientCommands::Unarchive { id } => cli::client::unarchive(id),
+            ClientCommands::List { all } => cli::client::list(all),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

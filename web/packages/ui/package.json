@@ -38,11 +38,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@nigel/theme": "*",
     "lit": "^3.2.1"
   },
   "devDependencies": {
     "@awesome.me/webawesome": "^3.1.0",
-    "@nigel/theme": "*",
     "@types/node": "^22.10.2",
     "axe-core": "^4.10.2",
     "jsdom": "^27.4.0",

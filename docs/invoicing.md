@@ -119,6 +119,60 @@ nigel client list
 `--email` is optional at creation, but an invoice cannot be sent to a client
 without one. `nigel client list` prints the client IDs that `invoice new` takes.
 
+### Who receives an invoice
+
+A client holds a **list** of contacts, each an email address with an optional
+name and title. Exactly one of them is the **billing contact**: that address is
+the invoice's `To`, the one `nigel client list` shows, and the one the published
+page prints. Every other contact is copied — `Cc` on the same message.
+
+```bash
+nigel client edit 1 --contact "ap@acme.test:Ada Payne:AP Manager" \
+                    --contact "dana@acme.test:Dana Chen:Design Lead"
+nigel client show 1
+```
+
+`--contact "email[:name[:title]]"` is repeatable and **replaces the whole
+list** — the same whole-list shape `invoice new --item "desc:qty:unit"` has,
+split the same way, so a title containing a colon keeps its remainder. The
+first one given is the billing recipient.
+
+`--email` and `--contact` cannot be used together: one sets a single field and
+the other replaces the collection, so applying both would make the order they
+were applied in visible. `--email` on its own still means what it always did —
+set the billing address, leave the other contacts alone.
+
+An address is not shape-checked, on any surface: `nigel client add --email`
+never has, and a form that refused what the CLI accepts would make the two
+disagree about what a client is. What *is* refused is a blank address, the same
+address twice on one client (case-insensitively — a cc that is also the `To` is
+a duplicate delivery, not a second recipient), two billing contacts, and a line
+break in any field, because these strings become mail headers.
+
+A refusal writes nothing at all. Adding a client and its contacts is one
+transaction, and so is editing one: a contact list that is turned down leaves
+no client row behind and no half-applied rename.
+
+The one exception is `nigel invoice import`, which takes what the source
+database has: an address carrying a character a mail header may not is copied
+verbatim, counted, and reported at the end of the run, exactly as an
+unparseable date is. Refusing it would abort a whole migration over a value
+nobody can correct until it has been imported. A send to that client refuses
+later, by name.
+
+**Everyone on the list receives the same document and can pay it.** One render,
+one message: the identical HTML body and the identical PDF go to the `To` and
+every `Cc`, Pay button included, and the published page at
+`public_base_url/i/{token}/` is the same page for all of them. That is
+deliberate — a second, button-less render for the cc list would create an
+artifact that is not what was published, and it would achieve nothing, because
+the token URL is forwardable by design. If only one person should be able to
+pay, give the client only one contact.
+
+The published page names the **billing contact only**. It is a static object on
+a public URL, and printing an organisation's whole contact list onto it would
+publish internal addresses to anyone the link reaches.
+
 A name is required and must be unique: an empty one and a name another client
 already has are both refused, on `client add` and on a `client edit` that
 renames. Renaming a client to the name it already has is not a collision.
@@ -143,15 +197,64 @@ nigel client edit 1 --name "Acme Corporation" --address "500 Market St"
 number first) and the balance still open against it — void and fully paid
 invoices contribute nothing.
 
-`client edit` takes `--name`, `--email`, `--address` and `--notes`; the flags you
-leave off are left alone, and passing none at all is an error rather than a silent
-no-op. A blank `--name` is refused, since the column is required. `--notes` is
+`client edit` takes `--name`, `--email`, `--address`, `--notes` and
+`--contact`; the flags you leave off are left alone, and passing none at all is
+an error rather than a silent no-op. A blank `--name` is refused, since the column is required. `--notes` is
 internal and never appears on an invoice.
 
 Edits take effect on the **next** send. Published pages are static snapshots on
 R2, so a corrected address reaches the client when the invoice is next sent —
 including a re-send of the same invoice, which overwrites the same URL. Emails
 already delivered keep the old details.
+
+### Deleting a client
+
+```bash
+nigel client delete 1
+nigel client delete 1 --yes        # skip the confirmation
+```
+
+Refused while **any** invoice bills the client, of any status:
+
+```
+Cannot delete: client has 8 invoices
+Run `nigel client show 1` to see them.
+```
+
+Void and fully paid invoices count too. Each one names the client on a page
+that has already been sent, and an invoice whose client row is gone is a state
+nothing in Nigel is allowed to create. For a client you have finished with but
+have billed, archive is the operation you want.
+
+Delete asks first. Without a terminal and without `--yes` it refuses rather
+than guessing, exactly as `invoice void` does.
+
+### Archiving a client
+
+```bash
+nigel client archive 7             # Archived client 7: Globex
+nigel client unarchive 7           # Restored client 7: Globex
+nigel client list                  # active clients only
+nigel client list --all            # with the archived ones, and the date
+```
+
+Archiving is **not** deletion. It writes one timestamp on the client row and
+touches nothing else: every invoice, payment and history row stays exactly
+where it was, and no figure anywhere changes. An archived client keeps
+appearing wherever its invoices do — the invoice list, the A/R aging report,
+every total.
+
+What archiving does is take the client out of the working list. It is hidden
+from `nigel client list`, from the dashboard's Clients screen (`A` shows them
+again) and from `GET /api/clients`, and a **new invoice for an archived client
+is refused**:
+
+```
+client 'Globex' is archived — unarchive it before invoicing
+```
+
+Unarchiving is one command and makes the client invoiceable again. There is no
+confirmation on either, because both are reversible in a keystroke.
 
 ## Creating an invoice
 
@@ -536,8 +639,8 @@ nothing to say.
 |---|---|---|
 | `{{NUMBER}}` | text | Invoice number (**required**) |
 | `{{CLIENT}}` | text | Client name (**required**) |
-| `{{CLIENT_EMAIL}}` | text | Client billing email, empty when unset |
-| `{{CLIENT_EMAIL_BLOCK}}` | fragment | `<br>ap@acme.test`, empty when unset |
+| `{{CLIENT_EMAIL}}` | text | The billing contact's address, empty when the client has none |
+| `{{CLIENT_EMAIL_BLOCK}}` | fragment | `<br>ap@acme.test`, empty when the client has none |
 | `{{CLIENT_ADDRESS}}` | text | Client billing address, empty when unset |
 | `{{CLIENT_ADDRESS_BLOCK}}` | fragment | One `<br>`-prefixed line per typed line, empty when unset or blank |
 | `{{COMPANY}}` | text | Your business name, empty when unset |

@@ -134,6 +134,12 @@ nigel browse register --uncategorized
 nigel client add "Acme Co" --email ap@acme.test
 nigel client show 1                                   # Details plus invoice history
 nigel client edit 1 --email billing@acme.test         # Applies on the next send
+nigel client edit 1 --contact "ap@acme.test:Ada Payne:AP" --contact "dana@acme.test:Dana Chen"
+                                                      # Whole list; the first is billed, the rest cc'd
+nigel client archive 7                                # Hide a finished client; touches no invoice
+nigel client unarchive 7
+nigel client list --all                               # Include archived clients
+nigel client delete 7                                 # Refused while any invoice bills them
 nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"
 nigel invoice edit 1248 --due 2026-09-30              # Drafts only
 nigel invoice void 1248                               # Cancel, deactivate its link, void its page

@@ -5,10 +5,11 @@ import {
   validateAccountForm,
   type AccountFormValue,
   type NcAccountFormChangeDetail,
-  type WcAccountForm,
+  WcAccountForm,
 } from './wc-account-form.js';
 import { accountTypeLabel, ACCOUNT_TYPES } from './account-type.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeControlsAdoption } from '../../preview/controls-suite.js';
 import preview from './wc-account-form.preview.js';
 
 const filled: AccountFormValue = {
@@ -115,3 +116,5 @@ describe('wc-account-form', () => {
 });
 
 describePreviewA11y(preview);
+
+describeControlsAdoption(WcAccountForm, ':focus-visible');

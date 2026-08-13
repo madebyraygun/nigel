@@ -11,6 +11,16 @@ import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
 import type { AppSettings } from '../api/types.js';
 import type { ScreenContext } from './context.js';
+import {
+  applyMode,
+  controlsCss,
+  darkModeQuery,
+  readMode,
+  resolveMode,
+  writeMode,
+  type ColorMode,
+  type ResolvedMode,
+} from '@nigel/theme';
 
 /**
  * Settings: business name, auto-update check, data directory, and the database
@@ -22,48 +32,51 @@ import type { ScreenContext } from './context.js';
  */
 @customElement('nigel-settings-screen')
 export class NigelSettingsScreen extends SignalWatcher(LitElement) {
-  static styles = css`
-    :host {
-      display: grid;
-      gap: var(--wa-space-l, 16px);
-      max-width: 48rem;
-      padding: var(--wa-space-l, 16px);
-      font-family: var(--wa-font-family-sans);
-      color: var(--wa-color-text);
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: grid;
+        gap: var(--wa-space-l, 16px);
+        max-width: 48rem;
+        padding: var(--wa-space-l, 16px);
+        font-family: var(--wa-font-family-sans);
+        color: var(--wa-color-text);
+      }
 
-    .row {
-      display: flex;
-      gap: var(--wa-space-s, 8px);
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
+      .row {
+        display: flex;
+        gap: var(--wa-space-s, 8px);
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
 
-    .row wa-input {
-      flex: 1 1 18rem;
-    }
+      .row wa-input {
+        flex: 1 1 18rem;
+      }
 
-    .path {
-      font-family: var(--wa-font-family-mono, monospace);
-      font-size: var(--wa-font-size-s, 13px);
-      background: var(--wa-color-surface-alt);
-      border-radius: var(--wa-radius-s, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      overflow-wrap: anywhere;
-    }
+      .path {
+        font-family: var(--wa-font-family-mono, monospace);
+        font-size: var(--wa-font-size-s, 13px);
+        background: var(--wa-color-surface-alt);
+        border-radius: var(--wa-radius-s, 6px);
+        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        overflow-wrap: anywhere;
+      }
 
-    .note {
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-    }
+      .note {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs, 6px) 0 0;
+      }
 
-    .error {
-      color: var(--wa-color-danger);
-      font-size: var(--wa-font-size-s, 13px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-    }
-  `;
+      .error {
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs, 6px) 0 0;
+      }
+    `,
+  ];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })
@@ -75,13 +88,47 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private busy: string | null = null;
   @state() private passwordError = '';
   @state() private dataDirError = '';
+  @state() private colorMode: ColorMode = 'system';
+  @state() private resolvedMode: ResolvedMode = 'light';
 
   private store: AppStore = getAppStore();
   private seededCompany = false;
 
+  /**
+   * Only there to keep the "currently dark" hint honest while System is
+   * selected. The colours themselves need no listener — System writes no
+   * class and the CSS media query does the tracking.
+   */
+  private darkQuery?: MediaQueryList;
+  private readonly onSystemChange = () => {
+    this.resolvedMode = resolveMode(this.colorMode, this.darkQuery);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     void this.loadAppSettings();
+
+    this.colorMode = readMode();
+    this.darkQuery = darkModeQuery();
+    this.resolvedMode = resolveMode(this.colorMode, this.darkQuery);
+    this.darkQuery?.addEventListener('change', this.onSystemChange);
+  }
+
+  disconnectedCallback(): void {
+    this.darkQuery?.removeEventListener('change', this.onSystemChange);
+    super.disconnectedCallback();
+  }
+
+  private handleColorMode(event: CustomEvent<{ mode: ColorMode }>): void {
+    const mode = event.detail.mode;
+    this.colorMode = mode;
+    // The container owns persistence; the switcher stays controlled. Nothing
+    // is sent to the server: every /api/settings/* route is behind the locked
+    // guard, so a server-stored mode could not be honoured on the unlock
+    // screen, and the preference is per-browser by nature anyway.
+    writeMode(mode);
+    applyMode(mode);
+    this.resolvedMode = resolveMode(mode, this.darkQuery);
   }
 
   private async loadAppSettings(): Promise<void> {
@@ -250,6 +297,17 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           @click=${this.saveCompanyName}
           >Save</wa-button
         >
+      </wc-panel>
+
+      <wc-panel
+        heading="Appearance"
+        description="Light, dark, or whatever this device is set to. Saved in this browser only — a laptop and a desktop on the same books can differ."
+      >
+        <wc-mode-switcher
+          .mode=${this.colorMode}
+          .resolved=${this.resolvedMode}
+          @nc-color-mode-change=${this.handleColorMode}
+        ></wc-mode-switcher>
       </wc-panel>
 
       <wc-panel

@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-app-shell.js';
-import type { WcAppShell } from './wc-app-shell.js';
+import { WcAppShell } from './wc-app-shell.js';
 import { dispatchNcToast } from './wc-toast.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-app-shell.preview.js';
 
 async function mount(props: Partial<WcAppShell> = {}): Promise<WcAppShell> {
@@ -73,3 +75,27 @@ describe('wc-app-shell', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
+
+describe('wc-app-shell on paper', () => {
+  const text = styleText(WcAppShell);
+
+  it('gives the whole page over to the content', () => {
+    // On screen the shell is a 100vh flex box with a scrolling main. On paper
+    // that clamps a ten-page report to one viewport-high box and throws the
+    // rest away, so both the clamp and the scroll have to come off.
+    expect(text).toMatch(/@media print[\s\S]*\.content[^{]*{[^}]*overflow:\s*visible/);
+    expect(text).toMatch(/@media print[\s\S]*\.content[^{]*{[^}]*padding:\s*0/);
+    expect(text).toMatch(/@media print[\s\S]*:host[^{]*{[^}]*height:\s*auto/);
+  });
+
+  it('keeps the parts it exposes', () => {
+    // nigel-app is one boundary away and can still use them; they are cheap
+    // and documented. What changed is that print no longer depends on them.
+    const html = WcAppShell.prototype.render.toString();
+    for (const part of ['sidebar', 'header', 'banner', 'content']) {
+      expect(html).toContain(`part="${part}"`);
+    }
+  });
+});

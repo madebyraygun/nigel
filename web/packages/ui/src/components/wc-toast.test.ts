@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-toast.js';
-import { dispatchNcToast, type WcToast } from './wc-toast.js';
+import { dispatchNcToast, WcToast } from './wc-toast.js';
+import { describePrintHiding } from '../../preview/print-suite.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-toast.preview.js';
 
@@ -162,3 +163,5 @@ describe('wc-toast', () => {
 });
 
 describePreviewA11y(preview);
+
+describePrintHiding(WcToast, ':host');

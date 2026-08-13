@@ -109,6 +109,7 @@ export {
   type NcManagerActionDetail,
 } from './wc-manager-table.js';
 export { WcManagerDialog } from './wc-manager-dialog.js';
+export { WcRowBadge } from './wc-row-badge.js';
 export {
   ACCOUNT_TYPES,
   accountTypeLabel,
@@ -222,7 +223,9 @@ export {
 export {
   WcClientForm,
   EMPTY_CLIENT_FORM,
+  EMPTY_CONTACT,
   validateClientForm,
+  type ClientFormContact,
   type ClientFormErrors,
   type ClientFormValue,
   type NcClientFormChangeDetail,
@@ -234,3 +237,4 @@ export {
   type SendStepState,
   type SendStepView,
 } from './wc-send-dialog.js';
+export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher.js';

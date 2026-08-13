@@ -18,8 +18,16 @@ const CLIENTS: Client[] = [
     email: 'ap@acme.test',
     billingAddress: '1 Main St',
     notes: null,
+    archivedAt: null,
   },
-  { id: 2, name: 'Globex', email: null, billingAddress: null, notes: null },
+  {
+    id: 2,
+    name: 'Globex',
+    email: null,
+    billingAddress: null,
+    notes: null,
+    archivedAt: null,
+  },
 ];
 
 function client(clients: Client[] = CLIENTS): FakeApiClient {
@@ -40,10 +48,14 @@ interface Mounted {
   routes: { screen: ScreenId; params: string }[];
 }
 
-async function mount(fake: FakeApiClient = client()): Promise<Mounted> {
+async function mount(
+  fake: FakeApiClient = client(),
+  query = '',
+): Promise<Mounted> {
   const routes: { screen: ScreenId; params: string }[] = [];
   const el = document.createElement('nigel-clients-screen');
   el.client = fake;
+  el.params = new URLSearchParams(query);
   el.navigate = (screen, params) =>
     routes.push({ screen, params: params?.toString() ?? '' });
   document.body.appendChild(el);
@@ -61,6 +73,11 @@ function table(el: NigelClientsScreen): WcManagerTable {
   const found = el.shadowRoot?.querySelector<WcManagerTable>('wc-manager-table');
   if (!found) throw new Error('no table on screen');
   return found;
+}
+
+function rowLabels(el: NigelClientsScreen): string[] {
+  return [...(table(el).shadowRoot?.querySelectorAll('tr[data-row] td:first-child') ?? [])]
+    .map((cell) => cell.textContent?.trim().split('\n')[0].trim() ?? '');
 }
 
 function dialog(el: NigelClientsScreen): WcManagerDialog | null {
@@ -121,6 +138,184 @@ describe('nigel-clients-screen', () => {
     vi.restoreAllMocks();
   });
 
+  describe('contacts', () => {
+    it('fetches the detail before the edit dialog can be filled in', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+
+      // The list row is a bare `Client`; the contacts come from one request on
+      // a deliberate click.
+      expect(fake.calls).toContain('getClient:1');
+      expect(form(el).value.contacts).toEqual([
+        { email: 'ap@acme.test', name: '', title: '' },
+      ]);
+    });
+
+    it('never offers a form the detail could not fill in', async () => {
+      // An editable form here would carry an empty contacts baseline, and
+      // saving it would whole-list-replace — delete — every address the client
+      // actually has.
+      const fake = client();
+      fake.clientError = new Error('boom');
+      const { el } = await mount(fake);
+      await rowAction(el, 'edit', 1);
+
+      expect(dialog(el)).not.toBeNull();
+      expect(dialog(el)?.error).toBeTruthy();
+      expect(dialog(el)?.querySelector('wc-client-form')).toBeNull();
+      expect(dialog(el)?.querySelector('[data-retry-editor]')).not.toBeNull();
+      // The list behind it loaded fine.
+      expect(layout(el).error).toBeNull();
+
+      // And a save cannot be coaxed out of it.
+      await save(el);
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+    });
+
+    it('retries the detail and then offers the form', async () => {
+      const fake = client();
+      fake.clientError = new Error('boom');
+      const { el } = await mount(fake);
+      await rowAction(el, 'edit', 1);
+
+      fake.clientError = null;
+      dialog(el)?.querySelector<HTMLElement>('[data-retry-editor]')?.click();
+      await settle(el);
+
+      expect(dialog(el)?.querySelector('wc-client-form')).not.toBeNull();
+      expect(form(el).value.contacts).toEqual([
+        { email: 'ap@acme.test', name: '', title: '' },
+      ]);
+    });
+
+    it('sends the whole contact list when it changes', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+
+      const contacts = form(el).shadowRoot?.querySelector<HTMLElement>('[data-add-contact]');
+      contacts?.click();
+      await settle(el);
+      const email = form(el).shadowRoot?.querySelectorAll<HTMLInputElement>(
+        '[data-contact-email]',
+      )[1];
+      email!.value = 'dana@acme.test';
+      email!.dispatchEvent(new Event('input'));
+      await settle(el);
+      await save(el);
+
+      const call = fake.calls.find((c) => c.startsWith('updateClient:1:'));
+      expect(call).toBeDefined();
+      const body = JSON.parse(call!.slice('updateClient:1:'.length));
+      expect(body.contacts).toEqual([
+        { email: 'ap@acme.test', name: null, title: null, isBilling: true },
+        { email: 'dana@acme.test', name: null, title: null, isBilling: false },
+      ]);
+      // `email` and `contacts` in one body is a 400, so the screen never sends
+      // both.
+      expect(body.email).toBeUndefined();
+    });
+
+    it('closes rather than patching when the contact list did not move', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+      await save(el);
+
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+      expect(dialog(el)).toBeNull();
+    });
+
+    it('refuses a blank row before the server sees it', async () => {
+      const { el, fake } = await mount();
+      await rowAction(el, 'edit', 1);
+      form(el).shadowRoot?.querySelector<HTMLElement>('[data-add-contact]')?.click();
+      await settle(el);
+      await save(el);
+
+      expect(fake.calls.some((c) => c.startsWith('updateClient:'))).toBe(false);
+      expect(form(el).errors.contacts?.[1]).toBe('An email address is required');
+    });
+  });
+
+  describe('archiving', () => {
+    const ARCHIVED: Client[] = [
+      ...CLIENTS,
+      {
+        id: 3,
+        name: 'Umbrella Corp',
+        email: 'ap@umbrella.test',
+        billingAddress: null,
+        notes: null,
+        archivedAt: '2026-03-01',
+      },
+    ];
+
+    it('asks for the active list by default and the whole one when told', async () => {
+      const { fake } = await mount(client(ARCHIVED));
+      expect(fake.calls).toContain('getClients');
+      expect(fake.calls).not.toContain('getClients:all');
+
+      const withArchived = await mount(client(ARCHIVED), 'archived=1');
+      expect(withArchived.fake.calls).toContain('getClients:all');
+      expect(rowLabels(withArchived.el)).toContain('Umbrella Corp');
+    });
+
+    it('marks an archived row with a badge rather than a column', async () => {
+      const { el } = await mount(client(ARCHIVED), 'archived=1');
+      const badges = table(el)
+        .shadowRoot?.querySelectorAll('wc-row-badge');
+      expect(badges?.length).toBe(1);
+      expect(badges?.[0].getAttribute('label')).toBe('Archived');
+      // No fourth column: the badge rides in the name cell.
+      expect(table(el).shadowRoot?.querySelectorAll('thead th').length).toBe(4);
+    });
+
+    it('writes the filter into the route rather than into state', async () => {
+      const { el, routes } = await mount();
+      const toggle = el.shadowRoot?.querySelector<HTMLElement>(
+        '[data-archived-toggle]',
+      );
+      toggle?.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle(el);
+      expect(routes).toEqual([{ screen: 'clients', params: 'archived=1' }]);
+    });
+
+    it('offers Archive on an active row and Unarchive on an archived one', async () => {
+      const { el } = await mount(client(ARCHIVED), 'archived=1');
+      const labels = [...(table(el).shadowRoot?.querySelectorAll('tr[data-row]') ?? [])].map(
+        (row) =>
+          [...row.querySelectorAll('wa-button')].map((b) => b.getAttribute('data-action')),
+      );
+      expect(labels[0]).toContain('archive');
+      expect(labels[2]).toContain('unarchive');
+    });
+
+    it('archives without a confirmation and refetches the list', async () => {
+      const { el, fake } = await mount(client(ARCHIVED));
+      await rowAction(el, 'archive', 2);
+
+      expect(fake.calls).toContain('archiveClient:2');
+      // Refetched, not spliced: the row leaves the unfiltered list.
+      expect(fake.calls.filter((call) => call === 'getClients')).toHaveLength(2);
+      expect(rowLabels(el)).not.toContain('Globex');
+    });
+
+    it('unarchives from the filtered list', async () => {
+      const { el, fake } = await mount(client(ARCHIVED), 'archived=1');
+      await rowAction(el, 'unarchive', 3);
+      expect(fake.calls).toContain('unarchiveClient:3');
+    });
+
+    it('reports a failed archive in the layout rather than silently', async () => {
+      const fake = client(ARCHIVED);
+      fake.archiveClientError = conflictError('client_archived', {
+        message: 'nope',
+      });
+      const { el } = await mount(fake);
+      await rowAction(el, 'archive', 2);
+      expect(layout(el).error).toBeTruthy();
+    });
+  });
+
   it('lists the clients, with an em dash for the ones missing a field', async () => {
     const { el } = await mount();
     expect(table(el).rows.map((row) => row.cells)).toEqual([
@@ -163,7 +358,9 @@ describe('nigel-clients-screen', () => {
     const { el, fake } = await mount();
     await rowAction(el, 'edit', 1);
     expect(form(el).value.name).toBe('Acme Co');
-    expect(form(el).value.email).toBe('ap@acme.test');
+    expect(form(el).value.contacts).toEqual([
+      { email: 'ap@acme.test', name: '', title: '' },
+    ]);
 
     await type(el, '[data-address]', '2 Elm St');
     await save(el);
