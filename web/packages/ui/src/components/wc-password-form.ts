@@ -87,7 +87,6 @@ export class WcPasswordForm extends LitElement {
         margin: 0;
         color: var(--wa-color-muted);
         font-size: var(--wa-font-size-s, 13px);
-        max-width: 68ch;
       }
 
       :host([mode='remove']) fieldset {
@@ -118,14 +117,6 @@ export class WcPasswordForm extends LitElement {
 
   @property({ type: String, reflect: true })
   mode: WcPasswordMode = 'set';
-
-  /** Overrides the operation's own name. Empty means the name for its mode. */
-  @property({ type: String })
-  heading = '';
-
-  /** Overrides the sentence under the name. Empty means the one for its mode. */
-  @property({ type: String })
-  description = '';
 
   @property({ type: Boolean, reflect: true })
   busy = false;
@@ -205,8 +196,8 @@ export class WcPasswordForm extends LitElement {
     return html`
       <form @submit=${this.handleSubmit}>
         <fieldset>
-          <legend><h3>${this.heading || HEADINGS[this.mode]}</h3></legend>
-          <p class="description">${this.description || DESCRIPTIONS[this.mode]}</p>
+          <legend><h3>${HEADINGS[this.mode]}</h3></legend>
+          <p class="description">${DESCRIPTIONS[this.mode]}</p>
           ${this.needsCurrent
             ? html`<wa-input
                 data-current

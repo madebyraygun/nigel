@@ -66,20 +66,6 @@ describe('wc-password-form', () => {
     );
   });
 
-  it('takes an overriding heading and description', async () => {
-    const el = await mount({
-      mode: 'change',
-      heading: 'Re-key these books',
-      description: 'Rewritten under the new password.',
-    });
-    expect(el.shadowRoot?.querySelector('legend h3')?.textContent).toBe(
-      'Re-key these books',
-    );
-    expect(el.shadowRoot?.querySelector('.description')?.textContent).toBe(
-      'Rewritten under the new password.',
-    );
-  });
-
   it('presents remove as the destructive operation', async () => {
     const el = await mount({ mode: 'remove' });
     // The attribute is what the danger styling selects on, and the button

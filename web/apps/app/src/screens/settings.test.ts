@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './settings.js';
 import type { NigelSettingsScreen } from './settings.js';
 import { ApiError, appLocked } from '../api/index.js';
-import { initializeAppStore, resetAppStore } from '../state/app-store.js';
+import { getAppStore, initializeAppStore, resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
 
 /**
@@ -460,6 +460,48 @@ describe('settings screen', () => {
         (f) => f.getAttribute('error'),
       );
       expect(errors).toEqual(['', 'Wrong password.']);
+    });
+
+    it('words a non-api failure for the operation that failed', async () => {
+      const ui = await import('@nigel/ui');
+      vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
+
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+      // Not an ApiError, so the screen supplies the sentence itself.
+      client.settingsError = new Error('socket hang up');
+
+      submitPassword(el, { mode: 'remove', currentPassword: 'hunter2' }, 1);
+      await settle(el);
+
+      const remove = el.shadowRoot?.querySelectorAll('wc-password-form')[1];
+      expect(remove?.getAttribute('error')).toBe('Could not remove the password.');
+    });
+
+    it('keeps a failure visible when the operation it names leaves the screen', async () => {
+      const ui = await import('@nigel/ui');
+      vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
+
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+      client.settingsError = new Error('socket hang up');
+
+      submitPassword(el, { mode: 'remove', currentPassword: 'hunter2' }, 1);
+      await settle(el);
+
+      // Another session decrypts these books; the next refreshStatus swaps the
+      // two forms for the single Set form the remove failure cannot name.
+      client.settingsError = null;
+      client.status = { ...client.status, encrypted: false };
+      await getAppStore().refreshStatus();
+      await settle(el);
+
+      const forms = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])];
+      expect(forms.map((f) => f.getAttribute('mode'))).toEqual(['set']);
+      // Stale, but readable — vanishing would leave the failure unreported.
+      expect(forms[0]?.getAttribute('error')).toBe('Could not remove the password.');
     });
 
     it('surfaces a wrong current password on the form', async () => {

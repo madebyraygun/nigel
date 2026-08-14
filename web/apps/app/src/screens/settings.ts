@@ -5,7 +5,12 @@ import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
-import { confirmDialog, dispatchNcToast, type NcPasswordSubmitDetail } from '@nigel/ui';
+import {
+  confirmDialog,
+  dispatchNcToast,
+  type NcPasswordSubmitDetail,
+  type WcPasswordMode,
+} from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { ApiError, type ApiClient } from '../api/index.js';
@@ -28,6 +33,23 @@ import {
   type ColorMode,
   type ResolvedMode,
 } from '@nigel/theme';
+
+interface PasswordFailure {
+  mode: WcPasswordMode;
+  message: string;
+}
+
+/**
+ * What a failure says when the server did not say anything usable. One
+ * sentence per operation: an encrypted database shows change and remove
+ * together, so a single "Could not change the password." would put the wrong
+ * verb under the Remove form.
+ */
+const PASSWORD_FAILURE: Record<WcPasswordMode, string> = {
+  set: 'Could not encrypt the database.',
+  change: 'Could not change the password.',
+  remove: 'Could not remove the password.',
+};
 
 /**
  * Settings: business name, auto-update check, data directory, and the database
@@ -123,13 +145,14 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private companyLoadError = '';
   @state() private dataDirDraft = '';
   @state() private busy: string | null = null;
-  @state() private passwordError = '';
   /**
-   * Which operation the error belongs to. An encrypted database has two
-   * password forms on screen, so a failure that is not filed against one of
-   * them lands under whichever happens to be first.
+   * A failed password operation and which operation it was. An encrypted
+   * database has two password forms on screen, both collecting a field called
+   * "Current password", so a message without its operation lands under
+   * whichever form happens to be first. The two travel as one object because
+   * a message filed against nothing is not a state worth being able to write.
    */
-  @state() private passwordErrorMode: NcPasswordSubmitDetail['mode'] | null = null;
+  @state() private passwordFailure: PasswordFailure | null = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
   @state() private resolvedMode: ResolvedMode = 'light';
@@ -366,8 +389,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       if (!confirmed) return;
     }
 
-    this.passwordError = '';
-    this.passwordErrorMode = null;
+    this.passwordFailure = null;
     this.busy = 'password';
     try {
       if (detail.mode === 'set') {
@@ -389,16 +411,32 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       // comes from the server, never from an optimistic local flag.
       await this.store.refreshStatus();
     } catch (error) {
-      this.passwordError =
-        error instanceof ApiError ? error.message : 'Could not change the password.';
-      this.passwordErrorMode = detail.mode;
+      this.passwordFailure = {
+        mode: detail.mode,
+        message:
+          error instanceof ApiError ? error.message : PASSWORD_FAILURE[detail.mode],
+      };
     } finally {
       this.busy = null;
     }
   };
 
-  private errorFor(mode: NcPasswordSubmitDetail['mode']): string {
-    return this.passwordErrorMode === mode ? this.passwordError : '';
+  /**
+   * Which of the forms on screen carries the failure. Normally the operation
+   * that produced it; if that operation is no longer rendered — another
+   * session encrypted or decrypted these books while the message was up, and
+   * `refreshStatus` swapped the forms underneath it — it falls back to the
+   * first one, because a message that is stale is still one somebody can read
+   * and a message filed against a form that does not exist is one nobody can.
+   */
+  private failureSlot(rendered: readonly WcPasswordMode[]): WcPasswordMode | null {
+    const failure = this.passwordFailure;
+    if (!failure) return null;
+    return rendered.includes(failure.mode) ? failure.mode : (rendered[0] ?? null);
+  }
+
+  private errorAt(mode: WcPasswordMode, slot: WcPasswordMode | null): string {
+    return slot === mode ? (this.passwordFailure?.message ?? '') : '';
   }
 
   /**
@@ -479,6 +517,10 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     const encrypted = status?.encrypted ?? false;
     // Same metadata field either way; only the label follows the books profile.
     const nameLabel = status?.profile === 'personal' ? 'Household name' : 'Business name';
+    const operations: readonly [WcPasswordMode, ...WcPasswordMode[]] = encrypted
+      ? ['change', 'remove']
+      : ['set'];
+    const failureSlot = this.failureSlot(operations);
 
     return html`
       <wc-panel
@@ -558,16 +600,16 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       >
         <div class="operations">
           <wc-password-form
-            mode=${encrypted ? 'change' : 'set'}
+            mode=${operations[0]}
             ?busy=${this.busy === 'password'}
-            error=${this.errorFor(encrypted ? 'change' : 'set')}
+            error=${this.errorAt(operations[0], failureSlot)}
             @nc-password-submit=${this.handlePasswordSubmit}
           ></wc-password-form>
           ${encrypted
             ? html`<wc-password-form
                 mode="remove"
                 ?busy=${this.busy === 'password'}
-                error=${this.errorFor('remove')}
+                error=${this.errorAt('remove', failureSlot)}
                 @nc-password-submit=${this.handlePasswordSubmit}
               ></wc-password-form>`
             : nothing}

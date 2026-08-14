@@ -24,21 +24,14 @@ const preview: Preview = {
       // field called "Current password". The state this component exists to
       // keep readable.
       name: 'encrypted database',
+      // The same gap the settings screen's .operations grid uses, so the
+      // preview demonstrates the spacing that actually ships.
       render: () => html`
-        <div style="display: grid; gap: 1.5rem;">
+        <div style="display: grid; gap: var(--wa-space-l, 16px);">
           <wc-password-form mode="change"></wc-password-form>
           <wc-password-form mode="remove"></wc-password-form>
         </div>
       `,
-    },
-    {
-      name: 'overridden wording',
-      render: () =>
-        html`<wc-password-form
-          mode="change"
-          heading="Re-key these books"
-          description="The database is rewritten under the new password."
-        ></wc-password-form>`,
     },
     {
       name: 'error',
