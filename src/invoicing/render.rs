@@ -26,6 +26,25 @@ pub fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
     }
 }
 
+/// The stored logo both documents will actually draw, or `None`.
+///
+/// `parse_logo` is everything a check can establish without a decoder, and it
+/// holds in every build. `logo_is_embeddable` is the rest, and it only exists
+/// where the `pdf` feature brought a decoder in. A value that fails either is
+/// used by neither document, which is what stops a file the page would display
+/// and the PDF would refuse. Neither refusal is an error: a logo never fails an
+/// invoice.
+///
+/// Public because the verdict has to be reached **once**: the publisher asks it
+/// before uploading, so nothing goes into the bucket that the documents will not
+/// draw, and `render_invoice` asks it again on the same value.
+pub fn usable_logo(stored: &str) -> Option<Logo> {
+    let logo = parse_logo(stored).ok().flatten();
+    #[cfg(feature = "pdf")]
+    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    logo
+}
+
 /// Everything `invoice send` publishes for one invoice.
 pub struct RenderedInvoice {
     pub html: String,
@@ -44,6 +63,30 @@ pub fn render_invoice(
     pay: PayButton<'_>,
     branding: &Branding<'_>,
 ) -> Result<RenderedInvoice> {
+    render_with_logo(
+        conn,
+        invoice,
+        client,
+        pay,
+        branding,
+        usable_logo(branding.logo).as_ref(),
+    )
+}
+
+/// The same seam with the logo verdict already reached.
+///
+/// `send` and a republish need it *before* they render — the object's address is
+/// derived from the bytes — and reaching it decodes the image, which is not work
+/// to do twice for one document. Everything else goes through
+/// [`render_invoice`], which reaches the verdict itself.
+pub fn render_with_logo(
+    conn: &Connection,
+    invoice: &Invoice,
+    client: &Client,
+    pay: PayButton<'_>,
+    branding: &Branding<'_>,
+    logo: Option<&Logo>,
+) -> Result<RenderedInvoice> {
     // Loaded here rather than passed in, so both callers get the same rows in
     // the same order — and, for the same reason, the money block is built here
     // rather than by whoever is rendering: every caller above the seam shows
@@ -51,27 +94,14 @@ pub fn render_invoice(
     let items = line_items(conn, invoice.id)?;
     let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
 
-    // Whether there is a usable logo is decided **here**, once, and both
-    // documents are then rendered from that one answer.
-    //
-    // `parse_logo` is everything a check can establish without a decoder, and it
-    // holds in every build. `logo_is_embeddable` is the rest, and it only exists
-    // where the `pdf` feature brought a decoder in. A value that fails either is
-    // erased from the branding the page is rendered from, so the page is handed
-    // no logo rather than asked to reach the same verdict a second time — which
-    // is what stops a file the page would display and the PDF would refuse.
-    // Neither refusal is an error: a logo never fails an invoice.
-    let logo = parse_logo(branding.logo).ok().flatten();
-    #[cfg(feature = "pdf")]
-    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    // The verdict is applied **above both renderers**: a value that fails
+    // `usable_logo` is erased from the branding the page is rendered from, so
+    // the page is handed no logo rather than asked to reach the same verdict a
+    // second time — which is what stops a file the page would display and the
+    // PDF would refuse.
     let branding = &Branding {
         logo: if logo.is_some() { branding.logo } else { "" },
-        template: branding.template,
-        company: branding.company,
-        company_address: branding.company_address,
-        company_phone: branding.company_phone,
-        payment_instructions: branding.payment_instructions,
-        contact_email: branding.contact_email,
+        ..*branding
     };
 
     let html = render_invoice_html(branding, invoice, client, &items, &money, pay);
@@ -87,7 +117,7 @@ pub fn render_invoice(
         invoice,
         client,
         &company,
-        logo.as_ref(),
+        logo,
         &items,
         &money,
         branding.payment_instructions,
@@ -519,6 +549,7 @@ mod tests {
             company_address: "P.O. Box 1234\nSpringfield, CA 90001",
             company_phone: "619.555.0123",
             logo,
+            logo_url: None,
             payment_instructions,
             contact_email: "b@e.test",
         }

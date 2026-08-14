@@ -484,7 +484,15 @@ impl SettingsManager {
             typed
         };
 
-        match db::set_metadata(conn, key, &value) {
+        // The logo goes through its own writer: clearing it has to forget what
+        // was published with it, or a document written afterwards would still
+        // carry a mark the operator has removed.
+        let written = if row == MENU_COMPANY_LOGO {
+            crate::invoicing::logo::set_company_logo(conn, &value)
+        } else {
+            db::set_metadata(conn, key, &value)
+        };
+        match written {
             Ok(()) => {
                 match row {
                     MENU_BUSINESS_NAME => self.company_name = value,
