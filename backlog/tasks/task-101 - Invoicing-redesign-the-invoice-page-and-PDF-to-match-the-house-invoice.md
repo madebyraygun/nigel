@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-14 00:54'
+updated_date: '2026-08-14 01:16'
 labels:
   - invoicing
   - pdf
@@ -128,6 +128,24 @@ All six landed on both documents; no parity exception.
 **The three wrapping defects: all fixed, no separate change needed.** They shared one cause — an unbounded party block squeezing the metadata table and the totals column — which item 6 removed. Three `white-space:nowrap` declarations (metadata cells, item headings, totals cells) make the symptom unreachable at any width.
 
 Verified: 1358+117 / 1003+117 / 1276+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+Still halted for re-review. AC #9 stays unchecked.
+
+## Correction: the invoice was reaching into the reports' shared machinery
+
+Found in review before the layout round went back to Dalton. Two constants the round had moved were not the invoice's.
+
+**`COL_PAD`** is read by `table_header`, `table_row` and `table_row_wrapped` — the machinery all nine report renderers draw through. Widening it 4->6mm to pad the invoice's cells re-laid-out every report PDF, and because `wrap_text` measures against `col.width - COL_PAD`, it also narrowed every report column's wrap width. Reverted to 4mm; the invoice now has `ITEM_COL_PAD` (6mm) and its own path — `item_table_header`, `wrap_item_cells`, `draw_item_cells`. `figure_right` re-derived from `ITEM_COL_PAD`, since the money block has to align with the Amount column.
+
+**The rule colour** was the same bug one commit earlier: `BORDER_GRAY` was set inside `hline`/`vline`, so every report's rules had gone grey. `PdfWriter` now carries `rule_color`, black by default, set only by `render_invoice_pdf`.
+
+**Pinned** by `mod shared_machinery_tests` — the reports' gutter, a rendered report's amount-column right edge (a measured literal, not derived from `COL_PAD`), report rules black, invoice rules grey. Both mutations run: restoring `COL_PAD` to 6mm fails two, defaulting the writer to grey fails the third.
+
+**Audit of everything else this epic added**: `CELL_PAD_Y`, `ITEM_COL_PAD`, `ROW_SHADE`, `PARTY_WIDTH`, `META_VALUE_WIDTH`, `fill_band`, `item_row`, `item_table_header`, `wrap_item_cells`, `draw_item_cells` — all invoice-only. `page_no` is incremented by the shared `new_page` but read only by the invoice and moves no geometry. `NOTE_COLS` is pre-existing and already read by the K-1 renderer; the invoice merely started reading it too.
+
+Invoice geometry unchanged after the fix (bands 8.6mm, rules 8.6mm apart, shared grey); reports back to black rules and their original column positions.
+
+Verified: 1362+117 / 1003+117 / 1276+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 
 Still halted for re-review. AC #9 stays unchecked.
 <!-- SECTION:NOTES:END -->
