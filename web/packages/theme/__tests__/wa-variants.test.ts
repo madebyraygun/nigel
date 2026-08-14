@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { declarationsOf, resolveToken, type Mode } from './token-resolution.js';
+import { controlsCss } from '../src/controls.js';
+import { resolveToken, type Mode } from './token-resolution.js';
 
 /**
  * What a `wa-button[variant='danger']` actually paints.
@@ -110,16 +111,17 @@ describe('the wa-button variant families', () => {
   );
 
   it.each(['danger', 'success', 'warning'])(
-    'draws a %s button its halo from the colour it is filled with',
+    'draws a %s button its hover edge from the colour it is filled with',
     (variant) => {
-      // The glow and the fill have to be the same hue or a hovered danger
-      // button wears somebody else's light. Both sides read the one token, so
-      // the pairing holds in either mode without a second declaration.
+      // The edge and the fill have to be the same hue or a hovered danger
+      // button wears somebody else's outline. Both sides read the one token,
+      // so the pairing holds in either mode without a second declaration.
       const family = indirection.get(variant)!.get('--wa-color-fill-loud')!;
-      const glow = declarationsOf(`--nc-glow-${variant}`);
+      const edge = controlsCss.cssText.match(
+        new RegExp(`wa-button\\[variant='${variant}'\\]\\s*\\{\\s*--nc-hover-border:\\s*([^;]+);`),
+      );
 
-      expect(glow).toHaveLength(1);
-      expect(glow[0]).toContain(`var(--wa-color-${variant})`);
+      expect(edge?.[1]).toBe(`var(--wa-color-${variant})`);
       for (const mode of MODES) {
         expect(resolveToken(family, mode)).toBe(resolveToken(`--wa-color-${variant}`, mode));
       }

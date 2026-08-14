@@ -1,4 +1,5 @@
 import { css } from 'lit';
+import { brandCycleKeyframes } from './tokens/gradient.js';
 
 /**
  * The brand treatment for Web Awesome primitives, adopted by the components
@@ -21,48 +22,104 @@ import { css } from 'lit';
  * properties inherit, which is why the document sheet still owns them.
  */
 export const controlsCss = css`
+  ${brandCycleKeyframes}
+
   wa-button[variant='brand']::part(base) {
     background: var(--nc-grad-brand);
+    background-size: var(--nc-grad-brand-size);
+    background-position: 0% 50%;
     color: var(--nc-color-on-gradient);
     border-color: transparent;
   }
 
+  /* background-image, not the background shorthand: the shorthand resets
+     background-size to auto, and the drift below is a position shift measured
+     against that size. */
   wa-button[variant='brand']:hover::part(base) {
-    background: var(--nc-grad-brand-hover);
+    background-image: var(--nc-grad-brand-hover);
     filter: brightness(1.04);
+  }
+
+  /* The hover treatment for the one button that has a gradient to move: the
+     ramp drifts by exactly one period per iteration and starts over where it
+     began. Same seven colours — nothing is rotated or recoloured, the image
+     is scrolled. */
+  wa-button[variant='brand']:not([appearance='plain'], [disabled], [loading]):is(
+      :hover,
+      :focus-visible
+    )::part(base) {
+    animation: nc-brand-cycle 2.4s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* The border below still draws, instantly, so hover and focus keep an
+       indication here — the motion is what goes, not the feedback. */
+    wa-button[variant='brand']:is(:hover, :focus-visible)::part(base) {
+      animation: none;
+    }
   }
 
   wa-button[variant='brand']:active:not([disabled])::part(base) {
     transform: translateY(1px);
   }
 
-  /* Which halo a button draws. One line per variant, so the rule that applies
-     it below is written once and every button is excluded on the same terms. */
+  /* Which edge a button draws on hover. One line per variant, so the rule
+     that applies it below is written once and every button is excluded on the
+     same terms. Neutral names the text colour because its own border tokens
+     are where an outlined button already sits — hovering to them is no change
+     at all. */
   wa-button {
-    --nc-glow: var(--nc-glow-neutral);
+    --nc-hover-border: var(--wa-color-text);
   }
 
   wa-button[variant='brand'] {
-    --nc-glow: var(--nc-glow-brand);
+    --nc-hover-border: var(--wa-color-brand);
   }
 
   wa-button[variant='danger'] {
-    --nc-glow: var(--nc-glow-danger);
+    --nc-hover-border: var(--wa-color-danger);
   }
 
   wa-button[variant='success'] {
-    --nc-glow: var(--nc-glow-success);
+    --nc-hover-border: var(--wa-color-success);
   }
 
   wa-button[variant='warning'] {
-    --nc-glow: var(--nc-glow-warning);
+    --nc-hover-border: var(--wa-color-warning);
+  }
+
+  /* Web Awesome already gives the base part a --wa-border-width-s border in
+     transparent and transitions it, along with five other properties, over
+     --wa-transition-fast. A transition declared out here replaces that whole
+     list rather than adding to it, so the list is restated with the two
+     properties the edge is drawn from on their own longer duration and
+     everything else left where WA had it. controls.test.ts pins which
+     properties this is answerable for. */
+  wa-button::part(base) {
+    transition:
+      background var(--wa-transition-fast),
+      border-color var(--nc-duration-slow),
+      box-shadow var(--nc-duration-slow),
+      color var(--wa-transition-fast),
+      opacity var(--wa-transition-fast),
+      transform var(--wa-transition-fast);
   }
 
   /* A plain button is a row action drawn as bare text, a disabled one is
      refusing, and a loading one drops the click in handleClick — none of the
-     three should be carrying the strongest click invitation in the theme. */
+     three should be carrying the strongest click invitation in the theme.
+
+     The edge is --wa-border-width-m, drawn in two halves so the box never
+     changes: the border WA already reserved space for, plus the rest of the
+     way as an inset ring. Widening the border itself would move every
+     neighbour a pixel on hover, and an inset shadow is clipped to the padding
+     edge, so the ring lands flush inside the border and the two read as one
+     solid 2px edge. The remainder is subtracted rather than written as 1px,
+     so a change to either width token stays a --wa-border-width-m edge. */
   wa-button:not([appearance='plain'], [disabled], [loading]):is(:hover, :focus-visible)::part(base) {
-    box-shadow: var(--nc-glow);
+    border-color: var(--nc-hover-border);
+    box-shadow: inset 0 0 0
+      calc(var(--wa-border-width-m) - var(--wa-form-control-border-width)) var(--nc-hover-border);
   }
 
   wa-button::part(label) {
