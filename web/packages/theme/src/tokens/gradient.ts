@@ -51,6 +51,36 @@ export const NIGEL_PALETTE_INK = [
 const ramp = unsafeCSS(NIGEL_PALETTE.join(', '));
 const inkRamp = unsafeCSS(NIGEL_PALETTE_INK.join(', '));
 
+// The two stops the glow is mixed from: the lavender the brand colour derives
+// from, and the magenta end of the ramp. Taken from the arrays rather than
+// written out again, so the glow is the brand ramp by construction.
+const lavender = unsafeCSS(NIGEL_PALETTE[5]);
+const magenta = unsafeCSS(NIGEL_PALETTE[6]);
+const violetInk = unsafeCSS(NIGEL_PALETTE_INK[5]);
+const fuchsiaInk = unsafeCSS(NIGEL_PALETTE_INK[6]);
+
+/**
+ * The hover and focus-visible glow: a close lavender halo with a wider, fainter
+ * magenta one under it. `--nc-glow-brand` sits behind a button already filled
+ * with the gradient, `--nc-glow-neutral` behind one that carries no fill.
+ *
+ * Two ramps for `--nc-grad-brand-text`'s reason. A pastel halo on a near-white
+ * surface is invisible, so light mode mixes the ink ramp; on a dark surface the
+ * ink hues read as a smudge, so dark mode mixes the pastels. The alphas differ
+ * with them — a glow has to lift off the surface it is drawn on.
+ */
+export const glowLightTokens = css`
+  --nc-glow-brand: 0 2px 10px color-mix(in srgb, ${violetInk} 32%, transparent),
+    0 6px 20px color-mix(in srgb, ${fuchsiaInk} 16%, transparent);
+  --nc-glow-neutral: 0 2px 10px color-mix(in srgb, ${violetInk} 20%, transparent);
+`;
+
+export const glowDarkTokens = css`
+  --nc-glow-brand: 0 2px 10px color-mix(in srgb, ${lavender} 36%, transparent),
+    0 6px 20px color-mix(in srgb, ${magenta} 20%, transparent);
+  --nc-glow-neutral: 0 2px 10px color-mix(in srgb, ${lavender} 26%, transparent);
+`;
+
 export const gradientCss = css`
   :root {
     --nc-grad-brand: linear-gradient(90deg, ${ramp});
@@ -75,5 +105,7 @@ export const gradientCss = css`
        light and dark, so a foreground that flips with the mode is unreadable
        in one of them. Held against every stop by contrast.test.ts. */
     --nc-color-on-gradient: #2b2b33;
+
+    ${glowLightTokens}
   }
 `;

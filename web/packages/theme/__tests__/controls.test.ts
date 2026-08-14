@@ -42,6 +42,54 @@ describe('controlsCss', () => {
   });
 });
 
+/** The rules behind AC #1: a glow on hover and on focus-visible. */
+describe('the button glow', () => {
+  /** Selector and token for each rule that draws a glow, whitespace collapsed. */
+  const glowRules = [
+    ...text.replace(/\s+/g, '').matchAll(/([^{}]+)\{box-shadow:var\((--nc-glow-[a-z]+)\)/g),
+  ];
+
+  it('is drawn for the brand buttons and for the neutral ones', () => {
+    expect(glowRules.map((m) => m[2])).toEqual(['--nc-glow-brand', '--nc-glow-neutral']);
+  });
+
+  it.each(['--nc-glow-brand', '--nc-glow-neutral'])(
+    '%s reaches both hover and focus-visible',
+    (token) => {
+      const selectors = glowRules.find((m) => m[2] === token)?.[1] ?? '';
+      expect(selectors).toContain(':hover');
+      expect(selectors).toContain(':focus-visible');
+    },
+  );
+
+  it('states focus-visible on the host and on the part', () => {
+    // wa-button sets delegatesFocus, so the host matches when the inner
+    // control does; the part *is* that control.
+    for (const [selectors] of glowRules) {
+      expect(selectors).toMatch(/:focus-visible\)?::part\(base\)/);
+      expect(selectors).toContain('::part(base):focus-visible');
+    }
+  });
+
+  it('skips a disabled button, which nothing is inviting a click on', () => {
+    for (const [selectors] of glowRules) {
+      expect(selectors).toMatch(/:not\((\[appearance='plain'],)?\[disabled]\)/);
+    }
+  });
+
+  it('skips a plain button, a row action drawn as bare text', () => {
+    const forNeutral = glowRules.find((m) => m[2] === '--nc-glow-neutral')?.[1] ?? '';
+    expect(forNeutral).toContain(":not([appearance='plain'],[disabled])");
+  });
+
+  it('declares no duration of its own', () => {
+    // wa-button's base part already transitions box-shadow over
+    // --wa-transition-fast, which the theme zeroes under reduced motion. A
+    // transition written here would replace that whole list instead.
+    expect(text).not.toMatch(/transition(-[a-z]+)?\s*:/);
+  });
+});
+
 describe('nigelTheme', () => {
   it('ships no ::part() rule at all — a document sheet cannot reach one', () => {
     expect(composed).not.toContain('::part(');

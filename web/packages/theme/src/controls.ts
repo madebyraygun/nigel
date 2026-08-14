@@ -39,6 +39,44 @@ export const controlsCss = css`
     transform: translateY(1px);
   }
 
+  /* Hover and focus-visible put a glow under a button in the ramp's own hues.
+     The token flips to the pastels in dark mode; the ink ramp is what reads on
+     a pale surface.
+
+     The pseudo-class is written twice on purpose. wa-button sets
+     delegatesFocus, so the host matches :focus-visible when the inner control
+     does — and the part itself is that control, which is the direct statement
+     of the same thing.
+
+     No transition is declared here. wa-button's own base part already
+     transitions box-shadow over --wa-transition-fast, which wa-contract.ts
+     points at --nc-duration-fast — 0ms under prefers-reduced-motion. A
+     transition in this rule would replace that whole list rather than add to
+     it, taking the background and colour transitions with it. */
+  :is(wa-button[variant='brand'], wa-button[variant='primary']):not([disabled]):is(
+      :hover,
+      :focus-visible
+    )::part(base),
+  :is(wa-button[variant='brand'], wa-button[variant='primary']):not(
+      [disabled]
+    )::part(base):focus-visible {
+    box-shadow: var(--nc-glow-brand);
+  }
+
+  /* Secondary: the neutral variant, filled or outlined. A plain button is a
+     row action drawn as bare text and a semantic variant is its own colour —
+     neither takes the brand halo. */
+  :is(wa-button:not([variant]), wa-button[variant='neutral']):not(
+      [appearance='plain'],
+      [disabled]
+    ):is(:hover, :focus-visible)::part(base),
+  :is(wa-button:not([variant]), wa-button[variant='neutral']):not(
+      [appearance='plain'],
+      [disabled]
+    )::part(base):focus-visible {
+    box-shadow: var(--nc-glow-neutral);
+  }
+
   wa-button::part(label) {
     font-family: var(--wa-font-family-sans);
     font-weight: var(--wa-font-weight-medium);

@@ -1,4 +1,5 @@
 import { css } from 'lit';
+import { glowDarkTokens } from './gradient.js';
 
 /**
  * The brand, danger, success, warning and info entries are darkened
@@ -93,6 +94,11 @@ const darkTokens = css`
 
   /* The pastel ramp is legible on a dark surface, so the wordmark keeps it. */
   --nc-grad-brand-text: var(--nc-grad-brand);
+
+  /* Same split, for the button glow: pastel hues on a dark surface, the ink
+     ramp on a light one. The values live beside the ramps they are mixed
+     from, in gradient.ts. */
+  ${glowDarkTokens}
 `;
 
 /**
