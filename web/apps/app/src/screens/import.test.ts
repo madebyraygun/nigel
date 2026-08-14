@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import './import.js';
 import type { NigelImportScreen } from './import.js';
 import {
+  EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
   type ImportFormValue,
   type NcImportChangeDetail,
@@ -527,6 +528,164 @@ describe('nigel-import-screen', () => {
     const { el } = await mount();
     expect(form(el).value.account).toBe('');
     expect(button(el, 'Preview')?.disabled).toBe(true);
+  });
+
+  it('offers no cancel until there is an import to abandon', async () => {
+    const { el } = await mount();
+    expect(button(el, 'Cancel')).toBeNull();
+
+    await choose(el);
+    expect(button(el, 'Cancel')).not.toBeNull();
+  });
+
+  it('offers a cancel for a form touched before any file is chosen', async () => {
+    const { el } = await mount();
+    await setForm(el, { account: 'BofA Checking' });
+
+    expect(button(el, 'Cancel')).not.toBeNull();
+  });
+
+  it('offers a cancel for a file the dropzone refused', async () => {
+    const { el } = await mount();
+    dropzone(el).dispatchEvent(
+      new CustomEvent('nc-file-error', {
+        detail: { message: 'nigel reads .csv, .xlsx, .xls statements.' },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+
+    expect(button(el, 'Cancel')).not.toBeNull();
+  });
+
+  it('cancels a chosen file before any preview', async () => {
+    const { el, fake } = await mount();
+    await choose(el);
+    await setForm(el, { account: 'BofA Checking', format: 'bofa_checking' });
+
+    await click(el, 'Cancel');
+
+    expect(dropzone(el).filename).toBe('');
+    expect(form(el).value).toEqual({ ...EMPTY_IMPORT_FORM });
+    expect(button(el, 'Cancel')).toBeNull();
+    expect(button(el, 'Preview')?.disabled).toBe(true);
+    expect(fake.calls).toEqual(['getAccounts', 'getImportFormats', 'getCsvProfiles']);
+  });
+
+  it('cancels a previewed import and returns the screen to its initial state', async () => {
+    const { el } = await mount();
+    await toPreview(el);
+    expect(panelHeadings(el)).toContain('Preview');
+
+    await click(el, 'Cancel');
+
+    expect(panelHeadings(el)).toEqual(['Import a statement']);
+    expect(dropzone(el).filename).toBe('');
+    expect(dropzone(el).error).toBe('');
+    // The wrong account is one of the two things a cancel corrects, so unlike
+    // the reset a finished import offers, this one clears it.
+    expect(form(el).value.account).toBe('');
+    expect(button(el, 'Cancel')).toBeNull();
+  });
+
+  it('cancels out of the duplicate-file dead end', async () => {
+    const fake = client();
+    fake.importPreview = { ...EMPTY_IMPORT_PREVIEW, duplicateFile: true };
+    const { el } = await mount(fake);
+    await toPreview(el);
+    expect(panelHeadings(el)).toContain('Already imported');
+
+    await click(el, 'Cancel');
+
+    expect(panelHeadings(el)).toEqual(['Import a statement']);
+    expect(dropzone(el).filename).toBe('');
+  });
+
+  it('cancels back to the preselected account rather than to none', async () => {
+    const fake = client();
+    fake.accounts = [ACCOUNTS[0]];
+    const { el } = await mount(fake);
+    await choose(el);
+    await click(el, 'Preview');
+
+    await click(el, 'Cancel');
+
+    // One account is not a choice, so the initial state has it filled in.
+    expect(form(el).value.account).toBe('BofA Checking');
+    expect(button(el, 'Cancel')).toBeNull();
+  });
+
+  it('clears the error a failed preview left behind', async () => {
+    const fake = client();
+    fake.previewError = new ApiError({
+      code: 'bad_request',
+      rawCode: 'bad_request',
+      message: 'Column 9 is past the end of every row.',
+      status: 400,
+    });
+    const { el } = await mount(fake);
+    await toPreview(el, { format: GENERIC_FORMAT_CHOICE });
+    expect(form(el).mappingError).toContain('Column 9');
+
+    await click(el, 'Cancel');
+
+    expect(form(el).mappingError).toBe('');
+  });
+
+  it('leaves the spooled upload to the purge and never names it again', async () => {
+    const { el, fake } = await mount();
+    await toPreview(el);
+    const abandoned = [...fake.liveUploads];
+    expect(abandoned).toHaveLength(1);
+    const before = [...fake.calls];
+
+    await click(el, 'Cancel');
+
+    // Cancel says nothing to the server: an upload is a file on disk with an
+    // mtime, and the hourly sweep is what collects it.
+    expect(fake.calls).toEqual(before);
+
+    // A second attempt at the same file uploads afresh rather than reaching
+    // for the id the cancelled import was holding.
+    await toPreview(el);
+    await click(el, 'Import 42');
+
+    expect(fake.calls.filter((c) => c.startsWith('uploadImport'))).toHaveLength(2);
+    const named = fake.calls
+      .filter((c) => c.startsWith('previewImport') || c.startsWith('confirmImport'))
+      .map((call) => bodyOf(call).uploadId);
+    expect(named.slice(1)).not.toContain(abandoned[0]);
+  });
+
+  it('refuses to cancel out from under a request in flight', async () => {
+    const fake = client();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const upload = fake.uploadImport.bind(fake);
+    fake.uploadImport = async (file: File) => {
+      await gate;
+      return upload(file);
+    };
+
+    const { el } = await mount(fake);
+    await choose(el);
+    await setForm(el, { account: 'BofA Checking' });
+
+    button(el, 'Preview')?.click();
+    await el.updateComplete;
+
+    // The api client sends nothing it can call back, so an upload cannot be
+    // recalled — only waited out.
+    expect(button(el, 'Cancel')?.disabled).toBe(true);
+
+    release();
+    await settle(el);
+
+    expect(panelHeadings(el)).toContain('Preview');
+    expect(button(el, 'Cancel')?.disabled).toBe(false);
   });
 
   it('still renders the form when the profile list fails', async () => {

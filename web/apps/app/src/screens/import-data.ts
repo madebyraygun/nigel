@@ -1,6 +1,8 @@
 import {
+  EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
   type CountItem,
+  type ImportAccountOption,
   type ImportFormValue,
 } from '@nigel/ui';
 
@@ -47,6 +49,32 @@ export function confirmRequestBody(form: ImportFormValue): ConfirmBody {
   const name = form.saveProfile.trim();
   if (body.mapping === undefined || name === '') return body;
   return { ...body, saveProfile: name };
+}
+
+/**
+ * The form an untouched screen shows: empty, plus the one preselection the
+ * screen makes for itself.
+ *
+ * One account is not a choice, so it is filled in — and filling it in must not
+ * make the screen look like an import somebody started, which is why the
+ * initial form is a function of the accounts rather than a constant.
+ */
+export function initialImportForm(accounts: ImportAccountOption[]): ImportFormValue {
+  if (accounts.length !== 1) return EMPTY_IMPORT_FORM;
+  return { ...EMPTY_IMPORT_FORM, account: accounts[0].name };
+}
+
+/** Whether two forms say the same thing, field by field. */
+export function sameImportForm(a: ImportFormValue, b: ImportFormValue): boolean {
+  return (
+    a.account === b.account &&
+    a.format === b.format &&
+    a.saveProfile === b.saveProfile &&
+    a.mapping.dateCol === b.mapping.dateCol &&
+    a.mapping.descCol === b.mapping.descCol &&
+    a.mapping.amountCol === b.mapping.amountCol &&
+    a.mapping.dateFormat === b.mapping.dateFormat
+  );
 }
 
 /** Whether this form would send an inline mapping — i.e. whose 400 it is. */

@@ -22,9 +22,11 @@ import {
   confirmRequestBody,
   formatLabel,
   importRequestBody,
+  initialImportForm,
   previewCounts,
   resultCounts,
   routeImportError,
+  sameImportForm,
 } from './import-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
@@ -46,6 +48,14 @@ type Busy = 'upload' | 'preview' | 'confirm' | null;
  * would answer 200 with zero counts — the checksum is checked before anything
  * is parsed — so the button would offer a no-op, and offering a no-op is worse
  * than not offering it.
+ *
+ * Cancel abandons the import at any stage before the confirm and puts the
+ * screen back the way it loaded, the chosen account included, since the wrong
+ * account is one of the two things it exists to correct. It tells the server
+ * nothing. A spooled upload is a file on disk with an mtime, swept an hour
+ * later, and a closed tab, a dead network and a quit browser all abandon one
+ * with no message at all — so the sweep has to be right on its own, and a
+ * delete call would only ever cover the case where someone stayed to click.
  */
 @customElement('nigel-import-screen')
 export class NigelImportScreen extends LitElement {
@@ -178,10 +188,8 @@ export class NigelImportScreen extends LitElement {
         name: account.name,
         accountType: account.accountType,
       }));
-      // One account is not a choice; preselecting it saves a click that has
-      // only one possible outcome.
-      if (this.accounts.length === 1 && this.form.account === '') {
-        this.form = { ...this.form, account: this.accounts[0].name };
+      if (this.form.account === '') {
+        this.form = initialImportForm(this.accounts);
       }
     } else {
       this.reportLoadFailure(accounts.reason, 'Could not load your accounts.');
@@ -257,6 +265,21 @@ export class NigelImportScreen extends LitElement {
 
   private get ready(): boolean {
     return this.file !== null && this.form.account !== '' && this.busy === null;
+  }
+
+  /**
+   * Whether there is an import to abandon.
+   *
+   * An untouched screen is already in the state cancel returns it to, and a
+   * control that does nothing is worse than no control.
+   */
+  private get dirty(): boolean {
+    return (
+      this.file !== null ||
+      this.preview !== null ||
+      this.dropzoneError !== '' ||
+      !sameImportForm(this.form, initialImportForm(this.accounts))
+    );
   }
 
   /**
@@ -382,7 +405,8 @@ export class NigelImportScreen extends LitElement {
     if (routed.toast) this.toast(routed.message);
   }
 
-  private handleReset = (): void => {
+  /** Everything about the current file, gone. */
+  private discard(): void {
     this.file = null;
     this.filename = '';
     this.filesize = 0;
@@ -391,8 +415,25 @@ export class NigelImportScreen extends LitElement {
     this.result = null;
     this.clearErrors();
     this.toasted.clear();
+  }
+
+  private handleReset = (): void => {
+    this.discard();
     // The account and the format stay: a second statement for the same account
     // is the ordinary next thing to do.
+  };
+
+  /**
+   * Abandon the import: the file, the preview and the form together.
+   *
+   * The form goes back too, which is what separates this from the reset a
+   * finished import offers — the wrong account is corrected here, not carried
+   * into the next attempt.
+   */
+  private handleCancel = (): void => {
+    if (this.busy !== null) return;
+    this.discard();
+    this.form = initialImportForm(this.accounts);
   };
 
   // -- rendering ------------------------------------------------------------
@@ -447,6 +488,7 @@ export class NigelImportScreen extends LitElement {
             : nothing}
         </div>
 
+        ${this.preview === null && this.dirty ? this.renderCancel() : nothing}
         <button
           class="action primary"
           slot="actions"
@@ -460,6 +502,29 @@ export class NigelImportScreen extends LitElement {
     `;
   }
 
+  /**
+   * The way out, rendered beside whatever would carry the import forward — the
+   * Preview button until there is a preview, and the confirm after that, so
+   * there is one cancel on screen and it is next to the decision it undoes.
+   *
+   * Disabled mid-request, as both of those are: the api client sends nothing it
+   * can call back, and an abandoned upload the browser can no longer name is
+   * worse than a two-second wait.
+   */
+  private renderCancel(): TemplateResult {
+    return html`
+      <button
+        class="action"
+        slot="actions"
+        type="button"
+        ?disabled=${this.busy !== null}
+        @click=${this.handleCancel}
+      >
+        Cancel
+      </button>
+    `;
+  }
+
   private renderPreview(preview: ImportPreview): TemplateResult {
     if (preview.duplicateFile) {
       return html`
@@ -468,6 +533,7 @@ export class NigelImportScreen extends LitElement {
             variant="warning"
             message="nigel has seen this exact file before, so importing it again would add nothing. Choose a different statement."
           ></wc-notice-bar>
+          ${this.renderCancel()}
         </wc-panel>
       `;
     }
@@ -493,6 +559,7 @@ export class NigelImportScreen extends LitElement {
           ></wc-sample-table>
         </div>
 
+        ${this.renderCancel()}
         <button
           class="action primary"
           slot="actions"
