@@ -538,36 +538,40 @@ pub(crate) fn republish_after_payment(
     cfg: &InvoicingConfig,
     data_dir: &Path,
 ) -> Vec<String> {
+    let warn = |what: &str, e: NigelError| vec![republish_warning(what, e)];
+    let invoice = match get_invoice(conn, invoice_id) {
+        Ok(invoice) => invoice,
+        Err(e) => return warn("reading the invoice", e),
+    };
     republish_with(
         conn,
-        invoice_id,
+        &invoice,
         cfg,
         data_dir,
         optional_publisher(cfg).as_ref(),
     )
 }
 
-/// The same with the publisher supplied, which is what lets the HTTP layer drive
-/// a republish against a fake and reach no network — the `send_with`/`void_with`
-/// seam, and the one place the sentences a failed republish earns are written.
+/// The sentence a republish that could not even be attempted earns. One home,
+/// so a terminal and a browser cannot word the same failure differently.
+fn republish_warning(what: &str, e: NigelError) -> String {
+    format!(
+        "Warning: the payment is recorded, but the published page could not be republished \
+         ({what}: {e})."
+    )
+}
+
+/// The same with the invoice already loaded and the publisher supplied, which is
+/// what lets the HTTP layer drive a republish against a fake, reach no network,
+/// and spend one read rather than three on the hot pay path — the
+/// `send_with`/`void_with` seam.
 pub(crate) fn republish_with<P: crate::invoicing::gateway::AssetPublisher>(
     conn: &Connection,
-    invoice_id: i64,
+    invoice: &Invoice,
     cfg: &InvoicingConfig,
     data_dir: &Path,
     publisher: Option<&P>,
 ) -> Vec<String> {
-    let warn = |what: &str, e: NigelError| {
-        vec![format!(
-            "Warning: the payment is recorded, but the published page could not be republished \
-             ({what}: {e})."
-        )]
-    };
-
-    let invoice = match get_invoice(conn, invoice_id) {
-        Ok(invoice) => invoice,
-        Err(e) => return warn("reading the invoice", e),
-    };
     // The ordinary case, and the one that must cost nothing: most payments land
     // on invoices that were never published.
     if invoice.published_at.is_none() {
@@ -575,11 +579,11 @@ pub(crate) fn republish_with<P: crate::invoicing::gateway::AssetPublisher>(
     }
     let client = match get_client(conn, invoice.client_id) {
         Ok(client) => client,
-        Err(e) => return warn("reading the client", e),
+        Err(e) => return vec![republish_warning("reading the client", e)],
     };
     let template = match load_template(data_dir) {
         Ok(template) => template,
-        Err(e) => return warn("loading the invoice template", e),
+        Err(e) => return vec![republish_warning("loading the invoice template", e)],
     };
 
     // The preview fallback, not `require`: a republish must not depend on an
@@ -587,7 +591,7 @@ pub(crate) fn republish_with<P: crate::invoicing::gateway::AssetPublisher>(
     let (contact_email, _) = contact_email_for_preview(cfg);
     let profile = company_profile(conn);
     let branding = profile.branding(&template, &contact_email);
-    republish_invoice(conn, &invoice, &client, &branding, publisher).warnings()
+    republish_invoice(conn, invoice, &client, &branding, publisher).warnings()
 }
 
 /// The same, for every invoice a sync recorded a payment against.
@@ -597,10 +601,29 @@ pub fn republish_all(
     cfg: &InvoicingConfig,
     data_dir: &Path,
 ) -> Vec<String> {
+    republish_all_with(
+        conn,
+        numbers,
+        cfg,
+        data_dir,
+        optional_publisher(cfg).as_ref(),
+    )
+}
+
+/// [`republish_all`] with the publisher injected, so the HTTP layer's sync runs
+/// the same loop against a fake instead of keeping its own copy of it — and the
+/// sentence an invoice nobody could look up earns has one home.
+pub(crate) fn republish_all_with<P: crate::invoicing::gateway::AssetPublisher>(
+    conn: &Connection,
+    numbers: &[i64],
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+    publisher: Option<&P>,
+) -> Vec<String> {
     numbers
         .iter()
         .flat_map(|number| match get_invoice_by_number(conn, *number) {
-            Ok(invoice) => republish_after_payment(conn, invoice.id, cfg, data_dir),
+            Ok(invoice) => republish_with(conn, &invoice, cfg, data_dir, publisher),
             Err(e) => vec![format!(
                 "Warning: could not republish invoice #{number}'s page ({e})."
             )],
@@ -1162,21 +1185,10 @@ mod tests {
         assert!(line.contains("draft"), "got: {line}");
     }
 
+    /// An installation with nothing configured — the state `InvoicingConfig`'s
+    /// `Default` is, and the one a test hands over to reach nothing.
     fn test_config() -> InvoicingConfig {
-        InvoicingConfig {
-            stripe_secret_key: None,
-            mailgun_api_key: None,
-            mailgun_domain: None,
-            from_email: None,
-            from_name: None,
-            reply_to_email: None,
-            contact_email: None,
-            r2_account_id: None,
-            r2_access_key: None,
-            r2_secret_key: None,
-            r2_bucket: None,
-            public_base_url: None,
-        }
+        InvoicingConfig::default()
     }
 
     /// Every key a send needs, with a from address on its own Mailgun domain.
@@ -1222,7 +1234,8 @@ mod tests {
         let id = seed_published(&conn);
         let publisher = CapturePub::default();
 
-        let warnings = republish_with(&conn, id, &configured(), _d.path(), Some(&publisher));
+        let invoice = get_invoice(&conn, id).unwrap();
+        let warnings = republish_with(&conn, &invoice, &configured(), _d.path(), Some(&publisher));
 
         assert!(warnings.is_empty(), "{warnings:?}");
         let pages = publisher.pages.borrow();

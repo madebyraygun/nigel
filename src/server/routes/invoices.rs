@@ -514,11 +514,29 @@ async fn pay(
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
 
-    let cfg = crate::settings::invoicing_config();
-    let data_dir = crate::settings::get_data_dir();
-    let publisher = crate::cli::invoice::optional_publisher(&cfg);
-    let result = with_conn_api(&state, move |conn| {
-        pay_with(conn, number, &request, publisher.as_ref(), &cfg, &data_dir)
+    // The config and the data directory are resolved **inside** the closure,
+    // which runs after `with_conn_api` has taken the `db_gate` read guard. A
+    // data-directory switch holds the write side, so a value read before the
+    // wait belongs to the database this request is no longer serving — the
+    // payment would record in the new books while the republish loaded its
+    // template and its bucket from the old ones, and publish a wrongly branded
+    // page. `state.data_dir()` is the same source `send_with` reads for the
+    // same reason: it follows `db_path`, which the switch rebinds under the
+    // write guard.
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            let cfg = crate::settings::invoicing_config();
+            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            pay_with(
+                conn,
+                number,
+                &request,
+                publisher.as_ref(),
+                &cfg,
+                &state.data_dir(),
+            )
+        }
     })
     .await?;
     Ok(Json(result))
@@ -554,7 +572,7 @@ fn pay_with<P: AssetPublisher>(
     // same republish identically.
     let refreshed = find_invoice(conn, number)?;
     let republish_warnings =
-        crate::cli::invoice::republish_with(conn, refreshed.id, cfg, data_dir, publisher);
+        crate::cli::invoice::republish_with(conn, &refreshed, cfg, data_dir, publisher);
     Ok(PayResult {
         invoice: detail_for(conn, refreshed)?,
         republish_warnings,
@@ -806,40 +824,36 @@ struct SyncResult {
 }
 
 async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
-    let cfg = crate::settings::invoicing_config();
-    let Some(secret_key) = cfg.stripe_secret_key.clone() else {
+    // The gateway is the one thing resolved before the gate, because an
+    // unconfigured installation owes the caller a refusal rather than a wait.
+    let Some(secret_key) = crate::settings::invoicing_config().stripe_secret_key else {
         return Err(not_configured("Payment sync", &["stripe_secret_key"]));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
     let today = crate::cli::today();
-    let data_dir = crate::settings::get_data_dir();
-    let publisher = crate::cli::invoice::optional_publisher(&cfg);
 
-    let result = with_conn_api(&state, move |conn| {
-        let report = sync_with(conn, &today, &gateway)?;
-        // Every invoice the run moved gets its page corrected, for the reason
-        // `pay` does: a client following their bookmark must not see a balance
-        // they have already settled.
-        let republish_warnings = report
-            .recorded_invoices
-            .iter()
-            .flat_map(|number| match inv::get_invoice_by_number(conn, *number) {
-                Ok(invoice) => crate::cli::invoice::republish_with(
-                    conn,
-                    invoice.id,
-                    &cfg,
-                    &data_dir,
-                    publisher.as_ref(),
-                ),
-                Err(e) => vec![format!(
-                    "Warning: could not republish invoice #{number}'s page ({e})."
-                )],
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            // Read under the gate, for the reason `pay` reads under it.
+            let cfg = crate::settings::invoicing_config();
+            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            let report = sync_with(conn, &today, &gateway)?;
+            // Every invoice the run moved gets its page corrected, for the
+            // reason `pay` does: a client following their bookmark must not see
+            // a balance they have already settled.
+            let republish_warnings = crate::cli::invoice::republish_all_with(
+                conn,
+                &report.recorded_invoices,
+                &cfg,
+                &state.data_dir(),
+                publisher.as_ref(),
+            );
+            Ok(SyncResult {
+                report,
+                republish_warnings,
             })
-            .collect();
-        Ok(SyncResult {
-            report,
-            republish_warnings,
-        })
+        }
     })
     .await?;
     Ok(Json(result))
@@ -974,8 +988,10 @@ async fn preview_pdf(
 #[cfg(test)]
 mod tests {
     use crate::server::testutil::*;
+    use crate::server::AppState;
     use crate::settings::InvoicingConfig;
     use axum::http::StatusCode;
+    use serde_json::json;
 
     #[tokio::test]
     async fn invoices_list_is_newest_first_and_carries_the_balance() {
@@ -1643,6 +1659,71 @@ mod tests {
             date: AS_OF.to_string(),
             method: "other".to_string(),
         }
+    }
+
+    /// The gate is the whole point of `with_conn_api`, and a value read before
+    /// it belongs to a database this request may no longer be serving.
+    ///
+    /// A data-directory switch holds `db_gate` for writing. If `pay` resolved
+    /// the data directory before waiting on the read side, a switch landing in
+    /// that window would record the payment in the **new** database while the
+    /// republish loaded its template — and its bucket — from the **old**
+    /// directory, and publish a wrongly branded page to R2 without a word.
+    ///
+    /// The switch is simulated exactly as it happens: the write guard is held,
+    /// the path is rebound under it, and the guard is dropped. The second data
+    /// directory carries a broken invoice template, so the warning names which
+    /// directory the republish actually read.
+    #[tokio::test]
+    async fn pay_reads_its_config_and_data_dir_under_the_db_gate() {
+        let _config = TempConfig::new();
+        let (_dir_a, db_a) = seeded_db();
+        let (_dir_b, db_b) = seeded_db();
+
+        // The tell: only the second directory has a template, and it is broken.
+        let template = crate::invoicing::render_html::template_path(db_b.parent().unwrap());
+        std::fs::create_dir_all(template.parent().unwrap()).expect("templates dir");
+        std::fs::write(
+            &template,
+            "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+        )
+        .expect("write template");
+
+        let token = crate::server::auth::generate_token();
+        let state = AppState::new(db_a.clone(), token.clone());
+        let app = crate::server::build_router(state.clone());
+
+        let gate = state.db_gate.clone().write_owned().await;
+        let request = tokio::spawn({
+            let app = app.clone();
+            let token = token.clone();
+            async move {
+                post_json(
+                    &app,
+                    "/api/invoices/1251/pay",
+                    &token,
+                    &json!({ "amount": 100.0, "date": AS_OF, "method": "other" }),
+                )
+                .await
+            }
+        });
+
+        // Long enough for the handler to reach the gate and block there; the
+        // assertion does not depend on the sleep, only the red half does.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        state.set_db_path(db_b.clone());
+        drop(gate);
+
+        let (status, body) = request.await.expect("the request finishes");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let warnings = body["republishWarnings"]
+            .as_array()
+            .expect("the broken template warns");
+        assert!(
+            warnings[0].as_str().unwrap().contains("{{TOTL}}"),
+            "the republish read the directory the switch bound, not the one \
+             resolved before the wait: {body}"
+        );
     }
 
     /// 1251 is the seeded sent invoice: published, with a live payment link. A

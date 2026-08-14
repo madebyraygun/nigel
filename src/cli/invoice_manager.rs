@@ -1481,7 +1481,7 @@ impl InvoiceManager {
     ///
     /// Its config and data directory come from `perform_pending_with`, which is
     /// where this screen resolves settings — the seam `begin_send` established.
-    pub(crate) fn perform_pending_republish(
+    fn perform_pending_republish(
         &mut self,
         conn: &Connection,
         cfg: &InvoicingConfig,
@@ -2929,21 +2929,10 @@ mod tests {
         assert_eq!(payment_rows(&conn), 0);
     }
 
+    /// An installation with nothing configured — the state `InvoicingConfig`'s
+    /// `Default` is, and the one a test hands over to reach nothing.
     fn no_config() -> InvoicingConfig {
-        InvoicingConfig {
-            stripe_secret_key: None,
-            mailgun_api_key: None,
-            mailgun_domain: None,
-            from_email: None,
-            from_name: None,
-            reply_to_email: None,
-            contact_email: None,
-            r2_account_id: None,
-            r2_access_key: None,
-            r2_secret_key: None,
-            r2_bucket: None,
-            public_base_url: None,
-        }
+        InvoicingConfig::default()
     }
 
     fn full_config() -> InvoicingConfig {
