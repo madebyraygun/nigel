@@ -1,20 +1,21 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-register-table.js';
-import type {
-  CategoryOption,
-  NcEditCommitDetail,
-  NcFlagToggleDetail,
-  NcRowEventDetail,
-  RegisterTableRow,
-  WcRegisterTable,
-} from './wc-register-table.js';
 import {
   REGISTER_SHORTCUTS,
-  WcRegisterTable as RegisterTableCtor,
+  WcRegisterTable,
+  type CategoryOption,
+  type NcEditCommitDetail,
+  type NcFlagToggleDetail,
+  type NcRowEventDetail,
+  type RegisterTableRow,
 } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-register-table.preview.js';
+
+/** Everything the component adopts into its shadow root — the only evidence
+    of layout available under jsdom, which has no layout engine. */
+const text = styleText(WcRegisterTable);
 
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
@@ -571,9 +572,18 @@ describe('wc-register-table height', () => {
     document.body.innerHTML = '';
   });
 
-  /** jsdom measures every box as zero, so the two boxes paging reads are given
-      sizes here: one row, and the viewport the scroller was granted. */
-  function stubLayout(el: WcRegisterTable, rowHeight: number, viewport: number): void {
+  /**
+   * jsdom measures every box as zero, so every box paging reads is given a
+   * size: one row, the scroller, and the sticky header and Net row that
+   * overlay it.
+   */
+  function stubLayout(
+    el: WcRegisterTable,
+    rowHeight: number,
+    viewport: number,
+    headHeight = 0,
+    footHeight = 0,
+  ): void {
     const scroller = el.shadowRoot?.querySelector('.scroller');
     if (!scroller) throw new Error('no scroller');
     Object.defineProperty(scroller, 'clientHeight', {
@@ -583,21 +593,56 @@ describe('wc-register-table height', () => {
     for (const row of rowEls(el)) {
       row.getBoundingClientRect = () => ({ height: rowHeight }) as DOMRect;
     }
+    const head = el.shadowRoot?.querySelector('thead');
+    if (head) head.getBoundingClientRect = () => ({ height: headHeight }) as DOMRect;
+    const foot = el.shadowRoot?.querySelector('tfoot');
+    if (foot) foot.getBoundingClientRect = () => ({ height: footHeight }) as DOMRect;
   }
 
   it('pages by the rows its own scroller shows, not by a fixed count', async () => {
     const rows = fixture(60);
-    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true });
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
 
-    // A short window: seven rows fit.
-    stubLayout(el, 24, 24 * 7 + 8);
+    // A short window: nine rows of box, two of which the header and the Net
+    // row sit over, so seven rows are ever visible.
+    stubLayout(el, 24, 24 * 9, 24, 24);
     await press(el, 'PageDown');
     expect(selectedId(el)).toBe(rows[7]?.id);
 
-    // A tall one: thirty-one do, and the same key moves that much further.
-    stubLayout(el, 24, 24 * 31 + 8);
+    // A tall one: thirty-one visible, and the same key moves that much further.
+    stubLayout(el, 24, 24 * 33, 24, 24);
     await press(el, 'PageDown');
     expect(selectedId(el)).toBe(rows[38]?.id);
+  });
+
+  it('never counts the rows hiding under the sticky header and Net row', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+
+    // Ten rows of scroller. The header and the Net row are painted over the
+    // top and bottom of it, so a row under either is never actually shown and
+    // paging by ten would skip two rows every press.
+    stubLayout(el, 24, 24 * 10, 24, 24);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[8]?.id);
+  });
+
+  it('pages by one row when only one row fits', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+
+    // A devtools-squashed window: three rows of box, two of them chrome.
+    stubLayout(el, 24, 24 * 3, 24, 24);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[1]?.id);
+  });
+
+  it('falls back to the TUI page size only when nothing could be measured', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+    // No stub at all: jsdom reports every height as zero.
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[20]?.id);
   });
 
   it('reflects fill, which is what the height rules select on', async () => {
@@ -605,24 +650,50 @@ describe('wc-register-table height', () => {
     expect(el.hasAttribute('fill')).toBe(true);
   });
 
-  const text = styleText(RegisterTableCtor);
-
   it('grows into the space a flex-column parent has left, and scrolls inside it', () => {
     // jsdom has no layout engine, so the rules themselves are the evidence.
-    // Filling takes three things and breaks without any one of them: the host
-    // has to be a growing flex item, the scroller has to be the part that
-    // grows, and `min-height: 0` has to override the automatic minimum that
-    // would otherwise size the scroller to all 1,800 rows.
+    // The host is what grows; the scroller only ever shrinks into it.
     expect(text).toMatch(/:host\(\[fill\]\)\s*{[^}]*flex:\s*1 1 auto/);
-    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*flex:\s*1 1 auto/);
     expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*min-height:\s*0/);
     expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*max-height:\s*none/);
   });
 
-  it('keeps the capped, content-sized shape when it is not filling', () => {
+  it('hugs its rows when the register is short, leaving no box below the Net row', () => {
+    // A sticky footer is pulled up by its scroller, never pushed down. A
+    // scroller told to *grow* therefore draws its border to the bottom of the
+    // window with three search matches stacked at the top of it — the dead
+    // space AC #2 forbids. Growing is the host's job; the scroller takes the
+    // lesser of its content and what the host has.
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*flex:\s*0 1 auto/);
+  });
+
+  it('stops shrinking a few rows in, and lets the page scroll instead', () => {
+    // On a viewport shortened by a docked devtools panel the toolbar keeps its
+    // height and the table would otherwise collapse to a sliver under the
+    // sticky Net row. The floor is on the host, which has no border of its
+    // own, so a short register still hugs its rows.
+    expect(text).toMatch(
+      /:host\(\[fill\]\)\s*{[^}]*min-height:\s*var\(--nc-register-min-height, 12rem\)/,
+    );
+  });
+
+  it('stays a block for a screen that never asked to fill', () => {
+    // The reports screen embeds this table in a normal page; only `fill`
+    // turns it into a flex column.
+    expect(text).toMatch(/:host\s*{[^}]*display:\s*block/);
+    expect(text).toMatch(/:host\(\[fill\]\)\s*{[^}]*display:\s*flex/);
+  });
+
+  it('honours --nc-register-height while it is sizing to its rows', () => {
     // The reports screen puts this table inside a page that scrolls as a
     // whole; a table that grew there would push the note below it off-screen.
     expect(text).toMatch(/\.scroller\s*{[^}]*max-height:\s*var\(--nc-register-height, 60vh\)/);
+  });
+
+  it('retires --nc-register-height under fill rather than half-honouring it', () => {
+    // A cap and a parent-driven height cannot both decide: under `fill` the
+    // parent wins, and the token is documented as having no effect there.
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*max-height:\s*none/);
   });
 
   it('keeps the Net row against the bottom of the scroller', () => {
