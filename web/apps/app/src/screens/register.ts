@@ -51,21 +51,31 @@ export class NigelRegisterScreen extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* The register is a full-height screen: the toolbar keeps its own
+         height and the table takes everything between it and the bottom of
+         the window, scrolling inside itself. Growing is what the shell's
+         content area answers.
+
+         The automatic minimum is left in place — the toolbar plus the table's
+         own floor — so a window too short for both scrolls the page instead
+         of squeezing the table to nothing. */
       :host {
-        display: grid;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
         gap: var(--wa-space-m, 12px);
-        align-content: start;
         padding: var(--wa-space-l, 16px);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
-        min-height: 0;
       }
+
 
       .bar {
         display: flex;
         align-items: end;
         gap: var(--wa-space-m, 12px);
         flex-wrap: wrap;
+        flex: 0 0 auto;
       }
 
       wc-register-toolbar {
@@ -389,6 +399,7 @@ export class NigelRegisterScreen extends LitElement {
         ? nothing
         : html`
             <wc-register-table
+              fill
               .rows=${visible}
               .categories=${this.categoryOptions}
               .selectedId=${this.selectedId}

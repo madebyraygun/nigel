@@ -55,10 +55,16 @@ export class WcAppShell extends LitElement {
       gap: var(--wa-space-s, 8px);
     }
 
+    /* A column flex container, so a screen that wants the window can ask for
+       it with flex-grow on its own host and get a definite height to divide
+       up. A screen that does not stays content-sized, as a block child would. */
     .content {
       flex: 1;
       overflow: auto;
       padding: var(--wa-space-l, 16px);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
 
     .banner:not(:empty) {

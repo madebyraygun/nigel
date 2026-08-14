@@ -7,6 +7,9 @@ import { describePrintHiding } from '../../preview/print-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-app-shell.preview.js';
 
+/** Everything the shell adopts into its shadow root. */
+const text = styleText(WcAppShell);
+
 async function mount(props: Partial<WcAppShell> = {}): Promise<WcAppShell> {
   const el = document.createElement('wc-app-shell');
   Object.assign(el, props);
@@ -78,9 +81,23 @@ describePreviewA11y(preview);
 
 describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
 
-describe('wc-app-shell on paper', () => {
-  const text = styleText(WcAppShell);
+describe('wc-app-shell content area', () => {
+  it('lets a screen ask for the whole window below the header', () => {
+    // The register is the screen that needs this: its table has to end at the
+    // bottom of the window rather than partway down it. A block content area
+    // gives a slotted screen no height to divide up, so `flex: 1` on the
+    // screen's own host would have nothing to grow into.
+    expect(text).toMatch(/\.content\s*{[^}]*display:\s*flex/);
+    expect(text).toMatch(/\.content\s*{[^}]*flex-direction:\s*column/);
+    expect(text).toMatch(/\.content\s*{[^}]*min-height:\s*0/);
+  });
 
+  it('still scrolls a screen that is taller than the window', () => {
+    expect(text).toMatch(/\.content\s*{[^}]*overflow:\s*auto/);
+  });
+});
+
+describe('wc-app-shell on paper', () => {
   it('gives the whole page over to the content', () => {
     // On screen the shell is a 100vh flex box with a scrolling main. On paper
     // that clamps a ten-page report to one viewport-high box and throws the
