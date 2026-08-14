@@ -1400,19 +1400,20 @@ mod tests {
                 .unwrap_or_else(|| panic!("{label} missing or out of order in: {totals}"));
             at += found + label.len();
         }
-        for emphasised in [
-            "<tr class=\"total\"><td colspan=\"3\">Total</td><td>USD 250.00</td></tr>",
-            "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>USD 150.00</td></tr>",
-        ] {
-            assert!(
-                totals.contains(emphasised),
-                "the emphasised rows carry the existing class: {totals}"
-            );
-        }
+        // Exactly one row carries the class, and it is the bottom one — what
+        // this invoice actually leaves owing.
         assert!(
-            totals.contains("<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>"),
-            "Paid is not the line the eye lands on: {totals}"
+            totals.contains(
+                "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>USD 150.00</td></tr>"
+            ),
+            "the balance is the line the eye lands on: {totals}"
         );
+        for plain in [
+            "<tr><td colspan=\"3\">Total</td><td>USD 250.00</td></tr>",
+            "<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>",
+        ] {
+            assert!(totals.contains(plain), "still emphasised: {totals}");
+        }
     }
 
     #[test]
@@ -1794,6 +1795,61 @@ mod tests {
             DEFAULT_TEMPLATE.contains("tbody tr:nth-child(even)"),
             "the item rows are not striped"
         );
+    }
+
+    /// Weight, not size, carries the emphasis — and it is the same line the PDF
+    /// picks out, because both ask `MoneySummary::lines()`.
+    #[test]
+    fn the_money_block_is_one_size_with_only_its_bottom_line_emphasised() {
+        let (mut inv, client, items) = sample();
+        inv.subtotal = 100.0;
+        inv.total = 100.0;
+        let money = MoneySummary::of(&inv, 40.0);
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money,
+            PayButton::Omitted,
+        );
+
+        // One emphasised row, and it is the last one.
+        assert_eq!(html.matches("class=\"total\"").count(), 1, "got: {html}");
+        let emphasised = html.rfind("class=\"total\"").expect("an emphasised row");
+        assert!(
+            html[emphasised..].contains("Balance due"),
+            "the emphasised row is not the balance: {html}"
+        );
+        // The stylesheet emphasises by weight alone: no size change on it.
+        assert!(
+            DEFAULT_TEMPLATE.contains("tfoot tr.total td{font-weight:700}"),
+            "the emphasised row still changes size"
+        );
+    }
+
+    /// The From block and the Invoice For block sit in different sections, so
+    /// nothing but a shared width makes their labels and their rules line up
+    /// down the page. Ragged is what it looks like otherwise.
+    #[test]
+    fn both_party_blocks_share_one_left_edge() {
+        assert!(
+            DEFAULT_TEMPLATE.contains(".party{display:flex;gap:.75rem;flex:0 0 "),
+            "the party blocks have no shared width to align on"
+        );
+    }
+
+    /// A date is one token: `2026-07-` on one line and `15` on the next is not
+    /// a date. Nor is a column heading that breaks in half a heading.
+    #[test]
+    fn the_stock_page_never_breaks_a_date_a_heading_or_an_amount() {
+        for rule in [
+            "table.meta th,table.meta td{border:none;padding:.15rem 1.5rem .15rem 0;text-align:left;font-weight:400;color:#444;white-space:nowrap}",
+            "table.items thead th{border-bottom:2px solid #909090;white-space:nowrap}",
+            "table.items tfoot td{border-bottom:none;border-right:none;text-align:right;white-space:nowrap}",
+        ] {
+            assert!(DEFAULT_TEMPLATE.contains(rule), "missing: {rule}");
+        }
     }
 
     #[test]

@@ -103,8 +103,16 @@ pub const LOGO_HEIGHT_FRACTION: f32 = 0.056;
 pub struct MoneyLine {
     pub label: &'static str,
     pub amount: f64,
-    /// The line a reader's eye should land on: the total, the balance, and the
-    /// credit when there is one.
+    /// The one line a reader's eye should land on: the **last** one, which is
+    /// whatever this invoice actually leaves owing — the total on an unpaid
+    /// invoice, the balance once something has been paid, the credit when
+    /// somebody has paid too much.
+    ///
+    /// Exactly one line carries it, and both documents emphasise it the same
+    /// way: by **weight alone**, at the same size as every other money line.
+    /// Two lines set large and bold with a small plain one between them reads
+    /// as two headlines and a whisper; one column of figures with the bottom
+    /// line picked out reads as a bill.
     pub emphasis: bool,
     /// A row the payment block introduced.
     ///
@@ -166,13 +174,19 @@ impl MoneySummary {
             push("Subtotal", self.subtotal, false, false);
             push("Tax", self.tax, false, false);
         }
-        push("Total", self.total, true, false);
+        push("Total", self.total, false, false);
         if self.paid > 0.0 {
             push("Paid", self.paid, false, true);
-            push("Balance due", self.balance, true, true);
+            push("Balance due", self.balance, false, true);
             if self.credit > 0.0 {
-                push("Credit", self.credit, true, true);
+                push("Credit", self.credit, false, true);
             }
+        }
+        // The emphasis is positional rather than per-label: whichever line ends
+        // the block is the one that says what is owed, and marking it here is
+        // what stops the two renderers disagreeing about which that is.
+        if let Some(last) = lines.last_mut() {
+            last.emphasis = true;
         }
         lines
     }
@@ -875,6 +889,32 @@ mod tests {
         assert_eq!(labels(&lines), vec!["Total", "Paid", "Balance due"]);
         assert_eq!(lines[2].amount, 60.0);
         assert!(lines[2].emphasis, "the balance is what a client looks for");
+    }
+
+    /// The block is a short column of figures with one line emphasised, not two
+    /// headlines with a whisper between them. The line that shouts is the last
+    /// one — what is actually owed — whichever line that turns out to be.
+    #[test]
+    fn only_the_bottom_line_of_the_money_block_is_emphasised() {
+        for (total, tax, paid) in [
+            (100.0, 0.0, 0.0),   // Total alone
+            (108.25, 8.25, 0.0), // Subtotal, Tax, Total
+            (100.0, 0.0, 40.0),  // Total, Paid, Balance due
+            (100.0, 0.0, 140.0), // Total, Paid, Balance due, Credit
+        ] {
+            let lines = MoneySummary::of(&invoice(total, tax), paid).lines();
+            let emphasised: Vec<&str> = lines
+                .iter()
+                .filter(|l| l.emphasis)
+                .map(|l| l.label)
+                .collect();
+            assert_eq!(
+                emphasised,
+                vec![lines.last().expect("a money block is never empty").label],
+                "exactly the last line, for {:?}",
+                labels(&lines)
+            );
+        }
     }
 
     #[test]

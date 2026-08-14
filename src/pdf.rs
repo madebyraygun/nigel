@@ -21,7 +21,16 @@ const MARGIN_BOTTOM: f32 = 25.4;
 const MARGIN_LEFT: f32 = 19.05;
 const MARGIN_RIGHT: f32 = 19.05;
 const ROW_H: f32 = 5.0;
-const COL_PAD: f32 = 4.0;
+const COL_PAD: f32 = 6.0;
+
+/// The air above and below a line-item row's type, inside its rules.
+///
+/// The item table is the one block a reader scans rather than reads, and type
+/// sitting hard against a rule is what made it read as cramped. Every metric
+/// that describes a row — the zebra band, the rule under it, the column
+/// dividers' extent — is derived from the same number, so they cannot come
+/// apart.
+const CELL_PAD_Y: f32 = 1.8;
 const FONT_SIZE: f32 = 10.0;
 const TITLE_SIZE: f32 = 16.0;
 const SUBTITLE_SIZE: f32 = 10.0;
@@ -273,9 +282,11 @@ impl PdfWriter {
     fn item_row(&mut self, cols: &[Col], values: &[&str], shaded: bool) {
         let wrapped = Self::wrap_cells(cols, values, FONT_SIZE);
         let max_lines = wrapped.iter().map(|w| w.len()).max().unwrap_or(1);
-        let row_height = max_lines as f32 * ROW_H;
+        let row_height = max_lines as f32 * ROW_H + 2.0 * CELL_PAD_Y;
         self.ensure_space(row_height);
 
+        // The band is the whole row — padding included — so the striping covers
+        // what the rules enclose rather than the type alone.
         let top = self.y - 3.5;
         if shaded {
             self.fill_band(
@@ -286,10 +297,12 @@ impl PdfWriter {
                 ROW_SHADE,
             );
         }
+        self.y += CELL_PAD_Y;
         self.draw_cells(cols, &wrapped, max_lines, false, FONT_SIZE);
-        let bottom = self.y - 3.5;
+        self.y += CELL_PAD_Y;
+
         let saved = self.y;
-        self.y = bottom;
+        self.y = top + row_height;
         self.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
         self.y = saved;
     }
@@ -1331,6 +1344,10 @@ pub fn render_invoice_pdf(
     ];
     let table_top = pdf.y - 3.5;
     let table_page = pdf.page_no;
+    // The header is a row like any other and gets the same air. `table_header`
+    // itself is shared with the nine report renderers, whose metrics are not
+    // this task's to move.
+    pdf.y += CELL_PAD_Y;
     pdf.table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
 
     for (index, item) in items.iter().enumerate() {
@@ -1377,10 +1394,12 @@ pub fn render_invoice_pdf(
         } else {
             money(line.amount)
         };
-        let size = if line.emphasis { 12.0 } else { FONT_SIZE };
+        // One size for every line; weight alone says which one matters. Two
+        // lines set large with a small one between them read as two headlines
+        // and a whisper rather than as a column of figures.
         pdf.ensure_space(ROW_H);
-        pdf.text_right(&label, figure_right - 35.0, size, line.emphasis);
-        pdf.text_right(&amount, figure_right, size, line.emphasis);
+        pdf.text_right(&label, figure_right - 35.0, FONT_SIZE, line.emphasis);
+        pdf.text_right(&amount, figure_right, FONT_SIZE, line.emphasis);
         pdf.y += ROW_H + 1.0;
     }
 
@@ -1389,23 +1408,26 @@ pub fn render_invoice_pdf(
     pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
     pdf.y += 6.0;
 
+    // `NOTE_COLS` is the full printable width. These blocks are prose, and
+    // prose set to the description column's half-measure runs to three short
+    // lines where it should run to one.
     if let Some(notes) = &invoice.notes {
         pdf.section_label("Notes");
-        pdf.table_row_wrapped(&cols[..1], &[notes], false, FONT_SIZE);
+        pdf.table_row_wrapped(NOTE_COLS, &[notes], false, FONT_SIZE);
         pdf.blank_row();
     }
     // The block only when `due_value` did not already print the terms beside
     // the date — the page's rule, from the same function.
     if let Some(terms) = terms_block_text(invoice) {
         pdf.section_label("Terms");
-        pdf.table_row_wrapped(&cols[..1], &[terms], false, FONT_SIZE);
+        pdf.table_row_wrapped(NOTE_COLS, &[terms], false, FONT_SIZE);
         pdf.blank_row();
     }
     let instructions = payment_lines(payment_instructions);
     if !instructions.is_empty() {
         pdf.section_label("Payment");
         for line in instructions {
-            pdf.table_row_wrapped(&cols[..1], &[line], false, FONT_SIZE);
+            pdf.table_row_wrapped(NOTE_COLS, &[line], false, FONT_SIZE);
         }
     }
 
@@ -1484,6 +1506,7 @@ const PT_PER_MM: f32 = 72.0 / 25.4;
 
 /// One string a rendered document drew: where, at what size, and what it said.
 #[cfg(test)]
+#[derive(Debug)]
 pub(crate) struct Drawn {
     /// Millimetres from the left edge.
     pub x: f32,
@@ -1596,6 +1619,42 @@ pub(crate) fn filled_rects(bytes: &[u8]) -> Vec<Vec<(f32, f32, f32, f32)>> {
                     .collect();
                 if let [x, y, w, h] = nums[..] {
                     out.push((x, y, x + w, y + h));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// Every string a rendered document draws in the bold face.
+///
+/// Weight is what carries emphasis now that the money block is all one size, so
+/// a test that could only see position and size could not check it.
+#[cfg(test)]
+pub(crate) fn bold_strings(bytes: &[u8]) -> Vec<String> {
+    page_streams(bytes)
+        .iter()
+        .flat_map(|stream| {
+            let mut out = Vec::new();
+            let mut bold = false;
+            for line in stream.lines().map(str::trim) {
+                if line.ends_with(" Tf") {
+                    bold = line.contains("Bold");
+                } else if let Some(hex) = line
+                    .strip_suffix("> Tj")
+                    .and_then(|rest| rest.strip_prefix('<'))
+                {
+                    if bold {
+                        out.push(
+                            hex.as_bytes()
+                                .chunks(2)
+                                .filter_map(|pair| {
+                                    u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
+                                })
+                                .map(|b| b as char)
+                                .collect(),
+                        );
+                    }
                 }
             }
             out
@@ -2048,6 +2107,118 @@ mod invoice_pdf_tests {
             lowest_band_line - header >= 14.0,
             "only {} mm between the band and the table",
             lowest_band_line - header
+        );
+    }
+
+    /// One size for every money line, and weight — not size — carries the
+    /// emphasis. The block reads as a short column of figures with the one that
+    /// matters picked out, rather than two headlines with a whisper between.
+    #[test]
+    fn the_money_block_is_one_size_with_only_its_bottom_line_bold() {
+        let mut inv = invoice();
+        inv.subtotal = 100.0;
+        inv.total = 100.0;
+        let money = MoneySummary::of(&inv, 40.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes =
+            render_invoice_pdf(&inv, &client(), &block, None, &items(), &money, "").unwrap();
+
+        let labels = ["Total", "Paid", "Balance due"];
+        let page = drawn_text(&bytes);
+        let drawn: Vec<&Drawn> = page[0]
+            .iter()
+            .filter(|d| labels.contains(&d.text.split(" (").next().unwrap_or("")))
+            .collect();
+        assert_eq!(drawn.len(), 3, "three money labels: {drawn:?}");
+        for line in &drawn {
+            assert_eq!(
+                line.size, FONT_SIZE,
+                "{:?} is set at {}, not the body size",
+                line.text, line.size
+            );
+        }
+        let bold = bold_strings(&bytes);
+        assert!(
+            bold.iter().any(|t| t == "Balance due"),
+            "the balance is the line that shouts: {bold:?}"
+        );
+        for label in ["Total (USD)", "Paid"] {
+            assert!(
+                !bold.iter().any(|t| t == label),
+                "{label} is still bold: {bold:?}"
+            );
+        }
+    }
+
+    /// The foot blocks are prose, and prose set to half the measure runs to
+    /// three short lines where it should run to one or two.
+    #[test]
+    fn the_foot_blocks_use_the_full_printable_width() {
+        let mut inv = invoice();
+        inv.notes = Some(
+            "Thank you for your business, and please do get in touch with any questions at all."
+                .into(),
+        );
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(
+            &inv,
+            &client(),
+            &block,
+            None,
+            &items(),
+            &money,
+            "Bank transfer to Example Bank, quoting the invoice number, or a cheque by post.",
+        )
+        .unwrap();
+
+        // Nothing under the foot rule wraps: at the full measure both fit one
+        // line each, where the old half-width column broke them.
+        let text = extract_text(&bytes);
+        for whole in [
+            "Thank you for your business, and please do get in touch with any questions at all.",
+            "Bank transfer to Example Bank, quoting the invoice number, or a cheque by post.",
+        ] {
+            assert!(text.contains(whole), "wrapped: {text}");
+        }
+    }
+
+    /// Rows read cramped when the type sits hard against its rules. The band
+    /// has to grow with the padding, or the striping stops covering the row it
+    /// belongs to.
+    #[test]
+    fn item_rows_are_padded_and_their_bands_cover_the_whole_row() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let two = vec![
+            items()[0].clone(),
+            InvoiceLineItem {
+                description: "Second".into(),
+                ..items()[0].clone()
+            },
+        ];
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &two, &money, "").unwrap();
+
+        let band = filled_rects(&bytes)[0]
+            .first()
+            .copied()
+            .expect("the second row is shaded");
+        let height = band.3 - band.1;
+        assert!(
+            height > ROW_H + 1.0,
+            "the band is {height} mm for a one-line row — no padding in it"
+        );
+
+        // The shaded row's own text sits inside its band, clear of both edges.
+        let baseline = drawn_text(&bytes)[0]
+            .iter()
+            .find(|d| d.text == "Second")
+            .expect("the second row is drawn")
+            .y;
+        assert!(
+            baseline > band.1 + 0.5 && baseline < band.3 - 0.5,
+            "the row's type is not inside its band: {baseline} in {band:?}"
         );
     }
 

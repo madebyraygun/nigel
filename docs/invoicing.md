@@ -891,6 +891,17 @@ last three name the currency — `USD 60.00` — exactly as the page does, becau
 they are new to both documents and a bare `$` cannot say which currency it
 means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
 
+Every line of that block is set at one size on both documents, and **only the
+bottom one is bold** — whichever line that is. On an unpaid invoice it is Total;
+once something has been paid it is Balance due; on an overpayment it is Credit.
+The bottom line is what the invoice actually leaves owing, and a column of
+figures with one of them picked out reads as a bill, where two lines set large
+with a small one between them reads as two headlines and a whisper.
+
+The blocks under the foot rule — Notes, Terms, Payment — run to the **full
+printable width**. They are prose, and prose set to the description column's
+measure runs to three short lines where it should run to one.
+
 `company_name` also becomes the PDF's document title (`Bluepeak LLC - Invoice
 #1248`), which is what a viewer puts in its window and what a browser suggests as
 a filename. Leave it unset and the document is headed by the invoice number
