@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:50'
-updated_date: '2026-08-14 04:51'
+updated_date: '2026-08-14 05:08'
 labels:
   - web
   - ui
@@ -46,6 +46,14 @@ The import flow (choose file, preview, confirm) has no cancel affordance. A user
 - Disabled while a request is in flight, like Preview and Import. `ApiClient` takes no `AbortSignal` and adding one would be a wide interface change; more to the point an aborted upload leaves a spooled file the browser can no longer name, which is strictly worse for AC #2 than waiting out a dry run.
 - **Spool decision: no delete endpoint. Cancel tells the server nothing.** `uploads.rs` documents the spool as non-authoritative ("an upload is a file on disk with an mtime"), the sweep runs at startup and before every upload, and a closed tab, a dead network or a quit browser abandons an upload with no message at all — so the sweep has to be correct on its own and a DELETE would only ever cover the case where somebody stayed to click it. It would also be fire-and-forget (cancel must reset whatever the server answers), i.e. an unobservable request. The screen already discards a cached `uploadId` without telling the server when the dropzone is cleared or a new file is chosen; cancel is the same act. Confirm still deletes eagerly server-side, as a side effect of work the server was already doing.
 - No Rust change, so the cargo matrix was not run. No new API surface, so docs/api.md is unchanged.
+
+**Review round (PR #7, four findings) — all fixed.**
+- *Correctness:* `load()` replaced the whole form with `initialImportForm()` whenever no account was chosen, wiping a format/mapping/profile name typed while the lists were still in flight. Only the account is patched now, and only while none has been named; the baseline moves with it, since a preselection is not work somebody did.
+- *Correctness:* `dirty` compared against `initialImportForm()` rather than the screen's current state, so after "Import another" (which deliberately keeps account and format) the screen read as dirty on arrival and Cancel offered to wipe exactly what the reset preserved. A `baseline` form is now set at load and at reset, `dirty` measures against it, and cancel returns to it — an account nobody touched during this attempt survives the attempt being abandoned. Cancel still clears an account chosen *for* this attempt.
+- *Cleanup:* `handleFileClear` was `discard()` written out again; it calls it.
+- *Cleanup:* `sameImportForm` hand-enumerated seven fields. It now flattens through `FormLeaves`, a record type derived from `keyof ImportFormValue` and `keyof GenericCsvMapping`, so a new field is a missing-property error. Verified by adding a probe field to `ImportFormValue` and watching `tsc` fail on `leaves()` (TS2322), then reverting.
+- Three tests written red first (all three failed against the old code), then green: keeps edits made while the account list was still loading; offers no cancel on the screen a finished import resets to; cancels back to what the reset kept, not to an empty form.
+- Re-verified from web/: build, test (188 + 1059 + 778, no unhandled errors), lint, typecheck — all clean. Guardrail hook printed `OK: no identity strings found` on the commit.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
