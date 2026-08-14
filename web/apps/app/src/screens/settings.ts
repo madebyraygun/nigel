@@ -88,6 +88,11 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         margin-top: var(--wa-space-s, 8px);
       }
 
+      .operations {
+        display: grid;
+        gap: var(--wa-space-l, 16px);
+      }
+
       .logo-field {
         display: grid;
         gap: var(--wa-space-2xs, 4px);
@@ -119,6 +124,12 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private dataDirDraft = '';
   @state() private busy: string | null = null;
   @state() private passwordError = '';
+  /**
+   * Which operation the error belongs to. An encrypted database has two
+   * password forms on screen, so a failure that is not filed against one of
+   * them lands under whichever happens to be first.
+   */
+  @state() private passwordErrorMode: NcPasswordSubmitDetail['mode'] | null = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
   @state() private resolvedMode: ResolvedMode = 'light';
@@ -356,6 +367,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     }
 
     this.passwordError = '';
+    this.passwordErrorMode = null;
     this.busy = 'password';
     try {
       if (detail.mode === 'set') {
@@ -379,10 +391,15 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     } catch (error) {
       this.passwordError =
         error instanceof ApiError ? error.message : 'Could not change the password.';
+      this.passwordErrorMode = detail.mode;
     } finally {
       this.busy = null;
     }
   };
+
+  private errorFor(mode: NcPasswordSubmitDetail['mode']): string {
+    return this.passwordErrorMode === mode ? this.passwordError : '';
+  }
 
   /**
    * The three states this panel has: loaded, loading, and could-not-load. The
@@ -536,22 +553,25 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       <wc-panel
         heading="Database password"
         description=${encrypted
-          ? 'This database is encrypted.'
+          ? 'This database is encrypted. Two separate operations: change the password, or remove it altogether.'
           : 'This database is not encrypted. Anyone with the file can read it.'}
       >
-        <wc-password-form
-          mode=${encrypted ? 'change' : 'set'}
-          ?busy=${this.busy === 'password'}
-          error=${this.passwordError}
-          @nc-password-submit=${this.handlePasswordSubmit}
-        ></wc-password-form>
-        ${encrypted
-          ? html`<wc-password-form
-              mode="remove"
-              ?busy=${this.busy === 'password'}
-              @nc-password-submit=${this.handlePasswordSubmit}
-            ></wc-password-form>`
-          : nothing}
+        <div class="operations">
+          <wc-password-form
+            mode=${encrypted ? 'change' : 'set'}
+            ?busy=${this.busy === 'password'}
+            error=${this.errorFor(encrypted ? 'change' : 'set')}
+            @nc-password-submit=${this.handlePasswordSubmit}
+          ></wc-password-form>
+          ${encrypted
+            ? html`<wc-password-form
+                mode="remove"
+                ?busy=${this.busy === 'password'}
+                error=${this.errorFor('remove')}
+                @nc-password-submit=${this.handlePasswordSubmit}
+              ></wc-password-form>`
+            : nothing}
+        </div>
       </wc-panel>
     `;
   }

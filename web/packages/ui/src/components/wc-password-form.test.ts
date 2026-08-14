@@ -34,6 +34,67 @@ describe('wc-password-form', () => {
     document.body.innerHTML = '';
   });
 
+  it('names its operation in a legend, so every field inside has an owner', async () => {
+    // Change and remove both collect "Current password"; in a flat stack only
+    // position tells them apart, and position is not announced.
+    const change = await mount({ mode: 'change' });
+    const remove = await mount({ mode: 'remove' });
+
+    for (const el of [change, remove]) {
+      expect(el.shadowRoot?.querySelector('fieldset > legend')).toBeTruthy();
+      expect(field(el, 'current').closest('fieldset')).toBe(
+        el.shadowRoot?.querySelector('fieldset'),
+      );
+    }
+    expect(change.shadowRoot?.querySelector('legend h3')?.textContent).toBe(
+      'Change password',
+    );
+    expect(remove.shadowRoot?.querySelector('legend h3')?.textContent).toBe(
+      'Remove password',
+    );
+  });
+
+  it('describes what each operation does', async () => {
+    const set = await mount({ mode: 'set' });
+    expect(set.shadowRoot?.querySelector('.description')?.textContent).toContain(
+      'every time it opens these books',
+    );
+
+    const remove = await mount({ mode: 'remove' });
+    expect(remove.shadowRoot?.querySelector('.description')?.textContent).toContain(
+      'Decrypts the database',
+    );
+  });
+
+  it('takes an overriding heading and description', async () => {
+    const el = await mount({
+      mode: 'change',
+      heading: 'Re-key these books',
+      description: 'Rewritten under the new password.',
+    });
+    expect(el.shadowRoot?.querySelector('legend h3')?.textContent).toBe(
+      'Re-key these books',
+    );
+    expect(el.shadowRoot?.querySelector('.description')?.textContent).toBe(
+      'Rewritten under the new password.',
+    );
+  });
+
+  it('presents remove as the destructive operation', async () => {
+    const el = await mount({ mode: 'remove' });
+    // The attribute is what the danger styling selects on, and the button
+    // variant is what a mouse user sees.
+    expect(el.getAttribute('mode')).toBe('remove');
+    expect(el.shadowRoot?.querySelector('wa-button')?.getAttribute('variant')).toBe(
+      'danger',
+    );
+
+    const change = await mount({ mode: 'change' });
+    expect(change.shadowRoot?.querySelector('wa-button')?.getAttribute('variant')).toBe(
+      'brand',
+    );
+  });
+
   it('renders only the fields its mode collects', async () => {
     const set = await mount({ mode: 'set' });
     expect(set.shadowRoot?.querySelector('[data-current]')).toBeNull();

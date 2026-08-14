@@ -400,6 +400,68 @@ describe('settings screen', () => {
       expect(client.calls).not.toContain('removePassword');
     });
 
+    it('asks for the removal in the destructive voice', async () => {
+      const ui = await import('@nigel/ui');
+      const confirm = vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
+
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+
+      submitPassword(el, { mode: 'remove', currentPassword: 'hunter2' }, 1);
+      await settle(el);
+
+      expect(confirm).toHaveBeenCalledWith(
+        expect.objectContaining({ variant: 'danger', confirmLabel: 'Remove password' }),
+      );
+      expect(client.calls).toContain('removePassword');
+    });
+
+    it('changing needs no confirmation', async () => {
+      const ui = await import('@nigel/ui');
+      const confirm = vi.spyOn(ui, 'confirmDialog');
+
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+
+      submitPassword(el, {
+        mode: 'change',
+        currentPassword: 'hunter2',
+        newPassword: 'hunter3',
+      });
+      await settle(el);
+
+      expect(confirm).not.toHaveBeenCalled();
+      expect(client.calls).toContain('changePassword');
+    });
+
+    it('files a failure against the operation that failed', async () => {
+      const ui = await import('@nigel/ui');
+      vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
+
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+      client.settingsError = new ApiError({
+        code: 'invalid_password',
+        rawCode: 'invalid_password',
+        message: 'Wrong password.',
+        status: 401,
+        details: { attemptsRemaining: 2, retryAfterMs: 0 },
+      });
+
+      submitPassword(el, { mode: 'remove', currentPassword: 'nope' }, 1);
+      await settle(el);
+
+      // The change form is first on screen and collects a field by the same
+      // name; a remove failure rendered there would be about the wrong one.
+      const errors = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])].map(
+        (f) => f.getAttribute('error'),
+      );
+      expect(errors).toEqual(['', 'Wrong password.']);
+    });
+
     it('surfaces a wrong current password on the form', async () => {
       const client = new FakeApiClient();
       client.status = { ...client.status, encrypted: true };
