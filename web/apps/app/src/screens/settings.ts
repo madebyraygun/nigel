@@ -595,8 +595,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       <wc-panel
         heading="Database password"
         description=${encrypted
-          ? 'This database is encrypted. Two separate operations: change the password, or remove it altogether.'
-          : 'This database is not encrypted. Anyone with the file can read it.'}
+          ? 'This database is encrypted. You can change the password, or remove it altogether.'
+          : 'Warning, this database is not encrypted, anyone with access to the file can read it. It is strongly recommended that you set a password and store it in a safe place.'}
       >
         <div class="operations">
           <wc-password-form
