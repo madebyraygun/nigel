@@ -238,3 +238,14 @@ export {
   type SendStepView,
 } from './wc-send-dialog.js';
 export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher.js';
+export { WcSnake } from './wc-snake.js';
+export {
+  BOARD_HEIGHT,
+  BOARD_WIDTH,
+  createGame,
+  step,
+  tickInterval,
+  turn,
+  type Direction,
+  type SnakeState,
+} from './snake-engine.js';

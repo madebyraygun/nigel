@@ -671,6 +671,41 @@ the page on success. The reload is injectable
 `location.reload`, and because "did it reload?" is exactly what a test needs to
 assert.
 
+## The easter egg
+
+The TUI hides Snake behind `s` on its dashboard. The browser hides the same
+game behind the same key, and nothing on screen says so.
+
+`src/snake-trigger.ts` is the whole of the risk in that, so it is a pure module
+with its own suite rather than a branch inside `nigel-app`: `s` is a letter
+before it is a shortcut, and a letter bound at the window is a bug in every
+context except the one it is for. It fires only for a bare unmodified `s` that
+is not a key repeat, not part of an IME composition, and not already handled —
+and never while a form control or a dialog is in the event's **composed path
+or the focus chain**. Two sources, because neither covers the other: the path
+is where the event came from, and the chain catches a dialog holding the screen
+with nothing focusable inside it. `deepActiveElement` walks shadow roots down,
+since `document.activeElement` answers `nigel-app` for a caret sitting in the
+register's inline editor.
+
+`nigel-app` binds it at the window rather than on the dashboard screen (the
+game covers the whole app and outlives what was under it), opens `wc-snake` as
+a fullscreen overlay, and on `nc-snake-exit` takes it down and returns focus to
+the element it captured on the way in.
+
+The game itself is `@nigel/ui`: `snake-engine.ts` is a pure port of
+`src/cli/snake.rs` — 40×20, food worth $1.00–$9.99, a 150 ms tick shedding 2 ms
+per segment down to a 50 ms floor, and the three endings — pinned to the Rust
+source by `snake-parity.test.ts` the way the palette is pinned by
+`palette-parity.test.ts`. `wc-snake` owns the clock and the pixels, drawing the
+body along `@nigel/theme`'s `gradientColor` (the browser's
+`effects::gradient_color`) on the mode-independent `--nc-color-arcade-*`
+ground, because the pastels are invisible on a light surface.
+
+Reduced motion stops the drifting specks and the gradient cycling along the
+snake — in the property and again in a media query — and does not stop the
+snake, which would not leave a game.
+
 ## How the build reaches the binary
 
 `npm run build` writes to `web/dist`, which `rust-embed` bakes into the binary.
