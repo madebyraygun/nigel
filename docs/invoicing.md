@@ -757,14 +757,16 @@ available: a template that carries them renders exactly what it always rendered 
 ones that keep the two documents saying the same thing, which is why the stock
 page moved to them.
 
-`{{TOTALS}}` is the money block: one `<tr><td colspan="3">Label</td><td>USD
-250.00</td></tr>` per line, the emphasised ones carrying `class="total"`. Which
+`{{TOTALS}}` is the money block: one `<tr><td colspan="3">Label</td><td>$250.00
+</td></tr>` per line, the emphasised ones carrying `class="total"`. Which
 lines exist is decided in one place for both documents — Subtotal and Tax only
 when there is tax, Total always, Paid and Balance due once anything has been
 paid, and Credit when someone has paid more than the invoice asked for — so the
 page and the PDF cannot disagree about the same invoice. The stock page puts it
 in a `<tfoot>` of the line-item table, which is what lines the amounts up under
-the Amount column.
+the Amount column, and pads its first row by two body sizes so the block stands
+off the last item row instead of reading as one more of them. The PDF stands its
+own block off the same way.
 
 A balance is never negative. An invoice settled to within half a cent is settled
 — the same test `refresh_status` uses to call it `paid`, so a page can never
@@ -841,7 +843,7 @@ Design                    2     $100.00    $200.00
 --------------------------------------------------
 Research                  4     $100.00    $400.00   <- shaded
 --------------------------------------------------
-                                  Total (USD)  $600.00
+                                       Total   $600.00
 
 --------------------------------------------------
 Notes
@@ -884,12 +886,23 @@ documents. Terms that run to a paragraph stay their own block under the foot
 rule instead, because a paragraph in parentheses after a date reads as neither.
 Whichever way they fall, they appear once.
 
+The three figure columns are sized to what the invoice being rendered actually
+holds — the wider of the heading and the widest figure in the column, plus the
+gutters that face a divider — and **Description takes every millimetre left
+over**. A figure is a short string that never wraps, so width beyond what it
+sets in is slack, and sizing every column for the longest form a figure might
+take spent that slack out of the one column with prose in it: a description that
+set in three lines on the page took five here. A dollar invoice gives
+Description about 99 mm of the 178 mm measure; the same invoice in euros, whose
+figures carry a `EUR ` prefix, gives it about 88 mm. Neither clips.
+
 Below the line items the PDF prints the same money block the page does, from the
 same rule: Subtotal and Tax only when there is tax, Total always, Paid and
-Balance due once anything has been paid, and Credit on an overpayment. Those
-last three name the currency — `USD 60.00` — exactly as the page does, because
-they are new to both documents and a bare `$` cannot say which currency it
-means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
+Balance due once anything has been paid, and Credit on an overpayment. Its
+figures end on the same edge the Amount column's do, which is the right text
+margin, so the two columns of figures read as one. It stands three body sizes
+clear of the table's last rule, and the page pads its first totals row by two,
+so on neither document does the block read as another row.
 
 Every figure on both documents reads one way: thousands separators, two
 decimals, and the currency named the same in the item table as in the money
@@ -915,15 +928,20 @@ measure runs to three short lines where it should run to one.
 a filename. Leave it unset and the document is headed by the invoice number
 alone — nothing is invented and no placeholder appears.
 
-Everything else about the PDF — typography, column widths, the order of the
-blocks — is fixed. Customize the HTML page instead; it is the artifact clients
-open, and the PDF rides along as the attachment.
+Everything else about the PDF — typography, the measure, the order of the
+blocks — is fixed, and the column widths are the renderer's own arithmetic
+rather than a setting. Customize the HTML page instead; it is the artifact
+clients open, and the PDF rides along as the attachment.
 
 ### The logo in the PDF
 
-The PDF embeds the **real logo**, top left, fitted into a 60 × 16 mm box with
-its aspect ratio kept — a wide wordmark fills the width and a tall mark fills the
-height, and neither is stretched. It ends level with the From block beside it.
+The PDF embeds the **real logo**, top left, fitted into a box that is a share of
+this document's printable width — `document::LOGO_WIDTH_FRACTION` by
+`LOGO_HEIGHT_FRACTION`, about 36 × 10 mm — with its aspect ratio kept. A wide
+wordmark fills the width and a tall mark fills the height, and neither is
+stretched. The page bounds its `<img>` by the same two fractions of its own
+measure, so the mark reads at the same size on both. It ends level with the From
+block beside it.
 
 Two things made that affordable:
 

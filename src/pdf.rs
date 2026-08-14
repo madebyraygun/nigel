@@ -46,6 +46,20 @@ const CELL_PAD_Y: f32 = 1.8;
 /// below also sit on; padding them would inset the table and make it read as
 /// narrower than the document.
 const ITEM_COL_PAD: f32 = 6.0;
+
+/// The text measure: what the bands, the item table and the foot blocks all run
+/// to, edge to edge.
+const PRINTABLE_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
+
+/// The least of the table Description keeps when the figure columns ask for
+/// more than there is.
+///
+/// Nothing bounds a quantity but the arithmetic — `validate_items` asks only
+/// that the figures are finite — so a column sized to its widest cell can be
+/// asked for the whole measure. Description is the column a reader reads, and
+/// one squeezed to nothing wraps every word onto its own line.
+const DESCRIPTION_MIN_FRACTION: f32 = 0.4;
+
 const FONT_SIZE: f32 = 10.0;
 const TITLE_SIZE: f32 = 16.0;
 const SUBTITLE_SIZE: f32 = 10.0;
@@ -97,7 +111,7 @@ struct Col {
 
 /// Single full-width column for note lines that span the printable area.
 const NOTE_COLS: &[Col] = &[Col {
-    width: PAGE_W - MARGIN_LEFT - MARGIN_RIGHT,
+    width: PRINTABLE_W,
     align: Align::Left,
 }];
 
@@ -263,7 +277,7 @@ impl PdfWriter {
         for (i, col) in cols.iter().enumerate() {
             if i < headers.len() {
                 match col.align {
-                    Align::Left => self.text(headers[i], x + ITEM_COL_PAD, FONT_SIZE, true),
+                    Align::Left => self.text(headers[i], x, FONT_SIZE, true),
                     Align::Right => {
                         let tw = approx_text_width(headers[i], FONT_SIZE);
                         self.text(headers[i], x + col.width - COL_PAD - tw, FONT_SIZE, true);
@@ -1107,7 +1121,6 @@ fn document_title(title: &str, company: &str) -> String {
 /// the mark reads at the same size here as it does on the page — a masthead
 /// rather than a banner. Whichever dimension binds first is the aspect ratio's
 /// business, and either way the box stays clear of the From block.
-const PRINTABLE_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
 const LOGO_MAX_W: f32 = PRINTABLE_W * LOGO_WIDTH_FRACTION;
 const LOGO_MAX_H: f32 = PRINTABLE_W * LOGO_HEIGHT_FRACTION;
 
@@ -1315,6 +1328,55 @@ fn logo_dimensions(image: &image_crate::DynamicImage) -> (u32, u32) {
     image.dimensions()
 }
 
+/// The item table's four columns, sized to the invoice being rendered.
+///
+/// Each of the three figure columns takes the wider of its heading and the
+/// widest figure it holds, plus the gutters on the sides that face a divider,
+/// and Description takes every millimetre left over. A figure is a short string
+/// and does not wrap, so any width beyond what it sets in is slack — and the
+/// slack came out of the one column that has prose in it.
+///
+/// Nothing bounds a quantity, so the figure columns are held to
+/// `DESCRIPTION_MIN_FRACTION` of the measure between them and scaled down
+/// together when they ask for more. The four always sum to `PRINTABLE_W`:
+/// the table runs edge to edge with the text margins, and the money block below
+/// is aligned to the last column's right edge.
+fn item_columns(headings: &[&str; 4], rows: &[[String; 4]]) -> [Col; 4] {
+    let mut figures = [0.0f32; 3];
+    for (slot, width) in figures.iter_mut().enumerate() {
+        let index = slot + 1;
+        let (left, right) = PdfWriter::item_gutters(index, headings.len());
+        *width = rows
+            .iter()
+            .map(|row| approx_text_width(&row[index], FONT_SIZE))
+            .fold(approx_text_width(headings[index], FONT_SIZE), f32::max)
+            + left
+            + right;
+    }
+
+    let asked: f32 = figures.iter().sum();
+    let ceiling = PRINTABLE_W * (1.0 - DESCRIPTION_MIN_FRACTION);
+    if asked > ceiling {
+        for width in &mut figures {
+            *width *= ceiling / asked;
+        }
+    }
+
+    let figure_col = |width: f32| Col {
+        width,
+        align: Align::Right,
+    };
+    [
+        Col {
+            width: PRINTABLE_W - figures.iter().sum::<f32>(),
+            align: Align::Left,
+        },
+        figure_col(figures[0]),
+        figure_col(figures[1]),
+        figure_col(figures[2]),
+    ]
+}
+
 /// The invoice as the client's email attachment carries it.
 ///
 /// `company` is the whole From block, decided by `document::company_block` so
@@ -1396,43 +1458,28 @@ pub fn render_invoice_pdf(
     // part of the client block rather than as the invoice.
     pdf.y = pdf.y.max(left_bottom) + 14.0;
 
-    // Widths chosen so each heading clears its own dividers with `ITEM_COL_PAD`
-    // on both sides — `Quantity` needs 26.4 mm of the 20 mm it used to have,
-    // and was overflowing its column into the rule beside it — and so the two
-    // figure columns hold a code-prefixed amount like `EUR 2,500.00`, which is
-    // four characters wider than the dollar form. They sum to the printable
-    // width.
-    let cols = &[
-        Col {
-            width: 78.8,
-            align: Align::Left,
-        },
-        Col {
-            width: 27.0,
-            align: Align::Right,
-        },
-        Col {
-            width: 36.0,
-            align: Align::Right,
-        },
-        Col {
-            width: 36.0,
-            align: Align::Right,
-        },
-    ];
+    // Every cell the table will set, so the columns can be sized from the
+    // strings themselves rather than from the longest form a figure might take.
+    let headings = ["Description", "Quantity", "Unit Price", "Amount"];
+    let rows: Vec<[String; 4]> = items
+        .iter()
+        .map(|item| {
+            [
+                item.description.clone(),
+                item.quantity.to_string(),
+                document_money(item.unit_amount, &invoice.currency),
+                document_money(item.line_total, &invoice.currency),
+            ]
+        })
+        .collect();
+    let cols = &item_columns(&headings, &rows);
     let table_top = pdf.y - 3.5;
     let table_page = pdf.page_no;
-    pdf.item_table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
+    pdf.item_table_header(cols, &headings);
 
-    for (index, item) in items.iter().enumerate() {
-        let qty = item.quantity.to_string();
-        let rate = document_money(item.unit_amount, &invoice.currency);
-        let amount = document_money(item.line_total, &invoice.currency);
-        pdf.item_row(
-            cols,
-            &[&item.description, &qty, &rate, &amount],
-            row_is_shaded(index),
-        );
+    for (index, row) in rows.iter().enumerate() {
+        let cells: Vec<&str> = row.iter().map(String::as_str).collect();
+        pdf.item_row(cols, &cells, row_is_shaded(index));
     }
     // Column dividers, drawn once the table's extent is known. Skipped when the
     // rows paginated, since a rule spanning a page break would be drawn on the
@@ -1811,6 +1858,35 @@ mod shared_machinery_tests {
         assert!(
             (right - 167.05).abs() < 0.5,
             "the report's amount column ends at {right} mm, not 167.05 mm"
+        );
+    }
+
+    /// A report's headings sit over their own columns. `table_row` draws a
+    /// left-aligned cell flush with its column, so a heading indented by a
+    /// gutter the rows do not take stands off to the right of everything under
+    /// it.
+    #[test]
+    fn a_reports_headings_sit_over_their_own_columns() {
+        let bytes = a_report();
+        let page = drawn_text(&bytes);
+        let x_of = |needle: &str| {
+            page[0]
+                .iter()
+                .find(|d| d.text == needle)
+                .unwrap_or_else(|| panic!("{needle} is not on the report"))
+                .x
+        };
+        assert!(
+            (x_of("ID") - MARGIN_LEFT).abs() < 0.01,
+            "the first heading starts at {} mm, not the {MARGIN_LEFT} mm text margin",
+            x_of("ID")
+        );
+        // And a heading further along the row, over the cell beneath it.
+        let heading = x_of("Description");
+        let cell = x_of("A transaction with a reasonably long description");
+        assert!(
+            (heading - cell).abs() < 0.01,
+            "the heading starts at {heading} mm and its column's text at {cell} mm"
         );
     }
 
@@ -2439,6 +2515,311 @@ pub(crate) mod invoice_pdf_tests {
         );
     }
 
+    /// One line item, with the figures the table is actually asked to set.
+    fn item(description: &str, quantity: f64, unit_amount: f64) -> InvoiceLineItem {
+        InvoiceLineItem {
+            description: description.into(),
+            quantity,
+            unit_amount,
+            line_total: quantity * unit_amount,
+            ..items()[0].clone()
+        }
+    }
+
+    /// An invoice whose descriptions are prose and whose figures are set in
+    /// `currency` — the shape the item table exists for.
+    fn priced_table(currency: &str, unit_amount: f64) -> (Invoice, Vec<InvoiceLineItem>) {
+        let lines = vec![
+            item(
+                "Design system audit and documentation across the marketing site",
+                12.0,
+                unit_amount,
+            ),
+            item("Component library build-out, phase one", 24.0, unit_amount),
+        ];
+        let total: f64 = lines.iter().map(|line| line.line_total).sum();
+        let mut inv = invoice();
+        inv.currency = currency.into();
+        inv.subtotal = total;
+        inv.total = total;
+        (inv, lines)
+    }
+
+    fn render_priced_table(currency: &str, unit_amount: f64) -> Vec<u8> {
+        let (inv, lines) = priced_table(currency, unit_amount);
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        render_invoice_pdf(&inv, &client(), &block, None, &lines, &money, "").unwrap()
+    }
+
+    /// The x of every column divider the item table drew, left to right.
+    ///
+    /// The party blocks above carry vertical rules of their own at x positions a
+    /// table divider also occupies, and their text is not in a column at all. A
+    /// divider is the rule that runs down past the header into the rows; PDF y
+    /// counts up from the foot, so that is the one reaching below the header's
+    /// baseline.
+    fn item_dividers(bytes: &[u8]) -> Vec<f32> {
+        let page = drawn_text(bytes);
+        let top = page[0]
+            .iter()
+            .find(|d| d.text == "Description")
+            .expect("the header")
+            .y;
+        let mut dividers: Vec<f32> = drawn_lines(bytes)[0]
+            .iter()
+            .filter(|(x1, y1, x2, y2)| {
+                (x1 - x2).abs() < 0.01 && y1.min(*y2) < top && *x1 > MARGIN_LEFT
+            })
+            .map(|(x, ..)| *x)
+            .collect();
+        dividers.sort_by(f32::total_cmp);
+        dividers
+    }
+
+    /// The four column widths a rendered table actually laid out, read back off
+    /// its dividers and its two outer edges.
+    fn item_column_widths(bytes: &[u8]) -> Vec<f32> {
+        let dividers = item_dividers(bytes);
+        assert_eq!(dividers.len(), 3, "the table drew its dividers");
+        let mut edges = vec![MARGIN_LEFT];
+        edges.extend(dividers);
+        edges.push(PAGE_W - MARGIN_RIGHT);
+        edges.windows(2).map(|pair| pair[1] - pair[0]).collect()
+    }
+
+    /// Every string the item table drew, from its header down to the rule under
+    /// its last row.
+    fn item_table_text(bytes: &[u8]) -> Vec<Drawn> {
+        let page = drawn_text(bytes);
+        let top = page[0]
+            .iter()
+            .find(|d| d.text == "Description")
+            .expect("the header")
+            .y;
+        let bottom = page[0]
+            .iter()
+            .find(|d| d.text == "Total")
+            .expect("the money block")
+            .y;
+        page.into_iter()
+            .next()
+            .expect("a first page")
+            .into_iter()
+            .filter(|d| d.y <= top + 0.1 && d.y > bottom + 0.1)
+            .collect()
+    }
+
+    fn widest(strings: &[&str]) -> f32 {
+        strings
+            .iter()
+            .map(|s| approx_text_width(s, FONT_SIZE))
+            .fold(0.0, f32::max)
+    }
+
+    /// The three figure columns hold figures, and a figure is a short string.
+    /// Sized instead for the longest form they might ever hold, they spend the
+    /// description's width on slack it can never use: a description that sets in
+    /// three lines on the page took five here.
+    #[test]
+    fn the_figure_columns_take_only_what_they_hold_and_description_takes_the_rest() {
+        let widths = item_column_widths(&render_priced_table("USD", 150.0));
+
+        let expected = [
+            widest(&["Quantity", "12", "24"]) + 2.0 * ITEM_COL_PAD,
+            widest(&["Unit Price", "$150.00"]) + 2.0 * ITEM_COL_PAD,
+            // The last column's right edge is the text margin, so it takes a
+            // gutter on its left only.
+            widest(&["Amount", "$1,800.00", "$3,600.00"]) + ITEM_COL_PAD,
+        ];
+        for (i, want) in expected.iter().enumerate() {
+            assert!(
+                (widths[i + 1] - want).abs() < 0.01,
+                "column {} is {:.1} mm, not the {want:.1} mm its widest string needs",
+                i + 1,
+                widths[i + 1]
+            );
+        }
+
+        let description = widths[0];
+        assert!(
+            (description - (PRINTABLE_W - expected.iter().sum::<f32>())).abs() < 0.01,
+            "Description is {description:.1} mm, not every millimetre the figures left"
+        );
+        assert!(
+            description > PRINTABLE_W / 2.0,
+            "Description is {description:.1} mm of {PRINTABLE_W:.1} mm — still the narrower half"
+        );
+    }
+
+    /// A code-prefixed figure is four characters wider than the dollar form, and
+    /// the columns have to grow for it rather than clip it. They still cost the
+    /// description less than sizing every invoice for the widest currency did.
+    #[test]
+    fn a_euro_invoice_widens_its_figure_columns_and_still_gains_description_width() {
+        let bytes = render_priced_table("EUR", 2500.0);
+        let widths = item_column_widths(&bytes);
+
+        let expected = [
+            widest(&["Quantity", "12", "24"]) + 2.0 * ITEM_COL_PAD,
+            widest(&["Unit Price", "EUR 2,500.00"]) + 2.0 * ITEM_COL_PAD,
+            widest(&["Amount", "EUR 30,000.00", "EUR 60,000.00"]) + ITEM_COL_PAD,
+        ];
+        for (i, want) in expected.iter().enumerate() {
+            assert!(
+                (widths[i + 1] - want).abs() < 0.01,
+                "column {} is {:.1} mm, not the {want:.1} mm its widest figure needs",
+                i + 1,
+                widths[i + 1]
+            );
+        }
+        // The fixed width every invoice used to give Description, currency
+        // regardless.
+        assert!(
+            widths[0] > 78.8,
+            "Description is {:.1} mm — no better than the fixed width",
+            widths[0]
+        );
+
+        // And nothing is clipped: every figure sits inside its own column.
+        let dividers = item_dividers(&bytes);
+        for drawn in item_table_text(&bytes) {
+            let left = drawn.x;
+            let right = drawn.x + approx_text_width(&drawn.text, drawn.size);
+            assert!(
+                left >= MARGIN_LEFT - 0.01 && right <= PAGE_W - MARGIN_RIGHT + 0.01,
+                "{:?} spans {left:.1}..{right:.1} mm, outside the text margins",
+                drawn.text
+            );
+            for divider in &dividers {
+                assert!(
+                    right <= divider + 0.01 || left >= divider - 0.01,
+                    "{:?} spans {left:.1}..{right:.1} mm and crosses the divider at {divider:.1} mm",
+                    drawn.text
+                );
+            }
+        }
+    }
+
+    /// The widths are the invoice's now, so the two halves of the table have to
+    /// be laid out from the same ones. A heading in one column over figures in
+    /// another is what a second computation would produce.
+    #[test]
+    fn each_figure_heading_ends_where_its_own_figures_end() {
+        for (currency, unit, figures) in [
+            ("USD", 150.0, ["24", "$150.00", "$3,600.00"]),
+            ("EUR", 2500.0, ["24", "EUR 2,500.00", "EUR 60,000.00"]),
+        ] {
+            let bytes = render_priced_table(currency, unit);
+            let drawn = item_table_text(&bytes);
+            let right_of = |needle: &str| {
+                let found = drawn
+                    .iter()
+                    .find(|d| d.text == needle)
+                    .unwrap_or_else(|| panic!("{needle} is not in the {currency} table"));
+                found.x + approx_text_width(&found.text, found.size)
+            };
+            for (heading, figure) in ["Quantity", "Unit Price", "Amount"].iter().zip(figures) {
+                let (h, f) = (right_of(heading), right_of(figure));
+                assert!(
+                    (h - f).abs() < 0.01,
+                    "{currency}: {heading} ends at {h:.1} mm and {figure} at {f:.1} mm"
+                );
+            }
+        }
+    }
+
+    /// The money block is read against the Amount column above it, so the two
+    /// columns of figures end on one edge. That edge is the text margin, which
+    /// is also where the Amount column's own right edge is.
+    #[test]
+    fn the_money_block_ends_on_the_amount_columns_edge() {
+        let bytes = render_priced_table("EUR", 2500.0);
+        let page = drawn_text(&bytes);
+        let right_of = |d: &Drawn| d.x + approx_text_width(&d.text, d.size);
+
+        let amount = item_table_text(&bytes)
+            .iter()
+            .filter(|d| d.text == "EUR 60,000.00")
+            .map(right_of)
+            .fold(f32::MIN, f32::max);
+        let total = page[0]
+            .iter()
+            .filter(|d| d.text.starts_with("EUR 90,000"))
+            .map(right_of)
+            .fold(f32::MIN, f32::max);
+        assert!(
+            (amount - total).abs() < 0.01,
+            "the Amount column ends at {amount:.1} mm and the money block at {total:.1} mm"
+        );
+        assert!((amount - (PAGE_W - MARGIN_RIGHT)).abs() < 0.01);
+    }
+
+    /// Nothing bounds a quantity but the arithmetic, and a figure column that
+    /// took whatever it was handed would leave Description with nothing — or
+    /// with less than nothing, which wraps every word onto its own line.
+    #[test]
+    fn an_outsized_figure_cannot_squeeze_the_description_column_away() {
+        let (mut inv, mut lines) = priced_table("USD", 150.0);
+        lines[0].quantity = 1e30;
+        lines[0].line_total = 1e30 * 150.0;
+        inv.subtotal = lines.iter().map(|line| line.line_total).sum();
+        inv.total = inv.subtotal;
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(&inv, &client(), &block, None, &lines, &money, "").unwrap();
+
+        let widths = item_column_widths(&bytes);
+        assert!(
+            widths[0] >= PRINTABLE_W * DESCRIPTION_MIN_FRACTION - 0.01,
+            "Description is {:.1} mm of {PRINTABLE_W:.1} mm",
+            widths[0]
+        );
+        let total: f32 = widths.iter().sum();
+        assert!(
+            (total - PRINTABLE_W).abs() < 0.01,
+            "the columns sum to {total:.1} mm, not the {PRINTABLE_W:.1} mm printable width"
+        );
+    }
+
+    /// The totals are not another row of the table, and they read as one when
+    /// they sit on the last row's rule. Both documents stand the block off by
+    /// air of their own: the page pads its first totals row, and this document
+    /// puts three body sizes between the rule and the first figure's baseline —
+    /// about two and a half above the type itself, the ascent being the
+    /// difference between a baseline and the top of a line.
+    #[test]
+    fn the_money_block_stands_off_the_last_item_row() {
+        let bytes = render_priced_table("USD", 150.0);
+        let page = drawn_text(&bytes);
+
+        let total = page[0]
+            .iter()
+            .find(|d| d.text == "Total")
+            .expect("the money block")
+            .y;
+        // The table's own rules, which run its full width. The last one is the
+        // foot of the last row; PDF y counts up from the foot of the page, so
+        // the lowest rule above the money block is the closest one.
+        let rule = drawn_lines(&bytes)[0]
+            .iter()
+            .filter(|(x1, y1, x2, y2)| {
+                (y1 - y2).abs() < 0.01
+                    && (x1 - MARGIN_LEFT).abs() < 0.01
+                    && (x2 - (PAGE_W - MARGIN_RIGHT)).abs() < 0.01
+                    && *y1 > total
+            })
+            .map(|(_, y, ..)| *y)
+            .fold(f32::MAX, f32::min);
+        let air = rule - total;
+        let body = FONT_SIZE / PT_PER_MM;
+        assert!(
+            air >= 3.0 * body,
+            "the money block stands {air:.1} mm below the table's last rule, under the {:.1} mm three body sizes ask for",
+            3.0 * body
+        );
+    }
+
     /// A heading crowded against the rule beside it reads as a mistake, and the
     /// `Quantity` column was narrow enough that its heading overflowed its own
     /// column and touched the divider on its left. Measured against the
@@ -2460,38 +2841,12 @@ pub(crate) mod invoice_pdf_tests {
         }];
         let bytes = render_invoice_pdf(&inv, &client(), &block, None, &long, &money, "").unwrap();
 
-        // Only the item table: the party blocks above it carry vertical rules of
-        // their own at x positions the table's dividers also occupy, and their
-        // text is not in a column at all. PDF y counts up from the foot, so the
-        // table is everything at or below the header's baseline.
-        let page = drawn_text(&bytes);
-        let top = page[0]
-            .iter()
-            .find(|d| d.text == "Description")
-            .expect("the header")
-            .y;
-        let dividers: Vec<f32> = drawn_lines(&bytes)[0]
-            .iter()
-            .filter(|(x1, y1, x2, y2)| {
-                // A table divider runs down past the header into the rows; the
-                // party block's rule sits entirely above it.
-                (x1 - x2).abs() < 0.01 && y1.min(*y2) < top && *x1 > MARGIN_LEFT
-            })
-            .map(|(x, ..)| *x)
-            .collect();
+        let dividers = item_dividers(&bytes);
         assert!(
             dividers.len() >= 3,
             "the table drew its dividers: {dividers:?}"
         );
-        let bottom = page[0]
-            .iter()
-            .find(|d| d.text == "Total")
-            .expect("the money block")
-            .y;
-        for drawn in page[0]
-            .iter()
-            .filter(|d| d.y <= top + 0.1 && d.y > bottom + 0.1)
-        {
+        for drawn in item_table_text(&bytes) {
             let left = drawn.x;
             let right = drawn.x + approx_text_width(&drawn.text, drawn.size);
             for divider in &dividers {

@@ -1974,6 +1974,64 @@ mod tests {
         );
     }
 
+    /// A declared value, or `None` when the stylesheet does not set it. The
+    /// property is matched with its colon, so `padding` never picks up
+    /// `padding-top`.
+    fn declared(selector: &str, property: &str) -> Option<String> {
+        let rule = DEFAULT_TEMPLATE
+            .lines()
+            .find(|line| line.starts_with(&format!("{selector}{{")))?;
+        let at = rule.split(&format!("{property}:")).nth(1)?;
+        Some(at[..at.find([';', '}'])?].to_string())
+    }
+
+    fn rem(value: &str) -> f32 {
+        value
+            .trim()
+            .trim_end_matches("rem")
+            .parse()
+            .expect("a rem length")
+    }
+
+    /// The padding above the **first** totals row, in `rem`, resolved the way
+    /// the cascade resolves it: the shorthand on `table.items tfoot td` sets all
+    /// four sides, and a later, more specific rule for the first row's cells
+    /// overrides the top. Reading the shorthand alone would report the block's
+    /// own leading and never see the stand-off at all.
+    fn totals_top_padding() -> f32 {
+        declared("table.items tfoot tr:first-child td", "padding-top")
+            .map(|value| rem(&value))
+            .unwrap_or_else(|| {
+                let shorthand =
+                    declared("table.items tfoot td", "padding").expect("the tfoot padding");
+                rem(shorthand.split_whitespace().next().expect("a top value"))
+            })
+    }
+
+    /// The totals are not another row of the table, and they read as one when
+    /// they sit on the last item row's rule with a tenth of a line above them.
+    /// Both documents stand the block off by air of their own — this document
+    /// by two body sizes of padding over the first row, the PDF by three between
+    /// that rule and the first figure's baseline.
+    #[test]
+    fn the_totals_block_stands_off_the_last_item_row() {
+        let air = totals_top_padding();
+        assert!(
+            air >= 2.0,
+            "the totals block clears the table by {air}rem, under the two body sizes it takes to read as its own block"
+        );
+
+        // Above the first row only. Leading that on every totals line would
+        // space the figures apart instead of setting the block off from the
+        // table, which is a different document.
+        let shorthand = declared("table.items tfoot td", "padding").expect("the tfoot padding");
+        let between = rem(shorthand.split_whitespace().next().expect("a top value"));
+        assert!(
+            between < air,
+            "every totals row carries {between}rem above it — the block is spaced, not stood off"
+        );
+    }
+
     /// A date is one token: `2026-07-` on one line and `15` on the next is not
     /// a date. Nor is a column heading that breaks in half a heading.
     #[test]
