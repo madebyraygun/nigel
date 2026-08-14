@@ -3,28 +3,28 @@
 <style>body{font-family:system-ui,sans-serif;max-width:44rem;margin:2rem auto;padding:0 1rem;color:#111}
 .letterhead,.band{display:flex;justify-content:space-between;align-items:flex-start;gap:2rem;margin-bottom:2rem}
 .letterhead:empty{display:none}
-.logo{max-width:14rem;max-height:4rem}
+.logo{max-width:8.8rem;max-height:2.5rem}
 .party{display:flex;gap:.75rem}
 .party-label{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#666;white-space:nowrap}
-.party-body{border-left:2px solid #111;padding-left:.75rem;line-height:1.5}
+.party-body{border-left:2px solid #909090;padding-left:.75rem;line-height:1.5}
 table.meta{border-collapse:collapse;width:auto}
 table.meta th,table.meta td{border:none;padding:.15rem 1.5rem .15rem 0;text-align:left;font-weight:400;color:#444}
 table.meta td{color:#111}
 table.meta td.strong{font-weight:700}
-table.items{width:100%;border-collapse:collapse}
-table.items th,table.items td{padding:.5rem .75rem;border-bottom:1px solid #ddd;border-right:1px solid #eee;text-align:left}
+table.items{width:100%;border-collapse:collapse;margin-top:1.5rem}
+table.items th,table.items td{padding:.5rem .75rem;border-bottom:1px solid #909090;border-right:1px solid #909090;text-align:left}
 table.items th:last-child,table.items td:last-child{border-right:none}
-table.items thead th{border-bottom:2px solid #111}
+table.items thead th{border-bottom:2px solid #909090}
+table.items tbody tr:nth-child(even){background:#f4f4f4}
 table.items th+th,table.items td+td{text-align:right}
 table.items tfoot td{border-bottom:none;border-right:none;text-align:right}
 table.items tfoot tr.total td{font-weight:700;font-size:1.15rem}
 .pay{display:inline-block;margin:1rem 0;padding:.6rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:.4rem}
 .pay-line{text-align:right;margin:.5rem 0 0}
-.foot-rule{border:none;border-top:1px solid #111;margin:2.5rem 0 1rem}
-h1{font-size:1.5rem;margin:0 0 1.5rem}h3{margin:1.25rem 0 .25rem;font-size:.95rem}</style>
+.foot-rule{border:none;border-top:1px solid #909090;margin:2.5rem 0 1rem}
+h3{margin:1.25rem 0 .25rem;font-size:.95rem}</style>
 </head><body>
 <header class="letterhead">{{LOGO}}{{COMPANY_BLOCK}}</header>
-<h1>Invoice #{{NUMBER}}</h1>
 <section class="band">
 <table class="meta">{{META_ROWS}}</table>
 <div class="party"><span class="party-label">Invoice For</span>

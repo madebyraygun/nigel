@@ -2154,7 +2154,8 @@ mod tests {
         // A whole page, not a 500 and not a half-rendered one. The stock page
         // asks nothing of the invoicing configuration: payment instructions are
         // the operator's own text and are simply absent when unset.
-        assert!(body.contains("Invoice #1250"), "{body}");
+        assert!(body.contains("<title>Invoice 1250</title>"), "{body}");
+        assert!(body.contains("Invoice ID"), "{body}");
         assert!(!body.contains("{{"), "no unexpanded placeholder: {body}");
         assert!(!body.contains("Payment"), "nothing configured: {body}");
     }

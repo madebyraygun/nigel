@@ -827,7 +827,6 @@ same order:
                                 | P.O. Box 1234
                                 | Springfield, CA 90001
                                 | ph. 619.555.0123
-Invoice #1248
 
 Invoice ID   1248               Invoice For
 Issue Date   2026-08-04         | Acme Co
@@ -835,17 +834,34 @@ Due Date     2026-09-05         | 123 Main St
              (Net 30)           | Springfield, IL 62704
                                 | ap@acme.test
 
+
 Description        Quantity  Unit Price     Amount
---------------------------------------------------
+==================================================
 Design                    2     $100.00    $200.00
 --------------------------------------------------
-                                  Total (USD)  $200.00
+Research                  4     $100.00    $400.00   <- shaded
+--------------------------------------------------
+                                  Total (USD)  $600.00
 
 --------------------------------------------------
 Notes
 Terms
 Payment
 ```
+
+There is **no title line**. The letterhead is the masthead and the metadata band
+carries the identifier, so `Invoice ID  1248` says it once rather than printing
+a heading over a row that repeats it. The number is still the document's file
+title — what a viewer puts in its window and what a browser suggests as a
+filename — and still the page's `<title>`; it is simply not drawn twice on the
+document itself.
+
+Line-item rows are ruled and every other one is tinted, which is what lets a
+reader follow one row across four columns. Both documents stripe the *same*
+rows: which ones is `document::row_is_shaded`'s decision, taken once. The
+striping and the row rules continue correctly onto a second page — the row that
+does not fit starts the new page and paints its band, its cells and its rule
+there.
 
 Every block is drawn only when there is something in it. A client with a name
 and nothing else gets no empty rows and no labels with nothing after them; an

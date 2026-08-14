@@ -1540,7 +1540,10 @@ fn invoice_preview_writes_html_to_the_data_dir() {
 
     let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html"))
         .expect("preview html missing");
-    assert!(html.contains("Invoice #1248"), "got: {html}");
+    // The number is in the tab title and in the metadata band; the document
+    // itself carries no heading line.
+    assert!(html.contains("<title>Invoice 1248</title>"), "got: {html}");
+    assert!(html.contains("Invoice ID"), "got: {html}");
     assert!(html.contains("1500.00"), "got: {html}");
 }
 

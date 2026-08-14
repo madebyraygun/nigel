@@ -1515,7 +1515,10 @@ mod tests {
             html.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {html}"))
         };
-        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
+        // The letterhead is the masthead, and the metadata band follows it —
+        // there is no title line between them any more.
+        assert!(at("Bluepeak LLC") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
         assert!(at("Invoice For") < at("123 Main St"));
         assert!(at("123 Main St") < at("Springfield, IL 62704"));
         assert!(at("Springfield, IL 62704") < at("a@b.test"));
@@ -1684,6 +1687,112 @@ mod tests {
         assert!(
             html.contains(".letterhead:empty{display:none}"),
             "and so nothing is drawn: {html}"
+        );
+    }
+
+    /// The stock page and the PDF share one grey for every structural rule, one
+    /// tint for the zebra, and one logo size. The template is a static file, so
+    /// the only thing that can hold it to `document.rs`'s values is a test that
+    /// reads them back out of it.
+    #[test]
+    fn the_stock_pages_stylesheet_uses_the_shared_document_colours() {
+        use crate::invoicing::document::{BORDER_GRAY, ROW_SHADE};
+        assert!(
+            DEFAULT_TEMPLATE.contains(&BORDER_GRAY.hex()),
+            "the border grey is not in the stylesheet"
+        );
+        assert!(
+            DEFAULT_TEMPLATE.contains(&ROW_SHADE.hex()),
+            "the row tint is not in the stylesheet"
+        );
+        // The near-blacks the rules used to be drawn in are gone; `#111` stays
+        // only as body type and the Pay button's ground.
+        // `border-radius` is a shape, not a rule, and the Pay button's ground
+        // is deliberately near-black.
+        let rules: Vec<&str> = DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                line.contains("#111")
+                    && [
+                        "border:",
+                        "border-left",
+                        "border-right",
+                        "border-top",
+                        "border-bottom",
+                    ]
+                    .iter()
+                    .any(|edge| line.contains(edge))
+            })
+            .collect();
+        assert!(rules.is_empty(), "a rule is still near-black: {rules:?}");
+    }
+
+    /// A masthead, not a banner. The page measures in `rem` against its body
+    /// width and the PDF in millimetres against its printable width, so the one
+    /// thing that can agree is the share of the measure the mark occupies.
+    #[test]
+    fn the_stock_pages_logo_cap_is_the_shared_fraction_of_its_measure() {
+        use crate::invoicing::document::{LOGO_HEIGHT_FRACTION, LOGO_WIDTH_FRACTION};
+
+        let rem_after = |needle: &str| -> f32 {
+            let at = DEFAULT_TEMPLATE
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}"))
+                + needle.len();
+            let rest = &DEFAULT_TEMPLATE[at..];
+            let end = rest.find("rem").expect("a rem length");
+            rest[..end].parse().expect("a number")
+        };
+        let body = rem_after("max-width:");
+        let logo_w = rem_after(".logo{max-width:");
+        let logo_h = rem_after("max-height:");
+
+        assert!(
+            (logo_w / body - LOGO_WIDTH_FRACTION).abs() < 0.01,
+            "the logo is {:.3} of the measure, not {LOGO_WIDTH_FRACTION}",
+            logo_w / body
+        );
+        assert!(
+            (logo_h / body - LOGO_HEIGHT_FRACTION).abs() < 0.01,
+            "the logo's height cap is {:.3} of the measure, not {LOGO_HEIGHT_FRACTION}",
+            logo_h / body
+        );
+    }
+
+    /// The reference has no title line: the letterhead is the masthead and the
+    /// metadata band carries the identifier.
+    #[test]
+    fn the_stock_page_prints_the_number_once_in_the_metadata_band() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        let body = &html[html.find("<body").expect("a body")..];
+        assert!(!body.contains("<h1"), "no heading at all: {body}");
+        assert!(!body.contains("Invoice #"), "no title line: {body}");
+        assert_eq!(
+            body.matches("1248").count(),
+            1,
+            "the number appears once, in the metadata band: {body}"
+        );
+        // `{{NUMBER}}` still satisfies REQUIRED from the `<title>` element, and
+        // the tab still names the invoice.
+        assert!(html.contains("<title>Invoice 1248</title>"), "got: {html}");
+        validate_template(DEFAULT_TEMPLATE, Path::new("stock"))
+            .expect("the stock page still validates");
+    }
+
+    /// Zebra striping is what lets a reader track one row across four columns.
+    #[test]
+    fn the_stock_page_stripes_every_other_item_row() {
+        assert!(
+            DEFAULT_TEMPLATE.contains("tbody tr:nth-child(even)"),
+            "the item rows are not striped"
         );
     }
 

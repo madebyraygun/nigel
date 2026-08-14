@@ -1,12 +1,14 @@
 use std::io::BufWriter;
 
+use printpdf::path::PaintMode;
 use printpdf::*;
 
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
 use crate::invoicing::document::{
-    address_lines, email_line, meta_rows, payment_lines, terms_block_text, CompanyBlock, Logo,
-    MoneySummary,
+    address_lines, email_line, meta_rows, payment_lines, row_is_shaded, terms_block_text,
+    CompanyBlock, DocumentColor, Logo, MoneySummary, BORDER_GRAY, LOGO_HEIGHT_FRACTION,
+    LOGO_WIDTH_FRACTION, ROW_SHADE,
 };
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::reports::*;
@@ -146,13 +148,35 @@ impl PdfWriter {
         self.text(s, right_edge - approx_text_width(s, size), size, bold);
     }
 
+    /// The layer this writer is drawing on.
+    fn layer(&self) -> PdfLayerReference {
+        self.doc
+            .get_page(self.current_page)
+            .get_layer(self.current_layer)
+    }
+
+    /// A filled band the width of the item table, for the zebra striping.
+    ///
+    /// The fill colour is restored to black afterwards, because `use_text`
+    /// inherits it: printpdf's text operator sets the font and the cursor and
+    /// nothing else, so a row drawn after an unrestored grey fill would be grey
+    /// type on a grey ground.
+    fn fill_band(&self, x1: f32, y_from: f32, x2: f32, y_to: f32, color: DocumentColor) {
+        let (r, g, b) = color.unit_rgb();
+        let layer = self.layer();
+        layer.set_fill_color(Color::Rgb(Rgb::new(r, g, b, None)));
+        layer.add_rect(
+            Rect::new(Mm(x1), Mm(PAGE_H - y_to), Mm(x2), Mm(PAGE_H - y_from))
+                .with_mode(PaintMode::Fill),
+        );
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.0, 0.0, 0.0, None)));
+    }
+
     /// A vertical rule, for the party blocks and the item table's dividers.
     /// `y_from`/`y_to` are this writer's downward `y`, not PDF coordinates.
     fn vline(&self, x: f32, y_from: f32, y_to: f32) {
-        let layer = self
-            .doc
-            .get_page(self.current_page)
-            .get_layer(self.current_layer);
+        let layer = self.layer();
+        self.use_border_color(&layer);
         layer.set_outline_thickness(0.5);
         layer.add_line(Line {
             points: vec![
@@ -163,11 +187,15 @@ impl PdfWriter {
         });
     }
 
+    /// Every rule on this document is the one grey both documents share.
+    fn use_border_color(&self, layer: &PdfLayerReference) {
+        let (r, g, b) = BORDER_GRAY.unit_rgb();
+        layer.set_outline_color(Color::Rgb(Rgb::new(r, g, b, None)));
+    }
+
     fn hline(&self, x1: f32, x2: f32) {
-        let layer = self
-            .doc
-            .get_page(self.current_page)
-            .get_layer(self.current_layer);
+        let layer = self.layer();
+        self.use_border_color(&layer);
         layer.set_outline_thickness(0.5);
         let line = Line {
             points: vec![
@@ -233,6 +261,78 @@ impl PdfWriter {
             x += col.width;
         }
         self.y += ROW_H;
+    }
+
+    /// One line-item row: its zebra band, its cells, and the rule under it.
+    ///
+    /// The order matters and the page break matters. `ensure_space` runs
+    /// **before** anything is drawn, so a row that does not fit starts the new
+    /// page and then paints its band, its text and its rule there — which is
+    /// what makes the striping and the grid carry on correctly across a break
+    /// rather than stranding a band on the page the row left.
+    fn item_row(&mut self, cols: &[Col], values: &[&str], shaded: bool) {
+        let wrapped = Self::wrap_cells(cols, values, FONT_SIZE);
+        let max_lines = wrapped.iter().map(|w| w.len()).max().unwrap_or(1);
+        let row_height = max_lines as f32 * ROW_H;
+        self.ensure_space(row_height);
+
+        let top = self.y - 3.5;
+        if shaded {
+            self.fill_band(
+                MARGIN_LEFT,
+                top,
+                PAGE_W - MARGIN_RIGHT,
+                top + row_height,
+                ROW_SHADE,
+            );
+        }
+        self.draw_cells(cols, &wrapped, max_lines, false, FONT_SIZE);
+        let bottom = self.y - 3.5;
+        let saved = self.y;
+        self.y = bottom;
+        self.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+        self.y = saved;
+    }
+
+    fn wrap_cells(cols: &[Col], values: &[&str], font_size: f32) -> Vec<Vec<String>> {
+        cols.iter()
+            .enumerate()
+            .map(|(i, col)| {
+                if i < values.len() && !values[i].is_empty() {
+                    wrap_text(values[i], col.width - COL_PAD, font_size)
+                } else {
+                    vec![String::new()]
+                }
+            })
+            .collect()
+    }
+
+    fn draw_cells(
+        &mut self,
+        cols: &[Col],
+        wrapped: &[Vec<String>],
+        max_lines: usize,
+        bold: bool,
+        font_size: f32,
+    ) {
+        for line_idx in 0..max_lines {
+            let mut x = MARGIN_LEFT;
+            for (col_idx, col) in cols.iter().enumerate() {
+                if let Some(text) = wrapped.get(col_idx).and_then(|c| c.get(line_idx)) {
+                    if !text.is_empty() {
+                        match col.align {
+                            Align::Left => self.text(text, x, font_size, bold),
+                            Align::Right => {
+                                let tw = approx_text_width(text, font_size);
+                                self.text(text, x + col.width - COL_PAD - tw, font_size, bold);
+                            }
+                        }
+                    }
+                }
+                x += col.width;
+            }
+            self.y += ROW_H;
+        }
     }
 
     fn table_row_wrapped(&mut self, cols: &[Col], values: &[&str], bold: bool, font_size: f32) {
@@ -921,12 +1021,13 @@ fn document_title(title: &str, company: &str) -> String {
 
 /// The box a logo is fitted into, top-left of the page.
 ///
-/// The printable width is 177.8 mm and the From block occupies the right of it
-/// from `PARTY_LABEL_X`; 60 mm leaves that block clear. 16 mm is the height of a
-/// four-line From block at this document's 5 mm line spacing, so a logo that
-/// fills the box ends level with the block beside it rather than under it.
-const LOGO_MAX_W: f32 = 60.0;
-const LOGO_MAX_H: f32 = 16.0;
+/// Both caps are the shared fractions of this document's printable width, so
+/// the mark reads at the same size here as it does on the page — a masthead
+/// rather than a banner. Whichever dimension binds first is the aspect ratio's
+/// business, and either way the box stays clear of the From block.
+const PRINTABLE_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
+const LOGO_MAX_W: f32 = PRINTABLE_W * LOGO_WIDTH_FRACTION;
+const LOGO_MAX_H: f32 = PRINTABLE_W * LOGO_HEIGHT_FRACTION;
 
 /// Where the two right-hand party blocks — From, and Invoice For — start.
 const PARTY_LABEL_X: f32 = 110.0;
@@ -1177,10 +1278,13 @@ pub fn render_invoice_pdf(
     let mut from_lines: Vec<&str> = company.address.clone();
     from_lines.extend(phone_line.as_deref());
     pdf.party_block("From", company.name, &from_lines, true);
-    pdf.y = pdf.y.max(left_bottom) + 8.0;
-
-    pdf.text(&title, MARGIN_LEFT, TITLE_SIZE, true);
-    pdf.y += 9.0;
+    // No title line. The letterhead is this document's masthead and the
+    // metadata band carries the identifier, so drawing "Invoice #1248" here
+    // would say the same thing twice — once as a heading and once as the row a
+    // client actually quotes back. `title` stays: it is the document's Info
+    // title, which is what a viewer puts in its window and a browser suggests
+    // as a filename, and that is file metadata rather than visible layout.
+    pdf.y = pdf.y.max(left_bottom) + 12.0;
 
     // --- the metadata column, and who the invoice is for --------------------
     let band_top = pdf.y;
@@ -1203,7 +1307,9 @@ pub fn render_invoice_pdf(
         client_lines.push(email);
     }
     pdf.party_block("Invoice For", &client.name, &client_lines, true);
-    pdf.y = pdf.y.max(left_bottom) + 6.0;
+    // The item table stands clear of the band above it, or its rows read as
+    // part of the client block rather than as the invoice.
+    pdf.y = pdf.y.max(left_bottom) + 14.0;
 
     let cols = &[
         Col {
@@ -1227,15 +1333,14 @@ pub fn render_invoice_pdf(
     let table_page = pdf.page_no;
     pdf.table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
 
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
         let qty = item.quantity.to_string();
         let rate = money(item.unit_amount);
         let amount = money(item.line_total);
-        pdf.table_row_wrapped(
+        pdf.item_row(
             cols,
             &[&item.description, &qty, &rate, &amount],
-            false,
-            FONT_SIZE,
+            row_is_shaded(index),
         );
     }
     // Column dividers, drawn once the table's extent is known. Skipped when the
@@ -1469,9 +1574,64 @@ pub(crate) fn drawn_lines(bytes: &[u8]) -> Vec<Vec<(f32, f32, f32, f32)>> {
         .collect()
 }
 
+/// Every filled rectangle a rendered document draws, per page, as
+/// `(x1, y1, x2, y2)` in millimetres from the bottom-left.
+///
+/// The zebra striping is a fill, not a rule, so `drawn_lines` cannot see it.
+#[cfg(test)]
+pub(crate) fn filled_rects(bytes: &[u8]) -> Vec<Vec<(f32, f32, f32, f32)>> {
+    page_streams(bytes)
+        .iter()
+        .map(|stream| {
+            let mut out = Vec::new();
+            for line in stream.lines().map(str::trim) {
+                // `x y w h re` followed by the fill operator.
+                let Some(rest) = line.strip_suffix(" re") else {
+                    continue;
+                };
+                let nums: Vec<f32> = rest
+                    .split_whitespace()
+                    .filter_map(|n| n.parse::<f32>().ok())
+                    .map(|n| n / PT_PER_MM)
+                    .collect();
+                if let [x, y, w, h] = nums[..] {
+                    out.push((x, y, x + w, y + h));
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// Every stroke colour a rendered document sets, as unit RGB.
+#[cfg(test)]
+pub(crate) fn stroke_colors(bytes: &[u8]) -> Vec<(f32, f32, f32)> {
+    page_streams(bytes)
+        .iter()
+        .flat_map(|stream| {
+            stream
+                .lines()
+                .map(str::trim)
+                .filter_map(|line| {
+                    let rest = line.strip_suffix(" RG")?;
+                    let nums: Vec<f32> = rest
+                        .split_whitespace()
+                        .filter_map(|n| n.parse::<f32>().ok())
+                        .collect();
+                    match nums[..] {
+                        [r, g, b] => Some((r, g, b)),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 #[cfg(all(test, feature = "pdf"))]
 mod invoice_pdf_tests {
     use super::*;
+    use crate::invoicing::document::row_is_shaded;
     use crate::models::{Client, Invoice, InvoiceLineItem};
 
     fn invoice() -> Invoice {
@@ -1573,7 +1733,10 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {text}"))
         };
-        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
+        // The letterhead heads the document and the metadata band follows it;
+        // there is no title line between them.
+        assert!(at("Bluepeak LLC") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
         assert!(at("Invoice For") < at("123 Main St"));
         assert!(at("123 Main St") < at("Springfield, IL 62704"));
         assert!(at("Springfield, IL 62704") < at("ap@acme.test"));
@@ -1782,6 +1945,112 @@ mod invoice_pdf_tests {
         }
     }
 
+    /// The reference invoice has no title line: the letterhead is the masthead
+    /// and the metadata band carries the identifier. Printing "Invoice #1248"
+    /// above a row that reads `Invoice ID  1248` says the same thing twice.
+    #[test]
+    fn the_number_is_printed_once_in_the_metadata_band() {
+        let bytes = pdf_of(&invoice(), &client(), "Bluepeak LLC");
+        let text = extract_text(&bytes);
+        assert!(!text.contains("Invoice #"), "no visible title line: {text}");
+        assert_eq!(
+            text.matches("1248").count(),
+            1,
+            "the number appears once, in the metadata band: {text}"
+        );
+        // File metadata is not visible layout, and a viewer's window title and
+        // a browser's suggested filename both read it.
+        assert_eq!(document_title_of(&bytes), "Bluepeak LLC - Invoice #1248");
+    }
+
+    /// The zebra is what lets a reader track one row across four columns, so it
+    /// has to be a fill behind the row rather than a rule between rows — and it
+    /// has to keep alternating after a page break, where the row index carries
+    /// on but the page's geometry starts over.
+    #[test]
+    fn every_other_item_row_is_shaded_on_every_page() {
+        let mut inv = invoice();
+        inv.subtotal = 6000.0;
+        inv.total = 6000.0;
+        let long: Vec<InvoiceLineItem> = (0..60)
+            .map(|i| InvoiceLineItem {
+                id: None,
+                invoice_id: Some(1),
+                description: format!("Line item number {i}"),
+                quantity: 1.0,
+                unit_amount: 100.0,
+                line_total: 100.0,
+                position: i,
+            })
+            .collect();
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(&inv, &client(), &block, None, &long, &money, "").unwrap();
+
+        let pages = filled_rects(&bytes);
+        assert!(pages.len() > 1, "the premise: the table paginated");
+        let shaded: usize = pages.iter().map(Vec::len).sum();
+        assert_eq!(
+            shaded,
+            (0..long.len()).filter(|i| row_is_shaded(*i)).count(),
+            "one fill per shaded row, no more and no fewer"
+        );
+        for (index, page) in pages.iter().enumerate() {
+            assert!(
+                !page.is_empty(),
+                "page {index} carries rows but no striping"
+            );
+            for rect in page {
+                let covered = drawn_text(&bytes)[index]
+                    .iter()
+                    .any(|drawn| drawn.y >= rect.1 - 0.01 && drawn.y <= rect.3 + 0.01);
+                assert!(covered, "page {index} shades a band with no row in it");
+            }
+        }
+    }
+
+    /// Every rule on this document is one grey, and it is the grey the page
+    /// uses. Two renderers each naming their own is how one document's table
+    /// ends up caged in near-black while the other's is a whisper.
+    #[test]
+    fn every_rule_is_drawn_in_the_shared_border_grey() {
+        let bytes = pdf_of(&invoice(), &rich_client(), "Bluepeak LLC");
+        let (r, g, b) = crate::invoicing::document::BORDER_GRAY.unit_rgb();
+        let strokes = stroke_colors(&bytes);
+        assert!(!strokes.is_empty(), "the document draws rules at all");
+        for stroke in &strokes {
+            assert!(
+                (stroke.0 - r).abs() < 0.01
+                    && (stroke.1 - g).abs() < 0.01
+                    && (stroke.2 - b).abs() < 0.01,
+                "a rule is drawn in {stroke:?}, not the shared grey"
+            );
+        }
+    }
+
+    /// The band above the table needs room, or the item rows read as part of
+    /// the client block rather than as the invoice.
+    #[test]
+    fn the_item_table_stands_clear_of_the_band_above_it() {
+        let bytes = pdf_of(&invoice(), &rich_client(), "Bluepeak LLC");
+        let page = &drawn_text(&bytes)[0];
+        let lowest_band_line = page
+            .iter()
+            .filter(|d| d.text == "ap@acme.test")
+            .map(|d| d.y)
+            .fold(f32::INFINITY, f32::min);
+        let header = page
+            .iter()
+            .find(|d| d.text == "Description")
+            .expect("the table header")
+            .y;
+        assert!(
+            lowest_band_line - header >= 14.0,
+            "only {} mm between the band and the table",
+            lowest_band_line - header
+        );
+    }
+
     #[test]
     fn an_unset_company_draws_no_from_block() {
         let text = extract_text(&pdf_of(&invoice(), &client(), ""));
@@ -1792,8 +2061,8 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {text}"))
         };
-        assert!(at("Invoice #1248") < at("Invoice ID"));
         assert!(at("Invoice ID") < at("Invoice For"));
+        assert!(at("Invoice For") < at("Description"));
     }
 
     #[test]
@@ -2112,8 +2381,8 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing: {text}"))
         };
-        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
-        assert!(at("Invoice #1248") < at("Invoice For"));
+        assert!(at("Bluepeak LLC") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
         assert!(image_xobjects(&bytes).is_empty(), "no image was configured");
     }
 
@@ -2148,7 +2417,9 @@ mod invoice_pdf_tests {
             text.find(needle)
                 .unwrap_or_else(|| panic!("missing: {text}"))
         };
-        assert!(at("Invoice #1248") < at("Invoice For"));
+        assert!(at("Invoice ID") < at("Invoice For"));
+        // Nothing visible names the company, and the Info title falls back to
+        // the invoice alone.
         assert_eq!(document_title_of(&bytes), "Invoice #1248");
     }
 

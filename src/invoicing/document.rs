@@ -27,6 +27,78 @@ pub const MAX_ADDRESS_LINES: usize = 6;
 /// both documents show the same thing.
 pub const ADDRESS_TRUNCATED: &str = "...";
 
+/// A colour both documents draw the same thing in.
+///
+/// One value, two renderings: the page needs a hex string for CSS, the PDF needs
+/// three floats between 0 and 1. Neither renderer is allowed to name a colour of
+/// its own, which is what stops one document's rules going grey while the
+/// other's stay black.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl DocumentColor {
+    const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    /// The CSS form, for a template author and for the stock page's stylesheet.
+    pub fn hex(&self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+
+    /// The PDF form: each channel as a fraction of full intensity.
+    pub fn unit_rgb(&self) -> (f32, f32, f32) {
+        (
+            self.r as f32 / 255.0,
+            self.g as f32 / 255.0,
+            self.b as f32 / 255.0,
+        )
+    }
+}
+
+/// The one grey every structural rule on both documents is drawn in — the party
+/// blocks' vertical rules, the item table's grid, the foot rule.
+///
+/// A medium neutral, deliberately well clear of the body text: a rule is
+/// structure, not type, and drawing the two in the same near-black makes a table
+/// read as a cage. It is also well clear of white, so it survives a fax-grade
+/// printer, which the near-invisible hairlines it replaces did not.
+pub const BORDER_GRAY: DocumentColor = DocumentColor::new(0x90, 0x90, 0x90);
+
+/// The tint behind every other line-item row.
+///
+/// Light enough that the body text over it keeps its full contrast, and dark
+/// enough to survive a printer that dithers: the striping is there to let a
+/// reader track a long row across four columns, so it has to be visible on paper
+/// and must never make a figure harder to read.
+pub const ROW_SHADE: DocumentColor = DocumentColor::new(0xf4, 0xf4, 0xf4);
+
+/// Whether the line-item row at `index` carries the zebra tint.
+///
+/// The second row and every other one after it, so the first row sits on the
+/// page's own white directly under the ruled header. Both documents ask this
+/// rather than each deciding what "every other" counts from — off by one here
+/// and the two documents stripe opposite rows.
+pub fn row_is_shaded(index: usize) -> bool {
+    index % 2 == 1
+}
+
+/// How much of a document's content width the logo may occupy.
+///
+/// A fraction rather than a length, because the page measures in `rem` against
+/// its body width and the PDF in millimetres against its printable width; the
+/// one thing that has to match is how large the mark reads, which is its share
+/// of the measure it sits in. A letterhead is a masthead, not a banner.
+pub const LOGO_WIDTH_FRACTION: f32 = 0.20;
+
+/// And of that width for its height, which is what stops a tall mark from
+/// growing down the page when the width cap never binds.
+pub const LOGO_HEIGHT_FRACTION: f32 = 0.056;
+
 /// One line of the money block, in the order both documents print them.
 pub struct MoneyLine {
     pub label: &'static str,

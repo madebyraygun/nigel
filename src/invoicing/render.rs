@@ -187,7 +187,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(out.html.contains("Invoice #1248"), "got: {}", out.html);
+        // The number is in the tab title and in the metadata band; there is no
+        // heading line on the document any more.
+        assert!(
+            out.html.contains("<title>Invoice 1248</title>"),
+            "got: {}",
+            out.html
+        );
+        assert!(out.html.contains("Invoice ID"), "got: {}", out.html);
         assert!(out.html.contains("Acme"), "got: {}", out.html);
         assert!(out.html.contains("100.00"));
     }
@@ -759,6 +766,9 @@ mod tests {
         )
         .unwrap();
         assert!(out.pdf.is_none());
-        assert!(out.html.contains("Invoice #1248"));
+        // The number is the tab title and the metadata band; the document
+        // carries no heading line.
+        assert!(out.html.contains("<title>Invoice 1248</title>"));
+        assert!(out.html.contains("Invoice ID"));
     }
 }
