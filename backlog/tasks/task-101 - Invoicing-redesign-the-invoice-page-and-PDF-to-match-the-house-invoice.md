@@ -1,11 +1,11 @@
 ---
 id: TASK-101
 title: 'Invoicing: redesign the invoice page and PDF to match the house invoice'
-status: In Progress
+status: Done
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-14 03:10'
+updated_date: '2026-08-14 04:22'
 labels:
   - invoicing
   - pdf
@@ -54,11 +54,13 @@ Note the email body is the invoice page itself — mailgun is handed render_invo
 - [x] #6 The page and the PDF agree on every figure and every block they both carry
 - [x] #7 A custom template exported before this change still loads, and REQUIRED does not grow
 - [x] #8 The pay-link-in-PDF rule is either upheld or reversed on the record, with the reasoning written down
-- [ ] #9 A rendered example of both documents is reviewed side by side before this is called done
+- [x] #9 A rendered example of both documents is reviewed side by side before this is called done
 - [x] #10 Payment instructions are configurable text, not a sentence hardcoded in the stock template
 - [x] #11 Payment instructions render on both the page and the PDF, or on neither
 - [x] #12 An installation that takes no bank transfers can omit the block entirely
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 

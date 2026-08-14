@@ -1,10 +1,10 @@
 ---
 id: TASK-87
 title: 'Invoicing: unify currency rendering between the page and the PDF'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-11 20:06'
-updated_date: '2026-08-14 01:47'
+updated_date: '2026-08-14 04:22'
 labels:
   - invoicing
 dependencies: []
