@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-14 02:01'
+updated_date: '2026-08-14 03:10'
 labels:
   - invoicing
   - pdf
@@ -160,6 +160,20 @@ Still halted for re-review. AC #9 stays unchecked.
 **TASK-87 closed.** `document::money` — separators, two decimals, `$` for USD, code prefix (`EUR 2,500.00`) otherwise, since `$` cannot say which dollar and not every symbol survives printpdf's WinAnsi built-ins. Applied to line items and totals on both documents. `fmt::money` stays dollar-only for the reports and the CLI. `MoneyLine::payment_row` removed — it existed only to carry the old two-format split. Rendering a real EUR invoice caught a second-order defect: the cell wrapper split `EUR 2,500.00` across two lines, so figure cells no longer wrap and the figure columns were widened.
 
 Verified: 1368+117 / 1007+117 / 1280+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+Still halted for re-review. AC #9 stays unchecked.
+
+## Fifth round — the party alignment, properly
+
+(1) The rules were never a grid problem: `.party` was a flex row whose content-sized label pushed the body's border along by its own text width, and `From` vs `Invoice For` differ by ~57px. `.party` is an explicit two-track grid now with a fixed label column and the label right-aligned against the rule — the page's equivalent of the PDF's `PARTY_LABEL_X`.
+
+**The test was the deeper failure.** `both_party_blocks_resolve_to_the_same_left_edge` computed the grid *cell's* edge and never looked inside the cell, so it could not fail for the reason the bug existed — which is why a visibly wrong page passed twice. Replaced by `both_party_rules_land_at_the_same_x`, which resolves the rule's own edge: cell edge + label column + gap, where the label column is a fixed track if declared and the label's rendered width if not. Watched failing first: 27.79rem vs 31.36rem.
+
+(2) `.party-body` border 2px -> 1px, matching the PDF's rule weight.
+
+(3) The item table's gutter is interior-only via `item_gutters`, so `Description` starts at 19.05mm and the `Amount` figures end at 196.85mm — the page's own text margins, measured on a fresh render. Applied to the page too. `no_item_table_cell_crowds_a_column_divider` still means what it says: it measures against dividers, which are interior by definition, so it constrains exactly the clearances that remain; the new edge-to-edge tests cover the outer edges.
+
+Verified: 1370+117 / 1008+117 / 1281+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 
 Still halted for re-review. AC #9 stays unchecked.
 <!-- SECTION:NOTES:END -->
