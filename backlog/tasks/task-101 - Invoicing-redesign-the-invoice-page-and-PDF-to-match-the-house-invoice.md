@@ -133,7 +133,7 @@ Still halted for re-review. AC #9 stays unchecked.
 
 ## Correction: the invoice was reaching into the reports' shared machinery
 
-Found in review before the layout round went back to Dalton. Two constants the round had moved were not the invoice's.
+Found in review before the layout round went back for the side-by-side. Two constants the round had moved were not the invoice's.
 
 **`COL_PAD`** is read by `table_header`, `table_row` and `table_row_wrapped` — the machinery all nine report renderers draw through. Widening it 4->6mm to pad the invoice's cells re-laid-out every report PDF, and because `wrap_text` measures against `col.width - COL_PAD`, it also narrowed every report column's wrap width. Reverted to 4mm; the invoice now has `ITEM_COL_PAD` (6mm) and its own path — `item_table_header`, `wrap_item_cells`, `draw_item_cells`. `figure_right` re-derived from `ITEM_COL_PAD`, since the money block has to align with the Amount column.
 
