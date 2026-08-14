@@ -1,11 +1,11 @@
 ---
 id: TASK-92
 title: 'Web UI: a way to cancel an in-progress import'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:50'
-updated_date: '2026-08-14 05:08'
+updated_date: '2026-08-14 18:29'
 labels:
   - web
   - ui
