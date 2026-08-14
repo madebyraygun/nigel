@@ -463,16 +463,20 @@ describe('the documented shortcuts', () => {
       await pressOnRow(el, 'Enter');
       expect(seen).toEqual([{ id: 101 }]);
     },
-    // Escape belongs to the editors, which is where the legend says it is:
-    // "cancel the edit". The table-level handler must leave it alone.
+    // Two jobs, as the legend says: the editors' cancel while one is open, and
+    // the TUI's clear-the-cursor when none is.
     Escape: async () => {
-      const el = await mount({ selectedId: 101, editingId: 101 });
-      const seen = listen<NcRowEventDetail>(el, 'nc-edit-cancel');
-      el.shadowRoot
+      const editing = await mount({ selectedId: 101, editingId: 101 });
+      const seen = listen<NcRowEventDetail>(editing, 'nc-edit-cancel');
+      editing.shadowRoot
         ?.querySelector('.category-input')
         ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await el.updateComplete;
+      await editing.updateComplete;
       expect(seen).toEqual([{ id: 101 }]);
+
+      const browsing = await mount({ selectedId: 101 });
+      await pressOnRow(browsing, 'Escape');
+      expect(selectedId(browsing)).toBeNull();
     },
     f: async () => {
       const el = await mount({ selectedId: 100 });
@@ -538,21 +542,40 @@ describe('reaching the register from the keyboard', () => {
     );
   });
 
-  it('answers a key pressed on the flag button, not only on the row', async () => {
+  it('answers a key pressed on the scroller, not only on a row', async () => {
+    // The original defect: the listener sat on the scroller, so a key only
+    // arrived when a row already had focus. It is on the host now, and the
+    // scroller is inside it.
     const el = await mount({ selectedId: 100 });
-    rowEls(el)[0]
-      ?.querySelector('button')
-      ?.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }),
-      );
-    await el.updateComplete;
+    await press(el, 'ArrowDown');
     expect(selectedId(el)).toBe(101);
+  });
+
+  it.each(['Enter', ' '])('lets the flag button answer %s itself', async (key) => {
+    // Intercepting these cancelled the button's own activation: Enter opened
+    // the row editor and never flagged anything, while Space flagged. A
+    // control inside a row keeps its keys.
+    const el = await mount({ selectedId: 100 });
+    const activations = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[0]?.querySelector('button')?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(activations).toEqual([]);
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it('focuses the row the cursor is on when asked', async () => {
     const el = await mount({ selectedId: 102 });
     expect(el.focusSelectedRow()).toBe(true);
     expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('102');
+    expect(selectedId(el)).toBe(102);
   });
 
   it('focuses the first row when nothing has been selected yet', async () => {
@@ -561,9 +584,123 @@ describe('reaching the register from the keyboard', () => {
     expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('100');
   });
 
+  it('selects nothing by landing the keyboard on the table', async () => {
+    // A register that opened with no cursor still has none afterwards: taking
+    // focus is not a decision about which transaction is current.
+    const el = await mount();
+    const seen = listen<NcRowEventDetail>(el, 'nc-row-select');
+    el.focusSelectedRow();
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not select the fallback tab stop when Tab lands on it', async () => {
+    // Nothing is selected, so the first row holds the stop as a fallback.
+    // Tab arriving there is not a decision about which transaction is current.
+    const el = await mount();
+    rowEls(el)[0]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+  });
+
+  it('selects a row Tab reaches that is not the fallback stop', async () => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[2]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
+  it('selects a row a pointer actually clicks', async () => {
+    const el = await mount();
+    rowEls(el)[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
   it('reports that an empty register had nothing to focus', async () => {
     const el = await mount({ rows: [] });
     expect(el.focusSelectedRow()).toBe(false);
+  });
+
+  it('clears the selection on Escape and consumes the key', async () => {
+    // TUI parity. Consuming it matters: an Escape that also reached the
+    // document would close the shortcut legend or leave fullscreen.
+    const el = await mount({ selectedId: 102 });
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[2]?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(selectedId(el)).toBeNull();
+    expect(event.defaultPrevented).toBe(true);
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0)).toHaveLength(1);
+  });
+});
+
+describe('keys the browser owns', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function chord(
+    el: WcRegisterTable,
+    key: string,
+    modifier: 'ctrlKey' | 'metaKey' | 'altKey',
+  ): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      [modifier]: true,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    el.shadowRoot?.querySelector('.scroller')?.dispatchEvent(event);
+    await el.updateComplete;
+    return event;
+  }
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'does not read %s+f as the flag shortcut',
+    async (modifier) => {
+      // Find-in-page must not write to the database.
+      const el = await mount({ selectedId: 100 });
+      const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+      const event = await chord(el, 'f', modifier);
+      expect(seen).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+    },
+  );
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'leaves %s+Home and +End to the browser',
+    async (modifier) => {
+      const el = await mount({ selectedId: 101 });
+      const home = await chord(el, 'Home', modifier);
+      const end = await chord(el, 'End', modifier);
+      expect(selectedId(el)).toBe(101);
+      expect(home.defaultPrevented).toBe(false);
+      expect(end.defaultPrevented).toBe(false);
+    },
+  );
+
+  it('leaves Alt+ArrowDown alone', async () => {
+    const el = await mount({ selectedId: 100 });
+    const event = await chord(el, 'ArrowDown', 'altKey');
+    expect(selectedId(el)).toBe(100);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('still answers the unmodified key', async () => {
+    const el = await mount({ selectedId: 100 });
+    const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    await press(el, 'f');
+    expect(seen).toEqual([{ id: 100, flag: true }]);
   });
 });
 

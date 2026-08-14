@@ -84,19 +84,64 @@ describe('wc-shortcut-help', () => {
     const el = await mount({ open: true });
     trigger(el).focus();
 
-    pressEscape(trigger(el));
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    trigger(el).dispatchEvent(event);
     await el.updateComplete;
     await el.updateComplete;
 
     expect(el.open).toBe(false);
     expect(el.shadowRoot?.activeElement).toBe(trigger(el));
+    expect(event.defaultPrevented).toBe(true);
   });
 
-  it('closes on Escape pressed anywhere, not only on the trigger', async () => {
+  it('closes on an Escape meant for something else without taking the key or the focus', async () => {
+    // The register's inline editor cancels on Escape. An open legend that
+    // stole it would leave the edit open and yank focus to the trigger.
     const el = await mount({ open: true });
-    pressEscape(document.body);
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    elsewhere.dispatchEvent(event);
     await el.updateComplete;
+    await el.updateComplete;
+
     expect(el.open).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('closes when focus leaves it', async () => {
+    const el = await mount({ open: true });
+    trigger(el).focus();
+
+    const elsewhere = document.createElement('input');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+    elsewhere.dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+    await el.updateComplete;
+
+    expect(el.open).toBe(false);
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('stays open while focus moves inside it', async () => {
+    const el = await mount({ open: true });
+    trigger(el).focus();
+    trigger(el).dispatchEvent(new FocusEvent('focusin', { bubbles: true, composed: true }));
+    await el.updateComplete;
+    expect(el.open).toBe(true);
   });
 
   it('leaves Escape alone while it is closed', async () => {
@@ -144,6 +189,32 @@ describe('wc-shortcut-help', () => {
     expect(trigger(el).tagName).toBe('BUTTON');
     expect(trigger(el).type).toBe('button');
     expect(trigger(el).tabIndex).toBe(0);
+  });
+
+  it('shifts back onto the screen when the trigger sits at the left edge', async () => {
+    // The panel is right-anchored, so a trigger on the second line of a
+    // wrapped toolbar would otherwise hang off the left of the window.
+    const el = await mount();
+    const box = panel(el);
+    box.getBoundingClientRect = () =>
+      ({ left: -120, right: 136, width: 256 }) as DOMRect;
+
+    el.show();
+    await el.updateComplete;
+
+    expect(box.style.transform).toBe('translateX(128px)');
+  });
+
+  it('leaves a panel that already fits alone', async () => {
+    const el = await mount();
+    const box = panel(el);
+    box.getBoundingClientRect = () =>
+      ({ left: 200, right: 456, width: 256 }) as DOMRect;
+
+    el.show();
+    await el.updateComplete;
+
+    expect(box.style.transform).toBe('');
   });
 
   describe('the panel is anchored rather than inline', () => {
