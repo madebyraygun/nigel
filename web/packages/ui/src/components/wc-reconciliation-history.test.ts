@@ -59,16 +59,35 @@ describe('wc-reconciliation-history', () => {
 
   it('shows a mismatch as a recorded result rather than hiding it', async () => {
     const el = await mount();
-    const first = el.shadowRoot?.querySelector('tbody tr');
-    expect(first?.querySelector('.status')?.textContent?.trim()).toBe('✗ Discrepancy');
-    expect(first?.querySelector('.status')?.classList.contains('off')).toBe(true);
+    const status = el.shadowRoot?.querySelector('tbody tr .status');
+    expect(status?.textContent?.trim()).toBe('Discrepancy');
+    expect(status?.querySelector('.mark')?.tagName.toLowerCase()).toBe('wc-icon-close');
+    expect(status?.classList.contains('off')).toBe(true);
   });
 
   it('marks a reconciled month and shows when it was checked', async () => {
     const el = await mount();
     const rows = [...(el.shadowRoot?.querySelectorAll('tbody tr') ?? [])];
-    expect(rows[1].querySelector('.status')?.textContent?.trim()).toBe('✓ Reconciled');
+    const status = rows[1].querySelector('.status');
+    expect(status?.textContent?.trim()).toBe('Reconciled');
+    expect(status?.querySelector('.mark')?.tagName.toLowerCase()).toBe('wc-icon-check');
     expect(rows[1].textContent).toContain('2025-03-01 12:04:18');
+  });
+
+  it('draws both results from one source rather than one from a fallback face', async () => {
+    // IBM Plex Mono has a `✓` and no `✗`, so as characters the two rows came
+    // from two different faces.
+    const el = await mount();
+    const marks = [...(el.shadowRoot?.querySelectorAll('.status .mark') ?? [])];
+    expect(marks).toHaveLength(3);
+
+    for (const mark of marks) {
+      await (mark as Element & { updateComplete: Promise<unknown> }).updateComplete;
+      const svg = mark.shadowRoot?.querySelector('svg');
+      // Decoration: the word beside it is what announces.
+      expect(svg?.getAttribute('aria-hidden')).toBe('true');
+      expect(svg?.getAttribute('stroke')).toBe('currentColor');
+    }
   });
 
   it('renders a missing balance as an em dash, never as zero', async () => {

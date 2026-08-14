@@ -7,6 +7,8 @@ import './wc-spinner.js';
 import { controlsCss } from '@nigel/theme';
 import './wc-notice-bar.js';
 import './wc-document-frame.js';
+import '../icons/icons.js';
+import type { IconTag } from '../icons/icons.js';
 
 /** Where a send is in its life. */
 export type SendPhase = 'confirm' | 'sending' | 'sent' | 'failed';
@@ -46,12 +48,17 @@ export interface SendFailureView {
   actionHref?: string;
 }
 
-const STATE_GLYPHS: Record<SendStepState, string> = {
-  pending: '·',
-  running: '⟳',
-  ok: '✓',
-  reused: '✓',
-  failed: '✗',
+/**
+ * The mark beside a step, as an SVG rather than a character: IBM Plex Mono has
+ * no glyph for a cross or a reload arrow, so drawn as text they would come
+ * from a fallback face while the label beside them did not.
+ */
+const STATE_ICONS: Record<SendStepState, IconTag> = {
+  pending: 'wc-icon-dot',
+  running: 'wc-icon-refresh',
+  ok: 'wc-icon-check',
+  reused: 'wc-icon-check',
+  failed: 'wc-icon-close',
 };
 
 const STATE_WORDS: Record<SendStepState, string> = {
@@ -61,6 +68,17 @@ const STATE_WORDS: Record<SendStepState, string> = {
   reused: 'reused',
   failed: 'failed',
 };
+
+/**
+ * The mark for one step's state. The icon names a custom element at runtime,
+ * so it is created imperatively rather than through a static template tag —
+ * `wc-empty-state` resolves its `icon` property the same way.
+ */
+function stepIcon(state: SendStepState) {
+  const el = document.createElement(STATE_ICONS[state]);
+  el.classList.add('glyph');
+  return el;
+}
 
 /**
  * The send confirmation, its step trace, and its outcome — one dialog that
@@ -125,13 +143,12 @@ export class WcSendDialog extends LitElement {
 
       .steps li {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: var(--wa-space-xs, 6px);
       }
 
       .glyph {
-        width: 1em;
-        text-align: center;
+        --nc-icon-size: 1em;
       }
 
       .steps li[data-state='pending'] {
@@ -435,7 +452,7 @@ export class WcSendDialog extends LitElement {
         ${this.steps.map(
           (step) => html`
             <li data-step=${step.step} data-state=${step.state}>
-              <span class="glyph" aria-hidden="true">${STATE_GLYPHS[step.state]}</span>
+              ${stepIcon(step.state)}
               <span>${step.label}</span>
               <span class="sr-only">— ${STATE_WORDS[step.state]}</span>
             </li>

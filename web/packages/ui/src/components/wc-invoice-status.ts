@@ -1,5 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import '../icons/icons.js';
+import type { IconTag } from '../icons/icons.js';
 
 /**
  * The six derived statuses, in the order `refresh_status` reasons about them.
@@ -20,20 +22,27 @@ export const INVOICE_STATUS_WORDS = [
 export type InvoiceStatusWord = (typeof INVOICE_STATUS_WORDS)[number];
 
 /**
- * A glyph per status, matching the wireframes and the TUI's own shorthand.
+ * An icon per status, matching the wireframes and the TUI's own shorthand.
  *
- * The glyph is decorative — the word beside it is what carries the meaning.
+ * The icon is decorative — the word beside it is what carries the meaning.
  * Both are rendered because colour alone cannot be the only channel (WCAG
  * 1.4.1), which is the same reason `wc-money` always prints its sign.
+ *
+ * They are SVGs rather than characters because IBM Plex Mono, the app's
+ * primary face, has a glyph for none of the six: drawn as text they each come
+ * from whatever fallback face the browser finds.
  */
-const GLYPHS: Record<string, string> = {
-  draft: '◻',
-  sent: '◆',
-  partial: '◑',
-  paid: '●',
-  overdue: '▲',
-  void: '⊘',
-};
+const STATUS_ICONS = {
+  draft: 'wc-icon-status-draft',
+  sent: 'wc-icon-status-sent',
+  partial: 'wc-icon-status-partial',
+  paid: 'wc-icon-status-paid',
+  overdue: 'wc-icon-status-overdue',
+  void: 'wc-icon-status-void',
+} satisfies Record<InvoiceStatusWord, IconTag>;
+
+/** What a status the six do not cover gets: a neutral mark, and its own word. */
+const UNKNOWN_STATUS_ICON: IconTag = 'wc-icon-dot';
 
 @customElement('wc-invoice-status')
 export class WcInvoiceStatus extends LitElement {
@@ -57,7 +66,7 @@ export class WcInvoiceStatus extends LitElement {
     }
 
     .glyph {
-      font-size: 0.9em;
+      --nc-icon-size: 1em;
     }
 
     .chip[data-status='draft'] {
@@ -101,13 +110,23 @@ export class WcInvoiceStatus extends LitElement {
   status = 'draft';
 
   render() {
-    const glyph = GLYPHS[this.status] ?? '•';
     return html`
       <span class="chip" part="chip" data-status=${this.status}>
-        <span class="glyph" aria-hidden="true">${glyph}</span>
+        ${this.renderGlyph()}
         <span class="word">${this.status}</span>
       </span>
     `;
+  }
+
+  private renderGlyph() {
+    const tag =
+      STATUS_ICONS[this.status as InvoiceStatusWord] ?? UNKNOWN_STATUS_ICON;
+    // The icon names a custom element at runtime, so it is created
+    // imperatively rather than through a static template tag — wc-empty-state
+    // resolves its `icon` property the same way.
+    const el = document.createElement(tag);
+    el.classList.add('glyph');
+    return el;
   }
 }
 

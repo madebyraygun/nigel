@@ -16,6 +16,13 @@ async function mount(status: string): Promise<WcInvoiceStatus> {
   return el;
 }
 
+/** An icon element once its own shadow root has rendered. */
+async function settled(node: Element | null | undefined): Promise<Element> {
+  expect(node).toBeTruthy();
+  await (node as Element & { updateComplete: Promise<unknown> }).updateComplete;
+  return node as Element;
+}
+
 /** Every colour custom property the chip reads, in source order. */
 function colorTokensUsed(): string[] {
   const css = [WcInvoiceStatus.styles].flat().map(String).join('\n');
@@ -69,14 +76,40 @@ describe('wc-invoice-status', () => {
     ]);
   });
 
-  it.each(INVOICE_STATUS_WORDS)('renders %s as a glyph and the word', async (status) => {
+  it.each(INVOICE_STATUS_WORDS)('renders %s as an icon and the word', async (status) => {
     const el = await mount(status);
     const chip = el.shadowRoot?.querySelector('.chip');
     expect(chip?.getAttribute('data-status')).toBe(status);
     expect(chip?.querySelector('.word')?.textContent).toBe(status);
-    // The glyph is decoration: the word is what a screen reader announces.
-    expect(chip?.querySelector('.glyph')?.getAttribute('aria-hidden')).toBe('true');
-    expect(chip?.querySelector('.glyph')?.textContent?.trim()).not.toBe('');
+    expect(chip?.querySelector('.glyph')?.tagName.toLowerCase()).toBe(
+      `wc-icon-status-${status}`,
+    );
+  });
+
+  it('draws the mark as an SVG, not as a character the mono face lacks', async () => {
+    // None of ◻ ◆ ◑ ● ▲ ⊘ is in IBM Plex Mono, so as text each one came from
+    // whatever fallback face the browser found.
+    const el = await mount('paid');
+    const icon = await settled(el.shadowRoot?.querySelector('.glyph'));
+    const svg = icon.shadowRoot?.querySelector('svg');
+
+    expect(svg?.querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(icon.textContent?.trim()).toBe('');
+    // Decoration: the word is what a screen reader announces.
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('sizes the mark to the text it sits beside and lets it take the chip’s colour', async () => {
+    const css = [WcInvoiceStatus.styles].flat().map(String).join('\n');
+    expect(css).toContain('--nc-icon-size: 1em');
+
+    // WcIconBase inherits currentColor, so a status keeps its own colour with
+    // nothing per-status to declare.
+    const el = await mount('overdue');
+    const icon = await settled(el.shadowRoot?.querySelector('.glyph'));
+    expect(icon.shadowRoot?.querySelector('svg')?.getAttribute('stroke')).toBe(
+      'currentColor',
+    );
   });
 
   it('renders a status it has never seen rather than blanking it', async () => {
@@ -84,7 +117,9 @@ describe('wc-invoice-status', () => {
     // InvoiceShelf importer or by hand cannot be assumed to be one of the six.
     const el = await mount('imported');
     expect(el.shadowRoot?.querySelector('.word')?.textContent).toBe('imported');
-    expect(el.shadowRoot?.querySelector('.glyph')?.textContent?.trim()).toBe('•');
+    expect(el.shadowRoot?.querySelector('.glyph')?.tagName.toLowerCase()).toBe(
+      'wc-icon-dot',
+    );
   });
 });
 

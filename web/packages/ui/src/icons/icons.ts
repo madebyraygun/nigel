@@ -186,6 +186,70 @@ export class WcIconClients extends WcIconBase {
   }
 }
 
+/**
+ * The neutral marker: a status nothing else describes, and a step not started.
+ *
+ * Filled rather than stroked, so at 1em beside a line of text it reads as a
+ * dot instead of a tiny ring.
+ */
+@customElement('wc-icon-dot')
+export class WcIconDot extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" fill="currentColor" stroke="none"/>`;
+  }
+}
+
+/*
+ * The invoice statuses, one shape each.
+ *
+ * Shape carries the distinction and colour is a third cue, so the six are
+ * told apart by outline-versus-fill and by silhouette rather than by hue
+ * alone. Each is drawn to the same optical width — a 7-unit radius plus the
+ * base stroke — so a column of chips does not jitter.
+ */
+
+@customElement('wc-icon-status-draft')
+export class WcIconStatusDraft extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M6 6h12v12H6z"/>`;
+  }
+}
+
+@customElement('wc-icon-status-sent')
+export class WcIconStatusSent extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 5l7 7-7 7-7-7z" fill="currentColor"/>`;
+  }
+}
+
+@customElement('wc-icon-status-partial')
+export class WcIconStatusPartial extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/>`;
+  }
+}
+
+@customElement('wc-icon-status-paid')
+export class WcIconStatusPaid extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z" fill="currentColor"/>`;
+  }
+}
+
+@customElement('wc-icon-status-overdue')
+export class WcIconStatusOverdue extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 5l8 14H4z" fill="currentColor"/>`;
+  }
+}
+
+@customElement('wc-icon-status-void')
+export class WcIconStatusVoid extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z"/><path d="M7.05 16.95L16.95 7.05"/>`;
+  }
+}
+
 /** Every tag this module registers, for previews and the registry's icon check. */
 export const ICON_TAGS = [
   'wc-icon-dashboard',
@@ -213,6 +277,13 @@ export const ICON_TAGS = [
   'wc-icon-trash',
   'wc-icon-invoice',
   'wc-icon-clients',
+  'wc-icon-dot',
+  'wc-icon-status-draft',
+  'wc-icon-status-sent',
+  'wc-icon-status-partial',
+  'wc-icon-status-paid',
+  'wc-icon-status-overdue',
+  'wc-icon-status-void',
 ] as const;
 
 export type IconTag = (typeof ICON_TAGS)[number];
@@ -244,5 +315,12 @@ declare global {
     'wc-icon-trash': WcIconTrash;
     'wc-icon-invoice': WcIconInvoice;
     'wc-icon-clients': WcIconClients;
+    'wc-icon-dot': WcIconDot;
+    'wc-icon-status-draft': WcIconStatusDraft;
+    'wc-icon-status-sent': WcIconStatusSent;
+    'wc-icon-status-partial': WcIconStatusPartial;
+    'wc-icon-status-paid': WcIconStatusPaid;
+    'wc-icon-status-overdue': WcIconStatusOverdue;
+    'wc-icon-status-void': WcIconStatusVoid;
   }
 }

@@ -14,10 +14,10 @@
  * `subset-font` is invoked through npx rather than declared as a devDependency
  * for the same reason: nothing about a normal install or build should need it.
  *
- * Known gap, and not one subsetting causes: IBM Plex Mono has no glyph for
- * ✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻ (checked against the *complete* upstream font, not the
- * subset). Those fall back per-glyph wherever the UI draws them — see the
- * Typefaces section of web/README.md.
+ * No range below covers ✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻, and none can: IBM Plex Mono has no
+ * glyph for any of them (checked against the *complete* upstream font, not the
+ * subset). The UI draws them as `wc-icon-*` SVGs instead — see the Typefaces
+ * section of web/README.md.
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

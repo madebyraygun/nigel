@@ -84,12 +84,38 @@ describe('wc-send-dialog', () => {
     ]);
   });
 
-  it('gives each step a word beside its glyph', async () => {
-    // The glyph is decoration; "✗" announces as nothing useful.
+  it('gives each step a word beside its mark', async () => {
+    // The mark is decoration; a cross announces as nothing useful.
     const el = await mount({ phase: 'failed', steps: STEPS });
     const first = el.shadowRoot?.querySelector('[data-step="config"]');
-    expect(first?.querySelector('.glyph')?.getAttribute('aria-hidden')).toBe('true');
+    const icon = first?.querySelector('.glyph') as
+      | (Element & { updateComplete: Promise<unknown> })
+      | null;
+    await icon?.updateComplete;
+
+    expect(icon?.shadowRoot?.querySelector('svg')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    );
     expect(first?.querySelector('.sr-only')?.textContent).toContain('done');
+  });
+
+  it('marks each state with an icon rather than a character', async () => {
+    // `⟳` and `✗` are not in IBM Plex Mono, so as text the trace mixed the
+    // app's face with whatever fallback the browser found, line by line.
+    const el = await mount({ phase: 'failed', steps: STEPS });
+    const marks = [...(el.shadowRoot?.querySelectorAll('[data-step] .glyph') ?? [])].map(
+      (node) => node.tagName.toLowerCase(),
+    );
+
+    expect(marks).toEqual([
+      'wc-icon-check',
+      'wc-icon-check',
+      'wc-icon-close',
+      'wc-icon-dot',
+    ]);
+    expect(el.shadowRoot?.querySelector('[data-steps]')?.textContent).not.toMatch(
+      /[✓✗⟳·]/,
+    );
   });
 
   it('shows the upstream sentence verbatim under our own headline', async () => {

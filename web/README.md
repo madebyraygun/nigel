@@ -161,20 +161,31 @@ drops `é` renders half a name in a fallback face, mid-word. Anything outside
 the subset falls back per glyph, which is correct behaviour and is why the
 Latin ranges are generous.
 
-### Known gap: eight glyphs the font does not have
+### Eight glyphs the font does not have, and what draws them instead
 
 IBM Plex Mono has **no glyph** for `✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻`. This is a property of the
 upstream font, verified against the complete release rather than the subset —
-subsetting is not the cause and a wider subset would not fix it.
+subsetting is not the cause and a wider subset would fix nothing.
 
-They are drawn by `wc-invoice-status` (all six status markers),
-`wc-send-dialog` (`⟳`, `✗`) and `wc-reconciliation-history` (`✗`), and they
-fall back to a system face per glyph. `✓` is present, so a reconciled row and a
-discrepancy row currently draw their marks from two different fonts.
+So none of them is typed as a character. Each is a `wc-icon-*` SVG on
+`WcIconBase`, sized to `1em` and inheriting `currentColor`, which is why they
+sit on the text baseline and keep whatever colour the state around them has:
 
-The fix is to replace them with `wc-icon-*` SVGs — the library already has
-`WcIconBase` and the icon set for it — rather than to chase a mono with
-dingbat coverage. Not done here: it is a component change, not a typeface one.
+| Where | Marks | Icons |
+|---|---|---|
+| `wc-invoice-status` | the six statuses | `wc-icon-status-{draft,sent,partial,paid,overdue,void}`, plus `wc-icon-dot` for a status the six do not cover |
+| `wc-send-dialog` | the step trace | `wc-icon-check`, `wc-icon-close`, `wc-icon-refresh`, `wc-icon-dot` |
+| `wc-reconciliation-history` | the result column | `wc-icon-check`, `wc-icon-close` |
+
+Every one of them is decorative: the word beside it — the status, the step's
+state in an `sr-only` span, `Reconciled`/`Discrepancy` — is what assistive tech
+announces, and `WcIconBase` hides an unlabelled icon from it.
+
+`packages/ui/src/__tests__/mono-glyph-coverage.test.ts` sweeps the three source
+trees for the eight characters and names the icon to use instead. Without it a
+character typed back in would look plausible on the author's machine and fail
+no other test — and chasing a mono with dingbat coverage is not the answer to
+that.
 
 ## Light and dark
 

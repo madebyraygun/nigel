@@ -20,6 +20,15 @@ const grid = (style = '') => html`
   </div>
 `;
 
+const STATUS_TAGS = ICON_TAGS.filter((tag) => tag.startsWith('wc-icon-status-'));
+
+/** One icon at the size of the text around it. */
+function withSize(tag: string) {
+  const el = document.createElement(tag);
+  el.style.setProperty('--nc-icon-size', '1em');
+  return el;
+}
+
 const preview: Preview = {
   id: 'icons',
   title: 'Icons',
@@ -39,6 +48,23 @@ const preview: Preview = {
       name: 'labelled',
       render: () =>
         html`<wc-icon-flag label="Flagged transaction"></wc-icon-flag>`,
+    },
+    {
+      // The status marks and the neutral dot stand in for characters IBM Plex
+      // Mono has no glyph for, so what matters is how they read at 1em beside
+      // the mono text they accompany.
+      name: 'inline-with-text',
+      render: () => html`
+        <p style="max-width:60ch;">
+          ${STATUS_TAGS.map(
+            (tag) => html`
+              <span style="display:inline-flex;align-items:center;gap:4px;margin-inline-end:12px;">
+                ${withSize(tag)}${tag.replace('wc-icon-status-', '')}
+              </span>
+            `,
+          )}
+        </p>
+      `,
     },
   ],
 };
