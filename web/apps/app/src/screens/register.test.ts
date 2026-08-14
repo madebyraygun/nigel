@@ -419,6 +419,29 @@ describe('register screen', () => {
     expect(help?.shortcuts).toEqual([...REGISTER_SHORTCUTS]);
   });
 
+  it('lets Escape reach the inline editor while the legend is open', async () => {
+    // Keyboard only: open the legend, open an editor, press Escape in it. A
+    // legend listening on the document in capture would eat the key and leave
+    // the edit open with focus yanked to its own trigger.
+    const { el } = await mount();
+    const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
+    help?.show();
+    await help?.updateComplete;
+
+    emitOnTable(el, 'nc-row-activate', { id: 3 });
+    await settle(el);
+    expect(table(el).editingId).toBe(3);
+
+    const input = table(el).shadowRoot?.querySelector('.category-input');
+    input?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
+    );
+    await settle(el);
+
+    expect(table(el).editingId).toBeNull();
+    expect(help?.open).toBe(false);
+  });
+
   it('hands the table the height left under the toolbar', async () => {
     const { el } = await mount();
     expect(table(el).fill).toBe(true);

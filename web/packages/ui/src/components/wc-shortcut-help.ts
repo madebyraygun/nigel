@@ -19,9 +19,9 @@ export interface ShortcutHint {
 /**
  * A screen's keyboard legend, behind a trigger, in a popover.
  *
- * The panel is absolutely positioned against the trigger, so opening it moves
- * nothing on the page — the previous inline `<details>` pushed the toolbar and
- * the table down every time it was opened.
+ * The panel is absolutely positioned against the trigger and clamped to the
+ * viewport, so opening it moves nothing on the page: an inline disclosure
+ * would push the toolbar and the table down each time.
  *
  * It is a disclosure rather than a dialog: the content is a definition list
  * with nothing focusable in it, so focus stays on the trigger and the panel
@@ -69,7 +69,9 @@ export class WcShortcutHelp extends LitElement {
     }
 
     /* Out of flow, so opening the legend never moves the toolbar or the table
-       under it. */
+       under it. It is shifted back on screen when the trigger
+       sits far enough left that the trailing anchor would hang it off the
+       edge. */
     .panel {
       position: absolute;
       z-index: 20;

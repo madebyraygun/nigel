@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
 import './wc-money.js';
@@ -183,8 +184,11 @@ export class WcRegisterTable extends LitElement {
         width: 9rem;
       }
 
+      /* Room for a seven-figure amount with its sign and separators; the
+         clipping below is the backstop, because a figure that overflowed
+         would land in the Account column beside it. */
       .col-amount {
-        width: 7rem;
+        width: 9rem;
       }
 
       .col-account {
@@ -247,6 +251,9 @@ export class WcRegisterTable extends LitElement {
       th.amount,
       td.amount {
         text-align: right;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       td.date {
@@ -489,15 +496,6 @@ export class WcRegisterTable extends LitElement {
   /** Measured once rows exist; the estimate only has to be close. */
   private rowHeight = ESTIMATED_ROW_HEIGHT;
 
-  /**
-   * Identifies the row *set*, not the array. The host rebuilds its filtered
-   * array on every render, so array identity says nothing; length and the two
-   * end ids change exactly when a search, a period or an account filter has
-   * actually produced different rows, which is when the window goes back to
-   * the top.
-   */
-  private rowsKey = '';
-
   @query('.scroller') private scroller?: HTMLElement;
   @query('.vendor-input') private vendorInput?: HTMLElement & { value: string };
 
@@ -537,25 +535,29 @@ export class WcRegisterTable extends LitElement {
         this.activeId = this.rows[0]?.id ?? null;
       }
 
-      const key = `${this.rows.length}:${this.rows[0]?.id ?? ''}:${
-        this.rows[this.rows.length - 1]?.id ?? ''
-      }`;
-      if (key !== this.rowsKey) {
-        this.rowsKey = key;
-        // A different set of rows is a different list: a search jump shows
-        // its results from the top, not from wherever the last one was.
-        this.windowStart = 0;
-        this.pendingScrollTop = 0;
-      }
+      this.resetWindowIfListChanged(changed.get('rows'));
     }
 
-    if (changed.has('editingId')) {
-      this.resetEditState();
-      // The editors have to be in the DOM to be typed into.
-      if (this.editingId !== null) {
-        this.coverIndex(this.rows.findIndex((row) => row.id === this.editingId));
-      }
-    }
+    if (changed.has('editingId')) this.resetEditState();
+  }
+
+  /**
+   * Send the window back to the top, but only for a genuinely different list.
+   *
+   * The test is whether the row the window is anchored on is still among the
+   * rows: a search, an account change or a period change leaves nothing it was
+   * showing, while an optimistic edit that drops one row elsewhere leaves the
+   * anchor where it is. Length alone cannot tell those apart, and resetting on
+   * length costs the user their place over an edit they just made.
+   */
+  private resetWindowIfListChanged(previous: RegisterTableRow[] | undefined): void {
+    if (!this.windowing) return;
+
+    const anchorId = previous?.[this.windowStart]?.id;
+    if (anchorId !== undefined && this.rows.some((row) => row.id === anchorId)) return;
+
+    this.windowStart = 0;
+    this.pendingScrollTop = 0;
   }
 
   updated(): void {
@@ -634,24 +636,37 @@ export class WcRegisterTable extends LitElement {
    * row *n* sits is `n * rowHeight` and nothing has to be measured.
    */
   private scrollToRowIndex(index: number, block: 'center' | 'nearest'): void {
+    // Whatever was pending is about to be decided one way or the other. A
+    // pending scroll left over from a call that needed none is a view yanked
+    // sideways by the next unrelated render.
+    this.pendingScrollTop = null;
+
     const scroller = this.scroller;
     if (!scroller) return;
 
     const viewport = scroller.clientHeight;
-    const top = index * this.rowHeight;
-
     if (viewport <= 0) return;
 
+    // The header and the Net row are painted over the scroller, so the band a
+    // row is actually visible in starts below one and ends above the other.
+    const head = this.stickyHeadHeight();
+    const band = this.visibleRowsHeight();
+    const top = index * this.rowHeight;
+
     if (block === 'center') {
-      this.pendingScrollTop = Math.max(0, top - viewport / 2 + this.rowHeight / 2);
-      return;
+      this.pendingScrollTop = Math.max(0, top + this.rowHeight / 2 - (head + band / 2));
+    } else {
+      const current = scroller.scrollTop;
+      if (top - head < current) this.pendingScrollTop = Math.max(0, top - head);
+      else if (top + this.rowHeight > current + head + band) {
+        this.pendingScrollTop = top + this.rowHeight - head - band;
+      }
     }
 
-    const current = scroller.scrollTop;
-    if (top < current) this.pendingScrollTop = top;
-    else if (top + this.rowHeight > current + viewport) {
-      this.pendingScrollTop = top + this.rowHeight - viewport;
-    }
+    // A row already in the DOM schedules no re-render, so `updated` may never
+    // run: do it now rather than leave the scroll for whatever renders next.
+    const { start, end } = this.windowRange;
+    if (index >= start && index < end) this.applyPendingScroll();
   }
 
   private applyPendingScroll(): void {
@@ -734,10 +749,10 @@ export class WcRegisterTable extends LitElement {
   /**
    * The one row in the tab order.
    *
-   * A roving tabindex needs a home even before anything is selected, or the
-   * table is not reachable by Tab at all and none of its keys can ever fire —
-   * which is exactly what happened on a register opened with a date filter,
-   * where nothing lands a cursor on load.
+   * A roving tabindex needs a home even before anything is selected: without
+   * one the table is not reachable by Tab at all and none of its keys can
+   * fire, which is the state a date-filtered register loads in, since nothing
+   * lands a cursor there.
    */
   private get tabStopId(): number | null {
     if (this.selectionIsRendered) return this.activeId;
@@ -831,9 +846,12 @@ export class WcRegisterTable extends LitElement {
    */
   private visibleRowsHeight(): number {
     const scroller = this.scroller?.clientHeight ?? 0;
-    const head = this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
     const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
-    return Math.max(0, scroller - head - foot);
+    return Math.max(0, scroller - this.stickyHeadHeight() - foot);
+  }
+
+  private stickyHeadHeight(): number {
+    return this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
   }
 
   // -- keyboard -------------------------------------------------------------
@@ -842,11 +860,12 @@ export class WcRegisterTable extends LitElement {
    * Keys this table must never look at.
    *
    * A chord belongs to the browser or the OS: `Ctrl`/`Cmd+F` is find-in-page,
-   * and reading it as the flag shortcut turned a find into a write against the
-   * database. `Ctrl+Home`/`End` are the document's. And a control inside a row
-   * keeps its own keys — intercepting `Enter` on the flag button cancelled the
-   * button's activation and opened the row editor instead, while `Space` went
-   * through, so the same button answered the two keys differently.
+   * and a table that read it as the flag shortcut would answer a find with a
+   * write against the database; `Ctrl+Home`/`End` are the document's. A
+   * control inside a row likewise keeps its own keys: intercepting `Enter` on
+   * the flag button cancels the button's activation and opens the row editor
+   * instead, while `Space` goes through, so the one button would answer the
+   * two keys differently.
    */
   private notOurs(event: KeyboardEvent): boolean {
     if (event.ctrlKey || event.metaKey || event.altKey) return true;
@@ -1057,17 +1076,15 @@ export class WcRegisterTable extends LitElement {
     }
 
     const columns = this.showAccount ? 7 : 6;
-    const { start, end } = this.windowRange;
     this.lastWindowLength = this.windowLength;
-    const above = start * this.rowHeight;
-    const below = (this.rows.length - end) * this.rowHeight;
     // Resolved once: the getter walks the rows, and a row must not pay for
     // that on a register of two thousand.
     const tabStop = this.tabStopId;
+    const hasFooter = this.total !== undefined || this.footerNote !== '';
 
     return html`
       <div class="scroller" @scroll=${this.handleScroll}>
-        <table role="grid" aria-rowcount=${this.rows.length + 1}>
+        <table role="grid" aria-rowcount=${this.rows.length + (hasFooter ? 2 : 1)}>
           <caption>
             ${this.caption}
           </caption>
@@ -1092,17 +1109,13 @@ export class WcRegisterTable extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.renderSpacer(above, columns)}
-            ${this.rows
-              .slice(start, end)
-              .map((row, offset) => this.renderRow(row, start + offset, tabStop))}
-            ${this.renderSpacer(below, columns)}
+            ${this.renderBody(columns, tabStop)}
           </tbody>
           ${this.total === undefined && this.footerNote === ''
             ? nothing
             : html`
                 <tfoot>
-                  <tr role="row">
+                  <tr role="row" aria-rowindex=${this.rows.length + 2}>
                     <td role="gridcell" colspan=${columns - 1}>
                       Net
                       ${this.footerNote
@@ -1123,8 +1136,72 @@ export class WcRegisterTable extends LitElement {
     `;
   }
 
-  /** Height standing in for the rows outside the window, so the scrollbar is
-      the length of the whole register rather than of what is drawn. */
+  /**
+   * The rows that go in the DOM: the window, plus the row being edited
+   * wherever it is.
+   *
+   * The editor has to survive a scroll. Slicing it out destroys the input and
+   * the half-typed vendor with it, so an editing row outside the window is
+   * drawn in its own place with spacers on both sides of it. Every gap between
+   * drawn rows becomes one spacer carrying the height of what it stands for,
+   * which is what keeps the scrollbar the length of the whole register.
+   */
+  private renderBody(columns: number, tabStop: number | null) {
+    const parts: { key: string; part: unknown }[] = [];
+    let previous = -1;
+    // Spacers are keyed by their ordinal, not by the rows they stand for:
+    // there are at most three, and a key derived from the scroll position
+    // would destroy and rebuild them on every frame.
+    let gaps = 0;
+
+    for (const index of this.renderedIndices) {
+      const gap = index - previous - 1;
+      if (gap > 0) {
+        parts.push({
+          key: `gap-${gaps++}`,
+          part: this.renderSpacer(gap * this.rowHeight, columns),
+        });
+      }
+      const row = this.rows[index];
+      if (row) parts.push({ key: `row-${row.id}`, part: this.renderRow(row, index, tabStop) });
+      previous = index;
+    }
+
+    const trailing = this.rows.length - previous - 1;
+    if (trailing > 0) {
+      parts.push({
+        key: `gap-${gaps++}`,
+        part: this.renderSpacer(trailing * this.rowHeight, columns),
+      });
+    }
+
+    // Keyed, so a row moving between segments — which is what an editing row
+    // does the moment the window scrolls past it — has its DOM moved rather
+    // than rebuilt. Rebuilding it would replace the inputs and lose whatever
+    // had been typed into them.
+    return repeat(
+      parts,
+      (item) => item.key,
+      (item) => item.part,
+    );
+  }
+
+  /** Ascending, no duplicates. */
+  private get renderedIndices(): number[] {
+    const { start, end } = this.windowRange;
+    const indices: number[] = [];
+    for (let index = start; index < end; index += 1) indices.push(index);
+    if (!this.windowing || this.editingId === null) return indices;
+
+    const editing = this.rows.findIndex((row) => row.id === this.editingId);
+    if (editing < 0 || (editing >= start && editing < end)) return indices;
+    if (editing < start) indices.unshift(editing);
+    else indices.push(editing);
+    return indices;
+  }
+
+  /** Height standing in for the rows not drawn, so the scrollbar is the
+      length of the whole register rather than of what is on screen. */
   private renderSpacer(height: number, columns: number) {
     if (height <= 0) return nothing;
     return html`
