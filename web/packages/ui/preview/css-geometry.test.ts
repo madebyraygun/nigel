@@ -111,6 +111,15 @@ describe('fixedBox', () => {
     expect(box?.width).toBe(360);
   });
 
+  it('clamps a both-inset box to max-width and anchors it at the start inset', () => {
+    // Over-constrained: a browser drops the end inset rather than the size.
+    const box = fixedBox(
+      resolvedDeclarations('.r { inset: 16px; max-inline-size: 200px; }', '.r'),
+      { viewport, content },
+    );
+    expect(box).toMatchObject({ left: 16, width: 200, right: 216 });
+  });
+
   it('reports no box when both insets on an axis are auto', () => {
     // Nothing anchors it: the browser would fall back to the static position,
     // which the stylesheet does not determine.

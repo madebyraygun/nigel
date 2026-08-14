@@ -255,6 +255,21 @@ function expand(property: string, value: string): [string, string][] {
   return [[property, value]];
 }
 
+/** Every declaration a selector's top-level rules carry, in source order. */
+function* declarationsFor(
+  cssText: string,
+  selector: string,
+): Generator<[property: string, value: string]> {
+  for (const match of topLevelRules(cssText).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!match[1]!.split(',').some((one) => one.trim() === selector)) continue;
+    for (const declaration of splitTopLevel(match[2]!, ';')) {
+      const colon = declaration.indexOf(':');
+      if (colon === -1) continue;
+      yield [declaration.slice(0, colon).trim(), declaration.slice(colon + 1).trim()];
+    }
+  }
+}
+
 /**
  * The declarations a selector ends up with, shorthands expanded and later
  * declarations winning — the same last-one-wins pass a browser makes within a
@@ -265,20 +280,10 @@ export function resolvedDeclarations(
   selector: string,
 ): Map<string, string> {
   const resolved = new Map<string, string>();
-  const rules = topLevelRules(cssText);
-  const pattern = /([^{}]+)\{([^{}]*)\}/g;
-  for (const match of rules.matchAll(pattern)) {
-    const selectors = match[1]!.split(',').map((one) => one.trim());
-    if (!selectors.includes(selector)) continue;
-    for (const declaration of splitTopLevel(match[2]!, ';')) {
-      const colon = declaration.indexOf(':');
-      if (colon === -1) continue;
-      const property = declaration.slice(0, colon).trim().toLowerCase();
-      const value = declaration.slice(colon + 1).trim();
-      if (property.startsWith('--')) continue;
-      for (const [expanded, expandedValue] of expand(property, value)) {
-        resolved.set(expanded, expandedValue);
-      }
+  for (const [property, value] of declarationsFor(cssText, selector)) {
+    if (property.startsWith('--')) continue;
+    for (const [expanded, expandedValue] of expand(property.toLowerCase(), value)) {
+      resolved.set(expanded, expandedValue);
     }
   }
   return resolved;
@@ -290,15 +295,8 @@ export function customProperties(
   selector: string,
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const match of topLevelRules(cssText).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (!match[1]!.split(',').some((one) => one.trim() === selector)) continue;
-    for (const declaration of splitTopLevel(match[2]!, ';')) {
-      const colon = declaration.indexOf(':');
-      if (colon === -1) continue;
-      const property = declaration.slice(0, colon).trim();
-      if (!property.startsWith('--')) continue;
-      out[property] = declaration.slice(colon + 1).trim();
-    }
+  for (const [property, value] of declarationsFor(cssText, selector)) {
+    if (property.startsWith('--')) out[property] = value;
   }
   return out;
 }
@@ -387,8 +385,12 @@ export function fixedBox(
     const maximum = resolveLength(declarations.get(maxProperty) ?? 'none', ctx);
 
     if (start !== null && end !== null && declaredSize === null) {
-      // Both insets pin the element: the size falls out of the containing block.
-      return { start: blockStart + start, size: blockSize - start - end };
+      // Both insets pin the element: the size falls out of the containing
+      // block, and a max that cuts it over-constrains the axis — which a
+      // browser settles by dropping the end inset, not the size.
+      const pinned = blockSize - start - end;
+      const size = maximum !== null ? Math.min(pinned, maximum) : pinned;
+      return { start: blockStart + start, size };
     }
     let size = declaredSize ?? contentSize;
     if (maximum !== null) size = Math.min(size, maximum);

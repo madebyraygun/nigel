@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import './wc-toast.js';
 import { dispatchNcToast, MAX_VISIBLE_TOASTS, WcToast } from './wc-toast.js';
 import { describePrintHiding } from '../../preview/print-suite.js';
@@ -68,14 +68,26 @@ describe('wc-toast', () => {
     await el.updateComplete;
     expect(region(el)?.getAttribute('role')).toBe('status');
     expect(region(el)?.getAttribute('aria-live')).toBe('polite');
+    expect(toastEl(el)?.hasAttribute('role')).toBe(false);
   });
 
-  it('announces assertively for danger', async () => {
+  it('announces assertively for danger without escalating the region', async () => {
     const el = await mount();
     dispatchNcToast(el, { message: 'Failed.', variant: 'danger' });
     await el.updateComplete;
-    expect(region(el)?.getAttribute('role')).toBe('alert');
-    expect(region(el)?.getAttribute('aria-live')).toBe('assertive');
+    // The alert is the toast itself, so a later info toast in the same region
+    // is not dragged up to assertive with it.
+    expect(toastEl(el)?.getAttribute('role')).toBe('alert');
+    expect(region(el)?.getAttribute('role')).toBe('status');
+    expect(region(el)?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('re-announces only what changed', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'First.', duration: 0 });
+    await el.updateComplete;
+    // aria-atomic would make every arrival re-read the whole column.
+    expect(region(el)?.hasAttribute('aria-atomic')).toBe(false);
   });
 
   it('auto-dismisses after the default duration', async () => {
@@ -185,6 +197,180 @@ describe('wc-toast', () => {
     document.body.appendChild(el);
     await el.updateComplete;
     expect(messages(el)).toEqual(['First.', 'Second.']);
+  });
+});
+
+describe('wc-toast dismissal', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function closeButton(el: WcToast): HTMLButtonElement | null {
+    return el.shadowRoot?.querySelector<HTMLButtonElement>('[data-toast-close]') ?? null;
+  }
+
+  it('gives a toast that never expires a close button', async () => {
+    const el = await mount();
+    // nigel-app's status error is exactly this shape: sticky, no action.
+    dispatchNcToast(el, { message: 'Could not reach the server.', duration: 0 });
+    await el.updateComplete;
+
+    const close = closeButton(el);
+    expect(close).toBeTruthy();
+    expect(close?.getAttribute('aria-label')).toBe('Dismiss');
+
+    close?.click();
+    await el.updateComplete;
+    expect(messages(el)).toEqual([]);
+  });
+
+  it('leaves the close button off a toast that expires on its own', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Saved.' });
+    await el.updateComplete;
+    expect(closeButton(el)).toBeNull();
+  });
+
+  it('leaves the close button off a sticky toast whose action ends it', async () => {
+    const el = await mount();
+    dispatchNcToast(el, {
+      message: 'Import undone.',
+      duration: 0,
+      action: { label: 'Redo', onClick: () => {} },
+    });
+    await el.updateComplete;
+    expect(closeButton(el)).toBeNull();
+  });
+
+  it('closes only the toast whose button was clicked', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Stays.', duration: 0 });
+    dispatchNcToast(el, { message: 'Goes.', duration: 0 });
+    await el.updateComplete;
+
+    el.shadowRoot?.querySelectorAll<HTMLButtonElement>('[data-toast-close]')[1]?.click();
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['Stays.']);
+  });
+
+  it('dismisses one toast by the id show() answered with', async () => {
+    const el = await mount();
+    const first = el.show({ message: 'First.', duration: 0 });
+    el.show({ message: 'Second.', duration: 0 });
+    await el.updateComplete;
+
+    expect(first).not.toBeNull();
+    el.dismiss(first!);
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['Second.']);
+  });
+});
+
+/**
+ * The region rides the top layer, so what matters is *when* it is (re-)shown:
+ * the top layer is ordered by open time, and a re-show jumps the region above
+ * whatever opened since.
+ */
+describe('wc-toast top-layer promotion', () => {
+  let calls: string[] = [];
+
+  function trackPopover(): void {
+    const open = new WeakSet<Element>();
+    const realMatches = Element.prototype.matches;
+    vi.spyOn(HTMLElement.prototype, 'showPopover').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      open.add(this);
+      calls.push('show');
+    });
+    vi.spyOn(HTMLElement.prototype, 'hidePopover').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      open.delete(this);
+      calls.push('hide');
+    });
+    vi.spyOn(Element.prototype, 'matches').mockImplementation(function (
+      this: Element,
+      selector: string,
+    ) {
+      if (selector === ':popover-open') return open.has(this);
+      return realMatches.call(this, selector);
+    });
+  }
+
+  beforeEach(() => {
+    calls = [];
+    trackPopover();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('promotes the region when a toast arrives', async () => {
+    const el = await mount();
+    expect(calls).toEqual([]);
+
+    dispatchNcToast(el, { message: 'First.', duration: 0 });
+    await el.updateComplete;
+    expect(calls).toEqual(['show']);
+  });
+
+  it('re-promotes above anything opened since the last toast', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'First.', duration: 0 });
+    await el.updateComplete;
+    dispatchNcToast(el, { message: 'Second.', duration: 0 });
+    await el.updateComplete;
+    expect(calls).toEqual(['show', 'hide', 'show']);
+  });
+
+  it('leaves the region alone when a toast expires with others behind it', async () => {
+    vi.useFakeTimers();
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Sticks.', duration: 0 });
+    await el.updateComplete;
+    dispatchNcToast(el, { message: 'Brief.', duration: 1000 });
+    await el.updateComplete;
+    calls = [];
+
+    vi.advanceTimersByTime(1000);
+    await el.updateComplete;
+
+    expect(messages(el)).toEqual(['Sticks.']);
+    // Re-showing here would jump the survivors above a modal opened after them.
+    expect(calls).toEqual([]);
+  });
+
+  it('re-promotes a shrunken stack as soon as a new toast arrives', async () => {
+    vi.useFakeTimers();
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Sticks.', duration: 0 });
+    dispatchNcToast(el, { message: 'Brief.', duration: 1000 });
+    await el.updateComplete;
+    vi.advanceTimersByTime(1000);
+    await el.updateComplete;
+    calls = [];
+
+    dispatchNcToast(el, { message: 'Newest.', duration: 0 });
+    await el.updateComplete;
+    expect(calls).toEqual(['hide', 'show']);
+  });
+
+  it('withdraws the region once the last toast goes', async () => {
+    vi.useFakeTimers();
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Brief.', duration: 1000 });
+    await el.updateComplete;
+    calls = [];
+
+    vi.advanceTimersByTime(1000);
+    await el.updateComplete;
+    expect(calls).toEqual(['hide']);
   });
 });
 
@@ -333,7 +519,9 @@ describe('wc-toast placement', () => {
   });
 
   it('keeps a full stack clear of the top of the shortest viewport', () => {
-    const viewport = { width: 375, height: 667 };
+    const [, viewport] = viewports.reduce((shortest, entry) =>
+      entry[1].height < shortest[1].height ? entry : shortest,
+    );
     const { region } = place(viewport, 280);
     expect(region.height).toBe(STACK_HEIGHT);
     expect(region.top).toBeGreaterThan(0);
