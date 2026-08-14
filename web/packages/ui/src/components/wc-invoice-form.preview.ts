@@ -1,7 +1,7 @@
 import { html } from 'lit';
 import './wc-invoice-form.js';
 import {
-  EMPTY_INVOICE_FORM,
+  newInvoiceForm,
   type InvoiceClientOption,
   type InvoiceFormValue,
 } from './wc-invoice-form.js';
@@ -39,7 +39,7 @@ const preview: Preview = {
       name: 'new',
       render: () => html`
         <wc-invoice-form
-          .value=${{ ...EMPTY_INVOICE_FORM, issueDate: '2026-08-07' } satisfies InvoiceFormValue}
+          .value=${newInvoiceForm('2026-08-07')}
           .clients=${clients}
         ></wc-invoice-form>
       `,

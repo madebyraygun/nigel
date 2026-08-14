@@ -1,12 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-invoice-form.js';
 import {
+  DEFAULT_DUE_TERM,
   EMPTY_INVOICE_FORM,
   addDays,
   dueDateOf,
   dueTermFor,
   invoiceFormItems,
   netDueDateFor,
+  newInvoiceForm,
   prefilledTerms,
   validateInvoiceForm,
   withDueTerm,
@@ -214,6 +216,17 @@ describe('due dates counted from the issue date', () => {
     expect(overflowed).toMatchObject({ dueTerm: 'none', dueDate: '', terms: '' });
   });
 
+  it('opens a new invoice on the default term, dated from its issue date', () => {
+    expect(DEFAULT_DUE_TERM).toBe('net14');
+    expect(newInvoiceForm('2026-08-07')).toMatchObject({
+      dueTerm: 'net14',
+      dueDate: '2026-08-21',
+      // The label is a choice's, and nobody has made one: the terms field is
+      // still the operator's to fill.
+      terms: '',
+    });
+  });
+
   it('infers no preset from an existing invoice’s dates', () => {
     // A due date thirty days out may be a Net 30 or a date somebody picked
     // that happens to land there. Guessing moves a stored due date the moment
@@ -375,7 +388,7 @@ describe('wc-invoice-form', () => {
 
     const empty = await mount({ value: { ...valid, dueTerm: 'none', dueDate: '' } });
     expect(empty.shadowRoot?.querySelector('[data-due-hint]')?.textContent).toContain(
-      'never goes overdue',
+      'Never goes overdue',
     );
   });
 
@@ -403,7 +416,7 @@ describe('wc-invoice-form', () => {
       value: { ...valid, dueTerm: 'custom', dueDate: '' },
     });
     expect(cleared.shadowRoot?.querySelector('[data-due-hint]')?.textContent).toContain(
-      'never goes overdue',
+      'Never goes overdue',
     );
   });
 

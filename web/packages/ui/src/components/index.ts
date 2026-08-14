@@ -200,6 +200,7 @@ export {
 } from './wc-line-items.js';
 export {
   WcInvoiceForm,
+  DEFAULT_DUE_TERM,
   DUE_TERM_LABELS,
   DUE_TERM_VALUES,
   EMPTY_INVOICE_FORM,
@@ -210,6 +211,7 @@ export {
   isDueTerm,
   isNetDueTerm,
   netDueDateFor,
+  newInvoiceForm,
   prefilledTerms,
   validateInvoiceForm,
   withDueTerm,

@@ -28,6 +28,9 @@ export const DUE_TERM_VALUES = ['none', 'net7', 'net14', 'net30', 'custom'] as c
 
 export type DueTerm = (typeof DUE_TERM_VALUES)[number];
 
+/** The choice a new invoice opens on, before anyone touches the control. */
+export const DEFAULT_DUE_TERM: DueTerm = 'net14';
+
 export interface InvoiceFormValue {
   /** The chosen client's id as a string — a select's value always is one. */
   clientId: string;
@@ -66,7 +69,7 @@ export const EMPTY_INVOICE_FORM: InvoiceFormValue = {
   clientId: '',
   issueDate: '',
   dueDate: '',
-  dueTerm: 'none',
+  dueTerm: DEFAULT_DUE_TERM,
   currency: 'USD',
   notes: '',
   terms: '',
@@ -244,6 +247,19 @@ export function withDueTerm(
     dueDate: term === 'none' ? '' : value.dueDate,
     terms: prefilledTerms(value.terms, term, written),
   };
+}
+
+/**
+ * The form a new invoice opens with, dated by its issue date.
+ *
+ * The default term is carried through `withIssueDate` rather than written into
+ * the constant, because a form showing Net 14 over an empty due date would
+ * raise an invoice that never goes overdue. The terms field is left alone: this
+ * form writes a label only for a choice made in the session that makes it, and
+ * a default nobody has touched is not one.
+ */
+export function newInvoiceForm(issueDate: string): InvoiceFormValue {
+  return withIssueDate(EMPTY_INVOICE_FORM, issueDate);
 }
 
 /** The rows that will actually be sent: everything nobody left blank. */
@@ -547,17 +563,17 @@ export class WcInvoiceForm extends LitElement {
       const outcome = netDueDateFor(this.value.issueDate, term);
       const message =
         outcome.kind === 'ok'
-          ? `Due ${outcome.dueDate} — ${days} days after the issue date, and moves with it.`
+          ? `Due ${outcome.dueDate}.`
           : outcome.kind === 'pending'
-            ? 'Set an issue date and the due date follows it.'
+            ? 'Set an issue date.'
             : outcome.kind === 'unreadable'
-              ? 'The issue date is not a date yet, so there is nothing to count from.'
+              ? 'The issue date must be set first.'
               : `${days} days after that issue date is past the last date an invoice can carry.`;
       return html`<p class="hint" data-due-hint>${message}</p>`;
     }
 
     return this.value.dueDate === ''
-      ? html`<p class="hint" data-due-hint>Empty means it never goes overdue.</p>`
+      ? html`<p class="hint" data-due-hint>Never goes overdue.</p>`
       : nothing;
   }
 

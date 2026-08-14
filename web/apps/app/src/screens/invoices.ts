@@ -12,6 +12,7 @@ import {
   confirmDialog,
   dispatchNcToast,
   EMPTY_INVOICE_FORM,
+  newInvoiceForm,
   paymentFormFor,
   validateInvoiceForm,
   validatePaymentForm,
@@ -375,7 +376,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         this.clients = clients;
         this.nextNumber = next.number;
         this.detail = null;
-        this.form = { ...EMPTY_INVOICE_FORM, issueDate: today() };
+        this.form = newInvoiceForm(today());
         this.formErrors = {};
         this.formError = null;
       } else if (number !== null) {
