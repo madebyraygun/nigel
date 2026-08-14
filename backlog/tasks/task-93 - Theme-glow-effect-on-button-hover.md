@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 17:54'
+updated_date: '2026-08-14 18:29'
 labels:
   - web
   - ui
@@ -54,6 +54,13 @@ Review round on PR #9 (7 findings):
 - The anti-regression transition comment and the palette-derivation comment are gone; the rationale lives in the guard test and the CLAUDE.md bullet.
 - One shared rule now applies the glow, with the variant hue named one line each, so the plain/disabled/loading exclusions cannot drift apart between variants.
 - The glow family moved to tokens/shadow.ts, which is where box-shadow tokens live; gradient.ts is back to being only the ramps.
+
+Theme gap found while testing PR #6, fixed here (same variant surface):
+- wa-button[variant="danger"] rendered as the base button. WA colours a variant in two hops — variants.styles points --wa-color-fill-loud at --wa-color-danger-fill-loud, the component reads the generic one — and the theme defined only the neutral and brand families, so the declaration was discarded and every delete dialog's primary (wc-confirm) plus wc-password-form's remove submit fell back to the neutral grey.
+- wa-contract.ts now defines the danger/success/warning families, mixed from each variant's own colour (10%/16% washes, solid loud fill, --wa-color-on-brand as the label). Brand decided deliberately: its loud fill stays the solid colour for outlined/plain, and the gradient part rule covers the default appearance.
+- The guard missed it because it walked <name>.styles.js and counted only bare var(--x): the families appear there as var(--x, fallback), and variants.styles hangs off the component class. A second check walks the component module and demands the leaf families, with the intermediate names still deliberately undemanded.
+- __tests__/token-resolution.ts resolves var() chains and color-mix so the suites assert what a button paints rather than what the sheet says; contrast.test.ts holds every on/fill pairing to AA and every loud border to 3:1. That caught --wa-color-neutral-border-loud at 1.23:1 (the outlined button's only edge) — it now names --wa-color-muted.
+- button-variants.preview.ts shows the four variants across accent/outlined/filled/plain, with axe coverage from its own test. Brand is left out: a preview host does not adopt controlsCss.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
