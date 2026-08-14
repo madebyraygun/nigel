@@ -1,11 +1,11 @@
 ---
 id: TASK-93
 title: 'Theme: animated gradient and edge on button hover'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 19:13'
+updated_date: '2026-08-14 19:35'
 labels:
   - web
   - ui
