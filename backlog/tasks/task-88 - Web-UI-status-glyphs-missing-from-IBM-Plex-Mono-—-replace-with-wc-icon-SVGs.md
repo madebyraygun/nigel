@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-11 21:23'
-updated_date: '2026-08-14 04:56'
+updated_date: '2026-08-14 17:57'
 labels:
   - web
   - ui
@@ -52,6 +52,13 @@ IBM Plex Mono has no glyph for the status/UI characters ✗ ⟳ ◑ ● ◆ ▲ 
 - All decorative: no `label`, so WcIconBase renders role="presentation" aria-hidden="true". The word beside each one already names the state (the status word, the sr-only step state, Reconciled/Discrepancy).
 - wc-send-dialog's step rows move from align-items: baseline to center — an inline-flex icon with no text content baselines on its bottom edge.
 - Added packages/ui/src/__tests__/mono-glyph-coverage.test.ts: sweeps packages/{ui,theme}/src and apps/app/src for the eight characters and names the icon to use instead, with a guard-the-guard case and a check that every icon it names is registered. Test files are exempt — the tests for these components have to name the characters to say what is no longer rendered.
+
+Review round (PR #10, nine findings):
+- The status lookup was an object literal indexed by a server-written string. `constructor` answered with an inherited function and `document.createElement` threw, taking down the chip and the Lit update of every row beside it. Both mark lookups are `html` templates now — the status one keyed through a `Map` — which fixes the crash, the per-render element churn (a send polls; every tick re-upgraded every step icon) and the imperative `createElement` pattern in one move.
+- `align-items: center` on the step rows floated a wrapped label's mark between its two lines. Rows align to their start and the mark drops by half the leading, derived from the same `--nc-step-line-height` the rows set.
+- `--nc-icon-size: 1em` repeated in three components became `inline`, a mode on WcIconBase. Non-inline uses (the gallery, wc-empty-state's 32px, wc-dropzone, wc-unlock-card) are asserted unchanged in both directions.
+- The sweep reads each file once, adds `packages/ui/preview`, and scans .js/.mjs/.cjs/.css/.html/.json/.txt as well as .ts. Symbols the subset carries are exempt by name with a disjointness check.
+- `wc-icon-dot` joined the inline preview state, and `settle`/`iconSvg` in `src/__tests__/settle.ts` replaced three hand-rolled `updateComplete` casts.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
