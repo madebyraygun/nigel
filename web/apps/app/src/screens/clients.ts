@@ -103,7 +103,8 @@ export class NigelClientsScreen extends LitElement {
     controlsCss,
     css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
       }
     `,
   ];

@@ -35,7 +35,8 @@ interface Reconciled {
 export class NigelReconcileScreen extends LitElement {
   static styles = css`
     :host {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--wa-space-l, 16px);
       max-width: 52rem;
     }

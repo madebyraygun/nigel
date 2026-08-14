@@ -43,7 +43,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     controlsCss,
     css`
       :host {
-        display: grid;
+        display: flex;
+        flex-direction: column;
         gap: var(--wa-space-l, 16px);
         max-width: 48rem;
         padding: var(--wa-space-l, 16px);

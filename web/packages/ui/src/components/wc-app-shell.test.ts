@@ -5,6 +5,7 @@ import { dispatchNcToast } from './wc-toast.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { describePrintHiding } from '../../preview/print-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
+import { describeColumnLayout, resolvedBox } from '../../preview/layout-suite.js';
 import preview from './wc-app-shell.preview.js';
 
 async function mount(props: Partial<WcAppShell> = {}): Promise<WcAppShell> {
@@ -41,6 +42,13 @@ describe('wc-app-shell', () => {
     expect(el.shadowRoot?.querySelector('main')).toBeTruthy();
   });
 
+  it('puts the screen slot inside the content area and nothing between them', async () => {
+    const el = await mount();
+    // A wrapper here would be a second box for the screen to fill, and the
+    // screen would be as tall as its content again.
+    expect(el.shadowRoot?.querySelector('main.content > slot:not([name])')).toBeTruthy();
+  });
+
   it('hosts exactly one toast region', async () => {
     const el = await mount();
     expect(el.shadowRoot?.querySelectorAll('wc-toast').length).toBe(1);
@@ -75,6 +83,17 @@ describe('wc-app-shell', () => {
 });
 
 describePreviewA11y(preview);
+
+describeColumnLayout(WcAppShell, '.content');
+
+describe('the content area', () => {
+  it('gives the screen the whole of it', () => {
+    // The screen is the only thing in the default slot; whether anything on it
+    // can be centred vertically is decided by how tall the screen is allowed
+    // to be, which is here and nowhere else.
+    expect(resolvedBox(WcAppShell, '.content ::slotted(*)').flexGrow).toBe('1');
+  });
+});
 
 describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
 

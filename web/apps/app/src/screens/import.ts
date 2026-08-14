@@ -51,9 +51,9 @@ type Busy = 'upload' | 'preview' | 'confirm' | null;
 export class NigelImportScreen extends LitElement {
   static styles = css`
     :host {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--wa-space-m, 12px);
-      align-content: start;
       padding: var(--wa-space-l, 16px);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);

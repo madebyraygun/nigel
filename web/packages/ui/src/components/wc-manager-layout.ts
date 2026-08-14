@@ -23,8 +23,13 @@ export class WcManagerLayout extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* A column, and one that takes the whole screen: the empty slot holds a
+         wc-empty-state, which centres itself in the space under the header
+         only if there is space under the header to have. */
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
         padding: var(--wa-space-l, 16px);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);

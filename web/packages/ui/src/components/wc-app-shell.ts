@@ -57,8 +57,19 @@ export class WcAppShell extends LitElement {
 
     .content {
       flex: 1;
+      display: flex;
+      flex-direction: column;
       overflow: auto;
       padding: var(--wa-space-l, 16px);
+    }
+
+    /* The screen is the only thing in the default slot, and it gets the whole
+       content area rather than as much of it as its own content fills — a
+       screen has nothing to centre anything in otherwise. Content taller than
+       the area still grows past it and scrolls, because a flex item's
+       automatic minimum size is its content. */
+    .content ::slotted(*) {
+      flex: 1 1 auto;
     }
 
     .banner:not(:empty) {

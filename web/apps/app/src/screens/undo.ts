@@ -24,7 +24,8 @@ import type { ScreenId } from './registry.js';
 export class NigelUndoScreen extends LitElement {
   static styles = css`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
       max-width: 52rem;
     }
   `;

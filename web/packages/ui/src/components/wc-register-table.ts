@@ -67,8 +67,12 @@ export class WcRegisterTable extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* A column filling the screen: with rows that is invisible, and with none
+         it is what lets the empty state centre itself where the table was. */
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
         min-height: 0;

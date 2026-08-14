@@ -6,9 +6,10 @@ import type {
   NcFlagToggleDetail,
   NcRowEventDetail,
   RegisterTableRow,
-  WcRegisterTable,
 } from './wc-register-table.js';
+import { WcRegisterTable } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeColumnLayout, resolvedBox } from '../../preview/layout-suite.js';
 import preview from './wc-register-table.preview.js';
 
 const categories: CategoryOption[] = [
@@ -395,3 +396,13 @@ describe('wc-register-table', () => {
 });
 
 describePreviewA11y(preview);
+
+describeColumnLayout(WcRegisterTable);
+
+describe('the table box', () => {
+  it('takes the screen height the toolbar left over', () => {
+    // Full of rows that is invisible — the scroller caps its own height. With
+    // no rows it is the box the empty state centres itself in.
+    expect(resolvedBox(WcRegisterTable).flexGrow).toBe('1');
+  });
+});
