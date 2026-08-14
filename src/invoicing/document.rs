@@ -45,6 +45,9 @@ impl DocumentColor {
         Self { r, g, b }
     }
 
+    /// The default a PDF draws in when nothing has said otherwise.
+    pub const BLACK: Self = Self::new(0, 0, 0);
+
     /// The CSS form, for a template author and for the stock page's stylesheet.
     pub fn hex(&self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)

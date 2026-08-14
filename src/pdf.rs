@@ -21,7 +21,7 @@ const MARGIN_BOTTOM: f32 = 25.4;
 const MARGIN_LEFT: f32 = 19.05;
 const MARGIN_RIGHT: f32 = 19.05;
 const ROW_H: f32 = 5.0;
-const COL_PAD: f32 = 6.0;
+const COL_PAD: f32 = 4.0;
 
 /// The air above and below a line-item row's type, inside its rules.
 ///
@@ -30,7 +30,17 @@ const COL_PAD: f32 = 6.0;
 /// that describes a row — the zebra band, the rule under it, the column
 /// dividers' extent — is derived from the same number, so they cannot come
 /// apart.
+///
+/// This and `ITEM_COL_PAD` are the **invoice's own** metrics, read only by the
+/// invoice's own drawing path. `COL_PAD` above is the shared table machinery's,
+/// which nine report renderers draw through: widening it to pad the invoice
+/// would silently re-lay-out the P&L, the register and everything else, and
+/// because `wrap_text` measures against `col.width - COL_PAD`, it would shrink
+/// every report column's wrap width into the bargain.
 const CELL_PAD_Y: f32 = 1.8;
+
+/// The gutter inside a line-item cell, left and right.
+const ITEM_COL_PAD: f32 = 6.0;
 const FONT_SIZE: f32 = 10.0;
 const TITLE_SIZE: f32 = 16.0;
 const SUBTITLE_SIZE: f32 = 10.0;
@@ -93,6 +103,14 @@ struct PdfWriter {
     current_page: PdfPageIndex,
     current_layer: PdfLayerIndex,
     y: f32,
+    /// What `hline` and `vline` stroke in.
+    ///
+    /// Black by default, because that is what the nine report renderers have
+    /// always drawn and none of them asked to change. `render_invoice_pdf` sets
+    /// it to the grey both client-facing documents share — setting it inside
+    /// `hline`/`vline` themselves, which the reports draw through, would have
+    /// turned every report's rules grey too.
+    rule_color: DocumentColor,
     /// How many pages have been started. The one thing that tells a caller
     /// whether a block it was drawing crossed a page break: `y` resets on a new
     /// page, so it can be *lower* after a break than before one and cannot be
@@ -116,6 +134,7 @@ impl PdfWriter {
             current_page: page,
             current_layer: layer,
             y: MARGIN_TOP,
+            rule_color: DocumentColor::BLACK,
             page_no: 0,
         })
     }
@@ -185,7 +204,7 @@ impl PdfWriter {
     /// `y_from`/`y_to` are this writer's downward `y`, not PDF coordinates.
     fn vline(&self, x: f32, y_from: f32, y_to: f32) {
         let layer = self.layer();
-        self.use_border_color(&layer);
+        self.use_rule_color(&layer);
         layer.set_outline_thickness(0.5);
         layer.add_line(Line {
             points: vec![
@@ -196,15 +215,14 @@ impl PdfWriter {
         });
     }
 
-    /// Every rule on this document is the one grey both documents share.
-    fn use_border_color(&self, layer: &PdfLayerReference) {
-        let (r, g, b) = BORDER_GRAY.unit_rgb();
+    fn use_rule_color(&self, layer: &PdfLayerReference) {
+        let (r, g, b) = self.rule_color.unit_rgb();
         layer.set_outline_color(Color::Rgb(Rgb::new(r, g, b, None)));
     }
 
     fn hline(&self, x1: f32, x2: f32) {
         let layer = self.layer();
-        self.use_border_color(&layer);
+        self.use_rule_color(&layer);
         layer.set_outline_thickness(0.5);
         let line = Line {
             points: vec![
@@ -280,7 +298,7 @@ impl PdfWriter {
     /// what makes the striping and the grid carry on correctly across a break
     /// rather than stranding a band on the page the row left.
     fn item_row(&mut self, cols: &[Col], values: &[&str], shaded: bool) {
-        let wrapped = Self::wrap_cells(cols, values, FONT_SIZE);
+        let wrapped = Self::wrap_item_cells(cols, values, FONT_SIZE);
         let max_lines = wrapped.iter().map(|w| w.len()).max().unwrap_or(1);
         let row_height = max_lines as f32 * ROW_H + 2.0 * CELL_PAD_Y;
         self.ensure_space(row_height);
@@ -298,7 +316,7 @@ impl PdfWriter {
             );
         }
         self.y += CELL_PAD_Y;
-        self.draw_cells(cols, &wrapped, max_lines, false, FONT_SIZE);
+        self.draw_item_cells(cols, &wrapped, max_lines, false, FONT_SIZE);
         self.y += CELL_PAD_Y;
 
         let saved = self.y;
@@ -307,12 +325,14 @@ impl PdfWriter {
         self.y = saved;
     }
 
-    fn wrap_cells(cols: &[Col], values: &[&str], font_size: f32) -> Vec<Vec<String>> {
+    /// Invoice-only, and named so: these measure against `ITEM_COL_PAD`, not
+    /// the shared table machinery's `COL_PAD`.
+    fn wrap_item_cells(cols: &[Col], values: &[&str], font_size: f32) -> Vec<Vec<String>> {
         cols.iter()
             .enumerate()
             .map(|(i, col)| {
                 if i < values.len() && !values[i].is_empty() {
-                    wrap_text(values[i], col.width - COL_PAD, font_size)
+                    wrap_text(values[i], col.width - ITEM_COL_PAD, font_size)
                 } else {
                     vec![String::new()]
                 }
@@ -320,7 +340,7 @@ impl PdfWriter {
             .collect()
     }
 
-    fn draw_cells(
+    fn draw_item_cells(
         &mut self,
         cols: &[Col],
         wrapped: &[Vec<String>],
@@ -337,7 +357,7 @@ impl PdfWriter {
                             Align::Left => self.text(text, x, font_size, bold),
                             Align::Right => {
                                 let tw = approx_text_width(text, font_size);
-                                self.text(text, x + col.width - COL_PAD - tw, font_size, bold);
+                                self.text(text, x + col.width - ITEM_COL_PAD - tw, font_size, bold);
                             }
                         }
                     }
@@ -346,6 +366,35 @@ impl PdfWriter {
             }
             self.y += ROW_H;
         }
+    }
+
+    /// The item table's own header. `table_header` is the shared one, and the
+    /// invoice cannot use it: its gutter is `COL_PAD`, which belongs to the
+    /// reports.
+    fn item_table_header(&mut self, cols: &[Col], headers: &[&str]) {
+        self.ensure_space(ROW_H * 2.0);
+        self.y += CELL_PAD_Y;
+        let mut x = MARGIN_LEFT;
+        for (i, col) in cols.iter().enumerate() {
+            if i < headers.len() {
+                match col.align {
+                    Align::Left => self.text(headers[i], x, FONT_SIZE, true),
+                    Align::Right => {
+                        let tw = approx_text_width(headers[i], FONT_SIZE);
+                        self.text(
+                            headers[i],
+                            x + col.width - ITEM_COL_PAD - tw,
+                            FONT_SIZE,
+                            true,
+                        );
+                    }
+                }
+            }
+            x += col.width;
+        }
+        self.y += 3.5;
+        self.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+        self.y += 5.0;
     }
 
     fn table_row_wrapped(&mut self, cols: &[Col], values: &[&str], bold: bool, font_size: f32) {
@@ -1271,6 +1320,9 @@ pub fn render_invoice_pdf(
 ) -> Result<Vec<u8>> {
     let title = format!("Invoice #{}", invoice.number);
     let mut pdf = PdfWriter::new(&document_title(&title, company.name))?;
+    // Every rule on this document is the grey the page uses. Set here rather
+    // than in `hline`/`vline`, which the report renderers draw through.
+    pdf.rule_color = BORDER_GRAY;
 
     // --- letterhead: the mark on the left, the From block on the right ------
     let band_top = pdf.y;
@@ -1344,11 +1396,7 @@ pub fn render_invoice_pdf(
     ];
     let table_top = pdf.y - 3.5;
     let table_page = pdf.page_no;
-    // The header is a row like any other and gets the same air. `table_header`
-    // itself is shared with the nine report renderers, whose metrics are not
-    // this task's to move.
-    pdf.y += CELL_PAD_Y;
-    pdf.table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
+    pdf.item_table_header(cols, &["Description", "Quantity", "Unit Price", "Amount"]);
 
     for (index, item) in items.iter().enumerate() {
         let qty = item.quantity.to_string();
@@ -1378,7 +1426,10 @@ pub fn render_invoice_pdf(
     // Which lines exist is `MoneySummary::lines()`'s decision, taken once for
     // both documents. Only the total names the currency, which is where this
     // document has always put it.
-    let figure_right = PAGE_W - MARGIN_RIGHT - COL_PAD;
+    // The Amount column's figures end at `PAGE_W - MARGIN_RIGHT - ITEM_COL_PAD`,
+    // so the money block below has to use the same gutter or the two columns of
+    // figures would not line up.
+    let figure_right = PAGE_W - MARGIN_RIGHT - ITEM_COL_PAD;
     for line in summary.lines() {
         let label = if line.label == "Total" {
             format!("Total ({})", invoice.currency)
@@ -1687,13 +1738,114 @@ pub(crate) fn stroke_colors(bytes: &[u8]) -> Vec<(f32, f32, f32)> {
         .collect()
 }
 
+/// The nine report renderers draw through the shared table machinery, and the
+/// invoice does not. These pin that boundary: the invoice's own layout work has
+/// twice now reached for a constant the reports read, and both times the
+/// consequence was nine documents silently re-laid-out.
 #[cfg(all(test, feature = "pdf"))]
-mod invoice_pdf_tests {
+mod shared_machinery_tests {
+    use super::*;
+
+    fn a_report() -> Vec<u8> {
+        render_flagged(
+            &[FlaggedTransaction {
+                id: 1,
+                date: "2026-08-04".into(),
+                description: "A transaction with a reasonably long description".into(),
+                amount: -125.0,
+                account_name: "Checking".into(),
+            }],
+            "Bluepeak LLC",
+        )
+        .unwrap()
+    }
+
+    /// The reports' column gutter. The invoice pads its cells with
+    /// `ITEM_COL_PAD`; reaching for this one instead widens every report column
+    /// and — because `wrap_text` measures against `col.width - COL_PAD` —
+    /// narrows every report's wrap width with it.
+    #[test]
+    fn the_shared_table_padding_is_not_the_invoices() {
+        assert_eq!(COL_PAD, 4.0, "the reports' gutter moved");
+        assert_ne!(
+            COL_PAD, ITEM_COL_PAD,
+            "the invoice must not pad its cells out of the shared constant"
+        );
+    }
+
+    /// A right-aligned figure in a report ends one `COL_PAD` inside its column.
+    /// Asserted on rendered bytes rather than on the constant alone, so a change
+    /// that reached the reports by some other route still fails here.
+    #[test]
+    fn a_reports_right_aligned_column_still_sits_where_it_did() {
+        let bytes = a_report();
+        let page = drawn_text(&bytes);
+        let amount = page[0]
+            .iter()
+            .find(|d| d.text.contains("125.00"))
+            .expect("the amount is drawn");
+        let right = amount.x + approx_text_width(&amount.text, amount.size);
+        // A measured millimetre, deliberately written as a literal rather than
+        // derived from `COL_PAD` — a derived expectation would move with the
+        // constant and pin nothing. This is where the flagged report's amount
+        // column has always ended; widening the shared gutter to 6 mm moves it
+        // to 165.05 and fails here.
+        assert!(
+            (right - 167.05).abs() < 0.5,
+            "the report's amount column ends at {right} mm, not 167.05 mm"
+        );
+    }
+
+    /// The grey is the two client-facing documents' shared decision. The
+    /// reports never asked for it, and `hline`/`vline` are what they draw
+    /// through.
+    #[test]
+    fn report_rules_are_still_black() {
+        for stroke in stroke_colors(&a_report()) {
+            assert_eq!(
+                stroke,
+                (0.0, 0.0, 0.0),
+                "a report rule is drawn in the invoice's grey"
+            );
+        }
+    }
+
+    /// And the invoice's are not, so the pinning above cannot pass by the grey
+    /// having quietly gone away everywhere.
+    #[test]
+    fn invoice_rules_are_still_the_shared_grey() {
+        let money = MoneySummary::of(&invoice_pdf_tests::invoice(), 0.0);
+        let block = crate::invoicing::document::company_block("Bluepeak LLC", "", "");
+        let bytes = render_invoice_pdf(
+            &invoice_pdf_tests::invoice(),
+            &invoice_pdf_tests::client(),
+            &block,
+            None,
+            &invoice_pdf_tests::items(),
+            &money,
+            "",
+        )
+        .unwrap();
+        let (r, g, b) = BORDER_GRAY.unit_rgb();
+        let strokes = stroke_colors(&bytes);
+        assert!(!strokes.is_empty());
+        for stroke in strokes {
+            assert!(
+                (stroke.0 - r).abs() < 0.01
+                    && (stroke.1 - g).abs() < 0.01
+                    && (stroke.2 - b).abs() < 0.01
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "pdf"))]
+pub(crate) mod invoice_pdf_tests {
     use super::*;
     use crate::invoicing::document::row_is_shaded;
     use crate::models::{Client, Invoice, InvoiceLineItem};
 
-    fn invoice() -> Invoice {
+    pub(crate) fn invoice() -> Invoice {
         Invoice {
             id: 1,
             number: 1248,
@@ -1715,7 +1867,7 @@ mod invoice_pdf_tests {
         }
     }
 
-    fn client() -> Client {
+    pub(crate) fn client() -> Client {
         Client {
             id: 1,
             name: "Acme".into(),
@@ -1726,7 +1878,7 @@ mod invoice_pdf_tests {
         }
     }
 
-    fn items() -> Vec<InvoiceLineItem> {
+    pub(crate) fn items() -> Vec<InvoiceLineItem> {
         vec![InvoiceLineItem {
             id: None,
             invoice_id: Some(1),
