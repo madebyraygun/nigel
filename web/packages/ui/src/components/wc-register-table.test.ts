@@ -551,10 +551,32 @@ describe('reaching the register from the keyboard', () => {
     expect(selectedId(el)).toBe(101);
   });
 
+  it('navigates from a control inside a cell, as a grid does', async () => {
+    // The ARIA grid split: the arrows belong to the grid wherever focus is,
+    // including on the flag button in a cell.
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[0]
+      ?.querySelector('button')
+      ?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }),
+      );
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it.each(['End', 'PageDown'])('pages from a control inside a cell with %s', async (key) => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[0]
+      ?.querySelector('button')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(103);
+  });
+
   it.each(['Enter', ' '])('lets the flag button answer %s itself', async (key) => {
-    // Intercepting these cancelled the button's own activation: Enter opened
-    // the row editor and never flagged anything, while Space flagged. A
-    // control inside a row keeps its keys.
+    // The other half of the split: an activation key is the control's, so the
+    // button answers both identically rather than Enter cancelling its click
+    // and opening the row editor.
     const el = await mount({ selectedId: 100 });
     const activations = listen<NcRowEventDetail>(el, 'nc-row-activate');
     const event = new KeyboardEvent('keydown', {

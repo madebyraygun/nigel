@@ -64,6 +64,9 @@ export interface NcFlagToggleDetail {
   flag: boolean;
 }
 
+/** The keys a focused control answers itself, rather than the grid around it. */
+const ACTIVATION_KEYS = new Set([' ', 'Enter']);
+
 /**
  * Rows to move by on PgUp/PgDn when the viewport cannot be measured — jsdom
  * reports every height as zero. Matches the TUI's `PAGE_SIZE`.
@@ -861,14 +864,18 @@ export class WcRegisterTable extends LitElement {
    *
    * A chord belongs to the browser or the OS: `Ctrl`/`Cmd+F` is find-in-page,
    * and a table that read it as the flag shortcut would answer a find with a
-   * write against the database; `Ctrl+Home`/`End` are the document's. A
-   * control inside a row likewise keeps its own keys: intercepting `Enter` on
-   * the flag button cancels the button's activation and opens the row editor
-   * instead, while `Space` goes through, so the one button would answer the
-   * two keys differently.
+   * write against the database; `Ctrl+Home`/`End` are the document's.
+   *
+   * The split at a control inside a cell is the ARIA grid pattern's. The
+   * *activation* keys are the control's, so the flag button answers `Enter`
+   * and `Space` identically instead of `Enter` cancelling its click and
+   * opening the row editor. The *navigation* keys stay the grid's, so the
+   * arrows and the paging keys move between rows from wherever focus is,
+   * including from a widget inside a cell.
    */
   private notOurs(event: KeyboardEvent): boolean {
     if (event.ctrlKey || event.metaKey || event.altKey) return true;
+    if (!ACTIVATION_KEYS.has(event.key)) return false;
     const target = event.composedPath()[0];
     return (
       target instanceof HTMLElement &&
