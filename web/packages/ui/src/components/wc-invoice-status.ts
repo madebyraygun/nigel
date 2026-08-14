@@ -1,5 +1,6 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import '../icons/icons.js';
 
 /**
  * The six derived statuses, in the order `refresh_status` reasons about them.
@@ -20,20 +21,36 @@ export const INVOICE_STATUS_WORDS = [
 export type InvoiceStatusWord = (typeof INVOICE_STATUS_WORDS)[number];
 
 /**
- * A glyph per status, matching the wireframes and the TUI's own shorthand.
+ * An icon per status, matching the wireframes and the TUI's own shorthand.
  *
- * The glyph is decorative — the word beside it is what carries the meaning.
+ * The icon is decorative — the word beside it is what carries the meaning.
  * Both are rendered because colour alone cannot be the only channel (WCAG
  * 1.4.1), which is the same reason `wc-money` always prints its sign.
+ *
+ * They are SVGs rather than characters because IBM Plex Mono, the app's
+ * primary face, has a glyph for none of the six: drawn as text they each come
+ * from whatever fallback face the browser finds.
  */
-const GLYPHS: Record<string, string> = {
-  draft: '◻',
-  sent: '◆',
-  partial: '◑',
-  paid: '●',
-  overdue: '▲',
-  void: '⊘',
-};
+const STATUS_ICONS = {
+  draft: html`<wc-icon-status-draft inline class="mark"></wc-icon-status-draft>`,
+  sent: html`<wc-icon-status-sent inline class="mark"></wc-icon-status-sent>`,
+  partial: html`<wc-icon-status-partial inline class="mark"></wc-icon-status-partial>`,
+  paid: html`<wc-icon-status-paid inline class="mark"></wc-icon-status-paid>`,
+  overdue: html`<wc-icon-status-overdue inline class="mark"></wc-icon-status-overdue>`,
+  void: html`<wc-icon-status-void inline class="mark"></wc-icon-status-void>`,
+} satisfies Record<InvoiceStatusWord, TemplateResult>;
+
+/**
+ * The same six, keyed for lookup by a string nobody vouched for.
+ *
+ * `status` is whatever the server wrote, and `invoices.status` has no CHECK
+ * constraint: `constructor` and `toString` are values a hand-edited row can
+ * hold, and an object lookup would answer those with an inherited function.
+ */
+const ICON_FOR_STATUS = new Map<string, TemplateResult>(Object.entries(STATUS_ICONS));
+
+/** What a status the six do not cover gets: a neutral mark, and its own word. */
+const UNKNOWN_STATUS_ICON = html`<wc-icon-dot inline class="mark"></wc-icon-dot>`;
 
 @customElement('wc-invoice-status')
 export class WcInvoiceStatus extends LitElement {
@@ -54,10 +71,6 @@ export class WcInvoiceStatus extends LitElement {
       line-height: 1.7;
       white-space: nowrap;
       color: var(--wa-color-text);
-    }
-
-    .glyph {
-      font-size: 0.9em;
     }
 
     .chip[data-status='draft'] {
@@ -101,10 +114,9 @@ export class WcInvoiceStatus extends LitElement {
   status = 'draft';
 
   render() {
-    const glyph = GLYPHS[this.status] ?? '•';
     return html`
       <span class="chip" part="chip" data-status=${this.status}>
-        <span class="glyph" aria-hidden="true">${glyph}</span>
+        ${ICON_FOR_STATUS.get(this.status) ?? UNKNOWN_STATUS_ICON}
         <span class="word">${this.status}</span>
       </span>
     `;

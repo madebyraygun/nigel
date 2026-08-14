@@ -4,6 +4,7 @@ import './wc-empty-state.js';
 import './wc-money.js';
 import './wc-notice-bar.js';
 import './wc-spinner.js';
+import '../icons/icons.js';
 
 /**
  * One recorded reconciliation, as `GET /api/reconciliations` returns it.
@@ -82,6 +83,9 @@ export class WcReconciliationHistory extends LitElement {
     }
 
     .status {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--wa-space-2xs, 4px);
       white-space: nowrap;
     }
 
@@ -165,6 +169,13 @@ export class WcReconciliationHistory extends LitElement {
     `;
   }
 
+  /**
+   * The result mark is decoration — "Reconciled" or "Discrepancy" beside it is
+   * what a screen reader announces, and the colour is a third cue rather than
+   * the only one. Both marks are SVGs so they come from one source: IBM Plex
+   * Mono has a check mark and no cross, so as characters a reconciled row and
+   * a discrepancy row would draw from two different faces.
+   */
   private renderRow(row: ReconciliationHistoryRow) {
     return html`
       <tr data-row=${row.id}>
@@ -173,7 +184,9 @@ export class WcReconciliationHistory extends LitElement {
         <td class="amount">${amount(row.calculatedBalance)}</td>
         <td>
           <span class=${`status ${row.isReconciled ? 'ok' : 'off'}`}>
-            ${row.isReconciled ? '✓ Reconciled' : '✗ Discrepancy'}
+            ${row.isReconciled
+              ? html`<wc-icon-check inline class="mark"></wc-icon-check>Reconciled`
+              : html`<wc-icon-close inline class="mark"></wc-icon-close>Discrepancy`}
           </span>
         </td>
         <td class=${row.reconciledAt === null ? 'muted' : ''}>

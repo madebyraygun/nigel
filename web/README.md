@@ -161,20 +161,47 @@ drops `é` renders half a name in a fallback face, mid-word. Anything outside
 the subset falls back per glyph, which is correct behaviour and is why the
 Latin ranges are generous.
 
-### Known gap: eight glyphs the font does not have
+### Eight glyphs the font does not have, and what draws them instead
 
 IBM Plex Mono has **no glyph** for `✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻`. This is a property of the
 upstream font, verified against the complete release rather than the subset —
-subsetting is not the cause and a wider subset would not fix it.
+subsetting is not the cause and a wider subset would fix nothing.
 
-They are drawn by `wc-invoice-status` (all six status markers),
-`wc-send-dialog` (`⟳`, `✗`) and `wc-reconciliation-history` (`✗`), and they
-fall back to a system face per glyph. `✓` is present, so a reconciled row and a
-discrepancy row currently draw their marks from two different fonts.
+So none of them is typed as a character. Each is a `wc-icon-*` SVG on
+`WcIconBase`, drawn with its `inline` attribute and inheriting `currentColor`,
+which is why they track the type they sit in and keep whatever colour the state
+around them has:
 
-The fix is to replace them with `wc-icon-*` SVGs — the library already has
-`WcIconBase` and the icon set for it — rather than to chase a mono with
-dingbat coverage. Not done here: it is a component change, not a typeface one.
+| Where | Marks | Icons |
+|---|---|---|
+| `wc-invoice-status` | the six statuses | `wc-icon-status-{draft,sent,partial,paid,overdue,void}`, plus `wc-icon-dot` for a status the six do not cover |
+| `wc-send-dialog` | the step trace | `wc-icon-check`, `wc-icon-close`, `wc-icon-refresh`, `wc-icon-dot` |
+| `wc-reconciliation-history` | the result column | `wc-icon-check`, `wc-icon-close` |
+
+`inline` is `WcIconBase`'s own 1em mode rather than a `--nc-icon-size: 1em`
+line in each component, so a mark set in text asks for it the same way
+everywhere. Without the attribute an icon is `--nc-icon-size` (20px) as it
+always was, which is what an empty state's 32px mark and the icon gallery keep.
+
+Every one of them is decorative: the word beside it — the status, the step's
+state in an `sr-only` span, `Reconciled`/`Discrepancy` — is what assistive tech
+announces, and `WcIconBase` hides an unlabelled icon from it.
+
+Each is a template rather than a tag name resolved at render time, so Lit
+updates the mark in place. A send polls and an invoice row re-renders with the
+list around it; rebuilding the element each time would re-upgrade a custom
+element somebody is looking at. It also puts the lookup on a `Map`: an invoice's
+status is whatever the server wrote, and an object indexed by `constructor`
+answers with an inherited function.
+
+`packages/ui/src/__tests__/mono-glyph-coverage.test.ts` sweeps the four source
+trees — the components, the preview shell, the theme and the app — for the
+eight characters and names the icon to use instead. It reads `.ts`, `.js`,
+`.mjs`, `.cjs`, `.css`, `.html`, `.json` and `.txt`, because a character can be
+typed into a stylesheet's `content` or a fixture as easily as into a module.
+Without it a character typed back in would look plausible on the author's
+machine and fail no other test — and chasing a mono with dingbat coverage is
+not the answer to that.
 
 ## Light and dark
 
