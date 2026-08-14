@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 05:04'
+updated_date: '2026-08-14 17:53'
 labels:
   - web
   - ui
@@ -45,6 +45,14 @@ Toasts render partially outside the viewport — screenshot shows a success toas
 - Stacking: up to 3 toasts, newest at the bottom, per-toast timers, oldest dropped past the cap.
 - Two bugs found while writing it: a backtick inside the css`` template truncated `static styles` to NaN, and a private `remove(id)` shadowed `HTMLElement.remove()`.
 - Tests assert geometry via `preview/css-geometry.ts` (stylesheet -> viewport pixels), not declarations. Also verified in headless Chromium inside the real `wc-app-shell` at 1280x800 and 390x700.
+
+Review round (9 findings) — all addressed on feat/toast-position:
+- A duration:0 toast with no action now carries a close button; `dismiss(id?)` closes one or all and `show()` answers the id.
+- Top-layer promotion is keyed to arrival alone: no re-promotion on expiry (survivors stay where they are), and the doc comment states the trade.
+- Live-region semantics split: region stays role=status/polite with no aria-atomic; a danger toast carries its own role=alert.
+- `fixedBox` clamps a both-inset box to max-width and anchors it at the start inset, matching the over-constrained rule.
+- Rule scanning behind `resolvedDeclarations`/`customProperties` extracted to one generator; the placement test reads its viewport from the shared table.
+- Preview gains a `never-expires` state; other states seed a long duration rather than zero so they are not all close-buttoned.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
