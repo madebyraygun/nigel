@@ -4,7 +4,7 @@ title: 'Web UI: date picker for invoice issue date and due date'
 status: In Progress
 assignee: []
 created_date: '2026-08-12 23:45'
-updated_date: '2026-08-14 04:56'
+updated_date: '2026-08-14 04:59'
 labels:
   - web
   - ui
@@ -41,8 +41,6 @@ Worth deciding as part of this: whether choosing a net preset should also fill t
 - [x] #9 A decision is recorded on whether a net preset also fills the terms field
 <!-- AC:END -->
 
-
-
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
@@ -66,3 +64,26 @@ Two decisions recorded.
 
 The preset-follows-issue-date behaviour lives in pure functions on `InvoiceFormValue`, not in handlers: `addDays`/`netDueDate` (UTC arithmetic so a daylight-saving boundary cannot cost a day; a computed date is always zero-padded, and a date the rule cannot read or a sum past year 9999 answers empty rather than guessing), `withIssueDate` (moves a net-derived due date, leaves a custom one and an absent one), `withDueTerm` (computes, keeps or clears), `dueTermFor` (reads an existing invoice’s two dates back as the choice that made them, which is what makes an edit behave like the raise) and `prefilledTerms`. The component’s three handlers each call one of them and emit the whole value.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The invoice form’s issue date gets a native date picker, and its due date becomes a choice of terms rather than a calendar.
+
+**What changed**
+- `wc-invoice-form` renders the issue date as `wa-input type="date"` (the `wc-reconcile-form` `type="month"` precedent: jsdom implements it, the `YYYY-MM-DD` check stays because Safari degrades the control to a text box, and the value the form emits is still the zero-padded ISO string the API demands).
+- The due date is a select — No due date / Net 7 / Net 14 / Net 30 / Custom date — with the picker appearing only for Custom. `InvoiceFormValue` gains `dueTerm`; the hint says which day a preset lands on and that it moves with the issue date.
+- The behaviour is pure functions rather than event-handler soup: `addDays`/`netDueDate` (UTC, so a daylight-saving boundary cannot cost a day; always zero-padded; empty rather than a guess for a date the rule cannot read or a sum past year 9999), `withIssueDate`, `withDueTerm`, `dueTermFor` and `prefilledTerms`. Each of the form’s three handlers calls one and emits the whole value.
+- `invoiceFormFrom` infers `dueTerm` from the stored dates, so editing the issue date of an invoice raised Net 30 moves its due date the way raising it did. `newInvoiceRequest`/`invoicePatch` are untouched — only `dueDate` crosses the wire.
+- `wc-payment-form`’s paid date takes the same picker with no presets.
+
+**Decisions recorded**
+- *A net preset fills the terms field — yes, non-destructively.* The page prints `2026-09-05 (Net 30)` beside the due date, so a Net 30 with empty terms would contradict the control that set it. `prefilledTerms` writes only over an empty field or a label it wrote itself; a sentence an operator typed survives, and switching to a custom date or none clears the stale label.
+- *The payment form’s paid date follows — the picker, not the presets.* A payment landed on the day it landed; there is no period to count from.
+
+**Tests**
+- Pure-logic tests for padding, month/year rollover, daylight-saving boundaries, unusable dates, preset-follows-issue-date (and custom/none staying put), term inference, and the terms prefill.
+- Component tests for the `type="date"` controls, a date typed into a degraded text control, the term options, the picker appearing only for Custom, and the moved due date.
+- Preview states cover empty, each due-date choice (preset, preset awaiting an issue date, custom, none), filled, invalid and saving; `describePreviewA11y` passes with zero violations, and the value literals carry `satisfies InvoiceFormValue`.
+- `npm ci`, `npm run build`, `npm test` (188 + 1079 + 760 passing, no Unhandled Errors), `npm run lint`, `npm run typecheck` all clean.
+<!-- SECTION:FINAL_SUMMARY:END -->
