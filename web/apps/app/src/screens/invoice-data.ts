@@ -1,5 +1,6 @@
 import {
   EMPTY_INVOICE_FORM,
+  dueTermFor,
   invoiceFormItems,
   parseLineNumber,
   validateInvoiceForm,
@@ -115,13 +116,21 @@ export function newInvoiceRequest(value: InvoiceFormValue): NewInvoiceRequest | 
   };
 }
 
-/** The form as it should look when an existing invoice is opened for editing. */
+/**
+ * The form as it should look when an existing invoice is opened for editing.
+ *
+ * The due-date choice is read back off the two dates rather than stored: a due
+ * date exactly a net period after the issue date is that preset, so moving the
+ * issue date of an invoice raised Net 30 moves the due date the way raising it
+ * did.
+ */
 export function invoiceFormFrom(detail: InvoiceDetail): InvoiceFormValue {
   return {
     ...EMPTY_INVOICE_FORM,
     clientId: String(detail.clientId),
     issueDate: detail.issueDate,
     dueDate: detail.dueDate ?? '',
+    dueTerm: dueTermFor(detail.issueDate, detail.dueDate ?? ''),
     currency: detail.currency,
     notes: detail.notes ?? '',
     terms: detail.terms ?? '',

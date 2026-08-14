@@ -23,12 +23,19 @@ export interface InvoiceClientOption {
   email: string | null;
 }
 
+/** How the due date was chosen, which decides whether it moves on its own. */
+export const DUE_TERM_VALUES = ['none', 'net7', 'net14', 'net30', 'custom'] as const;
+
+export type DueTerm = (typeof DUE_TERM_VALUES)[number];
+
 export interface InvoiceFormValue {
   /** The chosen client's id as a string — a select's value always is one. */
   clientId: string;
   issueDate: string;
   /** Empty means no due date, which is what stops it ever going overdue. */
   dueDate: string;
+  /** Which of the due-date choices `dueDate` came from. */
+  dueTerm: DueTerm;
   currency: string;
   notes: string;
   terms: string;
@@ -59,11 +66,141 @@ export const EMPTY_INVOICE_FORM: InvoiceFormValue = {
   clientId: '',
   issueDate: '',
   dueDate: '',
+  dueTerm: 'none',
   currency: 'USD',
   notes: '',
   terms: '',
   items: [{ ...EMPTY_LINE_ITEM }],
 };
+
+/** How many days after the issue date each net preset falls. */
+const NET_TERM_DAYS = { net7: 7, net14: 14, net30: 30 } as const;
+
+type NetDueTerm = keyof typeof NET_TERM_DAYS;
+
+export function isNetDueTerm(term: string): term is NetDueTerm {
+  return term in NET_TERM_DAYS;
+}
+
+export function isDueTerm(term: string): term is DueTerm {
+  return (DUE_TERM_VALUES as readonly string[]).includes(term);
+}
+
+/** What the due-date control calls each choice. */
+export const DUE_TERM_LABELS: Record<DueTerm, string> = {
+  none: 'No due date',
+  net7: 'Net 7',
+  net14: 'Net 14',
+  net30: 'Net 30',
+  custom: 'Custom date',
+};
+
+/** What a net preset writes into the terms field; the other choices write nothing. */
+function termsTextFor(term: DueTerm): string {
+  return isNetDueTerm(term) ? `Net ${NET_TERM_DAYS[term]}` : '';
+}
+
+const AUTO_TERMS: readonly string[] = Object.keys(NET_TERM_DAYS).map((term) =>
+  termsTextFor(term as DueTerm),
+);
+
+/**
+ * A `YYYY-MM-DD` as a UTC timestamp, or null if that is not a real day.
+ *
+ * UTC rather than local, so arithmetic across a daylight-saving boundary
+ * cannot land an hour short and round down to the previous day. The round trip
+ * is what rejects `2026-02-30`, which the shape check alone lets through and
+ * `Date.UTC` would silently roll forward to March.
+ */
+function utcDay(date: string): number | null {
+  const trimmed = date.trim();
+  if (!DATE_PATTERN.test(trimmed)) return null;
+  const [year, month, day] = trimmed.split('-').map(Number);
+  const stamp = Date.UTC(year, month - 1, day);
+  const back = new Date(stamp);
+  return back.getUTCMonth() + 1 === month && back.getUTCDate() === day ? stamp : null;
+}
+
+/**
+ * `date` plus `days`, zero-padded, or empty when that cannot be said.
+ *
+ * Empty covers both an issue date that is not yet a date and a sum past year
+ * 9999, where the ISO string grows a sign and six digits and stops being
+ * something the API would take.
+ */
+export function addDays(date: string, days: number): string {
+  const stamp = utcDay(date);
+  if (stamp === null) return '';
+  const moved = new Date(stamp + days * 86_400_000).toISOString().slice(0, 10);
+  return DATE_PATTERN.test(moved) ? moved : '';
+}
+
+/** The due date a net preset implies, or empty if the issue date is unusable. */
+export function netDueDate(issueDate: string, term: NetDueTerm): string {
+  return addDays(issueDate, NET_TERM_DAYS[term]);
+}
+
+/**
+ * Which choice a pair of dates reads as, for an invoice opened for editing.
+ *
+ * A due date that sits exactly a net period after the issue date is treated as
+ * that preset, so editing the issue date of an invoice raised Net 30 moves the
+ * due date the way raising it did. Anything else is a date somebody picked.
+ */
+export function dueTermFor(issueDate: string, dueDate: string): DueTerm {
+  if (dueDate.trim() === '') return 'none';
+  for (const term of Object.keys(NET_TERM_DAYS) as NetDueTerm[]) {
+    if (netDueDate(issueDate, term) === dueDate.trim()) return term;
+  }
+  return 'custom';
+}
+
+/**
+ * The terms field after a due-date choice, leaving anything written by hand.
+ *
+ * The reference invoices print `09/05/2026 (Net 30)`, so a net preset that did
+ * not say so in the terms would raise an invoice whose page contradicts the
+ * form. The prefill only writes over an empty field or a label it wrote
+ * itself — a sentence an operator typed is theirs.
+ */
+export function prefilledTerms(terms: string, term: DueTerm): string {
+  const current = terms.trim();
+  if (current !== '' && !AUTO_TERMS.includes(current)) return terms;
+  return termsTextFor(term);
+}
+
+/**
+ * The form with a new issue date, carrying a preset-derived due date along.
+ *
+ * A date picked by hand, and the absence of one, stay where they are: only a
+ * net period is defined relative to the issue date.
+ */
+export function withIssueDate(
+  value: InvoiceFormValue,
+  issueDate: string,
+): InvoiceFormValue {
+  const next = { ...value, issueDate };
+  if (!isNetDueTerm(value.dueTerm)) return next;
+  return { ...next, dueDate: netDueDate(issueDate, value.dueTerm) };
+}
+
+/**
+ * The form with a new due-date choice.
+ *
+ * `none` clears the date, which is the form's way of saying the invoice never
+ * goes overdue. `custom` keeps whatever date is showing as the starting point
+ * for the picker, so choosing Net 30 and then reaching for the calendar does
+ * not blank the field first.
+ */
+export function withDueTerm(value: InvoiceFormValue, term: DueTerm): InvoiceFormValue {
+  const dueDate = isNetDueTerm(term)
+    ? netDueDate(value.issueDate, term)
+    : term === 'none'
+      ? ''
+      : value.dueDate;
+
+  return { ...value, dueTerm: term, dueDate, terms: prefilledTerms(value.terms, term) };
+}
 
 /** The rows that will actually be sent: everything nobody left blank. */
 export function invoiceFormItems(value: InvoiceFormValue): LineItemValue[] {
@@ -163,6 +300,17 @@ export class WcInvoiceForm extends LitElement {
         gap: var(--wa-space-m, 12px);
       }
 
+      .due {
+        display: grid;
+        gap: var(--wa-space-2xs, 4px);
+        align-content: start;
+      }
+
+      .due .error,
+      .due .hint {
+        margin: 0;
+      }
+
       .error {
         margin: var(--wa-space-2xs, 4px) 0 0;
         color: var(--wa-color-danger, #b3261e);
@@ -229,9 +377,13 @@ export class WcInvoiceForm extends LitElement {
   disabled = false;
 
   private emit(next: Partial<InvoiceFormValue>): void {
+    this.emitValue({ ...this.value, ...next });
+  }
+
+  private emitValue(value: InvoiceFormValue): void {
     this.dispatchEvent(
       new CustomEvent<NcInvoiceFormChangeDetail>('nc-invoice-form-change', {
-        detail: { value: { ...this.value, ...next } },
+        detail: { value },
         bubbles: true,
         composed: true,
       }),
@@ -245,6 +397,18 @@ export class WcInvoiceForm extends LitElement {
     };
   }
 
+  private handleIssueDate = (event: Event): void => {
+    const input = event.target as HTMLInputElement;
+    this.emitValue(withIssueDate(this.value, input.value));
+  };
+
+  /** An option outside the set is ignored rather than stored as a term. */
+  private handleDueTerm = (event: Event): void => {
+    const select = event.target as HTMLSelectElement;
+    if (!isDueTerm(select.value)) return;
+    this.emitValue(withDueTerm(this.value, select.value));
+  };
+
   private handleItems = (event: Event): void => {
     const detail = (event as CustomEvent<NcLineItemsChangeDetail>).detail;
     this.emit({ items: detail.items });
@@ -252,6 +416,57 @@ export class WcInvoiceForm extends LitElement {
 
   private get chosenClient(): InvoiceClientOption | undefined {
     return this.clients.find((client) => String(client.id) === this.value.clientId);
+  }
+
+  /**
+   * The due date as terms rather than a calendar.
+   *
+   * The common case is a net period counted from the issue date, so the
+   * control offers those and computes the date; the picker only appears for a
+   * date that is nobody's net period.
+   */
+  private renderDue() {
+    const term = this.value.dueTerm;
+    const days = isNetDueTerm(term) ? NET_TERM_DAYS[term] : null;
+
+    return html`
+      <div class="due">
+        <wa-select
+          data-due-term
+          label="Due date"
+          value=${term}
+          ?disabled=${this.disabled}
+          @change=${this.handleDueTerm}
+        >
+          ${DUE_TERM_VALUES.map(
+            (option) =>
+              html`<wa-option value=${option}>${DUE_TERM_LABELS[option]}</wa-option>`,
+          )}
+        </wa-select>
+
+        ${term === 'custom'
+          ? html`<wa-input
+              data-due
+              type="date"
+              label="Date"
+              placeholder="YYYY-MM-DD"
+              autocomplete="off"
+              value=${this.value.dueDate}
+              ?disabled=${this.disabled}
+              @input=${this.handleField('dueDate')}
+            ></wa-input>`
+          : nothing}
+        ${this.errors.dueDate
+          ? html`<p class="error" role="alert">${this.errors.dueDate}</p>`
+          : days !== null
+            ? html`<p class="hint" data-due-hint>
+                ${this.value.dueDate === ''
+                  ? 'Set an issue date and the due date follows it.'
+                  : `Due ${this.value.dueDate} — ${days} days after the issue date, and moves with it.`}
+              </p>`
+            : html`<p class="hint" data-due-hint>Empty means it never goes overdue.</p>`}
+      </div>
+    `;
   }
 
   render() {
@@ -290,31 +505,19 @@ export class WcInvoiceForm extends LitElement {
           <div>
             <wa-input
               data-issue
+              type="date"
               label="Issue date"
               placeholder="YYYY-MM-DD"
               autocomplete="off"
               value=${this.value.issueDate}
               ?disabled=${this.disabled}
-              @input=${this.handleField('issueDate')}
+              @input=${this.handleIssueDate}
             ></wa-input>
             ${this.errors.issueDate
               ? html`<p class="error" role="alert">${this.errors.issueDate}</p>`
               : nothing}
           </div>
-          <div>
-            <wa-input
-              data-due
-              label="Due date"
-              placeholder="YYYY-MM-DD"
-              autocomplete="off"
-              value=${this.value.dueDate}
-              ?disabled=${this.disabled}
-              @input=${this.handleField('dueDate')}
-            ></wa-input>
-            ${this.errors.dueDate
-              ? html`<p class="error" role="alert">${this.errors.dueDate}</p>`
-              : html`<p class="hint">Empty means it never goes overdue.</p>`}
-          </div>
+          ${this.renderDue()}
           <div>
             <wa-input
               data-currency
