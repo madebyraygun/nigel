@@ -1,11 +1,11 @@
 ---
 id: TASK-94
 title: 'Web UI: toast renders off-screen'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 17:53'
+updated_date: '2026-08-14 18:02'
 labels:
   - web
   - ui
