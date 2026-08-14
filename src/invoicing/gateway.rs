@@ -36,6 +36,26 @@ pub trait AssetPublisher {
     /// client was actually sent, and deleting it would break a link someone may
     /// have filed rather than answer it honestly.
     fn publish_page(&self, token: &str, html: &[u8]) -> Result<String>;
+
+    /// Where the letterhead logo is addressed, for an image of this type.
+    ///
+    /// Pure, and on the trait rather than derived by a caller, because only the
+    /// publisher knows the base its objects are served under — and deciding
+    /// whether the object up there is still the right one means comparing the
+    /// address as well as the bytes. An operator who repoints `public_base_url`
+    /// at a different bucket has a stale URL, not a stale image.
+    fn logo_url(&self, mime: &str) -> String;
+
+    /// Put the letterhead logo beside the pages as its own object, answering
+    /// [`AssetPublisher::logo_url`].
+    ///
+    /// **One** object for the whole installation at a stable key, not one per
+    /// invoice: it is the operator's own mark, it carries no client data, and a
+    /// mail client that refuses `data:` URIs — Gmail — fetches it once and
+    /// caches it across every invoice. Whether to call it at all is the caller's
+    /// decision: [`crate::invoicing::logo`] skips it when the bytes already up
+    /// there are these, so a send that changes nothing uploads nothing.
+    fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String>;
 }
 
 pub trait Mailer {
@@ -65,6 +85,15 @@ mod tests {
         }
         fn publish_page(&self, token: &str, _h: &[u8]) -> crate::error::Result<String> {
             Ok(format!("https://billing.example.com/i/{token}/index.html"))
+        }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.com/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> crate::error::Result<String> {
+            Ok(self.logo_url(mime))
         }
     }
 

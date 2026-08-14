@@ -641,7 +641,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     try {
       const result = await this.client.sendInvoice(detail.number);
       this.sendSteps = sendStepViews({ completed: result.steps });
-      this.sendWarnings = result.configWarnings ?? [];
+      this.sendWarnings = [...(result.configWarnings ?? []), ...(result.warnings ?? [])];
       this.sentUrl = result.publicUrl;
       this.sendPhase = 'sent';
       this.detail = result.invoice;

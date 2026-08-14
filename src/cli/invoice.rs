@@ -144,6 +144,11 @@ impl CompanyProfile {
             company_address: &self.address,
             company_phone: &self.phone,
             logo: &self.logo,
+            // The self-contained page. `send` and a republish point it at the
+            // hosted object through `with_logo_url`; `preview` and the API's
+            // preview routes never do, which is what keeps a preview a file that
+            // renders with no network and no configuration.
+            logo_url: None,
             payment_instructions: &self.payment_instructions,
             contact_email,
         }
@@ -846,7 +851,7 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     for warning in &clients.warnings {
         eprintln!("notice: {warning}");
     }
-    let url = send_invoice(
+    let outcome = send_invoice(
         &conn,
         invoice.id,
         today,
@@ -855,7 +860,13 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         &clients.r2,
         &clients.mail,
     )?;
-    println!("Sent invoice #{number}: {url}");
+    println!("Sent invoice #{number}: {}", outcome.public_url);
+    // What the send went ahead despite — a letterhead logo that could not be
+    // published beside the page. The invoice went out; this is a note about how
+    // it will look in a mail client, printed after the address it went to.
+    for warning in &outcome.warnings {
+        eprintln!("notice: {warning}");
+    }
     Ok(())
 }
 
@@ -1226,6 +1237,43 @@ mod tests {
                 .push(String::from_utf8(html.to_vec()).unwrap());
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> Result<String> {
+            Ok(self.logo_url(mime))
+        }
+    }
+
+    /// TASK-105 AC-3/AC-4. Preview renders through the same seam a send
+    /// publishes through, and the one deliberate difference is where the logo
+    /// comes from: `company_profile(...).branding(...)` points at nothing, so a
+    /// preview is a self-contained file that reaches no bucket and asks for no
+    /// configuration. `send` and a republish add the address themselves through
+    /// `with_logo_url`.
+    #[test]
+    fn the_preview_branding_points_at_no_hosted_logo() {
+        let (_d, conn) = test_conn();
+        crate::db::set_metadata(&conn, "company_logo", "data:image/png;base64,AAAA").unwrap();
+
+        let profile = company_profile(&conn);
+        let branding = profile.branding(DEFAULT_TEMPLATE, "b@e.test");
+
+        assert_eq!(branding.logo, "data:image/png;base64,AAAA");
+        assert!(
+            branding.logo_url.is_none(),
+            "a preview carries the bytes; only a publish points at an object"
+        );
+        assert_eq!(
+            branding
+                .with_logo_url(Some("https://billing.example.test/i/logo.png"))
+                .logo_url,
+            Some("https://billing.example.test/i/logo.png"),
+            "and the publish path is the one that sets it"
+        );
     }
 
     #[test]

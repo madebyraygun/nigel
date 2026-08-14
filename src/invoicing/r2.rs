@@ -17,11 +17,40 @@ pub const PAGE_OBJECT: &str = "index.html";
 /// The PDF beside it, kept next to `PAGE_OBJECT` so the two keys are named once.
 pub const PDF_OBJECT: &str = "invoice.pdf";
 
+/// The letterhead logo's object name, by image type.
+///
+/// One object for the whole installation, above the per-token directories: it
+/// is the operator's own mark, it carries no client data, and a copy per invoice
+/// would write the same bytes again for every invoice ever sent. The extension
+/// follows the type so a static host answers with the right `Content-Type`
+/// whatever it was told at upload.
+pub fn logo_object(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => "logo.jpg",
+        _ => "logo.png",
+    }
+}
+
+/// The logo's key, beside the token directories rather than inside one.
+pub fn logo_key(mime: &str) -> String {
+    format!("i/{}", logo_object(mime))
+}
+
 pub fn public_url(public_base_url: &str, token: &str) -> String {
     format!(
         "{}/{}/{PAGE_OBJECT}",
         public_base_url.trim_end_matches('/'),
         token
+    )
+}
+
+/// The address the letterhead logo is served at — what a published page puts in
+/// its `<img src>`, and what an email client fetches.
+pub fn logo_public_url(public_base_url: &str, mime: &str) -> String {
+    format!(
+        "{}/{}",
+        public_base_url.trim_end_matches('/'),
+        logo_object(mime)
     )
 }
 
@@ -162,6 +191,15 @@ impl AssetPublisher for R2Publisher {
         )?;
         Ok(public_url(&self.public_base_url, token))
     }
+
+    fn logo_url(&self, mime: &str) -> String {
+        logo_public_url(&self.public_base_url, mime)
+    }
+
+    fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+        self.put(&logo_key(mime), bytes, mime)?;
+        Ok(self.logo_url(mime))
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +231,30 @@ mod tests {
         assert!(
             url.ends_with(&object_key("abc", PAGE_OBJECT)),
             "the address and the key must not drift: {url}"
+        );
+    }
+
+    /// The logo sits beside the token directories, not inside one: one object
+    /// for the installation, and the address a page carries is the key.
+    #[test]
+    fn the_logo_is_one_object_above_the_token_directories() {
+        assert_eq!(logo_key("image/png"), "i/logo.png");
+        assert_eq!(logo_key("image/jpeg"), "i/logo.jpg");
+        assert!(
+            !logo_key("image/png").contains("abc"),
+            "a per-token copy would write the same bytes for every invoice"
+        );
+    }
+
+    #[test]
+    fn the_logos_address_and_its_key_name_the_same_object() {
+        for mime in ["image/png", "image/jpeg"] {
+            let url = logo_public_url("https://billing.example.com/i", mime);
+            assert!(url.ends_with(&logo_key(mime)), "drifted: {url}");
+        }
+        assert_eq!(
+            logo_public_url("https://billing.example.com/i/", "image/png"),
+            "https://billing.example.com/i/logo.png"
         );
     }
 

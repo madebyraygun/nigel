@@ -147,8 +147,12 @@ pub fn void_invoice_with_teardown<G: PaymentGateway, P: AssetPublisher>(
     // Read before the write: `void_invoice` moves the status, and the teardown
     // works from the link and the token, which it does not touch.
     let invoice = get_invoice(conn, invoice_id)?;
+    // The letterhead a send published, read back rather than rebuilt: void needs
+    // no configuration and uploads nothing of its own, so the notice can only
+    // point at an object that is known to be there.
+    let logo = crate::invoicing::logo::published_logo_url(conn);
     void_invoice(conn, invoice_id, today)?;
-    Ok(teardown(&invoice, gateway, publisher))
+    Ok(teardown(&invoice, logo.as_deref(), gateway, publisher))
 }
 
 /// Everything after the commit. Infallible by construction: each half reports
@@ -156,6 +160,7 @@ pub fn void_invoice_with_teardown<G: PaymentGateway, P: AssetPublisher>(
 /// void.
 fn teardown<G: PaymentGateway, P: AssetPublisher>(
     invoice: &Invoice,
+    logo_url: Option<&str>,
     gateway: Option<&G>,
     publisher: Option<&P>,
 ) -> VoidOutcome {
@@ -172,7 +177,7 @@ fn teardown<G: PaymentGateway, P: AssetPublisher>(
         (None, _) => TeardownStep::NotApplicable,
         (Some(_), None) => TeardownStep::Skipped,
         (Some(_), Some(publisher)) => {
-            let html = voided_page_html(invoice.number);
+            let html = voided_page_html(invoice.number, logo_url);
             match publisher.publish_page(&invoice.token, html.as_bytes()) {
                 Ok(_) => TeardownStep::Done,
                 Err(e) => TeardownStep::Failed(e.to_string()),
@@ -280,6 +285,15 @@ mod tests {
                 .push((token.to_string(), String::from_utf8(html.to_vec()).unwrap()));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+            unreachable!("void publishes no logo; it points at the one a send left")
+        }
     }
 
     struct ForbiddenPub;
@@ -291,6 +305,15 @@ mod tests {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
+        }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+            unreachable!("void publishes no logo; it points at the one a send left")
         }
     }
 
@@ -323,6 +346,57 @@ mod tests {
         assert_eq!(*publisher.full_publishes.borrow(), 0);
 
         assert_eq!(get_invoice(&conn, id).unwrap().status, "void");
+    }
+
+    /// TASK-105 AC-5. A void replaces the page; the letterhead survives it. The
+    /// notice is still the operator's page, and the logo object it points at is
+    /// the one their last send put there — nothing here uploads or deletes it.
+    #[test]
+    fn a_voids_republished_page_keeps_the_letterhead_logo() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        // What a send leaves behind: the fingerprint and the address.
+        crate::db::set_metadata(
+            &conn,
+            crate::invoicing::logo::PUBLISHED_LOGO_KEY,
+            "deadbeef https://billing.example.test/i/logo.png",
+        )
+        .unwrap();
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+
+        void_invoice_with_teardown(&conn, id, "2026-08-06", Some(&gateway), Some(&publisher))
+            .expect("voids");
+
+        let pages = publisher.pages.borrow();
+        assert!(
+            pages[0]
+                .1
+                .contains("<img src=\"https://billing.example.test/i/logo.png\""),
+            "got: {}",
+            pages[0].1
+        );
+        assert!(pages[0].1.contains("voided"), "got: {}", pages[0].1);
+    }
+
+    /// An installation that never published a logo gets a notice with no image
+    /// rather than one pointing at an object that is not there.
+    #[test]
+    fn a_void_with_no_published_logo_writes_a_page_with_no_image() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        let publisher = FakePub::default();
+
+        void_invoice_with_teardown(
+            &conn,
+            id,
+            "2026-08-06",
+            Some(&FakeGw::default()),
+            Some(&publisher),
+        )
+        .expect("voids");
+
+        assert!(!publisher.pages.borrow()[0].1.contains("<img"));
     }
 
     /// AC #2: the void stands, and the URL is handed over for manual cleanup.
@@ -380,7 +454,12 @@ mod tests {
         let (_d, conn) = test_conn();
         let draft = get_invoice(&conn, seed(&conn)).unwrap();
         assert!(!has_teardown_work(&draft));
-        let outcome = teardown(&draft, Some(&FakeGw::default()), Some(&FakePub::default()));
+        let outcome = teardown(
+            &draft,
+            None,
+            Some(&FakeGw::default()),
+            Some(&FakePub::default()),
+        );
         assert_eq!(outcome.link, TeardownStep::NotApplicable);
         assert_eq!(outcome.page, TeardownStep::NotApplicable);
 

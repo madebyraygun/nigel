@@ -142,14 +142,41 @@ embedded in the PDF at all, and a file whose extension disagrees with its bytes
 is refused rather than mislabelled into somebody's inbox. A refusal names the
 problem and leaves the stored value alone.
 
-**The Gmail caveat.** The page is the email body, and the logo travels in it as
-a `data:` URI. Gmail does not render those. A Gmail reader therefore sees the
-business name — the image's `alt` text — where the logo would be, while the PDF
-attached beside it carries the real image. Everything else in the body renders
-normally. An operator who needs the logo visible in a Gmail body can host the
-image and put an absolute `<img src="https://…">` in their own
-`templates/invoice.html`; Nigel does not host images, because that would make
-sending an invoice depend on a second piece of infrastructure staying up.
+**The logo is published beside the page.** The page is the email body, and
+Gmail strips a `data:` URI out of one — a Gmail reader would see the business
+name, the image's `alt` text, where the mark should be. So `invoice send`
+uploads the image as its own object next to the invoice and the published page
+points at it with an absolute URL, which every mail client that displays remote
+images renders.
+
+The stored value stays the `data:` URI. `company_logo` is the one source of
+truth and `parse_logo` the one validation path; the publisher derives the bytes
+from it. What is published is **one object for the whole installation**, at
+`i/logo.png` or `i/logo.jpg` under your `public_base_url` — not a copy per
+invoice, because it is your own mark, it carries no client data, and a mail
+client fetches it once and caches it across every invoice you send. It is
+uploaded only when the bytes or the address differ from what is already up
+there; a content hash and that URL are recorded in the `published_logo` metadata
+key, so a send that changes nothing uploads nothing.
+
+**A logo that cannot be published never fails a send.** If the upload is
+refused, that page falls back to carrying the image inline exactly as a preview
+does — still a self-contained document, just one Gmail will strip — and the
+send reports a warning beside the address the invoice went to. The invoice is
+published, emailed and marked sent either way.
+
+`invoice preview` keeps the `data:` URI, deliberately: preview makes no network
+call and needs no invoicing configuration, and a preview that pointed at a
+hosted object would render as a broken image on a machine that has never sent
+anything. It is the third difference between a previewed and a published page,
+beside the Pay placeholder on an unsent draft and the absent PDF in a build
+without the `pdf` feature.
+
+A voided invoice's replacement page keeps the letterhead, pointing at the same
+published object — the notice is still your page, and an invoice that was
+wearing a letterhead a moment ago should not lose it on the way to saying it is
+cancelled. It shows no image at all on an installation that never published
+one, so the notice can never carry a broken link.
 
 `payment_instructions` is your text, printed under the foot rule on **both**
 documents, one line per line, with a `Payment` heading. Set it to your bank
@@ -544,8 +571,12 @@ One command does the whole publish:
    `nigel invoice preview` writes locally, so a preview cannot disagree with
    what is published.
 3. Uploads both to R2 as `i/{token}/index.html` and `i/{token}/invoice.pdf`, where
-   `token` is the invoice's random 16-character identifier. The address Nigel
-   hands out names the `index.html` object itself — see "Hosting" below.
+   `token` is the invoice's random 16-character identifier, plus the letterhead
+   logo at `i/logo.png` (or `.jpg`) if it is not already up there — one object
+   for the installation, beside the token directories rather than inside one.
+   The address Nigel hands out names the `index.html` object itself — see
+   "Hosting" below. A logo the upload refuses is a warning, never a failed
+   send.
 4. Emails the client through Mailgun — HTML body, PDF attached, subject
    `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
    is set. The name comes from the same setting the dashboard's settings screen
@@ -718,7 +749,7 @@ nothing to say.
 | `{{COMPANY_ADDRESS}}` | text | Your address as typed, newlines and all, empty when unset |
 | `{{COMPANY_PHONE}}` | text | Your phone, empty when unset |
 | `{{COMPANY_BLOCK}}` | fragment | The whole ruled From block — name, address lines, `ph.` line — empty when name, address and phone are all unset |
-| `{{LOGO}}` | fragment | `<img class="logo" src="data:…">`, empty when no logo is configured or the stored one cannot be used |
+| `{{LOGO}}` | fragment | `<img class="logo" src="…">`, empty when no logo is configured or the stored one cannot be used. A published page's `src` is the hosted object's absolute URL; a preview's is the `data:` URI |
 | `{{ISSUE}}` | text | Issue date |
 | `{{DUE_DATE}}` | text | Due date, empty when there is none |
 | `{{DUE}}` | fragment | `<br>Due: …`, empty when there is none |
@@ -1187,6 +1218,12 @@ stored at key `i/{token}/index.html` is served at, for example,
 `https://billing.example.com/i`. Keep the `i/` prefix in `public_base_url` aligned
 with that mapping — Nigel writes keys under `i/`, and the base URL only tells it
 what public address that prefix answers on.
+
+The letterhead logo is the one object outside a token directory: it lives at
+`i/logo.png` (or `i/logo.jpg`, following the image's type), so a published page
+fetches it from `https://billing.example.com/i/logo.png`. It is your own mark
+and carries no client data, which is what makes one shared object the right
+shape — nothing about it says which invoice, or whose, is being looked at.
 
 Nigel names the file, not its directory: every link it prints, returns and
 reports ends in `/index.html`. A plain R2 custom domain serves objects by key

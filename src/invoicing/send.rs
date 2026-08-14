@@ -5,7 +5,7 @@ use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{ensure_not_void, get_invoice, mark_published, set_payment_link};
-use crate::invoicing::render::{pay_button_for, render_invoice};
+use crate::invoicing::render::{pay_button_for, render_invoice, usable_logo};
 use crate::invoicing::render_html::Branding;
 use crate::models::Client;
 
@@ -87,6 +87,13 @@ pub struct SendOutcome {
     /// The invoice's status once the send was recorded.
     pub status: String,
     pub steps: Vec<(SendStep, StepOutcome)>,
+    /// What the send went ahead despite. A letterhead logo that could not be
+    /// published beside the page is the only one today: the page falls back to
+    /// carrying the image inline, which is a client's mail reader showing the
+    /// business name instead of a mark — not a failed invoice. Data rather than
+    /// a print, the way `VoidOutcome::warnings()` is, so a terminal, the TUI and
+    /// a browser each render it where it can be read.
+    pub warnings: Vec<String>,
 }
 
 /// A send that stopped, and where.
@@ -256,6 +263,19 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     trace.done(PaymentLink, link_outcome);
 
     let pay_url = invoice.stripe_payment_link_url.clone();
+
+    // Before the render, because the page has to carry the address: the object
+    // is what makes the logo survive a mail client that strips `data:` URIs, and
+    // it goes up once per distinct image rather than once per invoice. It can
+    // never fail a send — a failure leaves `url` unset and the page inlines the
+    // bytes exactly as a preview does.
+    let hosted = crate::invoicing::logo::publish_letterhead_logo(
+        conn,
+        usable_logo(branding.logo).as_ref(),
+        publisher,
+    );
+    let branding = &branding.with_logo_url(hosted.url.as_deref());
+
     // The same rule preview and republish apply: a settled or cancelled invoice
     // gets no working Pay button, which is what makes re-sending a paid invoice
     // publish an honest page.
@@ -297,11 +317,13 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         payment_link_url: pay_url,
         status,
         steps: std::mem::take(&mut trace.steps),
+        warnings: hosted.warning.into_iter().collect(),
     })
 }
 
-/// The URL of the published page, for callers that only need to say where the
-/// invoice went — the CLI and the TUI, whose wording predates the step trace.
+/// The send without its step trace, for the callers whose wording predates one
+/// — the CLI and the TUI, which want the address and the sentences and nothing
+/// about which of eight steps reused a payment link.
 pub fn send_invoice<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     conn: &Connection,
     invoice_id: i64,
@@ -310,11 +332,10 @@ pub fn send_invoice<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     gateway: &G,
     publisher: &P,
     mailer: &M,
-) -> Result<String> {
+) -> Result<SendOutcome> {
     send_invoice_traced(
         conn, invoice_id, today, branding, gateway, publisher, mailer,
     )
-    .map(|outcome| outcome.public_url)
     .map_err(|failure| failure.source)
 }
 
@@ -377,9 +398,20 @@ mod tests {
         fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
             Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.com/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> Result<String> {
+            Ok(self.logo_url(mime))
+        }
     }
+    #[derive(Default)]
     struct CapturePub {
         html: RefCell<String>,
+        logos: RefCell<Vec<Vec<u8>>>,
     }
     impl AssetPublisher for CapturePub {
         fn publish(&self, token: &str, h: &[u8], _p: &[u8]) -> Result<String> {
@@ -390,6 +422,16 @@ mod tests {
             *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+            self.logos.borrow_mut().push(bytes.to_vec());
+            Ok(self.logo_url(mime))
+        }
     }
     struct FailPub;
     impl AssetPublisher for FailPub {
@@ -397,6 +439,15 @@ mod tests {
             Err(NigelError::Other("upload down".into()))
         }
         fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
+            Err(NigelError::Other("upload down".into()))
+        }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other("upload down".into()))
         }
     }
@@ -454,7 +505,7 @@ mod tests {
             &mail,
         )
         .unwrap();
-        assert!(url.starts_with("https://billing.example.com/i/"));
+        assert!(url.public_url.starts_with("https://billing.example.com/i/"));
         let inv = get_invoice(&conn, id).unwrap();
         assert_eq!(inv.status, "sent");
         assert_eq!(inv.stripe_payment_link_id.as_deref(), Some("pl_1"));
@@ -681,9 +732,7 @@ mod tests {
             create_calls: RefCell::new(0),
         };
         let mail = FakeMail::default();
-        let publisher = CapturePub {
-            html: RefCell::new(String::new()),
-        };
+        let publisher = CapturePub::default();
         let branding = Branding {
             company: "Bluepeak LLC",
             company_phone: "619.555.0123",
@@ -700,6 +749,226 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------------
+    // The letterhead logo as an object beside the page
+    // ---------------------------------------------------------------------
+
+    /// A real PNG: it has to decode, because the render seam only lets through
+    /// a logo both documents can draw, and only that logo is ever uploaded.
+    fn logo_uri() -> String {
+        crate::pdf::logo_uri(400, 60)
+    }
+
+    /// The bytes behind that URI, which is what the object should carry.
+    fn logo_bytes() -> Vec<u8> {
+        crate::invoicing::document::parse_logo(&logo_uri())
+            .unwrap()
+            .expect("a logo")
+            .bytes
+    }
+
+    fn letterhead(logo: &str) -> Branding<'_> {
+        Branding {
+            company: "Bluepeak LLC",
+            logo,
+            contact_email: "billing@example.test",
+            ..Branding::with_template(DEFAULT_TEMPLATE)
+        }
+    }
+
+    /// AC-1. The published page points at an object beside it, so a mail client
+    /// that displays remote images renders the mark. The bytes go up as their
+    /// own object in the same send, before the message leaves.
+    #[test]
+    fn a_send_publishes_the_logo_and_points_the_page_at_it() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let publisher = CapturePub::default();
+        let uri = logo_uri();
+
+        let outcome = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &letterhead(&uri),
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .unwrap();
+
+        assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
+        let logos = publisher.logos.borrow();
+        assert_eq!(logos.len(), 1, "the image went up as its own object");
+        assert_eq!(logos[0], logo_bytes());
+
+        let html = publisher.html.borrow();
+        assert!(
+            html.contains("src=\"https://billing.example.test/i/logo.png\""),
+            "the page fetches it: {html}"
+        );
+        assert!(
+            !html.contains("data:image/png;base64"),
+            "and does not carry it: {html}"
+        );
+    }
+
+    /// The whole reason for the content hash: the operator's mark is the same
+    /// bytes on every invoice, so it is one object rather than one per send.
+    #[test]
+    fn resending_the_same_letterhead_uploads_the_logo_once() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let publisher = CapturePub::default();
+        let uri = logo_uri();
+
+        for _ in 0..3 {
+            send_invoice(
+                &conn,
+                id,
+                "2026-08-04",
+                &letterhead(&uri),
+                &gw,
+                &publisher,
+                &mail,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(publisher.logos.borrow().len(), 1);
+        assert!(publisher
+            .html
+            .borrow()
+            .contains("src=\"https://billing.example.test/i/logo.png\""));
+    }
+
+    /// AC-2. A logo is decoration on a document about money. The upload failing
+    /// costs the page its remote image and nothing else — the invoice is
+    /// published, emailed and marked sent, and the page still shows the mark.
+    #[test]
+    fn a_failed_logo_upload_never_fails_the_send() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let publisher = LogoRefusingPub::default();
+        let uri = logo_uri();
+
+        let outcome = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &letterhead(&uri),
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .expect("the send goes through");
+
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "sent");
+        assert_eq!(*mail.sent.borrow(), 1);
+        assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
+        assert!(
+            outcome.warnings[0].contains("logo bucket is on fire"),
+            "the upstream's own words: {:?}",
+            outcome.warnings
+        );
+        let html = publisher.html.borrow();
+        assert!(
+            html.contains("data:image/png;base64"),
+            "the page falls back to carrying the bytes: {html}"
+        );
+    }
+
+    /// No logo configured is not a failure and is not an upload.
+    #[test]
+    fn a_letterhead_with_no_logo_publishes_nothing_extra() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let publisher = CapturePub::default();
+
+        let outcome = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &letterhead(""),
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .unwrap();
+
+        assert!(outcome.warnings.is_empty());
+        assert!(publisher.logos.borrow().is_empty());
+    }
+
+    /// A stored value neither document would draw is never uploaded either: the
+    /// render seam's verdict is what the publisher asks.
+    #[test]
+    fn an_unusable_logo_is_not_uploaded() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let publisher = CapturePub::default();
+
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &letterhead("data:image/png;base64,bm90IGEgcG5n"),
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .unwrap();
+
+        assert!(publisher.logos.borrow().is_empty());
+        assert!(!publisher.html.borrow().contains("<img"));
+    }
+
+    /// Publishes pages happily and refuses only the logo, which is the one
+    /// failure that must not reach the caller as an error.
+    #[derive(Default)]
+    struct LogoRefusingPub {
+        html: RefCell<String>,
+    }
+    impl AssetPublisher for LogoRefusingPub {
+        fn publish(&self, token: &str, h: &[u8], _p: &[u8]) -> Result<String> {
+            *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fn publish_page(&self, token: &str, h: &[u8]) -> Result<String> {
+            *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+            Err(NigelError::Other("r2 503: logo bucket is on fire".into()))
+        }
+    }
+
     #[test]
     fn send_renders_with_the_supplied_template() {
         let (_d, conn) = test_conn();
@@ -708,9 +977,7 @@ mod tests {
             create_calls: RefCell::new(0),
         };
         let mail = FakeMail::default();
-        let publisher = CapturePub {
-            html: RefCell::new(String::new()),
-        };
+        let publisher = CapturePub::default();
         let branding = Branding {
             company: "",
             contact_email: "billing@example.test",
@@ -788,6 +1055,17 @@ mod tests {
             ))
         }
         fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
+            Err(NigelError::Other(
+                "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
+            ))
+        }
+        fn logo_url(&self, mime: &str) -> String {
+            format!(
+                "https://billing.example.test/i/{}",
+                crate::invoicing::r2::logo_object(mime)
+            )
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
@@ -1014,7 +1292,7 @@ mod tests {
             &mail,
         )
         .unwrap();
-        assert!(url.starts_with("https://billing.example.com/i/"));
+        assert!(url.public_url.starts_with("https://billing.example.com/i/"));
 
         let (_d2, other) = test_conn();
         let second = seed(&other);

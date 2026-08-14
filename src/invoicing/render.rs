@@ -26,6 +26,25 @@ pub fn pay_button_for(invoice: &Invoice) -> PayButton<'_> {
     }
 }
 
+/// The stored logo both documents will actually draw, or `None`.
+///
+/// `parse_logo` is everything a check can establish without a decoder, and it
+/// holds in every build. `logo_is_embeddable` is the rest, and it only exists
+/// where the `pdf` feature brought a decoder in. A value that fails either is
+/// used by neither document, which is what stops a file the page would display
+/// and the PDF would refuse. Neither refusal is an error: a logo never fails an
+/// invoice.
+///
+/// Public because the verdict has to be reached **once**: the publisher asks it
+/// before uploading, so nothing goes into the bucket that the documents will not
+/// draw, and `render_invoice` asks it again on the same value.
+pub fn usable_logo(stored: &str) -> Option<Logo> {
+    let logo = parse_logo(stored).ok().flatten();
+    #[cfg(feature = "pdf")]
+    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    logo
+}
+
 /// Everything `invoice send` publishes for one invoice.
 pub struct RenderedInvoice {
     pub html: String,
@@ -52,26 +71,14 @@ pub fn render_invoice(
     let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
 
     // Whether there is a usable logo is decided **here**, once, and both
-    // documents are then rendered from that one answer.
-    //
-    // `parse_logo` is everything a check can establish without a decoder, and it
-    // holds in every build. `logo_is_embeddable` is the rest, and it only exists
-    // where the `pdf` feature brought a decoder in. A value that fails either is
-    // erased from the branding the page is rendered from, so the page is handed
-    // no logo rather than asked to reach the same verdict a second time — which
-    // is what stops a file the page would display and the PDF would refuse.
-    // Neither refusal is an error: a logo never fails an invoice.
-    let logo = parse_logo(branding.logo).ok().flatten();
-    #[cfg(feature = "pdf")]
-    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    // documents are then rendered from that one answer: a value that fails
+    // `usable_logo` is erased from the branding the page is rendered from, so
+    // the page is handed no logo rather than asked to reach the same verdict a
+    // second time.
+    let logo = usable_logo(branding.logo);
     let branding = &Branding {
         logo: if logo.is_some() { branding.logo } else { "" },
-        template: branding.template,
-        company: branding.company,
-        company_address: branding.company_address,
-        company_phone: branding.company_phone,
-        payment_instructions: branding.payment_instructions,
-        contact_email: branding.contact_email,
+        ..*branding
     };
 
     let html = render_invoice_html(branding, invoice, client, &items, &money, pay);
@@ -519,6 +526,7 @@ mod tests {
             company_address: "P.O. Box 1234\nSpringfield, CA 90001",
             company_phone: "619.555.0123",
             logo,
+            logo_url: None,
             payment_instructions,
             contact_email: "b@e.test",
         }
