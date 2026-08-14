@@ -619,7 +619,10 @@ struct SendResult {
     /// not be published beside the page, which leaves the page carrying it
     /// inline. Separate from `configWarnings` because it is not about a
     /// setting — nothing is misconfigured, an upload did not work.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// Always serialized, empty and all, because `configWarnings` beside it is:
+    /// one struct answering the same question two ways is how a client ends up
+    /// with an `undefined` where it expected a list.
     warnings: Vec<String>,
 }
 
@@ -2394,15 +2397,12 @@ mod tests {
                 .push(String::from_utf8(html.to_vec()).expect("utf-8"));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, bytes: &[u8], mime: &str) -> NigelResult<String> {
             self.logos.borrow_mut().push(bytes.to_vec());
-            Ok(self.logo_url(mime))
+            Ok(self.logo_url(bytes, mime))
         }
     }
 
@@ -2419,11 +2419,8 @@ mod tests {
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> NigelResult<String> {
             Err(NigelError::Other(

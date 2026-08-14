@@ -1200,9 +1200,9 @@ export interface SendResult {
   /**
    * What the send went ahead despite — a letterhead logo that could not be
    * published beside the page, which leaves the page carrying it inline.
-   * Absent when there is nothing to say.
+   * Always present; empty when there is nothing to say.
    */
-  warnings?: string[];
+  warnings: string[];
 }
 
 /** One invoice the gateway refused during a sync. */

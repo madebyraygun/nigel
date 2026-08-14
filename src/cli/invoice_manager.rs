@@ -3183,11 +3183,8 @@ mod tests {
                 *self.pages.borrow_mut() += 1;
                 Ok(format!("https://billing.example.test/i/{token}/index.html"))
             }
-            fn logo_url(&self, mime: &str) -> String {
-                format!(
-                    "https://billing.example.test/i/{}",
-                    crate::invoicing::r2::logo_object(mime)
-                )
+            fn public_base(&self) -> &str {
+                "https://billing.example.test/i"
             }
             fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
                 unreachable!("void publishes no logo")
@@ -3347,14 +3344,11 @@ mod tests {
             fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
                 Ok(format!("https://billing.example.com/i/{token}/index.html"))
             }
-            fn logo_url(&self, mime: &str) -> String {
-                format!(
-                    "https://billing.example.com/i/{}",
-                    crate::invoicing::r2::logo_object(mime)
-                )
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
             }
-            fn publish_logo(&self, _bytes: &[u8], mime: &str) -> Result<String> {
-                Ok(self.logo_url(mime))
+            fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+                Ok(self.logo_url(bytes, mime))
             }
         }
         struct FailPub;
@@ -3365,11 +3359,8 @@ mod tests {
             fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))
             }
-            fn logo_url(&self, mime: &str) -> String {
-                format!(
-                    "https://billing.example.com/i/{}",
-                    crate::invoicing::r2::logo_object(mime)
-                )
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
             }
             fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))

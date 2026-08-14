@@ -63,6 +63,30 @@ pub fn render_invoice(
     pay: PayButton<'_>,
     branding: &Branding<'_>,
 ) -> Result<RenderedInvoice> {
+    render_with_logo(
+        conn,
+        invoice,
+        client,
+        pay,
+        branding,
+        usable_logo(branding.logo).as_ref(),
+    )
+}
+
+/// The same seam with the logo verdict already reached.
+///
+/// `send` and a republish need it *before* they render — the object's address is
+/// derived from the bytes — and reaching it decodes the image, which is not work
+/// to do twice for one document. Everything else goes through
+/// [`render_invoice`], which reaches the verdict itself.
+pub fn render_with_logo(
+    conn: &Connection,
+    invoice: &Invoice,
+    client: &Client,
+    pay: PayButton<'_>,
+    branding: &Branding<'_>,
+    logo: Option<&Logo>,
+) -> Result<RenderedInvoice> {
     // Loaded here rather than passed in, so both callers get the same rows in
     // the same order — and, for the same reason, the money block is built here
     // rather than by whoever is rendering: every caller above the seam shows
@@ -70,12 +94,11 @@ pub fn render_invoice(
     let items = line_items(conn, invoice.id)?;
     let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
 
-    // Whether there is a usable logo is decided **here**, once, and both
-    // documents are then rendered from that one answer: a value that fails
+    // The verdict is applied **above both renderers**: a value that fails
     // `usable_logo` is erased from the branding the page is rendered from, so
     // the page is handed no logo rather than asked to reach the same verdict a
-    // second time.
-    let logo = usable_logo(branding.logo);
+    // second time — which is what stops a file the page would display and the
+    // PDF would refuse.
     let branding = &Branding {
         logo: if logo.is_some() { branding.logo } else { "" },
         ..*branding
@@ -94,7 +117,7 @@ pub fn render_invoice(
         invoice,
         client,
         &company,
-        logo.as_ref(),
+        logo,
         &items,
         &money,
         branding.payment_instructions,

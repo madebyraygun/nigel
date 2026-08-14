@@ -151,13 +151,27 @@ images renders.
 
 The stored value stays the `data:` URI. `company_logo` is the one source of
 truth and `parse_logo` the one validation path; the publisher derives the bytes
-from it. What is published is **one object for the whole installation**, at
-`i/logo.png` or `i/logo.jpg` under your `public_base_url` — not a copy per
+from it. What is published is **one object per distinct image**, named after its
+own content — `i/logo-1a2b3c4d.png` under your `public_base_url` — not a copy per
 invoice, because it is your own mark, it carries no client data, and a mail
 client fetches it once and caches it across every invoice you send. It is
 uploaded only when the bytes or the address differ from what is already up
 there; a content hash and that URL are recorded in the `published_logo` metadata
 key, so a send that changes nothing uploads nothing.
+
+**Published logo objects are never overwritten and never deleted.** Because the
+name is the content, changing your logo writes a *new* object and leaves the old
+one exactly where it is — so an invoice you sent last year still shows the mark
+it was sent with. A document cannot change after it has been delivered, and a
+page whose logo silently became your new brand would be a change to a document
+somebody has already filed. The cost is that old logo objects accumulate in the
+bucket, one per rebrand and at most 128 KiB each; they are load-bearing for the
+pages that point at them, so Nigel does not clean them up. Delete one only if you
+are certain no delivered invoice references it.
+
+Changing the logo in Settings takes effect on the *next* document published;
+**clearing** it clears the record too, so documents published afterwards carry no
+mark, while the objects behind already-delivered pages stay put.
 
 **A logo that cannot be published never fails a send.** If the upload is
 refused, that page falls back to carrying the image inline exactly as a preview
@@ -172,11 +186,12 @@ anything. It is the third difference between a previewed and a published page,
 beside the Pay placeholder on an unsent draft and the absent PDF in a build
 without the `pdf` feature.
 
-A voided invoice's replacement page keeps the letterhead, pointing at the same
-published object — the notice is still your page, and an invoice that was
+A voided invoice's replacement page keeps the letterhead, pointing at the object
+your last send published — the notice is still your page, and an invoice that was
 wearing a letterhead a moment ago should not lose it on the way to saying it is
-cancelled. It shows no image at all on an installation that never published
-one, so the notice can never carry a broken link.
+cancelled. It shows no image at all on an installation that never published one,
+or when the recorded address is not under your current `public_base_url` (you
+moved buckets), so the notice can never carry a broken link.
 
 `payment_instructions` is your text, printed under the foot rule on **both**
 documents, one line per line, with a `Payment` heading. Set it to your bank
@@ -570,13 +585,13 @@ One command does the whole publish:
 2. Renders the invoice to HTML and PDF — the same `render_invoice` seam
    `nigel invoice preview` writes locally, so a preview cannot disagree with
    what is published.
-3. Uploads both to R2 as `i/{token}/index.html` and `i/{token}/invoice.pdf`, where
-   `token` is the invoice's random 16-character identifier, plus the letterhead
-   logo at `i/logo.png` (or `.jpg`) if it is not already up there — one object
-   for the installation, beside the token directories rather than inside one.
-   The address Nigel hands out names the `index.html` object itself — see
-   "Hosting" below. A logo the upload refuses is a warning, never a failed
-   send.
+3. Uploads the letterhead logo to `i/logo-<hash>.png` if that exact image is not
+   already up there, then both documents to `i/{token}/index.html` and
+   `i/{token}/invoice.pdf`, where `token` is the invoice's random 16-character
+   identifier. The logo goes up only after the render has succeeded, so a broken
+   template costs nothing; a logo the upload refuses is a warning, never a failed
+   send. The address Nigel hands out names the `index.html` object itself — see
+   "Hosting" below.
 4. Emails the client through Mailgun — HTML body, PDF attached, subject
    `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
    is set. The name comes from the same setting the dashboard's settings screen
@@ -1220,10 +1235,12 @@ with that mapping — Nigel writes keys under `i/`, and the base URL only tells 
 what public address that prefix answers on.
 
 The letterhead logo is the one object outside a token directory: it lives at
-`i/logo.png` (or `i/logo.jpg`, following the image's type), so a published page
-fetches it from `https://billing.example.com/i/logo.png`. It is your own mark
-and carries no client data, which is what makes one shared object the right
-shape — nothing about it says which invoice, or whose, is being looked at.
+`i/logo-<hash>.png` (or `.jpg`, following the image's type), so a published page
+fetches it from `https://billing.example.com/i/logo-1a2b3c4d.png`. It is your own
+mark and carries no client data, which is what makes one shared object the right
+shape — nothing about it says which invoice, or whose, is being looked at. The
+name is the content, so these objects are immutable: a rebrand adds one rather
+than replacing one, and nothing Nigel does removes them.
 
 Nigel names the file, not its directory: every link it prints, returns and
 reports ends in `/index.html`. A plain R2 custom domain serves objects by key

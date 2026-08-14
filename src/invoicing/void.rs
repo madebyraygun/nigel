@@ -149,8 +149,11 @@ pub fn void_invoice_with_teardown<G: PaymentGateway, P: AssetPublisher>(
     let invoice = get_invoice(conn, invoice_id)?;
     // The letterhead a send published, read back rather than rebuilt: void needs
     // no configuration and uploads nothing of its own, so the notice can only
-    // point at an object that is known to be there.
-    let logo = crate::invoicing::logo::published_logo_url(conn);
+    // point at an object that is known to be there — and only while this
+    // installation still serves the address it was published to.
+    let logo = publisher
+        .map(|publisher| publisher.public_base())
+        .and_then(|base| crate::invoicing::logo::published_logo_url(conn, base));
     void_invoice(conn, invoice_id, today)?;
     Ok(teardown(&invoice, logo.as_deref(), gateway, publisher))
 }
@@ -285,11 +288,8 @@ mod tests {
                 .push((token.to_string(), String::from_utf8(html.to_vec()).unwrap()));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             unreachable!("void publishes no logo; it points at the one a send left")
@@ -306,11 +306,8 @@ mod tests {
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             unreachable!("void publishes no logo; it points at the one a send left")
@@ -355,13 +352,7 @@ mod tests {
     fn a_voids_republished_page_keeps_the_letterhead_logo() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        // What a send leaves behind: the fingerprint and the address.
-        crate::db::set_metadata(
-            &conn,
-            crate::invoicing::logo::PUBLISHED_LOGO_KEY,
-            "deadbeef https://billing.example.test/i/logo.png",
-        )
-        .unwrap();
+        record_published_logo(&conn, "https://billing.example.test/i/logo-1a2b3c4d.png");
         let gateway = FakeGw::default();
         let publisher = FakePub::default();
 
@@ -372,11 +363,71 @@ mod tests {
         assert!(
             pages[0]
                 .1
-                .contains("<img src=\"https://billing.example.test/i/logo.png\""),
+                .contains("<img src=\"https://billing.example.test/i/logo-1a2b3c4d.png\""),
             "got: {}",
             pages[0].1
         );
         assert!(pages[0].1.contains("voided"), "got: {}", pages[0].1);
+    }
+
+    /// The record a send leaves behind: the fingerprint and the address.
+    fn record_published_logo(conn: &Connection, url: &str) {
+        crate::db::set_metadata(
+            conn,
+            crate::invoicing::logo::PUBLISHED_LOGO_KEY,
+            &format!("deadbeef {url}"),
+        )
+        .unwrap();
+    }
+
+    /// **A bucket move must not put a decommissioned domain on a page.** The
+    /// recorded address belongs to a host this installation no longer serves, so
+    /// the notice omits the image rather than pointing at it.
+    #[test]
+    fn a_void_after_a_bucket_move_omits_the_logo() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        record_published_logo(&conn, "https://old-bucket.example.test/i/logo-1a2b3c4d.png");
+        let publisher = FakePub::default();
+
+        void_invoice_with_teardown(
+            &conn,
+            id,
+            "2026-08-06",
+            Some(&FakeGw::default()),
+            Some(&publisher),
+        )
+        .expect("voids");
+
+        let pages = publisher.pages.borrow();
+        assert!(
+            !pages[0].1.contains("<img"),
+            "the old bucket is not this installation's to link to: {}",
+            pages[0].1
+        );
+        assert!(pages[0].1.contains("voided"), "the notice still stands");
+    }
+
+    /// **Clearing the logo clears the record**, so the next document published
+    /// carries none — while the objects behind already-delivered pages stay put.
+    #[test]
+    fn a_void_after_the_logo_was_cleared_carries_none() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        record_published_logo(&conn, "https://billing.example.test/i/logo-1a2b3c4d.png");
+        crate::invoicing::logo::set_company_logo(&conn, "").unwrap();
+        let publisher = FakePub::default();
+
+        void_invoice_with_teardown(
+            &conn,
+            id,
+            "2026-08-06",
+            Some(&FakeGw::default()),
+            Some(&publisher),
+        )
+        .expect("voids");
+
+        assert!(!publisher.pages.borrow()[0].1.contains("<img"));
     }
 
     /// An installation that never published a logo gets a notice with no image

@@ -882,7 +882,7 @@ separate field for what the send went ahead *despite*: today, a letterhead logo
 that could not be published beside the page, which leaves that page carrying the
 image inline rather than fetching it. Nothing is misconfigured in that case — an
 upload did not work — and the invoice went out either way, so it is a 200 with a
-sentence, never a failure. Both are omitted when empty.
+sentence, never a failure. Both are always present, empty arrays and all.
 
 A failure says where it stopped, and answers with the status that step's failure
 calls for:

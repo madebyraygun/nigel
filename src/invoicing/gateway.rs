@@ -37,26 +37,56 @@ pub trait AssetPublisher {
     /// have filed rather than answer it honestly.
     fn publish_page(&self, token: &str, html: &[u8]) -> Result<String>;
 
-    /// Where the letterhead logo is addressed, for an image of this type.
+    /// The address every published object is served under — `public_base_url`.
     ///
-    /// Pure, and on the trait rather than derived by a caller, because only the
-    /// publisher knows the base its objects are served under — and deciding
-    /// whether the object up there is still the right one means comparing the
-    /// address as well as the bytes. An operator who repoints `public_base_url`
-    /// at a different bucket has a stale URL, not a stale image.
-    fn logo_url(&self, mime: &str) -> String;
+    /// On the trait because a *recorded* address is only usable while this
+    /// installation still serves it. After a bucket move the URL a page was
+    /// published with names a host nobody is answering, and a page being written
+    /// now must omit the image rather than point at it.
+    fn public_base(&self) -> &str;
+
+    /// Where these bytes are addressed once published.
+    ///
+    /// Content-addressed, so the same image always answers the same URL and a
+    /// different one never collides with it — which is what makes a published
+    /// object safe to treat as immutable. Pure, so a page can be rendered
+    /// against this address before the object exists; that is what lets the
+    /// upload wait until the render has succeeded.
+    fn logo_url(&self, bytes: &[u8], mime: &str) -> String {
+        crate::invoicing::r2::logo_public_url(self.public_base(), bytes, mime)
+    }
 
     /// Put the letterhead logo beside the pages as its own object, answering
     /// [`AssetPublisher::logo_url`].
     ///
-    /// **One** object for the whole installation at a stable key, not one per
-    /// invoice: it is the operator's own mark, it carries no client data, and a
-    /// mail client that refuses `data:` URIs — Gmail — fetches it once and
-    /// caches it across every invoice. Whether to call it at all is the caller's
-    /// decision: [`crate::invoicing::logo`] skips it when the bytes already up
-    /// there are these, so a send that changes nothing uploads nothing.
+    /// **One object per distinct image**, not one per invoice: it is the
+    /// operator's own mark, it carries no client data, and a mail client that
+    /// refuses `data:` URIs — Gmail — fetches it once and caches it across every
+    /// invoice. Whether to call it at all is the caller's decision:
+    /// [`crate::invoicing::logo`] skips it when the object is already up there.
+    ///
+    /// Never a delete and never an overwrite of *different* bytes. Pages that
+    /// have already been delivered point at these objects, and a delivered
+    /// document may not change after delivery.
     fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String>;
 }
+
+/// The two logo methods a fake publisher that simply succeeds needs, so the
+/// dozen fakes across this crate do not each spell out the object layout — and
+/// so a change to it lands in one place rather than fourteen.
+#[cfg(test)]
+macro_rules! fake_logo_publishing {
+    ($base:expr) => {
+        fn public_base(&self) -> &str {
+            $base
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> $crate::error::Result<String> {
+            Ok(self.logo_url(bytes, mime))
+        }
+    };
+}
+#[cfg(test)]
+pub(crate) use fake_logo_publishing;
 
 pub trait Mailer {
     /// One message to the billing contact with every other contact copied.
@@ -86,15 +116,7 @@ mod tests {
         fn publish_page(&self, token: &str, _h: &[u8]) -> crate::error::Result<String> {
             Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.com/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
-        }
-        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> crate::error::Result<String> {
-            Ok(self.logo_url(mime))
-        }
+        fake_logo_publishing!("https://billing.example.com/i");
     }
 
     #[test]

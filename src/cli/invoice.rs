@@ -1237,14 +1237,11 @@ mod tests {
                 .push(String::from_utf8(html.to_vec()).unwrap());
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
-        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> Result<String> {
-            Ok(self.logo_url(mime))
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+            Ok(self.logo_url(bytes, mime))
         }
     }
 

@@ -5,7 +5,8 @@ use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{ensure_not_void, get_invoice, mark_published, set_payment_link};
-use crate::invoicing::render::{pay_button_for, render_invoice, usable_logo};
+use crate::invoicing::logo;
+use crate::invoicing::render::{pay_button_for, render_with_logo, usable_logo, RenderedInvoice};
 use crate::invoicing::render_html::Branding;
 use crate::models::Client;
 
@@ -264,27 +265,53 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
 
     let pay_url = invoice.stripe_payment_link_url.clone();
 
-    // Before the render, because the page has to carry the address: the object
-    // is what makes the logo survive a mail client that strips `data:` URIs, and
-    // it goes up once per distinct image rather than once per invoice. It can
-    // never fail a send — a failure leaves `url` unset and the page inlines the
-    // bytes exactly as a preview does.
-    let hosted = crate::invoicing::logo::publish_letterhead_logo(
-        conn,
-        usable_logo(branding.logo).as_ref(),
-        publisher,
-    );
-    let branding = &branding.with_logo_url(hosted.url.as_deref());
-
+    // The logo verdict is reached once for this document: the address the page
+    // points at is derived from the bytes, and reaching the verdict decodes the
+    // image. Both renders below share it.
+    let logo = usable_logo(branding.logo);
+    let pending = logo::pending(logo.as_ref(), publisher);
     // The same rule preview and republish apply: a settled or cancelled invoice
     // gets no working Pay button, which is what makes re-sending a paid invoice
     // publish an honest page.
-    let rendered = render_invoice(conn, &invoice, &client, pay_button_for(&invoice), branding)
-        .map_err(|e| (Render, e))?;
-    let pdf = rendered
+    let render = |branding: &Branding<'_>| {
+        render_with_logo(
+            conn,
+            &invoice,
+            &client,
+            pay_button_for(&invoice),
+            branding,
+            logo.as_ref(),
+        )
+    };
+
+    // The address is pure, so the page can be rendered against it before the
+    // object exists — which is what lets the upload wait until the render has
+    // succeeded, below.
+    let mut rendered = render(&branding.with_logo_url(pending.url())).map_err(|e| (Render, e))?;
+    let mut pdf = rendered
         .pdf
+        .take()
         .ok_or((Render, NigelError::Other(PDF_REQUIRED_MESSAGE.into())))?;
     trace.done(Render, StepOutcome::Ok);
+
+    // Only now: a broken custom template, or a build that cannot make the PDF,
+    // costs no object in the bucket at all.
+    let logo_warning = logo::publish(conn, &pending, publisher);
+    if logo_warning.is_some() {
+        // A published page may only point at an object that is there, so this
+        // one falls back to carrying the bytes inline — exactly what a preview
+        // carries. The template rendered a moment ago, so this is belt and
+        // braces; if it somehow will not, the hosted address stands rather than
+        // the send losing its attachment.
+        if let Ok(RenderedInvoice {
+            html,
+            pdf: Some(inline),
+        }) = render(branding)
+        {
+            rendered.html = html;
+            pdf = inline;
+        }
+    }
 
     let public_url = publisher
         .publish(&invoice.token, rendered.html.as_bytes(), &pdf)
@@ -317,7 +344,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         payment_link_url: pay_url,
         status,
         steps: std::mem::take(&mut trace.steps),
-        warnings: hosted.warning.into_iter().collect(),
+        warnings: logo_warning.into_iter().collect(),
     })
 }
 
@@ -347,6 +374,7 @@ mod tests {
     use crate::db::{get_connection, init_db};
     use crate::error::{NigelError, Result};
     use crate::invoicing::clients::add_client;
+    use crate::invoicing::gateway::fake_logo_publishing;
     use crate::invoicing::gateway::{
         AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
     };
@@ -398,15 +426,7 @@ mod tests {
         fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
             Ok(format!("https://billing.example.com/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.com/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
-        }
-        fn publish_logo(&self, _bytes: &[u8], mime: &str) -> Result<String> {
-            Ok(self.logo_url(mime))
-        }
+        fake_logo_publishing!("https://billing.example.com/i");
     }
     #[derive(Default)]
     struct CapturePub {
@@ -422,15 +442,12 @@ mod tests {
             *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
             self.logos.borrow_mut().push(bytes.to_vec());
-            Ok(self.logo_url(mime))
+            Ok(self.logo_url(bytes, mime))
         }
     }
     struct FailPub;
@@ -441,11 +458,8 @@ mod tests {
         fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
             Err(NigelError::Other("upload down".into()))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other("upload down".into()))
@@ -806,10 +820,11 @@ mod tests {
         assert_eq!(logos.len(), 1, "the image went up as its own object");
         assert_eq!(logos[0], logo_bytes());
 
+        let hosted = publisher.logo_url(&logo_bytes(), "image/png");
         let html = publisher.html.borrow();
         assert!(
-            html.contains("src=\"https://billing.example.test/i/logo.png\""),
-            "the page fetches it: {html}"
+            html.contains(&format!("src=\"{hosted}\"")),
+            "the page fetches it from {hosted}: {html}"
         );
         assert!(
             !html.contains("data:image/png;base64"),
@@ -844,10 +859,11 @@ mod tests {
         }
 
         assert_eq!(publisher.logos.borrow().len(), 1);
+        let hosted = publisher.logo_url(&logo_bytes(), "image/png");
         assert!(publisher
             .html
             .borrow()
-            .contains("src=\"https://billing.example.test/i/logo.png\""));
+            .contains(&format!("src=\"{hosted}\"")));
     }
 
     /// AC-2. A logo is decoration on a document about money. The upload failing
@@ -958,11 +974,8 @@ mod tests {
             *self.html.borrow_mut() = String::from_utf8(h.to_vec()).unwrap();
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other("r2 503: logo bucket is on fire".into()))
@@ -1059,11 +1072,8 @@ mod tests {
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
         }
-        fn logo_url(&self, mime: &str) -> String {
-            format!(
-                "https://billing.example.test/i/{}",
-                crate::invoicing::r2::logo_object(mime)
-            )
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
         }
         fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other(

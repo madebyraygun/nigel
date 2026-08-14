@@ -17,23 +17,47 @@ pub const PAGE_OBJECT: &str = "index.html";
 /// The PDF beside it, kept next to `PAGE_OBJECT` so the two keys are named once.
 pub const PDF_OBJECT: &str = "invoice.pdf";
 
-/// The letterhead logo's object name, by image type.
+/// How much of the content hash names the object. Eight hex characters is 32
+/// bits over the handful of logos one business ever has — a collision would
+/// need two images whose SHA-256 agrees in its first four bytes, and the whole
+/// hash is compared before an upload is skipped, so a collision costs a
+/// redundant upload rather than a wrong picture.
+const LOGO_FINGERPRINT_CHARS: usize = 8;
+
+/// The letterhead logo's object name for these bytes.
 ///
-/// One object for the whole installation, above the per-token directories: it
-/// is the operator's own mark, it carries no client data, and a copy per invoice
-/// would write the same bytes again for every invoice ever sent. The extension
-/// follows the type so a static host answers with the right `Content-Type`
-/// whatever it was told at upload.
-pub fn logo_object(mime: &str) -> &'static str {
+/// **Content-addressed, and therefore immutable.** A published object is never
+/// overwritten and never deleted: an invoice that was delivered pointing at
+/// `logo-1a2b3c4d.png` keeps showing the mark it was sent with, and a rebrand
+/// simply writes a different key. A mutable `logo.png` would have rewritten
+/// every page ever delivered, which is not a cache invalidation problem but a
+/// change to documents that have already gone out.
+///
+/// The extension follows the image type, so a static host answers with the
+/// right `Content-Type` whatever it was told at upload — and because the type
+/// is part of the name, a PNG replaced by a JPEG is a new object rather than a
+/// stale one under the wrong extension.
+pub fn logo_object(bytes: &[u8], mime: &str) -> String {
+    let fingerprint = crate::invoicing::logo::fingerprint(bytes);
+    format!(
+        "logo-{}.{}",
+        &fingerprint[..LOGO_FINGERPRINT_CHARS],
+        logo_extension(mime)
+    )
+}
+
+fn logo_extension(mime: &str) -> &'static str {
     match mime {
-        "image/jpeg" => "logo.jpg",
-        _ => "logo.png",
+        "image/jpeg" => "jpg",
+        _ => "png",
     }
 }
 
-/// The logo's key, beside the token directories rather than inside one.
-pub fn logo_key(mime: &str) -> String {
-    format!("i/{}", logo_object(mime))
+/// The logo's key, beside the token directories rather than inside one: it is
+/// the operator's own mark and carries no client data, so a copy per invoice
+/// would write the same bytes again for every invoice ever sent.
+pub fn logo_key(bytes: &[u8], mime: &str) -> String {
+    format!("i/{}", logo_object(bytes, mime))
 }
 
 pub fn public_url(public_base_url: &str, token: &str) -> String {
@@ -46,11 +70,15 @@ pub fn public_url(public_base_url: &str, token: &str) -> String {
 
 /// The address the letterhead logo is served at — what a published page puts in
 /// its `<img src>`, and what an email client fetches.
-pub fn logo_public_url(public_base_url: &str, mime: &str) -> String {
+///
+/// Pure, and derived from the bytes: a page can be rendered against this address
+/// before the object exists, which is what lets the upload wait until the render
+/// has succeeded.
+pub fn logo_public_url(public_base_url: &str, bytes: &[u8], mime: &str) -> String {
     format!(
         "{}/{}",
         public_base_url.trim_end_matches('/'),
-        logo_object(mime)
+        logo_object(bytes, mime)
     )
 }
 
@@ -192,13 +220,13 @@ impl AssetPublisher for R2Publisher {
         Ok(public_url(&self.public_base_url, token))
     }
 
-    fn logo_url(&self, mime: &str) -> String {
-        logo_public_url(&self.public_base_url, mime)
+    fn public_base(&self) -> &str {
+        &self.public_base_url
     }
 
     fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
-        self.put(&logo_key(mime), bytes, mime)?;
-        Ok(self.logo_url(mime))
+        self.put(&logo_key(bytes, mime), bytes, mime)?;
+        Ok(self.logo_url(bytes, mime))
     }
 }
 
@@ -235,26 +263,57 @@ mod tests {
     }
 
     /// The logo sits beside the token directories, not inside one: one object
-    /// for the installation, and the address a page carries is the key.
+    /// per distinct image for the whole installation, carrying no client data.
     #[test]
     fn the_logo_is_one_object_above_the_token_directories() {
-        assert_eq!(logo_key("image/png"), "i/logo.png");
-        assert_eq!(logo_key("image/jpeg"), "i/logo.jpg");
+        let key = logo_key(b"the mark", "image/png");
+        assert!(key.starts_with("i/logo-"), "got: {key}");
+        assert!(key.ends_with(".png"), "got: {key}");
         assert!(
-            !logo_key("image/png").contains("abc"),
+            !key.contains("abc"),
             "a per-token copy would write the same bytes for every invoice"
+        );
+        assert!(logo_key(b"the mark", "image/jpeg").ends_with(".jpg"));
+    }
+
+    /// **The key is the content, so a published object is immutable.** A rebrand
+    /// writes a different object and leaves the one an already-delivered invoice
+    /// points at exactly where it is.
+    #[test]
+    fn a_different_image_gets_a_different_object() {
+        assert_ne!(
+            logo_key(b"the old mark", "image/png"),
+            logo_key(b"the new mark", "image/png"),
+        );
+        assert_eq!(
+            logo_key(b"the mark", "image/png"),
+            logo_key(b"the mark", "image/png"),
+            "the same bytes must always answer the same address"
+        );
+    }
+
+    /// The type is part of the name, so a PNG replaced by a JPEG is a new
+    /// object rather than a stale one under the wrong extension.
+    #[test]
+    fn the_same_bytes_under_a_different_type_are_a_different_object() {
+        assert_ne!(
+            logo_key(b"the mark", "image/png"),
+            logo_key(b"the mark", "image/jpeg"),
         );
     }
 
     #[test]
     fn the_logos_address_and_its_key_name_the_same_object() {
         for mime in ["image/png", "image/jpeg"] {
-            let url = logo_public_url("https://billing.example.com/i", mime);
-            assert!(url.ends_with(&logo_key(mime)), "drifted: {url}");
+            let url = logo_public_url("https://billing.example.com/i", b"the mark", mime);
+            assert!(
+                url.ends_with(&logo_key(b"the mark", mime)),
+                "drifted: {url}"
+            );
         }
         assert_eq!(
-            logo_public_url("https://billing.example.com/i/", "image/png"),
-            "https://billing.example.com/i/logo.png"
+            logo_public_url("https://billing.example.com/i/", b"the mark", "image/png"),
+            logo_public_url("https://billing.example.com/i", b"the mark", "image/png"),
         );
     }
 
