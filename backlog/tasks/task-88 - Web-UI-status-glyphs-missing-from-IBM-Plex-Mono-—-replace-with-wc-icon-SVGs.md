@@ -1,11 +1,11 @@
 ---
 id: TASK-88
 title: 'Web UI: status glyphs missing from IBM Plex Mono — replace with wc-icon-* SVGs'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 21:23'
-updated_date: '2026-08-14 17:57'
+updated_date: '2026-08-14 18:20'
 labels:
   - web
   - ui
