@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
 import { NIGEL_PALETTE, NIGEL_PALETTE_INK } from '../src/tokens/gradient.js';
+import { contrast, resolveToken, type Mode } from './token-resolution.js';
 
 /**
  * The brand palette is pastel, which is exactly the failure mode this guards:
@@ -12,30 +13,6 @@ import { NIGEL_PALETTE, NIGEL_PALETTE_INK } from '../src/tokens/gradient.js';
 const AA_NORMAL = 4.5;
 /** WCAG 1.4.11: non-text content — a chart bar, a swatch, an icon. */
 const AA_GRAPHIC = 3;
-
-function channel(hex: string): [number, number, number] {
-  const v = hex.replace('#', '');
-  return [
-    parseInt(v.slice(0, 2), 16),
-    parseInt(v.slice(2, 4), 16),
-    parseInt(v.slice(4, 6), 16),
-  ];
-}
-
-function relativeLuminance(hex: string): number {
-  const srgb = channel(hex).map((c) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
-}
-
-function contrast(a: string, b: string): number {
-  const la = relativeLuminance(a);
-  const lb = relativeLuminance(b);
-  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
-  return (hi + 0.05) / (lo + 0.05);
-}
 
 /**
  * Pull a token's value out of the composed sheet. `occurrence` selects between
@@ -155,5 +132,36 @@ describe('the wordmark ramp is legible on the surface it is drawn on', () => {
     for (const stop of NIGEL_PALETTE_INK) {
       expect(NIGEL_PALETTE).not.toContain(stop);
     }
+  });
+});
+
+/**
+ * A variant button is a block of colour with a label on it, and the label's
+ * token is chosen by the family rather than by the surface underneath — so
+ * each `on` has to clear AA against the `fill` it is paired with, in both
+ * modes. `resolveToken` follows the family through to the hex it ends at,
+ * which is the only way to ask this of a sheet written in indirection.
+ */
+describe.each<Mode>(['light', 'dark'])('%s mode variant families are readable', (mode) => {
+  const FAMILIES = ['neutral', 'brand', 'danger', 'success', 'warning'] as const;
+  const PAIRINGS = ['loud', 'normal', 'quiet'] as const;
+
+  it.each(
+    FAMILIES.flatMap((family) =>
+      PAIRINGS.map((weight) => [`${family} ${weight}`, family, weight] as const),
+    ),
+  )('%s: the label clears AA on its fill', (_label, family, weight) => {
+    const on = resolveToken(`--wa-color-${family}-on-${weight}`, mode);
+    const fill = resolveToken(`--wa-color-${family}-fill-${weight}`, mode);
+    expect(contrast(on, fill)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each(FAMILIES)('%s: the loud border is visible against the app canvas', (family) => {
+    // WCAG 1.4.11 again: an outlined button's border is the only thing
+    // separating it from the page, so it owes 3:1 rather than 4.5:1.
+    const border = resolveToken(`--wa-color-${family}-border-loud`, mode);
+    expect(contrast(border, resolveToken('--wa-color-bg', mode))).toBeGreaterThanOrEqual(
+      AA_GRAPHIC,
+    );
   });
 });

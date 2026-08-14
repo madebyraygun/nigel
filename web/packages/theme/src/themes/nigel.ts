@@ -1,6 +1,6 @@
 import { css } from 'lit';
 import { colorCss, colorDarkCss } from '../tokens/color.js';
-import { gradientCss } from '../tokens/gradient.js';
+import { brandCycleKeyframes, gradientCss } from '../tokens/gradient.js';
 import { typographyCss } from '../tokens/typography.js';
 import { spacingCss } from '../tokens/spacing.js';
 import { radiusCss } from '../tokens/radius.js';
@@ -33,6 +33,7 @@ export const nigelTheme = css`
   ${typographyCss}
   ${spacingCss}
   ${gradientCss}
+  ${brandCycleKeyframes}
   ${radiusCss}
   ${shadowCss}
   ${motionCss}

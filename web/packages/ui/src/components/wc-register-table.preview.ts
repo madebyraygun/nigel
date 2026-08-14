@@ -76,6 +76,12 @@ const widestRow: RegisterTableRow[] = [
   },
 ];
 
+/** More rows than any sensible window shows, so the scroller has work to do. */
+const longRegister: RegisterTableRow[] = Array.from({ length: 32 }, (_, index) => {
+  const base = rows[index % rows.length] as RegisterTableRow;
+  return { ...base, id: 1000 + index };
+});
+
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
   { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
@@ -83,7 +89,7 @@ const categories: CategoryOption[] = [
   { id: 30, name: 'Meals', categoryType: 'expense' },
 ];
 
-const preview: Preview = {
+const preview = {
   id: 'wc-register-table',
   title: 'Register table',
   group: 'Data',
@@ -113,6 +119,21 @@ const preview: Preview = {
           .total=${-128450.75}
           footer-note="1 of 1 row"
         ></wc-register-table>
+      `,
+    },
+    {
+      name: 'filling-its-parent',
+      render: () => html`
+        <div style="display: flex; flex-direction: column; height: 18rem">
+          <wc-register-table
+            fill
+            .rows=${longRegister}
+            .categories=${categories}
+            .selectedId=${1000}
+            .total=${8281.51}
+            footer-note="32 of 1,872 rows"
+          ></wc-register-table>
+        </div>
       `,
     },
     {
@@ -184,6 +205,6 @@ const preview: Preview = {
       `,
     },
   ],
-};
+} satisfies Preview;
 
 export default preview;

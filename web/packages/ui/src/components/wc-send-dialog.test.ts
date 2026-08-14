@@ -3,7 +3,13 @@ import './wc-send-dialog.js';
 import { WcSendDialog, type SendStepView } from './wc-send-dialog.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { describeControlsAdoption } from '../../preview/controls-suite.js';
+import { iconSvg } from '../__tests__/settle.js';
 import preview from './wc-send-dialog.preview.js';
+
+/** The component's own sheet, for the rules only layout can express. */
+function styles(): string {
+  return [WcSendDialog.styles].flat().map(String).join('\n');
+}
 
 const STEPS: SendStepView[] = [
   { step: 'config', label: 'Reading the invoicing settings', state: 'ok' },
@@ -84,12 +90,96 @@ describe('wc-send-dialog', () => {
     ]);
   });
 
-  it('gives each step a word beside its glyph', async () => {
-    // The glyph is decoration; "✗" announces as nothing useful.
+  it('gives each step a word beside its mark', async () => {
+    // The mark is decoration; a cross announces as nothing useful.
     const el = await mount({ phase: 'failed', steps: STEPS });
     const first = el.shadowRoot?.querySelector('[data-step="config"]');
-    expect(first?.querySelector('.glyph')?.getAttribute('aria-hidden')).toBe('true');
+    const svg = await iconSvg(first?.querySelector('.mark'));
+
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
     expect(first?.querySelector('.sr-only')?.textContent).toContain('done');
+  });
+
+  it('marks each state with an icon rather than a character', async () => {
+    // `⟳` and `✗` are not in IBM Plex Mono, so as text the trace mixed the
+    // app's face with whatever fallback the browser found, line by line.
+    const el = await mount({ phase: 'failed', steps: STEPS });
+    const marks = [...(el.shadowRoot?.querySelectorAll('[data-step] .mark') ?? [])].map(
+      (node) => node.tagName.toLowerCase(),
+    );
+
+    expect(marks).toEqual([
+      'wc-icon-check',
+      'wc-icon-check',
+      'wc-icon-close',
+      'wc-icon-dot',
+    ]);
+    expect(el.shadowRoot?.querySelector('[data-steps]')?.textContent).not.toMatch(
+      /[✓✗⟳·]/,
+    );
+  });
+
+  it('keeps the marks it already drew as the trace advances', async () => {
+    // A send polls, so the trace re-renders on every tick. The marks are
+    // templates, so Lit updates them in place; rebuilding each element would
+    // re-upgrade custom elements the operator is watching.
+    const el = await mount({ phase: 'sending', steps: STEPS });
+    const before = [...(el.shadowRoot?.querySelectorAll('[data-step] .mark') ?? [])];
+
+    el.steps = STEPS.map((step) =>
+      step.step === 'email' ? { ...step, state: 'running' as const } : step,
+    );
+    await el.updateComplete;
+    const after = [...(el.shadowRoot?.querySelectorAll('[data-step] .mark') ?? [])];
+
+    // The three unchanged steps keep their element; only the one that moved
+    // from pending to running is swapped for a different mark.
+    expect(after.slice(0, 3)).toEqual(before.slice(0, 3));
+    expect(after[3].tagName.toLowerCase()).toBe('wc-icon-refresh');
+  });
+
+  it('sizes each mark to the trace’s own type rather than to the icon token', async () => {
+    const el = await mount({ phase: 'failed', steps: STEPS });
+    const mark = el.shadowRoot?.querySelector('[data-step] .mark');
+    expect(mark?.hasAttribute('inline')).toBe(true);
+    expect(styles()).not.toContain('--nc-icon-size');
+  });
+
+  describe('a step label long enough to wrap', () => {
+    const LONG: SendStepView[] = [
+      { step: 'config', label: 'Reading the invoicing settings', state: 'ok' },
+      {
+        step: 'publish',
+        label:
+          'Publishing the rendered invoice page and its PDF attachment to the configured R2 bucket',
+        state: 'running',
+      },
+    ];
+
+    it('renders one mark, first in its own row', async () => {
+      const el = await mount({ phase: 'sending', steps: LONG });
+      const row = el.shadowRoot?.querySelector('[data-step="publish"]');
+
+      expect(row?.querySelectorAll('.mark')).toHaveLength(1);
+      expect(row?.firstElementChild?.classList.contains('mark')).toBe(true);
+    });
+
+    it('puts the mark on the first line of the label, not between its two', () => {
+      // Centring the row would float the mark between a wrapped label's lines
+      // and leave it out of line with its single-line neighbours. The row
+      // aligns to its start instead, and the mark drops by half the leading —
+      // where a 1em mark sits in a line box of this height, wrapped or not.
+      const css = styles();
+      expect(css).toContain('align-items: flex-start');
+      expect(css).toContain('align-self: flex-start');
+
+      const lineHeight = /--nc-step-line-height:\s*([\d.]+)/.exec(css)?.[1];
+      expect(lineHeight, 'the row height the offset is derived from').toBeTruthy();
+      expect(css).toContain(`line-height: var(--nc-step-line-height)`);
+      expect(css).toContain(
+        'margin-block-start: calc((var(--nc-step-line-height) - 1) / 2 * 1em)',
+      );
+    });
   });
 
   it('shows the upstream sentence verbatim under our own headline', async () => {

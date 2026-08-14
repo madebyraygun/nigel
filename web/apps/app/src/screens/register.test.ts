@@ -370,4 +370,9 @@ describe('register screen', () => {
     const { el } = await mount(client(), 'account=BofA Checking');
     expect(table(el).showAccount).toBe(false);
   });
+
+  it('hands the table the height left under the toolbar', async () => {
+    const { el } = await mount();
+    expect(table(el).fill).toBe(true);
+  });
 });

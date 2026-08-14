@@ -74,11 +74,45 @@ export class WcRegisterTable extends LitElement {
         min-height: 0;
       }
 
+      /* Content-sized under a cap: the shape a page that scrolls as a whole
+         wants, and the only mode --nc-register-height applies to. */
       .scroller {
         overflow: auto;
         max-height: var(--nc-register-height, 60vh);
         border: 1px solid var(--wa-color-border);
         border-radius: var(--wa-radius-md, 8px);
+      }
+
+      /* The fill attribute is the register screen's mode: the table takes what
+         is left between the toolbar and the bottom of the window.
+
+         The *host* is what grows, and it carries the floor. The scroller only
+         ever shrinks into it (flex: 0 1 auto), so three search matches draw a
+         three-row box rather than a full-height bordered one with the Net row
+         pulled up under them — a sticky footer is pulled up by its scroller
+         and never pushed down.
+
+         --nc-register-min-height is where shrinking stops. Below it the page
+         scrolls instead, which is what a viewport shortened by a docked
+         devtools panel needs: the alternative is a table collapsed to a sliver
+         under its own sticky Net row. It sits on the host rather than on the
+         scroller because the scroller has a border and must stay free to hug
+         short content.
+
+         --nc-register-height does not apply here and is not meant to: a cap
+         and a parent-driven height cannot both decide, and under fill the
+         parent decides. */
+      :host([fill]) {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: var(--nc-register-min-height, 12rem);
+      }
+
+      :host([fill]) .scroller {
+        flex: 0 1 auto;
+        min-height: 0;
+        max-height: none;
       }
 
       table {
@@ -305,6 +339,13 @@ export class WcRegisterTable extends LitElement {
   dense = false;
 
   /**
+   * Take the height a flex-column parent has left over, and scroll inside it,
+   * rather than sizing to the rows under a cap.
+   */
+  @property({ type: Boolean, reflect: true })
+  fill = false;
+
+  /**
    * Drop every affordance that writes: no flag button, no activation, no edit
    * mode. Selection and scrolling stay, because reading a long register still
    * wants a cursor.
@@ -430,9 +471,22 @@ export class WcRegisterTable extends LitElement {
   private pageRows(): number {
     const rowElement = this.shadowRoot?.querySelector('tbody tr');
     const height = rowElement?.getBoundingClientRect().height ?? 0;
-    const viewport = this.scroller?.clientHeight ?? 0;
-    const rows = height > 0 ? Math.floor(viewport / height) : 0;
-    return rows > 1 ? rows : DEFAULT_PAGE_ROWS;
+    const rows = height > 0 ? Math.floor(this.visibleRowsHeight() / height) : 0;
+    // Zero means nothing could be measured, which is jsdom and a first paint.
+    // One is a real answer: a window with room for one row pages by one.
+    return rows > 0 ? rows : DEFAULT_PAGE_ROWS;
+  }
+
+  /**
+   * The height rows are actually visible in: the scroller less the header and
+   * the Net row, which are sticky and painted *over* it. Paging by the whole
+   * scroller skips the rows those two cover, every press.
+   */
+  private visibleRowsHeight(): number {
+    const scroller = this.scroller?.clientHeight ?? 0;
+    const head = this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+    const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
+    return Math.max(0, scroller - head - foot);
   }
 
   // -- keyboard -------------------------------------------------------------

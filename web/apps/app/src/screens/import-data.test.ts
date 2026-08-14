@@ -4,6 +4,7 @@ import {
   EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
   type GenericCsvMapping,
+  type ImportAccountOption,
   type ImportFormValue,
 } from '@nigel/ui';
 
@@ -20,9 +21,11 @@ import {
   confirmRequestBody,
   formatLabel,
   importRequestBody,
+  initialImportForm,
   previewCounts,
   resultCounts,
   routeImportError,
+  sameImportForm,
   usesMapping,
 } from './import-data.js';
 
@@ -180,6 +183,55 @@ describe('usesMapping', () => {
     expect(usesMapping(GENERIC)).toBe(true);
     expect(usesMapping(FORM)).toBe(false);
     expect(usesMapping({ ...FORM, format: 'chase' })).toBe(false);
+  });
+});
+
+describe('initialImportForm', () => {
+  const ONE: ImportAccountOption[] = [
+    { id: 1, name: 'BofA Checking', accountType: 'checking' },
+  ];
+  const TWO: ImportAccountOption[] = [
+    ...ONE,
+    { id: 2, name: 'BofA Credit Card', accountType: 'credit_card' },
+  ];
+
+  it('preselects the only account there is', () => {
+    expect(initialImportForm(ONE)).toEqual({
+      ...EMPTY_IMPORT_FORM,
+      account: 'BofA Checking',
+    });
+  });
+
+  it('chooses nothing when there is a choice to make', () => {
+    expect(initialImportForm(TWO)).toEqual(EMPTY_IMPORT_FORM);
+    expect(initialImportForm([])).toEqual(EMPTY_IMPORT_FORM);
+  });
+
+  it('is what an untouched screen already shows, so cancel is not offered there', () => {
+    expect(sameImportForm(initialImportForm(ONE), initialImportForm(ONE))).toBe(true);
+    expect(sameImportForm(initialImportForm(TWO), initialImportForm(TWO))).toBe(true);
+  });
+});
+
+describe('sameImportForm', () => {
+  it('compares the mapping field by field, not by identity', () => {
+    const copied: ImportFormValue = { ...FORM, mapping: { ...FORM.mapping } };
+    expect(sameImportForm(FORM, copied)).toBe(true);
+  });
+
+  it('notices every field a form can carry', () => {
+    const differing: ImportFormValue[] = [
+      { ...FORM, account: 'BofA Credit Card' },
+      { ...FORM, format: 'bofa_checking' },
+      { ...FORM, saveProfile: 'chase' },
+      { ...FORM, mapping: { ...FORM.mapping, dateCol: 9 } },
+      { ...FORM, mapping: { ...FORM.mapping, descCol: 9 } },
+      { ...FORM, mapping: { ...FORM.mapping, amountCol: 9 } },
+      { ...FORM, mapping: { ...FORM.mapping, dateFormat: '%d/%m/%Y' } },
+    ];
+    for (const form of differing) {
+      expect(sameImportForm(FORM, form)).toBe(false);
+    }
   });
 });
 
