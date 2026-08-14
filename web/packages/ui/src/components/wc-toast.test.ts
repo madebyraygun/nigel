@@ -1,8 +1,17 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-toast.js';
-import { dispatchNcToast, WcToast } from './wc-toast.js';
+import { dispatchNcToast, MAX_VISIBLE_TOASTS, WcToast } from './wc-toast.js';
 import { describePrintHiding } from '../../preview/print-suite.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
+import {
+  customProperties,
+  fixedBox,
+  isInsideViewport,
+  resolveLength,
+  resolvedDeclarations,
+  type Viewport,
+} from '../../preview/css-geometry.js';
 import preview from './wc-toast.preview.js';
 
 async function mount(): Promise<WcToast> {
@@ -14,6 +23,12 @@ async function mount(): Promise<WcToast> {
 
 function toastEl(el: WcToast): HTMLElement | null {
   return el.shadowRoot?.querySelector('.toast') ?? null;
+}
+
+function messages(el: WcToast): string[] {
+  return [...(el.shadowRoot?.querySelectorAll('.toast .message') ?? [])].map((node) =>
+    (node.textContent ?? '').trim(),
+  );
 }
 
 function region(el: WcToast): HTMLElement | null {
@@ -159,6 +174,169 @@ describe('wc-toast', () => {
     document.body.appendChild(el);
     await el.updateComplete;
     expect(toastEl(el)?.textContent).toContain('Seeded.');
+  });
+
+  it('seeds a whole stack from .initial', async () => {
+    const el = document.createElement('wc-toast');
+    el.initial = [
+      { message: 'First.', duration: 0 },
+      { message: 'Second.', duration: 0 },
+    ];
+    document.body.appendChild(el);
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['First.', 'Second.']);
+  });
+});
+
+describe('wc-toast stacking', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.useRealTimers();
+  });
+
+  it('keeps earlier toasts visible, newest last', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Older.', duration: 0 });
+    dispatchNcToast(el, { message: 'Newer.', duration: 0 });
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['Older.', 'Newer.']);
+  });
+
+  it('drops the oldest past the visible limit', async () => {
+    const el = await mount();
+    for (let n = 1; n <= MAX_VISIBLE_TOASTS + 2; n += 1) {
+      dispatchNcToast(el, { message: `Toast ${n}.`, duration: 0 });
+    }
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['Toast 3.', 'Toast 4.', 'Toast 5.']);
+  });
+
+  it('dismisses each toast on its own timer', async () => {
+    vi.useFakeTimers();
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Short.', duration: 1000 });
+    dispatchNcToast(el, { message: 'Long.', duration: 5000 });
+    await el.updateComplete;
+
+    vi.advanceTimersByTime(1000);
+    await el.updateComplete;
+    expect(messages(el)).toEqual(['Long.']);
+
+    vi.advanceTimersByTime(4000);
+    await el.updateComplete;
+    expect(messages(el)).toEqual([]);
+  });
+
+  it('leaves the other toasts alone when one action fires', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'Stays.', duration: 0 });
+    dispatchNcToast(el, {
+      message: 'Goes.',
+      duration: 0,
+      action: { label: 'Redo', onClick: () => {} },
+    });
+    await el.updateComplete;
+
+    el.shadowRoot?.querySelector<HTMLButtonElement>('[data-toast-action]')?.click();
+    await el.updateComplete;
+
+    expect(messages(el)).toEqual(['Stays.']);
+  });
+
+  it('dismiss() clears the whole stack', async () => {
+    const el = await mount();
+    dispatchNcToast(el, { message: 'One.', duration: 0 });
+    dispatchNcToast(el, { message: 'Two.', duration: 0 });
+    await el.updateComplete;
+
+    el.dismiss();
+    await el.updateComplete;
+    expect(messages(el)).toEqual([]);
+  });
+});
+
+/**
+ * Where the toasts actually land.
+ *
+ * jsdom does no layout, so these resolve the component's own stylesheet into
+ * viewport pixels — see `preview/css-geometry.ts` — and assert the resulting
+ * boxes, not the declarations that produced them.
+ */
+describe('wc-toast placement', () => {
+  const css = styleText(WcToast);
+  const vars = customProperties(css, ':host');
+  const regionRules = resolvedDeclarations(css, '.region');
+  const toastRules = resolvedDeclarations(css, '.toast');
+
+  // Three chips of a plausible height, plus the gaps between them.
+  const STACK_HEIGHT = MAX_VISIBLE_TOASTS * 44 + (MAX_VISIBLE_TOASTS - 1) * 8;
+
+  const viewports: [string, Viewport][] = [
+    ['desktop', { width: 1440, height: 900 }],
+    ['laptop', { width: 1024, height: 768 }],
+    ['phone', { width: 375, height: 667 }],
+  ];
+
+  function place(viewport: Viewport, messageWidth: number) {
+    const region = fixedBox(regionRules, {
+      viewport,
+      content: { width: messageWidth, height: STACK_HEIGHT },
+      vars,
+    });
+    if (!region) {
+      throw new Error('the region resolves to no box: nothing anchors it to the viewport');
+    }
+    const maxWidth =
+      resolveLength(toastRules.get('max-width') ?? 'none', {
+        viewport,
+        percentBasis: region.width,
+        vars,
+      }) ?? Number.POSITIVE_INFINITY;
+    const width = Math.min(messageWidth, maxWidth);
+    // The column aligns its chips to the region's end edge.
+    const toast = { ...region, width, left: region.right - width };
+    return { region, toast, wrapped: width < messageWidth };
+  }
+
+  it.each(viewports)('anchors the region inside a %s viewport', (_name, viewport) => {
+    const { region } = place(viewport, 280);
+    expect(isInsideViewport(region, viewport)).toBe(true);
+  });
+
+  it.each(viewports)('keeps a short toast inside a %s viewport', (_name, viewport) => {
+    const { toast } = place(viewport, 280);
+    expect(isInsideViewport(toast, viewport)).toBe(true);
+  });
+
+  it.each(viewports)(
+    'wraps a long message instead of running off a %s viewport',
+    (_name, viewport) => {
+      const natural = 2400;
+      const { toast, wrapped } = place(viewport, natural);
+      expect(wrapped).toBe(true);
+      expect(toast.width).toBeLessThan(natural);
+      expect(isInsideViewport(toast, viewport)).toBe(true);
+    },
+  );
+
+  it('lands in the same corner whatever the viewport', () => {
+    const corners = viewports.map(([, viewport]) => {
+      const { region } = place(viewport, 280);
+      return {
+        fromRight: viewport.width - region.right,
+        fromBottom: viewport.height - region.bottom,
+      };
+    });
+    expect(new Set(corners.map((corner) => JSON.stringify(corner))).size).toBe(1);
+    expect(corners[0]!.fromRight).toBeGreaterThan(0);
+    expect(corners[0]!.fromBottom).toBeGreaterThan(0);
+  });
+
+  it('keeps a full stack clear of the top of the shortest viewport', () => {
+    const viewport = { width: 375, height: 667 };
+    const { region } = place(viewport, 280);
+    expect(region.height).toBe(STACK_HEIGHT);
+    expect(region.top).toBeGreaterThan(0);
   });
 });
 

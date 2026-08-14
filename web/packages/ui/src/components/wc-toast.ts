@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 export type NcToastVariant = 'info' | 'success' | 'danger';
 
@@ -24,6 +25,17 @@ export const NC_TOAST_EVENT = 'nc-toast';
 
 const DEFAULT_DURATION_MS = 4000;
 const DEFAULT_ACTION_DURATION_MS = 8000;
+
+/**
+ * How many toasts share the corner. Past this the oldest goes, so a burst of
+ * events cannot grow the column until it runs out of viewport.
+ */
+export const MAX_VISIBLE_TOASTS = 3;
+
+interface QueuedToast {
+  id: number;
+  detail: NcToastDetail;
+}
 
 /**
  * Typed dispatcher for the toast bus. Use this instead of constructing a raw
@@ -60,14 +72,28 @@ export class WcToast extends LitElement {
     :host {
       /* The region is fixed-position; the host itself takes no space. */
       display: contents;
+      --nc-toast-gutter: var(--wa-space-l, 16px);
+      --nc-toast-max-width: 360px;
     }
 
+    /*
+     * Pinned to the bottom-right corner of the viewport.
+     *
+     * Both inline insets are set rather than one inset plus a translate: the
+     * region spans the viewport minus its gutters, so a percentage width
+     * inside it is viewport-relative and no offset can carry a toast past an
+     * edge. The corner also keeps clear of the app chrome that owns the
+     * others — the sidebar on the left, the header on the top.
+     */
     .region {
       position: fixed;
-      top: var(--wa-space-xl, 24px);
-      left: 50%;
-      transform: translateX(-50%);
+      inset-block: auto var(--nc-toast-gutter);
+      inset-inline: var(--nc-toast-gutter);
       z-index: 11000;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: var(--wa-space-s, 8px);
       pointer-events: none;
       /* Reset the UA popover styles so the region flows the same way whether
        * or not it is currently in the top layer. */
@@ -77,20 +103,19 @@ export class WcToast extends LitElement {
       background: transparent;
       color: inherit;
       overflow: visible;
-      width: auto;
-      max-width: none;
-      inset-inline: auto;
+      inline-size: auto;
+      block-size: auto;
     }
 
     .region:not(:popover-open) {
       /* The region must stay rendered for the aria-live subscription to hold,
        * but a UA hides closed popovers by default. */
-      display: block;
+      display: flex;
     }
 
     .toast {
       pointer-events: auto;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       gap: var(--wa-space-l, 16px);
       padding: 10px 16px;
@@ -106,8 +131,15 @@ export class WcToast extends LitElement {
       background: #1f1f28;
       color: #ece9f5;
       border: 1px solid rgb(255 255 255 / 10%);
-      max-width: min(360px, calc(100vw - 3rem));
-      word-break: break-word;
+      /* 100% is the region, which is the viewport minus its gutters, so a long
+       * message wraps inside the chip instead of widening it off-screen. */
+      max-width: min(var(--nc-toast-max-width), 100%);
+      box-sizing: border-box;
+    }
+
+    .message {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .toast[data-variant='success'] {
@@ -145,7 +177,7 @@ export class WcToast extends LitElement {
     @keyframes toast-in {
       from {
         opacity: 0;
-        transform: translateY(-8px);
+        transform: translateY(8px);
       }
       to {
         opacity: 1;
@@ -170,25 +202,37 @@ export class WcToast extends LitElement {
     }
   `;
 
-  /** Seeds a toast on first render. Previews and tests use this; the app does not. */
+  /**
+   * Seeds toasts on first render, one or several. Previews and tests use this;
+   * the app does not.
+   */
   @property({ attribute: false })
-  initial: NcToastDetail | null = null;
+  initial: NcToastDetail | NcToastDetail[] | null = null;
 
   @state()
-  private current: NcToastDetail | null = null;
+  private toasts: QueuedToast[] = [];
 
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  private nextId = 0;
+
+  private promotedId: number | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener(NC_TOAST_EVENT, this.handleToast as EventListener);
-    if (this.initial) this.show(this.initial);
+    if (this.initial) {
+      for (const detail of Array.isArray(this.initial) ? this.initial : [this.initial]) {
+        this.show(detail);
+      }
+    }
   }
 
   disconnectedCallback(): void {
     window.removeEventListener(NC_TOAST_EVENT, this.handleToast as EventListener);
-    this.clearTimer();
-    this.current = null;
+    this.clearTimers();
+    this.toasts = [];
+    this.promotedId = null;
     super.disconnectedCallback();
   }
 
@@ -198,31 +242,46 @@ export class WcToast extends LitElement {
       console.error('[wc-toast] ignored a toast with no message:', detail);
       return;
     }
-    this.current = detail;
-    this.clearTimer();
-    const fallback = detail.action
-      ? DEFAULT_ACTION_DURATION_MS
-      : DEFAULT_DURATION_MS;
+    const id = this.nextId++;
+    const next = [...this.toasts, { id, detail }];
+    for (const dropped of next.splice(0, next.length - MAX_VISIBLE_TOASTS)) {
+      this.clearTimer(dropped.id);
+    }
+    this.toasts = next;
+
+    const fallback = detail.action ? DEFAULT_ACTION_DURATION_MS : DEFAULT_DURATION_MS;
     const duration = detail.duration ?? fallback;
     if (duration > 0) {
-      this.timer = setTimeout(() => {
-        this.current = null;
-        this.timer = null;
-      }, duration);
+      this.timers.set(
+        id,
+        setTimeout(() => this.drop(id), duration),
+      );
     }
   }
 
-  /** Dismiss the visible toast, if any. */
+  /** Dismiss every visible toast. */
   dismiss(): void {
-    this.clearTimer();
-    this.current = null;
+    this.clearTimers();
+    this.toasts = [];
   }
 
-  private clearTimer(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
+  /** Named for what it takes off the stack — `remove` is HTMLElement's. */
+  private drop(id: number): void {
+    this.clearTimer(id);
+    this.toasts = this.toasts.filter((toast) => toast.id !== id);
+  }
+
+  private clearTimer(id: number): void {
+    const timer = this.timers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.timers.delete(id);
     }
+  }
+
+  private clearTimers(): void {
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
   }
 
   private handleToast = (event: Event): void => {
@@ -238,36 +297,42 @@ export class WcToast extends LitElement {
    * Promote the region into the browser's top layer so it paints above
    * wa-dialog, which uses native showModal(). The top layer is a stack ordered
    * by open time, so a toast arriving while the popover is already open has to
-   * hide and re-show to get back above a dialog opened in between.
+   * hide and re-show to get back above a dialog opened in between. Only a new
+   * toast triggers that: re-showing on every render would restart the entry
+   * animation of the toasts already in the column.
    */
   protected updated(): void {
     const region = this.shadowRoot?.querySelector<HTMLElement>('[data-toast-region]');
     if (!region || typeof region.showPopover !== 'function') return;
+    const newest = this.toasts.at(-1)?.id ?? null;
     try {
-      if (this.current) {
+      if (newest !== null) {
+        if (newest === this.promotedId && region.matches(':popover-open')) return;
         if (region.matches(':popover-open')) region.hidePopover();
         region.showPopover();
-      } else if (region.matches(':popover-open')) {
-        region.hidePopover();
+        this.promotedId = newest;
+      } else {
+        if (region.matches(':popover-open')) region.hidePopover();
+        this.promotedId = null;
       }
     } catch (error) {
       console.warn('[wc-toast] could not sync the popover state:', error);
     }
   }
 
-  private handleAction = (): void => {
-    const action = this.current?.action;
+  private runAction(toast: QueuedToast): void {
+    const action = toast.detail.action;
     if (!action) return;
     try {
       action.onClick();
     } catch (error) {
       console.error('[wc-toast] the toast action threw:', error);
     }
-    this.dismiss();
-  };
+    this.drop(toast.id);
+  }
 
   render() {
-    const danger = this.current?.variant === 'danger';
+    const danger = this.toasts.some((toast) => toast.detail.variant === 'danger');
     return html`
       <div
         class="region"
@@ -277,21 +342,25 @@ export class WcToast extends LitElement {
         aria-live=${danger ? 'assertive' : 'polite'}
         aria-atomic="true"
       >
-        ${this.current
-          ? html`<div class="toast" data-variant=${this.current.variant ?? 'info'}>
-              <span class="message">${this.current.message}</span>
-              ${this.current.action
+        ${repeat(
+          this.toasts,
+          (toast) => toast.id,
+          (toast) => html`
+            <div class="toast" data-variant=${toast.detail.variant ?? 'info'}>
+              <span class="message">${toast.detail.message}</span>
+              ${toast.detail.action
                 ? html`<button
                     type="button"
                     class="action"
                     data-toast-action
-                    @click=${this.handleAction}
+                    @click=${() => this.runAction(toast)}
                   >
-                    ${this.current.action.label}
+                    ${toast.detail.action.label}
                   </button>`
                 : nothing}
-            </div>`
-          : nothing}
+            </div>
+          `,
+        )}
       </div>
     `;
   }
