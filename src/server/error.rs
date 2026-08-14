@@ -212,10 +212,13 @@ impl From<NigelError> for ApiError {
                 let details = serde_json::json!({ "reason": "duplicate_name", "name": name });
                 Self::conflict(err.to_string(), details)
             }
-            NigelError::Blocked(block) => Self::conflict(
-                err.to_string(),
-                serde_json::json!({ "reason": block.reason_code(), "count": block.count }),
-            ),
+            NigelError::Blocked(block) => {
+                let mut details = serde_json::json!({ "reason": block.reason_code() });
+                if let Some(count) = block.count() {
+                    details["count"] = count.into();
+                }
+                Self::conflict(err.to_string(), details)
+            }
             NigelError::Conflict { code, .. } => {
                 Self::conflict(err.to_string(), serde_json::json!({ "reason": code }))
             }
@@ -455,10 +458,16 @@ mod tests {
     fn guardrails_carry_a_machine_readable_reason() {
         use crate::error::DeleteBlock;
 
-        let cases: [(NigelError, serde_json::Value); 5] = [
+        let cases: [(NigelError, serde_json::Value); 6] = [
             (
                 NigelError::Blocked(DeleteBlock::transactions("account", 3)),
                 json!({"reason": "has_transactions", "count": 3}),
+            ),
+            // No `count`: the refusal is about the invoice's own state, and a
+            // zero here would be a figure the data layer never produced.
+            (
+                NigelError::Blocked(DeleteBlock::not_deletable("invoice")),
+                json!({"reason": "not_deletable"}),
             ),
             (
                 NigelError::Blocked(DeleteBlock::active_rules("category", 2)),

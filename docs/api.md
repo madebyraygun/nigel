@@ -389,7 +389,8 @@ The invoice's own fields flattened, plus everything a detail screen prints:
   "items": [], "payments": [],
   "paid": 2000.0, "balance": 1200.0,
   "publicUrl": "https://billing.example.com/i/aBc123.../index.html",
-  "canEdit": false, "canSend": true, "canVoid": false, "canPay": true
+  "canEdit": false, "canSend": true, "canVoid": false, "canPay": true,
+  "canDelete": false
 }
 ```
 
@@ -402,13 +403,14 @@ unset. The address names the `index.html` object rather than its directory: a
 static host is not required to have an opinion about directories, and a plain R2
 custom domain answers the directory form with a 404.
 
-The four `can*` flags are the data layer's own guards, called rather than
-re-derived: `canEdit` is `ensure_editable`, `canVoid` is `ensure_voidable`, and
-`canSend`/`canPay` are `ensure_not_void` plus the email, total and balance
-checks. **A client must not re-derive them from `status`** — an edit is blocked
-by recorded payments as well as by status, and a second copy of that rule is a
-second copy of the guardrails. The flags disable a control; the `409` is what
-enforces it.
+The five `can*` flags are the data layer's own guards, called rather than
+re-derived: `canEdit` is `ensure_editable`, `canVoid` is `ensure_voidable`,
+`canDelete` is `delete_blocker` answering nothing, and `canSend`/`canPay` are
+`ensure_not_void` plus the email, total and balance checks. **A client must not
+re-derive them from `status`** — an edit is blocked by recorded payments as well
+as by status, and so is a delete, and a second copy of that rule is a second
+copy of the guardrails. The flags disable a control; the `409` is what enforces
+it.
 
 An unknown number is `404` with `details.reason` = `invoice_not_found`.
 
@@ -525,6 +527,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/clients/:id/unarchive` | `POST` | — | `Client` |
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
+| `/api/invoices/:number` | `DELETE` | — | `{ id, deleted }` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
 | `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings`) |
@@ -780,11 +783,44 @@ The draft-only rule is read from the current row inside the write's own
 transaction, never from anything the client sent, and it is more than a status
 comparison — see the conflict table below.
 
+#### Deleting a draft
+
+`DELETE /api/invoices/:number` removes a draft entered by mistake, with its line
+items, in one transaction. It is the opposite of `void` in every way that
+matters: no gateway, no publisher, no network call, and no row left behind.
+
+Only a draft that was never published and carries no payments can be deleted.
+Everything else is a `409` with `details.reason` = `not_deletable` and one
+sentence — published, paid and void all refuse the same way, because they are
+one rule: somebody outside this machine has seen the invoice. The block carries
+no `count`; it is about the invoice's own state rather than about things
+pointing at it.
+
+```json
+{
+  "error": {
+    "code": "conflict",
+    "message": "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
+    "details": { "reason": "not_deletable" }
+  }
+}
+```
+
+`canDelete` on the detail is that same guard called, so a screen can disable the
+control without owning a copy of the rule. An unknown number is `404` with
+`details.reason` = `invoice_not_found`.
+
+**The invoice number is not reused.** `next_invoice_number` is untouched, so
+deleting the newest draft leaves a gap in the sequence and
+`GET /api/invoices/next-number` answers what it answered before. A gap is normal
+and auditable; reissuing a number that may already have been exported or quoted
+is not.
+
 #### Voiding and paying
 
 `POST /api/invoices/:number/void` takes no body. It writes `voidedAt` and lets
-the status derive from it; `void` is terminal, so the returned detail has all
-four `can*` flags false.
+the status derive from it; `void` is terminal, so the returned detail has every
+`can*` flag false.
 
 It also **tears down what the invoice published** — deactivating the Stripe
 payment link and replacing the published page with a voided notice — which makes
@@ -1129,6 +1165,7 @@ its own words instead of parsing ours:
 | `client_missing_email` | `clientId`, `clientName`, `step` | Sending to a client with no address |
 | `invoice_not_payable` | `step` | Sending an invoice with nothing to charge |
 | `send_not_configured` | `missing`, `step` | Sending or syncing with settings unset |
+| `not_deletable` | — | Deleting an invoice that has been sent, paid or voided |
 
 The invoice-state reasons are the data layer's own, raised by
 `ensure_editable`, `ensure_voidable`, `ensure_not_void` and `payment_amount`, so

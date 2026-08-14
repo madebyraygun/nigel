@@ -351,6 +351,13 @@ export interface ApiClient {
    * the invoice is void either way, and failing the request would say otherwise.
    */
   voidInvoice(number: number): Promise<VoidResult>;
+  /**
+   * Remove a draft entered by mistake, with its line items.
+   *
+   * Refused with a 409 once the invoice has been sent, paid or voided — that is
+   * what `voidInvoice` is for. The invoice number is not reused.
+   */
+  deleteInvoice(number: number): Promise<Deleted>;
   payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult>;
   /**
    * Create the Stripe link, publish, email, and record — in one blocking
@@ -728,6 +735,10 @@ export class FetchApiClient implements ApiClient {
 
   voidInvoice(number: number): Promise<VoidResult> {
     return this.request<VoidResult>('POST', `/invoices/${number}/void`, {});
+  }
+
+  deleteInvoice(number: number): Promise<Deleted> {
+    return this.request<Deleted>('DELETE', `/invoices/${number}`);
   }
 
   payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult> {

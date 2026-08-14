@@ -10,9 +10,9 @@ use crate::fmt::money;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use crate::invoicing::invoices::{
-    create_invoice, ensure_not_void, ensure_voidable, get_invoice, get_invoice_by_number, is_void,
-    line_items, list_invoices, paid_amount, payment_amount, record_payment, update_invoice,
-    InvoiceListRow, InvoiceUpdate, NewLineItem,
+    create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
+    get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
+    payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::mailgun::{
     from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
@@ -374,6 +374,52 @@ pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
     for warning in outcome.warnings() {
         println!("{warning}");
     }
+    Ok(())
+}
+
+/// `nigel invoice delete <number>` — remove a draft entered by mistake.
+///
+/// The guard is asked before the prompt, `client delete`'s shape: an invoice
+/// that cannot be deleted is never offered a confirmation, because there is
+/// nothing to confirm. The block's own sentence is returned rather than printed
+/// so `main` writes it once, with the pointer to `void` on the line below it.
+pub fn delete(number: i64, yes: bool) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let invoice = find_invoice(&conn, number)?;
+
+    if let Some(block) = delete_blocker(&conn, &invoice)? {
+        // The pointer, not the sentence: an invoice that is already void has
+        // nothing left to cancel, and telling somebody to run `void` on it
+        // would be advice that fails.
+        let pointer = if is_void(&invoice) {
+            String::new()
+        } else {
+            format!("\nRun `nigel invoice void {number}` to cancel it instead.")
+        };
+        return Err(NigelError::Other(format!(
+            "{}{pointer}",
+            NigelError::Blocked(block)
+        )));
+    }
+
+    let client = get_client(&conn, invoice.client_id)?;
+    println!("{}", void_summary(&invoice, &client.name));
+    println!("Deleting removes the draft and its line items. This cannot be undone.");
+    if !crate::cli::confirm_or_refuse(
+        "Delete it? [y/N]",
+        &format!("Refusing to delete invoice #{number} without confirmation. Pass --yes."),
+        yes,
+    )? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    delete_invoice(&conn, invoice.id)?;
+    println!("Deleted invoice #{number}.");
+    println!(
+        "Invoice numbers are not reused — the next draft will be #{}.",
+        next_number(&conn)?
+    );
     Ok(())
 }
 

@@ -143,6 +143,7 @@ nigel client delete 7                                 # Refused while any invoic
 nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"
 nigel invoice edit 1248 --due 2026-09-30              # Drafts only
 nigel invoice void 1248                               # Cancel, deactivate its link, void its page
+nigel invoice delete 1252                             # Remove an unsent draft; the number is not reused
 nigel invoice preview 1248                            # Render it locally first — no network, no config
 nigel invoice send 1248                               # Preview it, confirm, then publish and email
 nigel invoice send 1248 --yes                         # Skip the confirmation

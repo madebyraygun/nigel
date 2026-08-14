@@ -26,8 +26,9 @@ dashboard as well. Run `nigel` and press:
   `Enter` to open one and `a` — or `n`, if that is the mnemonic that comes to
   hand — to draft a new one. The actions live on the open
   invoice, not the list: `s` sends it, `p` records a payment against it, `v`
-  voids it — each with a confirmation, and each refused in the same words the
-  CLI would use.
+  voids it, and `d` deletes it when it is still an unsent draft — each with a
+  confirmation, and each refused in the same words the CLI would use. `d` is
+  advertised in the footer only for an invoice that can take it.
 
 The draft form takes a client, an issue date, an optional due date (prefilled
 Net 30), a currency, and as many line items as you need — `Ins` (or `F2`) adds a
@@ -504,6 +505,66 @@ every extra line you do see names something that is still out there. The same
 sentences appear in the dashboard's invoice screen and on the void response in
 the web UI.
 
+## Deleting a draft entered by mistake
+
+```bash
+nigel invoice delete 1252
+nigel invoice delete 1252 --yes    # skip the confirmation
+```
+
+Void is a statement — it writes `voided_at`, deactivates the payment link and
+republishes the page as a voided notice, precisely so a URL a client filed still
+resolves to something honest. A draft created by mistake — the wrong client, a
+mis-keyed command run twice, a test row on real books — has published nothing
+and told nobody, and deserves to leave without a tombstone. That is what delete
+is for; it is the same distinction as `client delete` against `client archive`.
+
+**Only a draft that was never sent and has no payments can be deleted.**
+Everything else refuses, in one sentence:
+
+```
+Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted
+Run `nigel invoice void 1252` to cancel it instead.
+```
+
+| The invoice | Delete |
+| --- | --- |
+| a draft, never published, no payments | removes it and its line items |
+| sent, partial, overdue or paid | refused — its URL and its emailed PDF are already in somebody's hands |
+| void | refused — it is a record that something happened |
+| a draft with any payment against it | refused — money arrived against those figures |
+
+The guard lives in the data layer beside `ensure_editable` and `ensure_voidable`,
+so a caller reaching `delete_invoice` directly cannot get past it, and the same
+sentence is what the CLI prints, the dashboard puts on its status line and the
+API answers as a `409` with `details.reason = "not_deletable"`.
+
+The invoice and its line items go in one transaction. Payments are not cascaded:
+the guard means a deletable invoice has none, and the delete asserts that rather
+than assuming it.
+
+Delete asks first. On a terminal it names the invoice and asks
+`Delete it? [y/N]`; anything but `y` prints `Aborted.` and changes nothing.
+Without a terminal, `--yes` is required, exactly as `invoice void` and
+`client delete` are.
+
+### The number is not reused
+
+`next_invoice_number` stays where it is. Deleting the newest draft leaves a gap
+in the sequence, and that is the intended outcome:
+
+```
+$ nigel invoice delete 1252 --yes
+Deleted invoice #1252.
+Invoice numbers are not reused — the next draft will be #1253.
+```
+
+A gap in a numbering sequence is normal and auditable. Handing #1252 out again
+is not: the number may already have been quoted in an email, exported to a
+spreadsheet, or referenced in a ledger somewhere Nigel cannot see, and two
+different invoices sharing one number is a problem that surfaces months later
+with no way to tell which was meant.
+
 ## Sending
 
 ```bash
@@ -648,8 +709,10 @@ Opening an invoice gives you its totals, its line items, its payment history,
 the addresses it was published to, and a collapsed preview of the page a client
 opens — rendered by the same code `invoice send` publishes, so it is the real
 document rather than an impression of it. The actions on that screen are the
-CLI's: **Send…**, **Record payment…**, **Edit** and **Void…**, each enabled by
-the server's own guards rather than by a status the browser reasoned about.
+CLI's: **Send…**, **Record payment…**, **Edit**, **Void…** and **Delete…**, each
+enabled by the server's own guards rather than by a status the browser reasoned
+about. Delete is offered only for a draft nobody has seen; deleting one returns
+to the list with a toast, since there is no longer an invoice to return to.
 
 Sending asks first, and the confirmation names every consequence — the payment
 link and its amount, the host the page will be published to, and the address

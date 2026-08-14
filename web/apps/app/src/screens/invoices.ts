@@ -49,6 +49,7 @@ import {
   payRequest,
   sendStepViews,
   today,
+  deleteConfirmationMessage,
   voidConfirmationMessage,
 } from './invoice-data.js';
 import {
@@ -533,6 +534,42 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     }
   };
 
+  private handleDelete = async (): Promise<void> => {
+    const detail = this.detail;
+    if (!detail) return;
+
+    const confirmed = await confirmDialog({
+      heading: `Delete draft invoice #${detail.number}?`,
+      message: deleteConfirmationMessage(detail),
+      confirmLabel: 'Delete invoice',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    this.busy = true;
+    try {
+      await this.client.deleteInvoice(detail.number);
+      // There is nothing left to refresh or to render a success into: the route
+      // change drops `actionError`/`actionWarnings` and reloads the list, so a
+      // toast is what survives to say the delete happened. Dispatched before
+      // the navigation, while this element is still the one in the tree the
+      // event has to bubble out of.
+      dispatchNcToast(this, {
+        variant: 'success',
+        message: `Deleted invoice #${detail.number}. Invoice numbers are not reused.`,
+      });
+      this.go({ number: null, edit: null });
+    } catch (error) {
+      // Void's reasoning: `confirmDialog()` is already gone, so the refusal
+      // lands above the invoice it is about, and the refetch stands because a
+      // refusal can mean another tab has moved this invoice on.
+      this.actionError = invoicingGuardrailMessage(error, 'invoice');
+      await this.refresh(true);
+    } finally {
+      this.busy = false;
+    }
+  };
+
   private dismissActionError = (): void => {
     this.actionError = null;
   };
@@ -863,6 +900,15 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           @click=${this.handleVoid}
         >
           Void…
+        </wa-button>
+        <wa-button
+          data-delete
+          appearance="outlined"
+          variant="danger"
+          ?disabled=${!detail.canDelete || this.busy}
+          @click=${this.handleDelete}
+        >
+          Delete…
         </wa-button>
       </div>
 

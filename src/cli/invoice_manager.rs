@@ -17,9 +17,9 @@ use crate::fmt::money;
 use crate::invoicing::clients::{get_client, list_clients, ClientScope};
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{
-    create_invoice, ensure_not_void, ensure_voidable, get_invoice, is_void, line_items,
-    list_invoices, paid_amount, payment_amount, payments, record_payment, validate_currency,
-    validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
+    create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
+    is_void, line_items, list_invoices, paid_amount, payment_amount, payments, record_payment,
+    validate_currency, validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::send::send_invoice;
@@ -42,6 +42,10 @@ enum Screen {
     Detail,
     PayForm(PayForm),
     ConfirmVoid,
+    /// Delete, awaiting its answer. A plain confirmation rather than a
+    /// two-phase one: unlike send and void, delete makes no network call, so
+    /// there is no frozen terminal to warn anybody about.
+    ConfirmDelete,
     ConfirmSend,
     Sending,
     /// Void, once it has been confirmed. Like `Sending`, this is a frame the
@@ -368,6 +372,11 @@ struct Detail {
     items: Vec<InvoiceLineItem>,
     payments: Vec<InvoicePayment>,
     paid: f64,
+    /// Whether `d` is on offer, from `delete_blocker` **called** rather than
+    /// from a second copy of its rule here — the reason the API's `canDelete`
+    /// is the guard called too. `draw` has no connection, so the answer is
+    /// loaded with the rest of the invoice.
+    deletable: bool,
 }
 
 impl Detail {
@@ -383,6 +392,7 @@ impl Detail {
             items: line_items(conn, invoice.id)?,
             payments: payments(conn, invoice.id)?,
             paid: paid_amount(conn, invoice.id)?,
+            deletable: delete_blocker(conn, &invoice)?.is_none(),
             invoice,
             client,
         })
@@ -469,7 +479,9 @@ impl InvoiceManager {
         match &self.screen {
             Screen::List => self.draw_list(frame),
             Screen::NewInvoice(form) => self.draw_new_form(frame, form),
-            Screen::Detail | Screen::ConfirmVoid | Screen::ConfirmSend => self.draw_detail(frame),
+            Screen::Detail | Screen::ConfirmVoid | Screen::ConfirmDelete | Screen::ConfirmSend => {
+                self.draw_detail(frame)
+            }
             Screen::PayForm(form) => self.draw_pay_form(frame, form),
             Screen::Sending => self.draw_sending(frame),
             Screen::Voiding => self.draw_voiding(frame),
@@ -907,6 +919,23 @@ impl InvoiceManager {
             }
         }
 
+        if let Screen::ConfirmDelete = &self.screen {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "   Delete draft invoice #{} for {} ({})?",
+                    invoice.number,
+                    detail.client_name(),
+                    money(invoice.total)
+                ),
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.push(Line::from(Span::styled(
+                "   The draft and its line items go for good. Invoice numbers are not reused.",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+
         // Clamped here rather than on the key, because how far this scrolls
         // depends on how tall the terminal is.
         let visible = (content_area.height as usize).max(1);
@@ -925,14 +954,24 @@ impl InvoiceManager {
                 Paragraph::new(" y=void  n=cancel").style(FOOTER_STYLE),
                 hints_area,
             );
+        } else if let Screen::ConfirmDelete = &self.screen {
+            frame.render_widget(
+                Paragraph::new(" y=delete  n=cancel").style(FOOTER_STYLE),
+                hints_area,
+            );
         } else if let Screen::ConfirmSend = &self.screen {
             frame.render_widget(
                 Paragraph::new(" y=send  n=cancel").style(FOOTER_STYLE),
                 hints_area,
             );
         } else {
+            // The verbs the selected invoice can actually take. Delete is
+            // advertised only for the draft it is for, because it is the one
+            // action most invoices refuse.
             let hint = if is_void(invoice) {
                 " Up/Down=scroll  Esc=back  q=quit"
+            } else if detail.deletable {
+                " s=send  p=record payment  v=void  d=delete  Up/Down=scroll  Esc=back  q=quit"
             } else {
                 " s=send  p=record payment  v=void  Up/Down=scroll  Esc=back  q=quit"
             };
@@ -1044,6 +1083,7 @@ impl InvoiceManager {
             Screen::Detail => self.handle_detail_key(code, conn),
             Screen::PayForm(_) => self.handle_pay_key(code, conn),
             Screen::ConfirmVoid => self.handle_void_key(code, conn),
+            Screen::ConfirmDelete => self.handle_delete_key(code, conn),
             Screen::ConfirmSend => self.handle_confirm_send_key(code),
             // Any key dismisses the result and returns to the reloaded detail.
             Screen::ActionResult { .. } => {
@@ -1282,6 +1322,59 @@ impl InvoiceManager {
         }
     }
 
+    /// `d` on the detail view, pre-flighted through `delete_blocker` so the
+    /// dialog is never offered for an invoice that would refuse it — the same
+    /// order `v` and `client_manager`'s `d` use. A refusal lands on the status
+    /// line as the block's own sentence.
+    fn open_delete_confirmation(&mut self, conn: &Connection) {
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        match delete_blocker(conn, &detail.invoice) {
+            Ok(None) => self.open_confirmation(Screen::ConfirmDelete),
+            Ok(Some(block)) => self.set_status(NigelError::Blocked(block).to_string()),
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    fn handle_delete_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
+        match code {
+            KeyCode::Char('y') => {
+                self.perform_delete(conn);
+                InvoiceAction::Continue
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.screen = Screen::Detail;
+                InvoiceAction::Continue
+            }
+            _ => InvoiceAction::Continue,
+        }
+    }
+
+    /// Delete runs on the key rather than through `InvoiceAction::Perform`: it
+    /// is one local transaction and reaches nothing, so the two-phase frame
+    /// send and void need would promise a wait that never happens.
+    fn perform_delete(&mut self, conn: &Connection) {
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        let number = detail.invoice.number;
+        match delete_invoice(conn, detail.invoice.id) {
+            Ok(()) => {
+                self.detail = None;
+                self.screen = Screen::List;
+                self.reload_list(conn);
+                self.set_status(format!(
+                    "Deleted invoice #{number}. Invoice numbers are not reused."
+                ));
+            }
+            Err(e) => {
+                self.screen = Screen::Detail;
+                self.set_status(e.to_string());
+            }
+        }
+    }
+
     fn handle_void_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
         match code {
             KeyCode::Char('y') => self.begin_void(conn),
@@ -1516,6 +1609,7 @@ impl InvoiceManager {
             KeyCode::PageDown => self.detail_scroll += 10,
             KeyCode::Char('p') => self.open_pay_form(&crate::cli::today()),
             KeyCode::Char('v') => self.open_void_confirmation(conn),
+            KeyCode::Char('d') => self.open_delete_confirmation(conn),
             KeyCode::Char('s') => {
                 return self.begin_send(conn, invoicing_config(), &get_data_dir())
             }
@@ -2701,6 +2795,126 @@ mod tests {
         let notice = warned[quiet.len()..].join(" ");
         assert!(notice.starts_with("notice:"), "{warned:?}");
         assert!(notice.contains("/i"), "{warned:?}");
+    }
+
+    fn open_delete(mgr: &mut InvoiceManager, conn: &Connection) {
+        mgr.handle_key(KeyCode::Enter, conn);
+        mgr.handle_key(KeyCode::Char('d'), conn);
+    }
+
+    fn invoice_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn d_opens_the_delete_confirmation_naming_the_invoice_client_and_total() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Acme Co", 1_250.0);
+        let mut mgr = manager(&conn);
+        open_delete(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::ConfirmDelete));
+        let screen = rendered(&mut mgr);
+        assert!(
+            screen.contains("Delete draft invoice #1248 for Acme Co ($1,250.00)?"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("Invoice numbers are not reused."),
+            "{screen}"
+        );
+        assert!(screen.contains("y=delete  n=cancel"), "{screen}");
+    }
+
+    #[test]
+    fn the_detail_footer_offers_delete_only_for_a_deletable_draft() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Acme Co", 1_250.0);
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+        assert!(rendered(&mut mgr).contains("d=delete"));
+
+        mark_published(&conn, id, "2026-07-17").unwrap();
+        let mut published = manager(&conn);
+        published.handle_key(KeyCode::Enter, &conn);
+        let screen = rendered(&mut published);
+        assert!(!screen.contains("d=delete"), "{screen}");
+    }
+
+    #[test]
+    fn n_and_esc_cancel_a_delete_without_writing() {
+        for key in [KeyCode::Char('n'), KeyCode::Esc] {
+            let (_d, conn) = test_conn();
+            seed_invoice(&conn, "Acme Co", 1_250.0);
+            let mut mgr = manager(&conn);
+            open_delete(&mut mgr, &conn);
+
+            mgr.handle_key(key, &conn);
+            assert!(matches!(mgr.screen, Screen::Detail));
+            assert_eq!(invoice_count(&conn), 1);
+        }
+    }
+
+    #[test]
+    fn y_deletes_the_draft_and_returns_to_the_list() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Acme Co", 1_250.0);
+        let mut mgr = manager(&conn);
+        open_delete(&mut mgr, &conn);
+
+        mgr.handle_key(KeyCode::Char('y'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::List));
+        assert!(mgr.detail.is_none());
+        assert_eq!(invoice_count(&conn), 0);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM invoice_line_items", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(mgr.rows.is_empty(), "the list was reloaded");
+        assert!(mgr
+            .status_message
+            .as_deref()
+            .expect("a status line")
+            .contains("Deleted invoice #1248"));
+    }
+
+    /// The block is asked before the dialog, so a published invoice is never
+    /// offered a confirmation it would fail — `account_manager`'s precedent.
+    #[test]
+    fn d_on_a_published_invoice_reports_the_block_instead_of_offering_a_dialog() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Acme Co", 1_250.0);
+        mark_published(&conn, id, "2026-07-17").unwrap();
+        let mut mgr = manager(&conn);
+        open_delete(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::Detail));
+        assert_eq!(
+            mgr.status_message.as_deref(),
+            Some("Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted")
+        );
+        assert_eq!(invoice_count(&conn), 1);
+    }
+
+    #[test]
+    fn d_on_a_void_invoice_reports_the_block() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Acme Co", 1_250.0);
+        void_invoice(&conn, id, "2026-07-17").unwrap();
+        let mut mgr = manager(&conn);
+        open_delete(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::Detail));
+        assert!(mgr
+            .status_message
+            .as_deref()
+            .expect("a status line")
+            .starts_with("Cannot delete: invoice has been sent, paid or voided"));
+        assert_eq!(invoice_count(&conn), 1);
     }
 
     fn open_void(mgr: &mut InvoiceManager, conn: &Connection) {

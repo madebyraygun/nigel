@@ -73,6 +73,11 @@ function sentenceFor(details: ConflictDetails): string | null {
       return details.paid !== undefined && details.total !== undefined
         ? `This invoice has no outstanding balance — ${money(details.paid)} of ${money(details.total)} is already recorded.`
         : 'This invoice has no outstanding balance.';
+    // Delete is for the draft entered by mistake; everything a client has seen
+    // is void's business. One reason covers published, paid and void, because
+    // the server refuses all three in one sentence.
+    case 'not_deletable':
+      return 'Only a draft that was never sent and has no payments can be deleted. Void this invoice instead.';
     case 'has_invoices':
       return `${plural(count, 'invoice')} ${count === 1 ? 'bills' : 'bill'} this client. Nigel will not delete a client that has been billed.`;
     case 'duplicate_name':

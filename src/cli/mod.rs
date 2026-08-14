@@ -459,6 +459,15 @@ pub enum InvoiceCommands {
         #[arg(long)]
         yes: bool,
     },
+    /// Delete a draft entered by mistake. Refused once it has been sent, paid
+    /// or voided; the number is not reused.
+    Delete {
+        /// Invoice number (shown in `nigel invoice list`)
+        number: i64,
+        /// Delete without confirmation (required when stdin is not a TTY)
+        #[arg(long)]
+        yes: bool,
+    },
     /// List invoices.
     List,
     /// Show one invoice by number.

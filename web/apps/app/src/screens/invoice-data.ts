@@ -378,6 +378,22 @@ export function voidConfirmationMessage(detail: InvoiceDetail): string {
   return `${terminal} This invoice has been published: voiding it replaces the published page with a voided notice and deactivates its Stripe payment link, wherever each of those is configured.`;
 }
 
+/**
+ * What the delete dialog says deleting will do, for this invoice.
+ *
+ * Two facts and no hedging, because the whole point of delete is that there is
+ * nothing out there to take down: the row and its lines go, and the number does
+ * not come back. The gap is deliberate — reissuing a number that may already
+ * have been exported or quoted is the thing this avoids — so the dialog names
+ * it rather than letting it be discovered later.
+ */
+export function deleteConfirmationMessage(detail: InvoiceDetail): string {
+  const lines = detail.items.length;
+  return `Invoice #${detail.number} and its ${lines} line item${
+    lines === 1 ? '' : 's'
+  } will be removed for good. Invoice numbers are not reused, so #${detail.number} will stay a gap in the sequence.`;
+}
+
 /** The detail view's outstanding figure. */
 export function detailBalance(detail: InvoiceDetail): number | null {
   return outstandingOrNull(detail);

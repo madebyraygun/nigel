@@ -588,6 +588,7 @@ export const CONFLICT_REASONS = [
   'send_not_configured',
   'send_misconfigured',
   'client_archived',
+  'not_deletable',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -998,6 +999,11 @@ export interface InvoiceDetail {
   canSend: boolean;
   canVoid: boolean;
   canPay: boolean;
+  /**
+   * Whether this invoice is still the draft nobody has seen. Delete is for the
+   * one entered by mistake; void is for everything that has left the building.
+   */
+  canDelete: boolean;
 }
 
 /**

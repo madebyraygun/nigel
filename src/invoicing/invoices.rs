@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{get_metadata, set_metadata};
-use crate::error::{NigelError, Result};
+use crate::error::{DeleteBlock, NigelError, Result};
 use crate::invoicing::clients::ensure_client_active;
 use crate::models::{Invoice, InvoiceLineItem, InvoicePayment, InvoiceStatus};
 
@@ -616,6 +616,63 @@ pub fn payment_amount(invoice: &Invoice, paid: f64, requested: Option<f64>) -> R
             Ok(invoice.total - paid)
         }
     }
+}
+
+/// Why this invoice cannot be deleted, or `None` when it can.
+///
+/// Delete is for the draft that should never have existed — the wrong client,
+/// a duplicated command, a test row on real books. Void is for everything else,
+/// and the line between them is whether anybody outside this machine has seen
+/// the invoice. Published means its token URL and its emailed PDF are already
+/// in somebody's hands; void means it is a record that something happened; a
+/// payment means money arrived against it. Each of those is a tombstone worth
+/// keeping, and all three refuse in one sentence.
+///
+/// The shape is `clients::delete_blocker`'s so both are asked the same way: the
+/// CLI and the TUI put the question before the confirmation, and the API turns
+/// the same block into a 409 with a machine-readable reason.
+pub fn delete_blocker(conn: &Connection, invoice: &Invoice) -> Result<Option<DeleteBlock>> {
+    let blocked = is_void(invoice)
+        || invoice.published_at.is_some()
+        || invoice.status != InvoiceStatus::Draft.as_str()
+        || paid_amount(conn, invoice.id)? > 0.0;
+    Ok(blocked.then(|| DeleteBlock::not_deletable("invoice")))
+}
+
+/// Remove a draft entered by mistake, with its line items, in one transaction.
+///
+/// The guard runs inside that transaction rather than above it, so a delete
+/// races nothing: `delete_blocker` reads the row this statement is about to
+/// remove. **The invoice number is not reused** — `next_invoice_number` is
+/// deliberately left where it is, because a gap in a numbering sequence is
+/// normal and auditable where reissuing a number that may already have been
+/// exported or quoted is not.
+///
+/// Payments are asserted rather than cascaded. The guard refuses any invoice
+/// with money against it, so a payment row here means the guard and this delete
+/// disagree — and a row of exactly `0.00`, which `paid_amount` sums past, is
+/// precisely the case a `> 0.0` guard alone would let through.
+pub fn delete_invoice(conn: &Connection, invoice_id: i64) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let invoice = get_invoice(&tx, invoice_id)?;
+    if let Some(block) = delete_blocker(&tx, &invoice)? {
+        return Err(NigelError::Blocked(block));
+    }
+    let payment_rows: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM invoice_payments WHERE invoice_id = ?1",
+        [invoice_id],
+        |r| r.get(0),
+    )?;
+    if payment_rows > 0 {
+        return Err(NigelError::Blocked(DeleteBlock::not_deletable("invoice")));
+    }
+    tx.execute(
+        "DELETE FROM invoice_line_items WHERE invoice_id = ?1",
+        [invoice_id],
+    )?;
+    tx.execute("DELETE FROM invoices WHERE id = ?1", [invoice_id])?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// May this invoice be voided? Not already void, and with no recorded payments.
@@ -1293,6 +1350,171 @@ mod tests {
             unit_amount: 100.0,
         }];
         create_invoice(conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap()
+    }
+
+    fn block_code(err: &crate::error::NigelError) -> &'static str {
+        match err {
+            crate::error::NigelError::Blocked(block) => block.reason_code(),
+            other => panic!("expected a Blocked, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_draft_that_was_never_published_and_has_no_payments_can_be_deleted() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+
+        assert!(delete_blocker(&conn, &get_invoice(&conn, id).unwrap())
+            .unwrap()
+            .is_none());
+        delete_invoice(&conn, id).unwrap();
+
+        assert!(list_invoices(&conn, None, None).unwrap().is_empty());
+        assert!(matches!(
+            get_invoice(&conn, id),
+            Err(NigelError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn deleting_an_invoice_takes_its_line_items_with_it() {
+        let (_d, conn) = test_conn();
+        let cid = client_id(&conn, "Acme");
+        let items = vec![
+            NewLineItem {
+                description: "Design".into(),
+                quantity: 2.0,
+                unit_amount: 100.0,
+            },
+            NewLineItem {
+                description: "Build".into(),
+                quantity: 1.0,
+                unit_amount: 400.0,
+            },
+        ];
+        let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
+        assert_eq!(line_items(&conn, id).unwrap().len(), 2);
+
+        delete_invoice(&conn, id).unwrap();
+
+        let orphans: i64 = conn
+            .query_row("SELECT COUNT(*) FROM invoice_line_items", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(orphans, 0, "the line items went with the invoice");
+    }
+
+    /// The counter only moves forward, and this pins the decision: a gap in the
+    /// numbering is normal and auditable, where reissuing a number that may
+    /// already have been exported or quoted is not.
+    #[test]
+    fn deleting_the_newest_draft_does_not_move_the_invoice_number_counter() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        let after_create = next_number(&conn).unwrap();
+        assert_eq!(get_invoice(&conn, id).unwrap().number, after_create - 1);
+
+        delete_invoice(&conn, id).unwrap();
+
+        assert_eq!(
+            next_number(&conn).unwrap(),
+            after_create,
+            "the deleted number is not handed out again"
+        );
+    }
+
+    #[test]
+    fn a_published_invoice_refuses_deletion() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        mark_published(&conn, id, "2026-08-05").unwrap();
+
+        let err = delete_invoice(&conn, id).unwrap_err();
+        assert_eq!(block_code(&err), "not_deletable");
+        assert!(get_invoice(&conn, id).is_ok(), "nothing was removed");
+    }
+
+    #[test]
+    fn a_paid_invoice_refuses_deletion() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        record_payment(&conn, id, 100.0, "2026-08-06", "direct_deposit", None).unwrap();
+
+        let err = delete_invoice(&conn, id).unwrap_err();
+        assert_eq!(block_code(&err), "not_deletable");
+    }
+
+    /// A payment against an unpublished draft leaves it `draft` while it is only
+    /// partial, so status alone would let this one through — the guard asks
+    /// about the money as well.
+    #[test]
+    fn a_draft_with_a_partial_payment_refuses_deletion() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        record_payment(&conn, id, 40.0, "2026-08-06", "direct_deposit", None).unwrap();
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "draft");
+
+        let err = delete_invoice(&conn, id).unwrap_err();
+        assert_eq!(block_code(&err), "not_deletable");
+    }
+
+    /// The tombstone argument: a void invoice is a record that something
+    /// happened, and deleting it would erase the record rather than the mistake.
+    #[test]
+    fn a_void_invoice_refuses_deletion() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        void_invoice(&conn, id, "2026-08-06").unwrap();
+
+        let err = delete_invoice(&conn, id).unwrap_err();
+        assert_eq!(block_code(&err), "not_deletable");
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "void");
+    }
+
+    /// `paid_amount` sums, so a payment row of exactly zero passes a `> 0.0`
+    /// guard. The delete asserts the rows are gone rather than assuming it.
+    #[test]
+    fn a_zero_amount_payment_row_still_stops_the_delete() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        conn.execute(
+            "INSERT INTO invoice_payments (invoice_id, amount, paid_date, method)
+             VALUES (?1, 0.0, '2026-08-06', 'other')",
+            [id],
+        )
+        .unwrap();
+
+        let err = delete_invoice(&conn, id).unwrap_err();
+        assert_eq!(block_code(&err), "not_deletable");
+        assert!(get_invoice(&conn, id).is_ok());
+    }
+
+    #[test]
+    fn deleting_an_invoice_that_is_not_there_is_a_not_found() {
+        let (_d, conn) = test_conn();
+        assert!(matches!(
+            delete_invoice(&conn, 404),
+            Err(NigelError::NotFound(_))
+        ));
+    }
+
+    /// One sentence, wherever the refusal is read.
+    #[test]
+    fn every_refused_delete_reads_the_same_way() {
+        let (_d, conn) = test_conn();
+        let expected = "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted";
+
+        for prepare in [
+            (|conn: &Connection, id: i64| mark_published(conn, id, "2026-08-05").unwrap())
+                as fn(&Connection, i64),
+            |conn, id| void_invoice(conn, id, "2026-08-05").unwrap(),
+            |conn, id| {
+                record_payment(conn, id, 100.0, "2026-08-05", "direct_deposit", None).unwrap();
+            },
+        ] {
+            let id = seed_draft(&conn);
+            prepare(&conn, id);
+            assert_eq!(delete_invoice(&conn, id).unwrap_err().to_string(), expected);
+        }
     }
 
     #[test]

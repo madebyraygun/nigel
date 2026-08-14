@@ -1,9 +1,10 @@
 ---
 id: TASK-106
 title: 'Invoicing: delete a draft invoice that was entered by mistake'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-14 00:05'
+updated_date: '2026-08-14 04:56'
 labels:
   - invoicing
   - cli

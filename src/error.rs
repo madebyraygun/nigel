@@ -5,78 +5,112 @@ use thiserror::Error;
 /// Why a delete was refused. The variants are the vocabulary the API publishes
 /// as `details.reason`, so the client can render its own wording instead of
 /// parsing ours.
+///
+/// A reason that counts something carries the count, because the two are only
+/// ever correct together: `NotDeletable` is about the row's own state and has
+/// nothing to count, and a shared `count: 0` beside it would put a figure
+/// nobody chose on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockReason {
-    HasTransactions,
-    HasActiveRules,
-    HasInvoices,
+    HasTransactions(i64),
+    HasActiveRules(i64),
+    HasInvoices(i64),
+    /// The row is not the freshly-entered draft this delete is for: it has been
+    /// published, paid or voided.
+    NotDeletable,
 }
 
-/// A refused delete: what was being deleted, why, and how much of it there is.
+/// A refused delete: what was being deleted and why.
 ///
 /// `Display` is the message the CLI and the TUI have always printed; the parts
 /// stay separately readable so the API can answer with a code and a count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeleteBlock {
-    /// The noun in the message: "account" or "category".
+    /// The noun in the message: "account", "category", "client" or "invoice".
     pub subject: &'static str,
     pub reason: BlockReason,
-    pub count: i64,
 }
 
 impl DeleteBlock {
     pub fn transactions(subject: &'static str, count: i64) -> Self {
         Self {
             subject,
-            reason: BlockReason::HasTransactions,
-            count,
+            reason: BlockReason::HasTransactions(count),
         }
     }
 
     pub fn active_rules(subject: &'static str, count: i64) -> Self {
         Self {
             subject,
-            reason: BlockReason::HasActiveRules,
-            count,
+            reason: BlockReason::HasActiveRules(count),
         }
     }
 
     pub fn invoices(subject: &'static str, count: i64) -> Self {
         Self {
             subject,
-            reason: BlockReason::HasInvoices,
-            count,
+            reason: BlockReason::HasInvoices(count),
+        }
+    }
+
+    pub fn not_deletable(subject: &'static str) -> Self {
+        Self {
+            subject,
+            reason: BlockReason::NotDeletable,
         }
     }
 
     pub fn reason_code(&self) -> &'static str {
         match self.reason {
-            BlockReason::HasTransactions => "has_transactions",
-            BlockReason::HasActiveRules => "has_active_rules",
-            BlockReason::HasInvoices => "has_invoices",
+            BlockReason::HasTransactions(_) => "has_transactions",
+            BlockReason::HasActiveRules(_) => "has_active_rules",
+            BlockReason::HasInvoices(_) => "has_invoices",
+            BlockReason::NotDeletable => "not_deletable",
+        }
+    }
+
+    /// How many blocking rows there are, for the reasons that count something.
+    pub fn count(&self) -> Option<i64> {
+        match self.reason {
+            BlockReason::HasTransactions(n)
+            | BlockReason::HasActiveRules(n)
+            | BlockReason::HasInvoices(n) => Some(n),
+            BlockReason::NotDeletable => None,
         }
     }
 }
 
 impl fmt::Display for DeleteBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let plural = if self.count == 1 { "" } else { "s" };
-        let Self { subject, count, .. } = self;
+        let subject = self.subject;
+        let plural = |count: i64| if count == 1 { "" } else { "s" };
         match self.reason {
-            BlockReason::HasTransactions => {
+            BlockReason::HasTransactions(count) => {
                 write!(
                     f,
-                    "Cannot delete: {subject} has {count} transaction{plural}"
+                    "Cannot delete: {subject} has {count} transaction{}",
+                    plural(count)
                 )
             }
-            BlockReason::HasActiveRules => {
+            BlockReason::HasActiveRules(count) => {
                 write!(
                     f,
-                    "Cannot delete: {subject} has {count} active rule{plural}"
+                    "Cannot delete: {subject} has {count} active rule{}",
+                    plural(count)
                 )
             }
-            BlockReason::HasInvoices => {
-                write!(f, "Cannot delete: {subject} has {count} invoice{plural}")
+            BlockReason::HasInvoices(count) => {
+                write!(
+                    f,
+                    "Cannot delete: {subject} has {count} invoice{}",
+                    plural(count)
+                )
+            }
+            BlockReason::NotDeletable => {
+                write!(
+                    f,
+                    "Cannot delete: {subject} has been sent, paid or voided — only an unsent draft with no payments can be deleted"
+                )
             }
         }
     }
@@ -184,6 +218,10 @@ mod tests {
                 DeleteBlock::invoices("client", 3),
                 "Cannot delete: client has 3 invoices",
             ),
+            (
+                DeleteBlock::not_deletable("invoice"),
+                "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
+            ),
         ];
         for (block, expected) in cases {
             assert_eq!(block.to_string(), expected);
@@ -205,6 +243,20 @@ mod tests {
             DeleteBlock::invoices("client", 1).reason_code(),
             "has_invoices"
         );
+        assert_eq!(
+            DeleteBlock::not_deletable("invoice").reason_code(),
+            "not_deletable"
+        );
+    }
+
+    /// A refusal about the row's own state counts nothing, and must not put a
+    /// zero on the wire beside a reason that never had a figure.
+    #[test]
+    fn only_the_counting_reasons_carry_a_count() {
+        assert_eq!(DeleteBlock::transactions("account", 12).count(), Some(12));
+        assert_eq!(DeleteBlock::active_rules("category", 3).count(), Some(3));
+        assert_eq!(DeleteBlock::invoices("client", 1).count(), Some(1));
+        assert_eq!(DeleteBlock::not_deletable("invoice").count(), None);
     }
 
     #[test]

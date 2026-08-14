@@ -115,6 +115,23 @@ describe('invoicingGuardrailMessage', () => {
     expect(invoicingGuardrailMessage(error, 'invoice')).toBe(error.message);
   });
 
+  it('explains a refused delete in our words, and points at void', () => {
+    // The server says "Cannot delete: invoice has been sent, paid or voided —
+    // only an unsent draft with no payments can be deleted".
+    const message = invoicingGuardrailMessage(
+      conflict(
+        'not_deletable',
+        {},
+        'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      ),
+      'invoice',
+    );
+    expect(message).toBe(
+      'Only a draft that was never sent and has no payments can be deleted. Void this invoice instead.',
+    );
+    expect(message).not.toContain('Cannot delete:');
+  });
+
   it('falls back to the server sentence for an unrecognized 409 reason', () => {
     expect(
       invoicingGuardrailMessage(conflict('some_new_rule', {}, 'Nigel refused that'), 'invoice'),
