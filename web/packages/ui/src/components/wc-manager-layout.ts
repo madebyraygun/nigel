@@ -98,6 +98,15 @@ export class WcManagerLayout extends LitElement {
         justify-content: center;
         padding: var(--wa-space-xl, 24px);
       }
+
+      /* Block flow for the sheets: a flex container is not required to
+         fragment, and a client list long enough to print is exactly where
+         Safari and older Chromium slice through a row. */
+      @media print {
+        :host {
+          display: block;
+        }
+      }
     `,
   ];
 

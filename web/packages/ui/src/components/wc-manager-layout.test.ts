@@ -2,7 +2,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import './wc-manager-layout.js';
 import { WcManagerLayout } from './wc-manager-layout.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
-import { describeColumnLayout, resolvedBox } from '../../preview/layout-suite.js';
+import {
+  describeColumnLayout,
+  describePrintsAsBlock,
+  resolvedBox,
+} from '../../preview/layout-suite.js';
 import preview from './wc-manager-layout.preview.js';
 
 async function mount(props: Partial<WcManagerLayout> = {}): Promise<WcManagerLayout> {
@@ -104,6 +108,8 @@ describe('wc-manager-layout', () => {
 describePreviewA11y(preview);
 
 describeColumnLayout(WcManagerLayout);
+
+describePrintsAsBlock(WcManagerLayout);
 
 describe('the manager frame', () => {
   it('takes the whole screen, so the empty slot has room under the header', () => {

@@ -2,7 +2,7 @@ import { html } from 'lit';
 import './wc-empty-state.js';
 import type { Preview } from '../../preview/types.js';
 
-const preview = {
+const preview: Preview = {
   id: 'wc-empty-state',
   title: 'Empty State',
   group: 'Feedback',
@@ -61,6 +61,6 @@ const preview = {
         </div>`,
     },
   ],
-} satisfies Preview;
+};
 
 export default preview;

@@ -57,6 +57,12 @@ export class NigelImportScreen extends LitElement {
       padding: var(--wa-space-l, 16px);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
+    }
+
+    /* The reading width belongs to what is being read. The screen itself is
+       the whole content area, so an empty state on it centres in the area
+       rather than in a column down its left. */
+    wc-panel {
       max-width: 56rem;
     }
 

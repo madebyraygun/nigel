@@ -285,6 +285,15 @@ export class WcRegisterTable extends LitElement {
         outline: 2px solid var(--wa-color-focus);
         outline-offset: 1px;
       }
+
+      /* Block flow for the sheets, where a register runs to many pages: a flex
+         container is not required to fragment, and the leftover height the
+         column hands out is a property of a viewport. */
+      @media print {
+        :host {
+          display: block;
+        }
+      }
     `,
   ];
 

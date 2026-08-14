@@ -131,6 +131,22 @@ const preview: Preview = {
       `,
     },
     {
+      // The register screen is a flex column filling the content area, and the
+      // table takes what the toolbar left; with no rows that height is what its
+      // empty state centres in. The dashed box stands in for the area.
+      name: 'empty-filling-a-screen',
+      render: () => html`
+        <div
+          style="display:flex; flex-direction:column; block-size:22rem; border:1px dashed var(--wa-color-border);"
+        >
+          <wc-register-table
+            .rows=${[]}
+            empty-message="No transactions in this period."
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
       name: 'editing',
       render: () => html`
         <wc-register-table

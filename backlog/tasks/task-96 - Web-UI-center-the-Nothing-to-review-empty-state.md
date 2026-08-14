@@ -4,7 +4,7 @@ title: 'Web UI: center the Nothing-to-review empty state'
 status: In Progress
 assignee: []
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 05:13'
+updated_date: '2026-08-14 18:05'
 labels:
   - web
   - ui
@@ -39,6 +39,14 @@ Fixed structurally, in three parts:
 Verified in a real browser (headless Chrome against the built SPA at `#/review`): before, the panel sat at x 629 / y 200 in a 232–1280 x 88–800 content area; after, x 756 / y 445 — the centre of the area on both axes. Accounts, register, reports, dashboard, reconcile, settings, undo and invoices were screenshotted too; nothing else moved.
 
 Tests: `preview/layout-suite.ts` is a shared suite in the shape of `print-suite.ts` — it resolves a component's own rule through the CSSOM and reads back the values a browser would hand to layout, because jsdom lays nothing out. `apps/app/src/__tests__/screen-layout.test.ts` is the guard that keeps a new screen from stacking its children some other way.
+
+Review round (PR #14, 8 findings):
+
+- The screen guard resolves the box instead of matching text: it imports the screen modules and runs each `static styles` through `layout-suite`'s CSSOM resolution, so a `flex-flow: column` screen passes and a screen whose later `:host` rule puts `display` back to `block` fails and is named. The old regex could do neither.
+- `layout-suite`'s at-rule scanner tracks brace depth and quotes and ends a blockless statement at its semicolon, so `@import 'x.css';` and `content: '@'` no longer swallow the rule after them; both are in `preview/layout-suite.test.ts`.
+- Print: the converted hosts go back to `display: block` on paper — the shell's print block reaches every screen through `.content ::slotted(*)` (a normal declaration in the outer tree beats the inner tree's own `:host`, verified in Chrome), and `wc-manager-layout` and `wc-register-table` carry their own, being deeper than the shell can reach. `describePrintsAsBlock` asserts it.
+- `reconcile`, `undo`, `settings` and `import` move their reading width off the host onto the panels, so the invariant CLAUDE.md states holds on every screen.
+- `wc-manager-layout` and `wc-register-table` each gain an `empty-filling-a-screen` preview state; `wc-empty-state.preview.ts` is back on the house `const preview: Preview =` convention.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -26,6 +26,12 @@ export class NigelUndoScreen extends LitElement {
     :host {
       display: flex;
       flex-direction: column;
+    }
+
+    /* The reading width belongs to what is being read. The screen itself is
+       the whole content area, so an empty state on it centres in the area
+       rather than in a column down its left. */
+    wc-panel {
       max-width: 52rem;
     }
   `;

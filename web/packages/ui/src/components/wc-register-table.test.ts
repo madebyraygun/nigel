@@ -9,7 +9,11 @@ import type {
 } from './wc-register-table.js';
 import { WcRegisterTable } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
-import { describeColumnLayout, resolvedBox } from '../../preview/layout-suite.js';
+import {
+  describeColumnLayout,
+  describePrintsAsBlock,
+  resolvedBox,
+} from '../../preview/layout-suite.js';
 import preview from './wc-register-table.preview.js';
 
 const categories: CategoryOption[] = [
@@ -398,6 +402,8 @@ describe('wc-register-table', () => {
 describePreviewA11y(preview);
 
 describeColumnLayout(WcRegisterTable);
+
+describePrintsAsBlock(WcRegisterTable);
 
 describe('the table box', () => {
   it('takes the screen height the toolbar left over', () => {

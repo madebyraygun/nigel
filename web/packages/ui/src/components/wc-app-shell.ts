@@ -108,6 +108,16 @@ export class WcAppShell extends LitElement {
         padding: 0;
         overflow: visible;
       }
+
+      /* The screen goes back to block flow for the sheets. A flex container is
+         not required to fragment and Safari and older Chromium slice through a
+         row rather than break between two, and the leftover height a column
+         hands out is a property of a viewport, which paper does not have. A
+         normal declaration in the outer tree beats the inner tree's own :host
+         rule, so this reaches every screen from here. */
+      .content ::slotted(*) {
+        display: block;
+      }
     }
   `;
 

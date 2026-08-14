@@ -38,6 +38,13 @@ export class NigelReconcileScreen extends LitElement {
       display: flex;
       flex-direction: column;
       gap: var(--wa-space-l, 16px);
+    }
+
+    /* The reading width belongs to what is being read. The screen itself is
+       the whole content area, so an empty state on it centres in the area
+       rather than in a column down its left. */
+    wc-panel,
+    wc-reconcile-result {
       max-width: 52rem;
     }
   `;
