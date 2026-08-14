@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-14 00:21'
+updated_date: '2026-08-14 00:54'
 labels:
   - invoicing
   - pdf
@@ -114,6 +114,22 @@ Plan Task 10 ran; five changes came back and all five landed on both documents, 
 Verified after the changes: 1351+117 / 999+117 / 1272+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 
 Still halted at Task 10 for re-review. AC #9 stays unchecked.
+
+## Second side-by-side round — six layout changes
+
+All six landed on both documents; no parity exception.
+
+**PDF.** (1) Item cells padded — `COL_PAD` 4->6mm and a new `CELL_PAD_Y`; every row metric derives from it, so band, row rule and column dividers grew together (one-line row and its band both 8.6mm, rules 8.6mm apart). `table_header` is shared with the report renderers and was left alone; the invoice pads its own header at the call site. (2/3) The money block is one size with weight alone carrying the emphasis. (4) Notes, Terms and Payment run to the full printable width via `NOTE_COLS` — Notes and Terms had the same defect as Payment and are the same block family, so all three moved.
+
+**Page.** (5) Same totals treatment, from the same decision. (6) `.party` gained a fixed flex basis, so both party blocks share one left edge the way the PDF's do from `PARTY_TEXT_X`.
+
+**The shared decision.** `MoneyLine::emphasis` is now positional — exactly the last line — which is Total unpaid, Balance due once paid, Credit on an overpayment. Both renderers read it, so they cannot emphasise different lines.
+
+**The three wrapping defects: all fixed, no separate change needed.** They shared one cause — an unbounded party block squeezing the metadata table and the totals column — which item 6 removed. Three `white-space:nowrap` declarations (metadata cells, item headings, totals cells) make the symptom unreachable at any width.
+
+Verified: 1358+117 / 1003+117 / 1276+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+Still halted for re-review. AC #9 stays unchecked.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
