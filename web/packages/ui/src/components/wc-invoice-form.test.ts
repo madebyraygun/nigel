@@ -3,9 +3,10 @@ import './wc-invoice-form.js';
 import {
   EMPTY_INVOICE_FORM,
   addDays,
+  dueDateOf,
   dueTermFor,
   invoiceFormItems,
-  netDueDate,
+  netDueDateFor,
   prefilledTerms,
   validateInvoiceForm,
   withDueTerm,
@@ -139,23 +140,32 @@ describe('validateInvoiceForm', () => {
 
 describe('due dates counted from the issue date', () => {
   it('pads every computed date, across a month and a year boundary', () => {
-    expect(netDueDate('2026-02-27', 'net7')).toBe('2026-03-06');
-    expect(netDueDate('2026-12-20', 'net14')).toBe('2027-01-03');
-    expect(netDueDate('2028-02-01', 'net30')).toBe('2028-03-02');
+    expect(dueDateOf(netDueDateFor('2026-02-27', 'net7'))).toBe('2026-03-06');
+    expect(dueDateOf(netDueDateFor('2026-12-20', 'net14'))).toBe('2027-01-03');
+    expect(dueDateOf(netDueDateFor('2028-02-01', 'net30'))).toBe('2028-03-02');
     expect(addDays('2026-08-07', 30)).toBe('2026-09-06');
+  });
+
+  it('counts from the year it was given, not the one Date.UTC maps it to', () => {
+    // `Date.UTC(26, …)` is 1926: a two-digit-looking year that the shape check
+    // accepts must not silently book a due date nineteen centuries out.
+    expect(addDays('0026-08-07', 30)).toBe('0026-09-06');
+    expect(dueDateOf(netDueDateFor('0099-12-20', 'net14'))).toBe('0100-01-03');
+    expect(dueDateOf(netDueDateFor('0001-01-01', 'net7'))).toBe('0001-01-08');
   });
 
   it('counts in whole days regardless of the reader’s daylight saving', () => {
     // Local-time arithmetic across a spring-forward lands an hour short and
     // rounds down to the previous day; UTC cannot.
-    expect(netDueDate('2026-03-05', 'net7')).toBe('2026-03-12');
-    expect(netDueDate('2026-10-25', 'net7')).toBe('2026-11-01');
+    expect(dueDateOf(netDueDateFor('2026-03-05', 'net7'))).toBe('2026-03-12');
+    expect(dueDateOf(netDueDateFor('2026-10-25', 'net7'))).toBe('2026-11-01');
   });
 
-  it('says nothing rather than guessing when the issue date is not a day', () => {
-    expect(netDueDate('', 'net30')).toBe('');
-    expect(netDueDate('2026-8-7', 'net30')).toBe('');
-    expect(netDueDate('2026-02-30', 'net30')).toBe('');
+  it('says why it has no date rather than guessing one', () => {
+    expect(netDueDateFor('', 'net30')).toEqual({ kind: 'pending' });
+    expect(netDueDateFor('2026-8-7', 'net30')).toEqual({ kind: 'unreadable' });
+    expect(netDueDateFor('2026-02-30', 'net30')).toEqual({ kind: 'unreadable' });
+    expect(netDueDateFor('9999-12-31', 'net30')).toEqual({ kind: 'unreachable' });
     expect(addDays('9999-12-31', 30)).toBe('');
   });
 
@@ -175,6 +185,7 @@ describe('due dates counted from the issue date', () => {
 
   it('clears a preset due date the issue date can no longer support', () => {
     expect(withIssueDate(valid, '').dueDate).toBe('');
+    expect(withIssueDate(valid, '2026-8-10').dueDate).toBe('');
   });
 
   it('computes, keeps or clears the date as the choice demands', () => {
@@ -187,13 +198,37 @@ describe('due dates counted from the issue date', () => {
     expect(withDueTerm(valid, 'none').dueDate).toBe('');
   });
 
-  it('reads an existing invoice’s dates back as the choice that made them', () => {
-    expect(dueTermFor('2026-08-07', '')).toBe('none');
-    expect(dueTermFor('2026-08-07', '2026-08-14')).toBe('net7');
-    expect(dueTermFor('2026-08-07', '2026-08-21')).toBe('net14');
-    expect(dueTermFor('2026-08-07', '2026-09-06')).toBe('net30');
-    expect(dueTermFor('2026-08-07', '2026-08-31')).toBe('custom');
-    expect(dueTermFor('', '2026-08-31')).toBe('custom');
+  it('keeps a preset whose date is only waiting on the issue date', () => {
+    const waiting = withDueTerm({ ...valid, issueDate: '', terms: '' }, 'net30');
+    expect(waiting).toMatchObject({ dueTerm: 'net30', dueDate: '', terms: 'Net 30' });
+    expect(withIssueDate(waiting, '2026-08-07').dueDate).toBe('2026-09-06');
+  });
+
+  it('refuses a preset it could never date, rather than promising a period', () => {
+    // Thirty days past 9999-12-31 is not a date this form can write, so the
+    // choice falls back to the one that means no due date and writes no terms.
+    const overflowed = withDueTerm(
+      { ...valid, issueDate: '9999-12-31', dueDate: '', terms: '' },
+      'net30',
+    );
+    expect(overflowed).toMatchObject({ dueTerm: 'none', dueDate: '', terms: '' });
+  });
+
+  it('infers no preset from an existing invoice’s dates', () => {
+    // A due date thirty days out may be a Net 30 or a date somebody picked
+    // that happens to land there. Guessing moves a stored due date the moment
+    // the issue date is edited, so a stored date opens as Custom.
+    expect(dueTermFor('')).toBe('none');
+    expect(dueTermFor('2026-09-06')).toBe('custom');
+    expect(dueTermFor('2026-08-31')).toBe('custom');
+
+    const loaded: InvoiceFormValue = {
+      ...valid,
+      dueTerm: dueTermFor(valid.dueDate),
+      issueDate: '2026-08-07',
+      dueDate: '2026-09-06',
+    };
+    expect(withIssueDate(loaded, '2026-08-10').dueDate).toBe('2026-09-06');
   });
 });
 
@@ -205,13 +240,22 @@ describe('the terms a net preset writes', () => {
   it('leaves a sentence somebody typed', () => {
     const typed = 'Payable on receipt; late after 15 days.';
     expect(withDueTerm({ ...valid, terms: typed }, 'net7').terms).toBe(typed);
-    expect(prefilledTerms(typed, 'none')).toBe(typed);
+    expect(prefilledTerms(typed, 'none', null)).toBe(typed);
   });
 
-  it('rewrites a label it wrote itself, and clears it for a date or none', () => {
-    expect(withDueTerm(valid, 'net7').terms).toBe('Net 7');
-    expect(withDueTerm(valid, 'none').terms).toBe('');
-    expect(withDueTerm(valid, 'custom').terms).toBe('');
+  it('leaves a stored label it cannot claim to have written', () => {
+    // `Net 30` in a loaded invoice is the operator's or the CLI's; matching the
+    // text the form would have written is not evidence the form wrote it.
+    expect(withDueTerm(valid, 'none').terms).toBe('Net 30');
+    expect(withDueTerm(valid, 'custom').terms).toBe('Net 30');
+    expect(prefilledTerms('Net 30', 'net7', null)).toBe('Net 30');
+  });
+
+  it('rewrites the label it wrote itself, and clears it for a date or none', () => {
+    const wrote = withDueTerm({ ...valid, terms: '' }, 'net30');
+    expect(prefilledTerms(wrote.terms, 'net7', wrote.terms)).toBe('Net 7');
+    expect(prefilledTerms(wrote.terms, 'none', wrote.terms)).toBe('');
+    expect(prefilledTerms(wrote.terms, 'custom', wrote.terms)).toBe('');
   });
 });
 
@@ -333,6 +377,97 @@ describe('wc-invoice-form', () => {
     expect(empty.shadowRoot?.querySelector('[data-due-hint]')?.textContent).toContain(
       'never goes overdue',
     );
+  });
+
+  it('tells a missing issue date apart from one it cannot read', async () => {
+    const waiting = await mount({
+      value: { ...valid, issueDate: '', dueDate: '', dueTerm: 'net30' },
+    });
+    expect(waiting.shadowRoot?.querySelector('[data-due-hint]')?.textContent).toContain(
+      'Set an issue date',
+    );
+
+    const unreadable = await mount({
+      value: { ...valid, issueDate: '2026-8-7', dueDate: '', dueTerm: 'net30' },
+    });
+    const hint = unreadable.shadowRoot?.querySelector('[data-due-hint]')?.textContent;
+    expect(hint).toContain('issue date');
+    expect(hint).not.toContain('Set an issue date');
+  });
+
+  it('says nothing about going overdue when a custom date is filled in', async () => {
+    const filled = await mount({ value: { ...valid, dueTerm: 'custom' } });
+    expect(filled.shadowRoot?.querySelector('[data-due-hint]')).toBeNull();
+
+    const cleared = await mount({
+      value: { ...valid, dueTerm: 'custom', dueDate: '' },
+    });
+    expect(cleared.shadowRoot?.querySelector('[data-due-hint]')?.textContent).toContain(
+      'never goes overdue',
+    );
+  });
+
+  it('never clears terms that arrived with the invoice', async () => {
+    // `Net 30` on a loaded invoice is the operator's or the CLI's. The form
+    // clears only what it wrote itself, this session.
+    const el = await mount({ value: { ...valid, terms: 'Net 30' } });
+    const seen: InvoiceFormValue[] = [];
+    el.addEventListener('nc-invoice-form-change', (event) =>
+      seen.push((event as CustomEvent<NcInvoiceFormChangeDetail>).detail.value),
+    );
+
+    const select = el.shadowRoot?.querySelector<HTMLSelectElement>('[data-due-term]');
+    select!.value = 'none';
+    select!.dispatchEvent(new Event('change'));
+
+    expect(seen.at(-1)?.terms).toBe('Net 30');
+  });
+
+  it('clears the label it wrote itself when the choice moves on', async () => {
+    const el = await mount({ value: { ...valid, terms: '', dueTerm: 'none', dueDate: '' } });
+    const seen: InvoiceFormValue[] = [];
+    el.addEventListener('nc-invoice-form-change', (event) =>
+      seen.push((event as CustomEvent<NcInvoiceFormChangeDetail>).detail.value),
+    );
+    const select = () =>
+      el.shadowRoot?.querySelector<HTMLSelectElement>('[data-due-term]');
+
+    select()!.value = 'net30';
+    select()!.dispatchEvent(new Event('change'));
+    expect(seen.at(-1)?.terms).toBe('Net 30');
+
+    // The parent hands the emitted value straight back, as the screen does.
+    el.value = seen.at(-1)!;
+    await el.updateComplete;
+
+    select()!.value = 'none';
+    select()!.dispatchEvent(new Event('change'));
+    expect(seen.at(-1)?.terms).toBe('');
+  });
+
+  it('stops claiming a prefill once the terms are edited by hand', async () => {
+    const el = await mount({ value: { ...valid, terms: '', dueTerm: 'none', dueDate: '' } });
+    const seen: InvoiceFormValue[] = [];
+    el.addEventListener('nc-invoice-form-change', (event) =>
+      seen.push((event as CustomEvent<NcInvoiceFormChangeDetail>).detail.value),
+    );
+    const select = () =>
+      el.shadowRoot?.querySelector<HTMLSelectElement>('[data-due-term]');
+
+    select()!.value = 'net30';
+    select()!.dispatchEvent(new Event('change'));
+    el.value = seen.at(-1)!;
+    await el.updateComplete;
+
+    const terms = el.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-terms]');
+    terms!.value = 'Net 30';
+    terms!.dispatchEvent(new Event('input'));
+    el.value = seen.at(-1)!;
+    await el.updateComplete;
+
+    select()!.value = 'none';
+    select()!.dispatchEvent(new Event('change'));
+    expect(seen.at(-1)?.terms).toBe('Net 30');
   });
 
   it('carries a line-item edit up as the whole value', async () => {

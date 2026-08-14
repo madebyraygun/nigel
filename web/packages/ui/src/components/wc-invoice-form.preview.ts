@@ -66,6 +66,21 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'due-preset-unreadable-issue-date',
+      render: () => html`
+        <wc-invoice-form
+          .value=${{
+            ...filled,
+            issueDate: '2026-8-7',
+            dueDate: '',
+            dueTerm: 'net30',
+          } satisfies InvoiceFormValue}
+          .clients=${clients}
+          .errors=${{ issueDate: 'Issue date must be YYYY-MM-DD' }}
+        ></wc-invoice-form>
+      `,
+    },
+    {
       name: 'due-custom',
       render: () => html`
         <wc-invoice-form
@@ -96,7 +111,11 @@ const preview: Preview = {
     {
       name: 'editing',
       render: () => html`
-        <wc-invoice-form mode="edit" .value=${filled} .clients=${clients}></wc-invoice-form>
+        <wc-invoice-form
+          mode="edit"
+          .value=${{ ...filled, dueTerm: 'custom' } satisfies InvoiceFormValue}
+          .clients=${clients}
+        ></wc-invoice-form>
       `,
     },
     {
