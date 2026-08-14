@@ -272,6 +272,27 @@ fn enrich_conflict(err: NigelError, invoice: &Invoice, paid: f64) -> ApiError {
     }
 }
 
+/// A refused delete, plus the two facts a client needs to say something true
+/// about it.
+///
+/// `enrich_conflict`'s job for `NigelError::Blocked`: the code and the sentence
+/// stay the data layer's, and the route adds only what a screen would otherwise
+/// have to guess. `canVoid` is `ensure_voidable` **called** — the same question
+/// `nigel invoice delete` asks before it offers the same advice — because
+/// "void it instead" is a dead end for an invoice with payments, which refuses
+/// void as well. `status` carries the already-void case.
+fn enrich_block(err: NigelError, conn: &Connection, invoice: &Invoice) -> ApiError {
+    let NigelError::Blocked(block) = &err else {
+        return ApiError::from(err);
+    };
+    let details = serde_json::json!({
+        "reason": block.reason_code(),
+        "status": invoice.status,
+        "canVoid": inv::ensure_voidable(conn, invoice).is_ok(),
+    });
+    ApiError::conflict(err.to_string(), details)
+}
+
 fn default_currency() -> String {
     "USD".to_string()
 }
@@ -481,7 +502,7 @@ async fn destroy(
 ) -> ApiResult<Json<Deleted>> {
     let id = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
-        inv::delete_invoice(conn, invoice.id)?;
+        inv::delete_invoice(conn, invoice.id).map_err(|e| enrich_block(e, conn, &invoice))?;
         Ok(invoice.id)
     })
     .await?;
@@ -1676,11 +1697,17 @@ mod tests {
             let (status, body) =
                 delete_json(&app, &format!("/api/invoices/{number}"), &token).await;
             assert_eq!(status, StatusCode::CONFLICT, "#{number}: {body}");
-            assert_eq!(body["error"]["details"]["reason"], "not_deletable");
+            let details = &body["error"]["details"];
+            assert_eq!(details["reason"], "not_deletable");
             assert!(
-                body["error"]["details"]["count"].is_null(),
+                details["count"].is_null(),
                 "a state refusal counts nothing: {body}"
             );
+            // The facts a client needs to say something true about it. Void is
+            // a dead end for anything with payments, and the route reports
+            // `ensure_voidable` rather than leaving it to be guessed at.
+            assert_eq!(details["status"], detail["status"]);
+            assert_eq!(details["canVoid"], detail["canVoid"]);
             assert_eq!(
                 body["error"]["message"],
                 "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted"

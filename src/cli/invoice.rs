@@ -389,17 +389,10 @@ pub fn delete(number: i64, yes: bool) -> Result<()> {
     let invoice = find_invoice(&conn, number)?;
 
     if let Some(block) = delete_blocker(&conn, &invoice)? {
-        // The pointer, not the sentence: an invoice that is already void has
-        // nothing left to cancel, and telling somebody to run `void` on it
-        // would be advice that fails.
-        let pointer = if is_void(&invoice) {
-            String::new()
-        } else {
-            format!("\nRun `nigel invoice void {number}` to cancel it instead.")
-        };
         return Err(NigelError::Other(format!(
-            "{}{pointer}",
-            NigelError::Blocked(block)
+            "{}{}",
+            NigelError::Blocked(block),
+            delete_alternative(&conn, &invoice)?
         )));
     }
 
@@ -422,6 +415,28 @@ pub fn delete(number: i64, yes: bool) -> Result<()> {
         next_number(&conn)?
     );
     Ok(())
+}
+
+/// The line under a refused delete, derived from what this invoice can actually
+/// do rather than from what usually follows a refusal.
+///
+/// Void is only worth naming when `ensure_voidable` would allow it — the same
+/// call `nigel invoice void` makes — because advice the reader can follow
+/// straight into a second refusal is worse than none. An invoice with payments
+/// is that case: it refuses delete *and* void, so what it gets is the fact
+/// rather than a suggestion. An already-void invoice gets nothing: there is
+/// nothing left to do to it.
+fn delete_alternative(conn: &Connection, invoice: &Invoice) -> Result<String> {
+    if is_void(invoice) {
+        return Ok(String::new());
+    }
+    if ensure_voidable(conn, invoice).is_ok() {
+        return Ok(format!(
+            "\nRun `nigel invoice void {}` to cancel it instead.",
+            invoice.number
+        ));
+    }
+    Ok("\nA payment has been recorded against it, so it stays on the books.".to_string())
 }
 
 fn confirm_void(invoice: &Invoice, yes: bool) -> Result<bool> {

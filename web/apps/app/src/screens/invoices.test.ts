@@ -584,6 +584,8 @@ describe('nigel-invoices-screen', () => {
     fake.deleteInvoiceError = conflictError('not_deletable', {
       message:
         'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      status: 'sent',
+      canVoid: true,
     });
     const { el, routes } = await mount('number=1252', fake);
 
@@ -597,6 +599,44 @@ describe('nigel-invoices-screen', () => {
     // The invoice being explained is still on screen, and the route stood still.
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
     expect(routes).toEqual([]);
+  });
+
+  /// The screen renders whatever the reason table produced, so the dead-end
+  /// advice must not reappear here for an invoice void would also refuse.
+  it('does not tell a paid invoice to void itself when the delete is refused', async () => {
+    await answerConfirm(true);
+    const fake = client();
+    // A real refusal, built by the fake from the invoice's own flags.
+    fake.invoiceDetails[1252] = detail({
+      number: 1252,
+      status: 'paid',
+      canDelete: false,
+      canVoid: false,
+    });
+    // canDelete is false, so the button is disabled — drive the handler the way
+    // a stale view would, with the flag on and the server refusing.
+    fake.invoiceDetails[1253] = detail({
+      number: 1253,
+      status: 'paid',
+      canDelete: true,
+      canVoid: false,
+    });
+    fake.deleteInvoiceError = conflictError('not_deletable', {
+      message:
+        'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      status: 'paid',
+      canVoid: false,
+    });
+    const { el } = await mount('number=1253', fake);
+
+    button(el, '[data-delete]').click();
+    await settle(el);
+
+    const message = el.shadowRoot
+      ?.querySelector('[data-action-error]')
+      ?.getAttribute('message');
+    expect(message).not.toContain('Void this invoice instead');
+    expect(message).toContain('it stays on the books');
   });
 
   it('renders what a void could not take down, without calling it a failure', async () => {

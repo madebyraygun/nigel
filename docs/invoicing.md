@@ -527,6 +527,13 @@ Cannot delete: invoice has been sent, paid or voided — only an unsent draft wi
 Run `nigel invoice void 1252` to cancel it instead.
 ```
 
+The line under the refusal names only something that would actually work. Void
+is suggested when `nigel invoice void` would accept the invoice; an invoice with
+payments refuses void too, so it is told what is true of it instead — `A payment
+has been recorded against it, so it stays on the books.` — and an already-void
+invoice is told nothing, because there is nothing left to do to it. The browser
+branches the same way, on the `status` and `canVoid` the 409 carries.
+
 | The invoice | Delete |
 | --- | --- |
 | a draft, never published, no payments | removes it and its line items |
@@ -540,8 +547,11 @@ sentence is what the CLI prints, the dashboard puts on its status line and the
 API answers as a `409` with `details.reason = "not_deletable"`.
 
 The invoice and its line items go in one transaction. Payments are not cascaded:
-the guard means a deletable invoice has none, and the delete asserts that rather
-than assuming it.
+the guard means a deletable invoice has none, and the delete re-asserts it. The
+test is whether a payment row **exists**, not what the rows add up to — a row of
+`0.00`, or two that cancel out, is still a payment somebody recorded, and a
+summed test would call such an invoice deletable everywhere the button is drawn
+and then refuse it at the write.
 
 Delete asks first. On a terminal it names the invoice and asks
 `Delete it? [y/N]`; anything but `y` prints `Aborted.` and changes nothing.

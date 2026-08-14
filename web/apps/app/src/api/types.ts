@@ -601,8 +601,14 @@ export interface ConflictDetails {
   /** `no_transactions` names the account and month it found nothing in. */
   account?: string;
   month?: string;
-  /** `not_draft` names the status that blocked the edit. */
+  /** `not_draft` and `not_deletable` name the status behind the refusal. */
   status?: string;
+  /**
+   * `not_deletable` carries whether void would be accepted — `ensure_voidable`
+   * called, not re-derived — because void refuses a paid invoice too and
+   * suggesting it there is advice that fails.
+   */
+  canVoid?: boolean;
   /** `has_payments` and `no_balance` carry the figures behind the refusal. */
   total?: number;
   paid?: number;

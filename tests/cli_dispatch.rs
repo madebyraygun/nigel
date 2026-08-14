@@ -1274,8 +1274,11 @@ fn invoice_delete_refuses_a_void_invoice_without_telling_it_to_void_again() {
     assert_eq!(count, 1);
 }
 
+/// A paid invoice refuses void as well, so pointing at it would be a dead end:
+/// the operator runs the suggested command and gets a second refusal. The
+/// honest answer names what is actually true of the invoice.
 #[test]
-fn invoice_delete_refuses_a_draft_that_has_been_paid() {
+fn invoice_delete_of_a_paid_invoice_does_not_point_at_a_void_that_would_refuse() {
     let env = TestEnv::new();
     init_with_client_and_invoice(&env);
     env.cmd()
@@ -1291,6 +1294,37 @@ fn invoice_delete_refuses_a_draft_that_has_been_paid() {
         .assert()
         .success();
 
+    // The premise: void refuses this invoice too.
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be voided"));
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot delete: invoice has been"))
+        .stderr(predicate::str::contains("nigel invoice void").not())
+        .stderr(predicate::str::contains(
+            "A payment has been recorded against it, so it stays on the books.",
+        ));
+}
+
+/// The one case where the pointer is real advice: a sent invoice with nothing
+/// paid against it, which `ensure_voidable` allows.
+#[test]
+fn invoice_delete_of_a_sent_invoice_points_at_the_void_that_would_work() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.db()
+        .execute(
+            "UPDATE invoices SET published_at = '2026-08-05', status = 'sent' WHERE number = 1248",
+            [],
+        )
+        .expect("publish");
+
     env.cmd()
         .args(["invoice", "delete", "1248", "--yes"])
         .assert()
@@ -1299,6 +1333,12 @@ fn invoice_delete_refuses_a_draft_that_has_been_paid() {
         .stderr(predicate::str::contains(
             "Run `nigel invoice void 1248` to cancel it instead.",
         ));
+
+    // And the advice holds: the command it names succeeds.
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success();
 }
 
 #[test]

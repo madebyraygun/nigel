@@ -1288,9 +1288,13 @@ export class FakeApiClient implements ApiClient {
 
     const detail = this.detail(number);
     if (!detail.canDelete) {
+      // The shape the route sends: the code and the sentence are the data
+      // layer's, plus the two facts the sentence branches on.
       throw conflictError('not_deletable', {
         message:
           'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+        status: detail.status,
+        canVoid: detail.canVoid,
       });
     }
     delete this.invoiceDetails[number];

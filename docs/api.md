@@ -794,7 +794,10 @@ Everything else is a `409` with `details.reason` = `not_deletable` and one
 sentence — published, paid and void all refuse the same way, because they are
 one rule: somebody outside this machine has seen the invoice. The block carries
 no `count`; it is about the invoice's own state rather than about things
-pointing at it.
+pointing at it. It does carry `status` and `canVoid` — `ensure_voidable` called,
+not re-derived — so a client can say something true about what to do next:
+suggesting void to an invoice with payments is a dead end, because void refuses
+it as well.
 
 ```json
 {

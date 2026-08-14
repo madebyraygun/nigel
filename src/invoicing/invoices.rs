@@ -635,8 +635,25 @@ pub fn delete_blocker(conn: &Connection, invoice: &Invoice) -> Result<Option<Del
     let blocked = is_void(invoice)
         || invoice.published_at.is_some()
         || invoice.status != InvoiceStatus::Draft.as_str()
-        || paid_amount(conn, invoice.id)? > 0.0;
+        || has_payments(conn, invoice.id)?;
     Ok(blocked.then(|| DeleteBlock::not_deletable("invoice")))
+}
+
+/// Whether any payment row names this invoice — **existence, not a sum**.
+///
+/// `paid_amount` answers a different question and would answer it differently
+/// here: a row of exactly `0.00`, or two rows that cancel out, total nothing
+/// while still being payments somebody recorded. A summed guard would call such
+/// an invoice deletable in every pre-flight and then have the write refuse it,
+/// which is a screen offering an action the server rejects. One predicate,
+/// asked by [`delete_blocker`] and by [`delete_invoice`] inside its own
+/// transaction, is what keeps the two from disagreeing.
+fn has_payments(conn: &Connection, invoice_id: i64) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM invoice_payments WHERE invoice_id = ?1)",
+        [invoice_id],
+        |r| r.get(0),
+    )?)
 }
 
 /// Remove a draft entered by mistake, with its line items, in one transaction.
@@ -648,24 +665,20 @@ pub fn delete_blocker(conn: &Connection, invoice: &Invoice) -> Result<Option<Del
 /// normal and auditable where reissuing a number that may already have been
 /// exported or quoted is not.
 ///
-/// Payments are asserted rather than cascaded. The guard refuses any invoice
-/// with money against it, so a payment row here means the guard and this delete
-/// disagree — and a row of exactly `0.00`, which `paid_amount` sums past, is
-/// precisely the case a `> 0.0` guard alone would let through.
+/// Payments are asserted rather than cascaded, against the same `has_payments`
+/// predicate the guard just applied — so this is a real assertion about the
+/// rows this statement is about to orphan, not a second, looser rule that could
+/// refuse what the pre-flight allowed.
 pub fn delete_invoice(conn: &Connection, invoice_id: i64) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
     let invoice = get_invoice(&tx, invoice_id)?;
     if let Some(block) = delete_blocker(&tx, &invoice)? {
         return Err(NigelError::Blocked(block));
     }
-    let payment_rows: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM invoice_payments WHERE invoice_id = ?1",
-        [invoice_id],
-        |r| r.get(0),
-    )?;
-    if payment_rows > 0 {
-        return Err(NigelError::Blocked(DeleteBlock::not_deletable("invoice")));
-    }
+    debug_assert!(
+        !has_payments(&tx, invoice_id)?,
+        "delete_blocker allowed an invoice with payment rows"
+    );
     tx.execute(
         "DELETE FROM invoice_line_items WHERE invoice_id = ?1",
         [invoice_id],
@@ -1470,10 +1483,15 @@ mod tests {
         assert_eq!(get_invoice(&conn, id).unwrap().status, "void");
     }
 
-    /// `paid_amount` sums, so a payment row of exactly zero passes a `> 0.0`
-    /// guard. The delete asserts the rows are gone rather than assuming it.
+    /// The pre-flight and the delete ask the same question, so a screen can
+    /// never offer an action the write then refuses.
+    ///
+    /// A summed guard would answer differently here: a payment row of exactly
+    /// zero — or of two rows that cancel out — totals nothing, so `> 0.0` would
+    /// call this invoice deletable and the delete would refuse it. The rule is
+    /// therefore row existence, in both.
     #[test]
-    fn a_zero_amount_payment_row_still_stops_the_delete() {
+    fn a_zero_amount_payment_row_stops_the_delete_and_the_pre_flight_agrees() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
         conn.execute(
@@ -1483,9 +1501,43 @@ mod tests {
         )
         .unwrap();
 
+        let invoice = get_invoice(&conn, id).unwrap();
+        assert_eq!(
+            delete_blocker(&conn, &invoice)
+                .unwrap()
+                .map(|b| b.reason_code()),
+            Some("not_deletable"),
+            "the pre-flight must refuse what the delete refuses"
+        );
         let err = delete_invoice(&conn, id).unwrap_err();
         assert_eq!(block_code(&err), "not_deletable");
         assert!(get_invoice(&conn, id).is_ok());
+    }
+
+    /// Two payments that sum to nothing are still payments. The same disagreement
+    /// as the zero row, arrived at from the other side.
+    #[test]
+    fn payments_that_cancel_out_stop_the_delete_and_the_pre_flight_agrees() {
+        let (_d, conn) = test_conn();
+        let id = seed_draft(&conn);
+        for amount in ["40.0", "-40.0"] {
+            conn.execute(
+                &format!(
+                    "INSERT INTO invoice_payments (invoice_id, amount, paid_date, method)
+                     VALUES (?1, {amount}, '2026-08-06', 'other')"
+                ),
+                [id],
+            )
+            .unwrap();
+        }
+        assert_eq!(paid_amount(&conn, id).unwrap(), 0.0);
+
+        let invoice = get_invoice(&conn, id).unwrap();
+        assert!(delete_blocker(&conn, &invoice).unwrap().is_some());
+        assert_eq!(
+            block_code(&delete_invoice(&conn, id).unwrap_err()),
+            "not_deletable"
+        );
     }
 
     #[test]

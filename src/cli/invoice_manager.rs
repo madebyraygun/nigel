@@ -1358,8 +1358,8 @@ impl InvoiceManager {
         let Some(detail) = &self.detail else {
             return;
         };
-        let number = detail.invoice.number;
-        match delete_invoice(conn, detail.invoice.id) {
+        let (invoice_id, number) = (detail.invoice.id, detail.invoice.number);
+        match delete_invoice(conn, invoice_id) {
             Ok(()) => {
                 self.detail = None;
                 self.screen = Screen::List;
@@ -1369,7 +1369,12 @@ impl InvoiceManager {
                 ));
             }
             Err(e) => {
-                self.screen = Screen::Detail;
+                // The guard passed when the dialog opened and refused at the
+                // write, so the row moved underneath this screen. Reload it
+                // before the sentence lands beside it — a refused void does the
+                // same — or the figures and the offered verbs would still be
+                // the ones that justified a dialog the invoice no longer earns.
+                self.after_mutation(conn, invoice_id);
                 self.set_status(e.to_string());
             }
         }
@@ -2915,6 +2920,37 @@ mod tests {
             .expect("a status line")
             .starts_with("Cannot delete: invoice has been sent, paid or voided"));
         assert_eq!(invoice_count(&conn), 1);
+    }
+
+    /// A delete refused at the write means the row moved under the screen —
+    /// another process published or paid it while the dialog was open. The
+    /// detail is reloaded before the sentence lands beside it, the way a
+    /// refused void reloads, so the figures and the offered verbs are the
+    /// invoice's current ones rather than the ones that justified the dialog.
+    #[test]
+    fn a_delete_refused_at_the_write_reloads_the_detail_it_refused() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Acme Co", 1_250.0);
+        let mut mgr = manager(&conn);
+        open_delete(&mut mgr, &conn);
+        assert!(matches!(mgr.screen, Screen::ConfirmDelete));
+
+        // Somebody else publishes it while the confirmation is up.
+        mark_published(&conn, id, "2026-07-17").unwrap();
+        record_payment(&conn, id, 100.0, "2026-07-18", "ach", None).unwrap();
+
+        mgr.handle_key(KeyCode::Char('y'), &conn);
+
+        assert!(
+            matches!(mgr.screen, Screen::Detail),
+            "the invoice is still there"
+        );
+        assert_eq!(invoice_count(&conn), 1);
+        let detail = mgr.detail.as_ref().expect("the detail was reloaded");
+        assert_eq!(detail.paid, 100.0, "stale figures would still read 0");
+        assert_eq!(detail.invoice.status, "partial");
+        assert!(!detail.deletable, "d must stop being advertised");
+        assert!(!rendered(&mut mgr).contains("d=delete"));
     }
 
     fn open_void(mgr: &mut InvoiceManager, conn: &Connection) {
