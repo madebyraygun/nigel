@@ -39,6 +39,7 @@ use crate::invoicing::send::{send_invoice_traced, SendFailure, SendStep, StepOut
 use crate::invoicing::sync::{sync_all_report_within, SyncReport};
 use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
+use crate::settings::InvoicingConfig;
 
 use super::super::error::{ApiError, ApiErrorCode, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
@@ -513,21 +514,26 @@ async fn pay(
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
 
-    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
+    let cfg = crate::settings::invoicing_config();
+    let data_dir = crate::settings::get_data_dir();
+    let publisher = crate::cli::invoice::optional_publisher(&cfg);
     let result = with_conn_api(&state, move |conn| {
-        pay_with(conn, number, &request, publisher.as_ref())
+        pay_with(conn, number, &request, publisher.as_ref(), &cfg, &data_dir)
     })
     .await?;
     Ok(Json(result))
 }
 
-/// The pay with its publisher passed in, which is what makes the republish
-/// testable without a network — the seam `void_with` and `send_with` established.
+/// The pay with its publisher, its config and its data directory passed in,
+/// which is what makes the republish testable without a network and without an
+/// ambient settings file — the seam `void_with` and `send_with` established.
 fn pay_with<P: AssetPublisher>(
     conn: &Connection,
     number: i64,
     request: &PayRequest,
     publisher: Option<&P>,
+    cfg: &InvoicingConfig,
+    data_dir: &std::path::Path,
 ) -> ApiResult<PayResult> {
     let invoice = find_invoice(conn, number)?;
     let paid = inv::paid_amount(conn, invoice.id)?;
@@ -543,41 +549,16 @@ fn pay_with<P: AssetPublisher>(
     )
     .map_err(|e| enrich_conflict(e, &invoice, paid))?;
 
-    // After the write has committed, and unable to undo it: the branding is
-    // resolved the way `cli::invoice::republish_after_payment` resolves it, and
-    // every failure out here is a sentence rather than a status.
+    // After the write has committed, and unable to undo it: the CLI layer owns
+    // the resolution and the sentences, so a terminal and a browser describe the
+    // same republish identically.
     let refreshed = find_invoice(conn, number)?;
-    let republish_warnings = republish_page(conn, &refreshed, publisher);
+    let republish_warnings =
+        crate::cli::invoice::republish_with(conn, refreshed.id, cfg, data_dir, publisher);
     Ok(PayResult {
         invoice: detail_for(conn, refreshed)?,
         republish_warnings,
     })
-}
-
-/// Re-render one published invoice through the CLI layer's resolver, with the
-/// publisher the route was given. Infallible: the payment is already recorded.
-fn republish_page<P: AssetPublisher>(
-    conn: &Connection,
-    invoice: &Invoice,
-    publisher: Option<&P>,
-) -> Vec<String> {
-    if invoice.published_at.is_none() {
-        return Vec::new();
-    }
-    let client = match get_client(conn, invoice.client_id) {
-        Ok(client) => client,
-        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (reading the client: {e}).")],
-    };
-    let template = match load_template(&crate::settings::get_data_dir()) {
-        Ok(template) => template,
-        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (loading the invoice template: {e}).")],
-    };
-    let (contact_email, _) =
-        crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
-    let profile = crate::cli::invoice::company_profile(conn);
-    let branding = profile.branding(&template, &contact_email);
-    crate::invoicing::republish::republish_invoice(conn, invoice, &client, &branding, publisher)
-        .warnings()
 }
 
 // ---------------------------------------------------------------------------
@@ -825,12 +806,14 @@ struct SyncResult {
 }
 
 async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
-    let Some(secret_key) = crate::settings::invoicing_config().stripe_secret_key else {
+    let cfg = crate::settings::invoicing_config();
+    let Some(secret_key) = cfg.stripe_secret_key.clone() else {
         return Err(not_configured("Payment sync", &["stripe_secret_key"]));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
     let today = crate::cli::today();
-    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
+    let data_dir = crate::settings::get_data_dir();
+    let publisher = crate::cli::invoice::optional_publisher(&cfg);
 
     let result = with_conn_api(&state, move |conn| {
         let report = sync_with(conn, &today, &gateway)?;
@@ -841,7 +824,13 @@ async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
             .recorded_invoices
             .iter()
             .flat_map(|number| match inv::get_invoice_by_number(conn, *number) {
-                Ok(invoice) => republish_page(conn, &invoice, publisher.as_ref()),
+                Ok(invoice) => crate::cli::invoice::republish_with(
+                    conn,
+                    invoice.id,
+                    &cfg,
+                    &data_dir,
+                    publisher.as_ref(),
+                ),
                 Err(e) => vec![format!(
                     "Warning: could not republish invoice #{number}'s page ({e})."
                 )],
@@ -985,6 +974,7 @@ async fn preview_pdf(
 #[cfg(test)]
 mod tests {
     use crate::server::testutil::*;
+    use crate::settings::InvoicingConfig;
     use axum::http::StatusCode;
 
     #[tokio::test]
@@ -1665,8 +1655,15 @@ mod tests {
         let conn = open_db(&db_path);
         let publisher = FakePub::default();
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&publisher))
-            .expect("the payment goes through");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            Some(&publisher),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment goes through");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0, "{json}");
@@ -1688,8 +1685,15 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let conn = open_db(&db_path);
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&ForbiddenPub))
-            .expect("a failed republish is not a failed payment");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            Some(&ForbiddenPub),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("a failed republish is not a failed payment");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0, "the money is recorded: {json}");
@@ -1713,8 +1717,15 @@ mod tests {
         let conn = open_db(&db_path);
         let publisher = FakePub::default();
 
-        let result = pay_with(&conn, 1252, &pay_request(10.0), Some(&publisher))
-            .expect("the payment goes through");
+        let result = pay_with(
+            &conn,
+            1252,
+            &pay_request(10.0),
+            Some(&publisher),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment goes through");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert!(json.get("republishWarnings").is_none(), "{json}");
@@ -1732,8 +1743,15 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let conn = open_db(&db_path);
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), None::<&FakePub>)
-            .expect("the payment lands");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            None::<&FakePub>,
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment lands");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0);

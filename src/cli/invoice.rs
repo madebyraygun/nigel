@@ -527,7 +527,36 @@ pub(crate) use crate::invoicing::render::pay_button_for;
 /// the publisher and the rows are resolved here and passed down. A broken custom
 /// template, an unreadable data directory and an R2 outage are all *warnings*:
 /// the payment is committed, and nothing at this end may read as its failure.
-pub(crate) fn republish_after_payment(conn: &Connection, invoice_id: i64) -> Vec<String> {
+///
+/// The config and the data directory arrive as arguments, the way `begin_send`
+/// takes them: each front end resolves its own settings at its own call site, so
+/// nothing below here can reach an ambient one — and a test that does not pass a
+/// config cannot reach a configured bucket.
+pub(crate) fn republish_after_payment(
+    conn: &Connection,
+    invoice_id: i64,
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+) -> Vec<String> {
+    republish_with(
+        conn,
+        invoice_id,
+        cfg,
+        data_dir,
+        optional_publisher(cfg).as_ref(),
+    )
+}
+
+/// The same with the publisher supplied, which is what lets the HTTP layer drive
+/// a republish against a fake and reach no network — the `send_with`/`void_with`
+/// seam, and the one place the sentences a failed republish earns are written.
+pub(crate) fn republish_with<P: crate::invoicing::gateway::AssetPublisher>(
+    conn: &Connection,
+    invoice_id: i64,
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+    publisher: Option<&P>,
+) -> Vec<String> {
     let warn = |what: &str, e: NigelError| {
         vec![format!(
             "Warning: the payment is recorded, but the published page could not be republished \
@@ -548,33 +577,30 @@ pub(crate) fn republish_after_payment(conn: &Connection, invoice_id: i64) -> Vec
         Ok(client) => client,
         Err(e) => return warn("reading the client", e),
     };
-    let template = match load_template(&get_data_dir()) {
+    let template = match load_template(data_dir) {
         Ok(template) => template,
         Err(e) => return warn("loading the invoice template", e),
     };
 
-    let cfg = invoicing_config();
     // The preview fallback, not `require`: a republish must not depend on an
     // address being configured, since the page it is correcting is already up.
-    let (contact_email, _) = contact_email_for_preview(&cfg);
+    let (contact_email, _) = contact_email_for_preview(cfg);
     let profile = company_profile(conn);
     let branding = profile.branding(&template, &contact_email);
-    republish_invoice(
-        conn,
-        &invoice,
-        &client,
-        &branding,
-        optional_publisher(&cfg).as_ref(),
-    )
-    .warnings()
+    republish_invoice(conn, &invoice, &client, &branding, publisher).warnings()
 }
 
 /// The same, for every invoice a sync recorded a payment against.
-pub fn republish_all(conn: &Connection, numbers: &[i64]) -> Vec<String> {
+pub fn republish_all(
+    conn: &Connection,
+    numbers: &[i64],
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+) -> Vec<String> {
     numbers
         .iter()
         .flat_map(|number| match get_invoice_by_number(conn, *number) {
-            Ok(invoice) => republish_after_payment(conn, invoice.id),
+            Ok(invoice) => republish_after_payment(conn, invoice.id, cfg, data_dir),
             Err(e) => vec![format!(
                 "Warning: could not republish invoice #{number}'s page ({e})."
             )],
@@ -811,8 +837,10 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
 }
 
 pub fn sync(today: &str) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let stripe = build_gateway(&invoicing_config())?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let cfg = invoicing_config();
+    let stripe = build_gateway(&cfg)?;
     let report = sync_all_report(&conn, today, &stripe)?;
     // Printing is the front end's job: the data layer hands back the per-invoice
     // failures so a browser can render the same ones a terminal prints.
@@ -823,14 +851,15 @@ pub fn sync(today: &str) -> Result<()> {
         );
     }
     println!("Recorded {} new payment(s)", report.recorded);
-    for warning in republish_all(&conn, &report.recorded_invoices) {
+    for warning in republish_all(&conn, &report.recorded_invoices, &cfg, &data_dir) {
         println!("{warning}");
     }
     Ok(())
 }
 
 pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "paid")?;
     let paid = paid_amount(&conn, invoice.id)?;
@@ -843,7 +872,7 @@ pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result
     );
     // After the payment is committed, and never able to undo it: the page a
     // client bookmarked is corrected, or a warning says why it was not.
-    for warning in republish_after_payment(&conn, invoice.id) {
+    for warning in republish_after_payment(&conn, invoice.id, &invoicing_config(), &data_dir) {
         println!("{warning}");
     }
     Ok(())
@@ -1168,25 +1197,45 @@ mod tests {
         id
     }
 
-    /// A whole isolated installation: a temp config directory *and* a temp data
-    /// directory, because `republish_after_payment` resolves both. Without the
-    /// second, a test that writes a template writes it into whatever
-    /// `~/Documents/nigel` a developer has.
-    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
-        let guard = crate::settings::TempConfigDir::new();
-        let mut settings = crate::settings::load_settings();
-        settings.data_dir = dir.to_string_lossy().into_owned();
-        crate::settings::save_settings(&settings).expect("settings");
-        guard
+    /// The seam takes the publisher as well as the config, so the whole
+    /// republish runs against a fake: a fully-configured `InvoicingConfig` is
+    /// still not a bucket anything in this module can reach.
+    #[derive(Default)]
+    struct CapturePub {
+        pages: std::cell::RefCell<Vec<String>>,
+    }
+    impl crate::invoicing::gateway::AssetPublisher for CapturePub {
+        fn publish(&self, token: &str, html: &[u8], _pdf: &[u8]) -> Result<String> {
+            self.publish_page(token, html)
+        }
+        fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
+            self.pages
+                .borrow_mut()
+                .push(String::from_utf8(html.to_vec()).unwrap());
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+    }
+
+    #[test]
+    fn a_republish_uploads_through_the_publisher_it_was_handed() {
+        let (_d, conn) = test_conn();
+        let id = seed_published(&conn);
+        let publisher = CapturePub::default();
+
+        let warnings = republish_with(&conn, id, &configured(), _d.path(), Some(&publisher));
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let pages = publisher.pages.borrow();
+        assert_eq!(pages.len(), 1, "the corrected page, and nothing else");
+        assert!(pages[0].contains("Balance due"), "got: {}", pages[0]);
     }
 
     #[test]
     fn republishing_with_nothing_configured_warns_and_records_nothing() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_published(&conn);
 
-        let warnings = republish_after_payment(&conn, id);
+        let warnings = republish_after_payment(&conn, id, &test_config(), _d.path());
 
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("#1248"), "{warnings:?}");
@@ -1198,24 +1247,18 @@ mod tests {
     #[test]
     fn republishing_an_unpublished_invoice_says_nothing() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_invoice(&conn);
         record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
 
-        assert!(republish_after_payment(&conn, id).is_empty());
+        assert!(republish_after_payment(&conn, id, &test_config(), _d.path()).is_empty());
     }
 
     #[test]
     fn a_broken_custom_template_is_a_warning_not_a_failure() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_published(&conn);
 
-        let path = template_path(&get_data_dir());
-        assert!(
-            path.starts_with(_d.path()),
-            "the test must not write outside its temp dir: {path:?}"
-        );
+        let path = template_path(_d.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
@@ -1223,7 +1266,7 @@ mod tests {
         )
         .unwrap();
 
-        let warnings = republish_after_payment(&conn, id);
+        let warnings = republish_after_payment(&conn, id, &test_config(), _d.path());
 
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("{{TOTL}}"), "{warnings:?}");

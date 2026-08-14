@@ -1131,7 +1131,7 @@ impl InvoiceManager {
         }
         match self.screen {
             Screen::Voiding => self.perform_pending_void(conn, today, cfg),
-            Screen::Republishing => self.perform_pending_republish(conn),
+            Screen::Republishing => self.perform_pending_republish(conn, &cfg, data_dir),
             _ => self.perform_pending_send(conn, today, cfg, data_dir),
         }
     }
@@ -1478,13 +1478,22 @@ impl InvoiceManager {
     /// The republish that follows a payment, run after the blocking frame has
     /// been painted. It cannot fail: every outcome is one of
     /// `RepublishOutcome`'s sentences, and the payment is already recorded.
-    fn perform_pending_republish(&mut self, conn: &Connection) {
+    ///
+    /// Its config and data directory come from `perform_pending_with`, which is
+    /// where this screen resolves settings — the seam `begin_send` established.
+    pub(crate) fn perform_pending_republish(
+        &mut self,
+        conn: &Connection,
+        cfg: &InvoicingConfig,
+        data_dir: &std::path::Path,
+    ) {
         let Some(detail) = &self.detail else {
             self.screen = Screen::List;
             return;
         };
         let invoice_id = detail.invoice.id;
-        let warnings = crate::cli::invoice::republish_after_payment(conn, invoice_id);
+        let warnings =
+            crate::cli::invoice::republish_after_payment(conn, invoice_id, cfg, data_dir);
         self.screen = Screen::Detail;
         if !warnings.is_empty() {
             self.screen = Screen::ActionResult {
@@ -1993,20 +2002,6 @@ mod tests {
         (dir, conn)
     }
 
-    /// A whole isolated installation: a temp config directory *and* a temp data
-    /// directory. `perform_pending_republish` resolves both from ambient
-    /// settings rather than taking them as arguments the way `begin_send` does,
-    /// so without this a test answers from the developer's own settings.json —
-    /// and on a machine with R2 configured, republishes to the real bucket.
-    /// `cli::invoice`'s own `isolated` is the same guard for the same reason.
-    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
-        let guard = crate::settings::TempConfigDir::new();
-        let mut settings = crate::settings::load_settings();
-        settings.data_dir = dir.to_string_lossy().into_owned();
-        crate::settings::save_settings(&settings).expect("settings");
-        guard
-    }
-
     fn manager(conn: &Connection) -> InvoiceManager {
         InvoiceManager::new(conn, "Hello, Sam.")
     }
@@ -2438,7 +2433,6 @@ mod tests {
     #[test]
     fn paying_a_published_invoice_paints_a_frame_before_it_republishes() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
         mark_published(&conn, id, "2026-07-16").unwrap();
         let mut mgr = manager(&conn);
@@ -2459,7 +2453,7 @@ mod tests {
 
         // Nothing is configured, so the page is still stale — and the result
         // screen says so rather than passing the republish off as done.
-        mgr.perform_pending_republish(&conn);
+        mgr.perform_pending_republish(&conn, &no_config(), _d.path());
         let after = rendered(&mut mgr);
         assert!(after.contains("old balance"), "{after}");
     }
