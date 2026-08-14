@@ -311,7 +311,7 @@ mod tests {
     /// apart and a client comparing the two sees one figure.
     #[cfg(feature = "pdf")]
     #[test]
-    fn the_pdf_and_the_page_render_the_payment_rows_identically() {
+    fn the_pdf_and_the_page_render_every_figure_identically() {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
         crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
@@ -329,13 +329,45 @@ mod tests {
         .unwrap();
         let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
 
-        for figure in ["USD 40.00", "USD 60.00"] {
+        // The money block and the line items both, in one style: the page used
+        // to print a bare `100.00` in its table where this document printed
+        // `$100.00`, and the block mixed `$` rows with `USD` rows.
+        for figure in ["$40.00", "$60.00", "$100.00"] {
             assert!(out.html.contains(figure), "{figure} missing from the page");
             assert!(
                 text.contains(figure),
                 "{figure} missing from the pdf: {text}"
             );
         }
+        assert!(!out.html.contains("USD"), "no code on a dollar page");
+        assert!(!text.contains("USD"), "nor on the attachment: {text}");
+    }
+
+    /// The non-USD case both documents have to get right together.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_non_usd_invoice_names_its_currency_on_both_documents() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        conn.execute("UPDATE invoices SET currency = 'EUR' WHERE id = ?1", [id])
+            .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        assert!(out.html.contains("EUR 100.00"), "got: {}", out.html);
+        assert!(text.contains("EUR 100.00"), "got: {text}");
+        assert!(!out.html.contains('$'), "no dollar sign on the page");
+        assert!(!text.contains('$'), "nor on the attachment: {text}");
     }
 
     #[test]

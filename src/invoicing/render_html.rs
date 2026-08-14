@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{NigelError, Result};
 use crate::invoicing::document::{
-    address_lines, company_block, email_line, meta_rows, parse_logo, payment_lines,
-    terms_block_text, MoneySummary,
+    address_lines, company_block, email_line, meta_rows, money as document_money, parse_logo,
+    payment_lines, terms_block_text, MoneySummary,
 };
 use crate::models::{Client, Invoice, InvoiceLineItem};
 
@@ -326,11 +326,11 @@ pub fn render_invoice_html(
         .iter()
         .map(|i| {
             format!(
-                "<tr><td>{}</td><td>{}</td><td>{:.2}</td><td>{:.2}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(&i.description),
                 i.quantity,
-                i.unit_amount,
-                i.line_total
+                document_money(i.unit_amount, &invoice.currency),
+                document_money(i.line_total, &invoice.currency)
             )
         })
         .collect();
@@ -471,8 +471,9 @@ pub fn render_invoice_html(
                 ""
             };
             format!(
-                "<tr{class}><td colspan=\"3\">{}</td><td>{currency} {:.2}</td></tr>",
-                line.label, line.amount
+                "<tr{class}><td colspan=\"3\">{}</td><td>{}</td></tr>",
+                line.label,
+                document_money(line.amount, &invoice.currency)
             )
         })
         .collect();
@@ -1404,13 +1405,13 @@ mod tests {
         // this invoice actually leaves owing.
         assert!(
             totals.contains(
-                "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>USD 150.00</td></tr>"
+                "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>$150.00</td></tr>"
             ),
             "the balance is the line the eye lands on: {totals}"
         );
         for plain in [
-            "<tr><td colspan=\"3\">Total</td><td>USD 250.00</td></tr>",
-            "<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>",
+            "<tr><td colspan=\"3\">Total</td><td>$250.00</td></tr>",
+            "<tr><td colspan=\"3\">Paid</td><td>$100.00</td></tr>",
         ] {
             assert!(totals.contains(plain), "still emphasised: {totals}");
         }
@@ -1428,9 +1429,9 @@ mod tests {
             &summary,
             PayButton::Omitted,
         );
-        assert!(html.contains("Balance due</td><td>USD 0.00"), "got: {html}");
-        assert!(html.contains("Credit</td><td>USD 50.00"), "got: {html}");
-        assert!(!html.contains("USD -"), "no negative figure: {html}");
+        assert!(html.contains("Balance due</td><td>$0.00"), "got: {html}");
+        assert!(html.contains("Credit</td><td>$50.00"), "got: {html}");
+        assert!(!html.contains("-$"), "no negative figure: {html}");
     }
 
     #[test]
@@ -1828,14 +1829,69 @@ mod tests {
         );
     }
 
-    /// The From block and the Invoice For block sit in different sections, so
-    /// nothing but a shared width makes their labels and their rules line up
-    /// down the page. Ragged is what it looks like otherwise.
+    /// Where a party block's left edge actually falls, in `rem` from the body's
+    /// left edge, computed from the stylesheet the way a browser would.
+    ///
+    /// A `space-between` flex row cannot align two blocks that live in
+    /// different containers: each one is pushed right by whatever its sibling
+    /// happens to be, and the logo and the metadata table are not the same
+    /// width. Both bands are a grid with the same explicit track list instead,
+    /// which is the page's equivalent of the PDF's single `PARTY_TEXT_X` — so
+    /// this reads each band's own declaration and works out the edge, rather
+    /// than asserting that some declaration exists.
+    fn party_edge(container: &str) -> f32 {
+        let body_width: f32 = {
+            let at = DEFAULT_TEMPLATE.find("max-width:").expect("a body width") + 10;
+            let rest = &DEFAULT_TEMPLATE[at..];
+            rest[..rest.find("rem").expect("rem")]
+                .parse()
+                .expect("a number")
+        };
+        // The rule that gives this container its tracks. One selector list may
+        // cover both bands, which is the point.
+        let rule = DEFAULT_TEMPLATE
+            .lines()
+            .find(|line| {
+                line.starts_with(&format!(".{container}"))
+                    || line.contains(&format!(",.{container}{{"))
+            })
+            .unwrap_or_else(|| panic!("no rule for .{container}"));
+        let tracks = rule
+            .split("grid-template-columns:")
+            .nth(1)
+            .unwrap_or_else(|| panic!(".{container} is not an explicit grid: {rule}"));
+        let tracks = &tracks[..tracks.find([';', '}']).expect("end of declaration")];
+        // `1fr <n>rem`: the party column is the last track, so its left edge is
+        // the measure less that track.
+        let last: f32 = {
+            let t = tracks.split_whitespace().last().expect("a last track");
+            t.trim_end_matches("rem").parse().expect("a rem track")
+        };
+        body_width - last
+    }
+
+    /// The From block and the Invoice For block sit in different sections. Their
+    /// labels and their rules have to line up down the page, and the only thing
+    /// that makes that true is both bands laying their party column on the same
+    /// track.
+    /// Grid auto-placement would drop the party block into the first column of
+    /// a letterhead that has no logo, which would put the From block on the
+    /// left of the page and the Invoice For block on the right.
     #[test]
-    fn both_party_blocks_share_one_left_edge() {
+    fn the_party_column_is_pinned_so_a_logoless_letterhead_still_aligns() {
         assert!(
-            DEFAULT_TEMPLATE.contains(".party{display:flex;gap:.75rem;flex:0 0 "),
-            "the party blocks have no shared width to align on"
+            DEFAULT_TEMPLATE.contains("grid-column:2"),
+            "the party block is auto-placed and will move when the logo is absent"
+        );
+    }
+
+    #[test]
+    fn both_party_blocks_resolve_to_the_same_left_edge() {
+        let letterhead = party_edge("letterhead");
+        let band = party_edge("band");
+        assert_eq!(
+            letterhead, band,
+            "the From block starts at {letterhead}rem and Invoice For at {band}rem"
         );
     }
 
@@ -1846,7 +1902,7 @@ mod tests {
         for rule in [
             "table.meta th,table.meta td{border:none;padding:.15rem 1.5rem .15rem 0;text-align:left;font-weight:400;color:#444;white-space:nowrap}",
             "table.items thead th{border-bottom:2px solid #909090;white-space:nowrap}",
-            "table.items tfoot td{border-bottom:none;border-right:none;text-align:right;white-space:nowrap}",
+            "table.items tfoot td{border-bottom:none;border-right:none;text-align:right;white-space:nowrap;padding:.15rem .9rem}",
         ] {
             assert!(DEFAULT_TEMPLATE.contains(rule), "missing: {rule}");
         }

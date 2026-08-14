@@ -4,7 +4,24 @@
 # of CLAUDE.md for what belongs in each tier.
 #
 #   ./scripts/check-no-real-data.sh          # scan the tree (what CI runs)
-#   ./scripts/check-no-real-data.sh --staged # scan the staged diff (pre-commit hook)
+#   ./scripts/check-no-real-data.sh --staged # scan the staged diff (pre-commit hook,
+#                                            # installed via core.hooksPath=.githooks)
+#
+# SCOPE. This gate is about **content committed into the tree** — fixtures, docs,
+# templates, test data, task notes, commit messages — where an operator's name,
+# address, contact details or real figures have no business being.
+#
+# Commit authorship is NOT in scope and is not a violation. Every commit in this
+# repository is authored by its real author, that is correct, and the history
+# rewrite scrubbed content and never authorship. The same goes for the
+# organisation's own package and repository metadata: the crate name, the GitHub
+# slug, the Pages domain and the maintainer address in `Cargo.toml` are how a
+# published project identifies itself. Neither is scanned here, and neither
+# should be "fixed".
+#
+# The check is this script's **exit status**. Do not read its output to decide
+# whether it passed: grepping for a word matches that word inside a failure
+# report too, which is how a refused commit once got through.
 set -uo pipefail
 
 mode="${1:-tree}"

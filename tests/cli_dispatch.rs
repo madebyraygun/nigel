@@ -1544,7 +1544,9 @@ fn invoice_preview_writes_html_to_the_data_dir() {
     // itself carries no heading line.
     assert!(html.contains("<title>Invoice 1248</title>"), "got: {html}");
     assert!(html.contains("Invoice ID"), "got: {html}");
-    assert!(html.contains("1500.00"), "got: {html}");
+    // One figure format on both documents: separators, two decimals, and the
+    // currency named — a bare `1500.00` is what the page used to print.
+    assert!(html.contains("$1,500.00"), "got: {html}");
 }
 
 #[test]

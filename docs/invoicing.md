@@ -891,6 +891,14 @@ last three name the currency — `USD 60.00` — exactly as the page does, becau
 they are new to both documents and a bare `$` cannot say which currency it
 means. Subtotal, Tax and Total keep this document's older `$1,500.00` style.
 
+Every figure on both documents reads one way: thousands separators, two
+decimals, and the currency named the same in the item table as in the money
+block. A dollar invoice prints `$6,600.00`; every other currency is prefixed
+with its code, `EUR 6,600.00`. A code is unambiguous where a symbol is not — `$`
+alone cannot say US, Canadian or Australian — and it survives the PDF's built-in
+fonts intact, which not every currency symbol does. Nothing says the currency
+twice: the Total row is labelled `Total`, not `Total (USD)`.
+
 Every line of that block is set at one size on both documents, and **only the
 bottom one is bold** — whichever line that is. On an unpaid invoice it is Total;
 once something has been paid it is Balance due; on an overpayment it is Credit.

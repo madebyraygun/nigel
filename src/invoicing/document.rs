@@ -102,6 +102,33 @@ pub const LOGO_WIDTH_FRACTION: f32 = 0.20;
 /// growing down the page when the width cap never binds.
 pub const LOGO_HEIGHT_FRACTION: f32 = 0.056;
 
+/// How a figure reads on both client-facing documents.
+///
+/// One style everywhere — thousands separators, two decimals, and the currency
+/// named the same way in the item table as in the money block, on the page as
+/// in the PDF. The two documents used to disagree twice over: the page printed
+/// a bare `3600.00` in its item table where the PDF printed `$3,600.00`, and the
+/// money block mixed `$1,500.00` with `USD 60.00` depending on which rows an
+/// invoice happened to have.
+///
+/// USD gets `$`, because that is what a reader of a dollar invoice expects.
+/// Everything else is prefixed with its code. A code is unambiguous where a
+/// symbol is not — `$` alone cannot say US, Canadian or Australian — and it
+/// survives the PDF's built-in WinAnsi fonts intact, which is not true of every
+/// currency symbol. An invoice with no currency recorded prints the bare figure
+/// rather than inventing one.
+pub fn money(amount: f64, currency: &str) -> String {
+    let code = currency.trim().to_ascii_uppercase();
+    let sign = if amount < 0.0 { "-" } else { "" };
+    let figure = crate::fmt::money(amount.abs());
+    let figure = figure.strip_prefix('$').unwrap_or(&figure);
+    match code.as_str() {
+        "USD" => format!("{sign}${figure}"),
+        "" => format!("{sign}{figure}"),
+        other => format!("{sign}{other} {figure}"),
+    }
+}
+
 /// One line of the money block, in the order both documents print them.
 pub struct MoneyLine {
     pub label: &'static str,
@@ -117,14 +144,6 @@ pub struct MoneyLine {
     /// as two headlines and a whisper; one column of figures with the bottom
     /// line picked out reads as a bill.
     pub emphasis: bool,
-    /// A row the payment block introduced.
-    ///
-    /// These are new to *both* documents, so both render them the same way —
-    /// `USD 60.00` — rather than one of them inheriting the PDF's older
-    /// `$`-prefixed style, which cannot say which currency it means. The
-    /// pre-existing Subtotal/Tax/Total rows keep each document's own
-    /// convention; reconciling those is TASK-87's.
-    pub payment_row: bool,
 }
 
 /// The figures both documents draw, and the rules about which of them appear.
@@ -165,24 +184,23 @@ impl MoneySummary {
     /// is a fact about money owed the other way and never a negative balance.
     pub fn lines(&self) -> Vec<MoneyLine> {
         let mut lines = Vec::with_capacity(6);
-        let mut push = |label, amount, emphasis, payment_row| {
+        let mut push = |label, amount, emphasis| {
             lines.push(MoneyLine {
                 label,
                 amount,
                 emphasis,
-                payment_row,
             })
         };
         if self.tax != 0.0 {
-            push("Subtotal", self.subtotal, false, false);
-            push("Tax", self.tax, false, false);
+            push("Subtotal", self.subtotal, false);
+            push("Tax", self.tax, false);
         }
-        push("Total", self.total, false, false);
+        push("Total", self.total, false);
         if self.paid > 0.0 {
-            push("Paid", self.paid, false, true);
-            push("Balance due", self.balance, false, true);
+            push("Paid", self.paid, false);
+            push("Balance due", self.balance, false);
             if self.credit > 0.0 {
-                push("Credit", self.credit, false, true);
+                push("Credit", self.credit, false);
             }
         }
         // The emphasis is positional rather than per-label: whichever line ends
@@ -898,6 +916,28 @@ mod tests {
     /// headlines with a whisper between them. The line that shouts is the last
     /// one — what is actually owed — whichever line that turns out to be.
     #[test]
+    fn a_dollar_invoice_reads_in_dollars_with_separators() {
+        assert_eq!(money(6600.0, "USD"), "$6,600.00");
+        assert_eq!(money(0.0, "USD"), "$0.00");
+        assert_eq!(money(1234567.5, "USD"), "$1,234,567.50");
+    }
+
+    /// The trap this closes: `fmt::money` is dollar-only, so routing everything
+    /// through it would print `$` on a euro invoice.
+    #[test]
+    fn a_non_usd_invoice_says_which_currency_it_means() {
+        assert_eq!(money(6600.0, "EUR"), "EUR 6,600.00");
+        assert_eq!(money(250.0, "gbp"), "GBP 250.00");
+        assert_eq!(money(99.0, ""), "99.00");
+    }
+
+    #[test]
+    fn a_negative_figure_keeps_its_sign_in_front() {
+        assert_eq!(money(-40.0, "USD"), "-$40.00");
+        assert_eq!(money(-40.0, "EUR"), "-EUR 40.00");
+    }
+
+    #[test]
     fn only_the_bottom_line_of_the_money_block_is_emphasised() {
         for (total, tax, paid) in [
             (100.0, 0.0, 0.0),   // Total alone
@@ -985,16 +1025,18 @@ mod tests {
         );
     }
 
-    /// The rows the payment block introduced are new to both documents, so both
-    /// render them the same way rather than one inheriting an older convention.
+    /// Every row of the block, whichever half of it introduced them, reads the
+    /// same way on both documents. `MoneyLine` used to carry a `payment_row`
+    /// flag so the newer rows could be formatted differently from the older
+    /// ones; `money` settled that, and the flag went with it.
     #[test]
-    fn the_payment_rows_are_flagged_for_identical_rendering() {
-        let lines = MoneySummary::of(&invoice(108.25, 8.25), 130.0).lines();
-        for line in &lines {
-            let expected = matches!(line.label, "Paid" | "Balance due" | "Credit");
+    fn every_money_row_is_formatted_by_the_one_rule() {
+        let summary = MoneySummary::of(&invoice(108.25, 8.25), 130.0);
+        for line in summary.lines() {
             assert_eq!(
-                line.payment_row, expected,
-                "{} is flagged wrong",
+                money(line.amount, "USD"),
+                crate::fmt::money(line.amount),
+                "{} is not formatted by the shared rule",
                 line.label
             );
         }

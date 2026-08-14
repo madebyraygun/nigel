@@ -6,9 +6,9 @@ use printpdf::*;
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
 use crate::invoicing::document::{
-    address_lines, email_line, meta_rows, payment_lines, row_is_shaded, terms_block_text,
-    CompanyBlock, DocumentColor, Logo, MoneySummary, BORDER_GRAY, LOGO_HEIGHT_FRACTION,
-    LOGO_WIDTH_FRACTION, ROW_SHADE,
+    address_lines, email_line, meta_rows, money as document_money, payment_lines, row_is_shaded,
+    terms_block_text, CompanyBlock, DocumentColor, Logo, MoneySummary, BORDER_GRAY,
+    LOGO_HEIGHT_FRACTION, LOGO_WIDTH_FRACTION, ROW_SHADE,
 };
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::reports::*;
@@ -258,7 +258,7 @@ impl PdfWriter {
         for (i, col) in cols.iter().enumerate() {
             if i < headers.len() {
                 match col.align {
-                    Align::Left => self.text(headers[i], x, FONT_SIZE, true),
+                    Align::Left => self.text(headers[i], x + ITEM_COL_PAD, FONT_SIZE, true),
                     Align::Right => {
                         let tw = approx_text_width(headers[i], FONT_SIZE);
                         self.text(headers[i], x + col.width - COL_PAD - tw, FONT_SIZE, true);
@@ -330,12 +330,15 @@ impl PdfWriter {
     fn wrap_item_cells(cols: &[Col], values: &[&str], font_size: f32) -> Vec<Vec<String>> {
         cols.iter()
             .enumerate()
-            .map(|(i, col)| {
-                if i < values.len() && !values[i].is_empty() {
-                    wrap_text(values[i], col.width - ITEM_COL_PAD, font_size)
-                } else {
-                    vec![String::new()]
-                }
+            .map(|(i, col)| match values.get(i) {
+                Some(value) if value.is_empty() => vec![String::new()],
+                // A figure is one token. `EUR 2,500.00` has a space in it, and
+                // wrapping on that space puts the code on one line and the
+                // amount on the next — a number broken in half. Only the
+                // description column is prose.
+                Some(value) if matches!(col.align, Align::Right) => vec![(*value).to_string()],
+                Some(value) => wrap_text(value, col.width - 2.0 * ITEM_COL_PAD, font_size),
+                None => vec![String::new()],
             })
             .collect()
     }
@@ -354,7 +357,7 @@ impl PdfWriter {
                 if let Some(text) = wrapped.get(col_idx).and_then(|c| c.get(line_idx)) {
                     if !text.is_empty() {
                         match col.align {
-                            Align::Left => self.text(text, x, font_size, bold),
+                            Align::Left => self.text(text, x + ITEM_COL_PAD, font_size, bold),
                             Align::Right => {
                                 let tw = approx_text_width(text, font_size);
                                 self.text(text, x + col.width - ITEM_COL_PAD - tw, font_size, bold);
@@ -378,7 +381,7 @@ impl PdfWriter {
         for (i, col) in cols.iter().enumerate() {
             if i < headers.len() {
                 match col.align {
-                    Align::Left => self.text(headers[i], x, FONT_SIZE, true),
+                    Align::Left => self.text(headers[i], x + ITEM_COL_PAD, FONT_SIZE, true),
                     Align::Right => {
                         let tw = approx_text_width(headers[i], FONT_SIZE);
                         self.text(
@@ -1376,21 +1379,27 @@ pub fn render_invoice_pdf(
     // part of the client block rather than as the invoice.
     pdf.y = pdf.y.max(left_bottom) + 14.0;
 
+    // Widths chosen so each heading clears its own dividers with `ITEM_COL_PAD`
+    // on both sides — `Quantity` needs 26.4 mm of the 20 mm it used to have,
+    // and was overflowing its column into the rule beside it — and so the two
+    // figure columns hold a code-prefixed amount like `EUR 2,500.00`, which is
+    // four characters wider than the dollar form. They sum to the printable
+    // width.
     let cols = &[
         Col {
-            width: 97.8,
+            width: 78.8,
             align: Align::Left,
         },
         Col {
-            width: 20.0,
+            width: 27.0,
             align: Align::Right,
         },
         Col {
-            width: 30.0,
+            width: 36.0,
             align: Align::Right,
         },
         Col {
-            width: 30.0,
+            width: 36.0,
             align: Align::Right,
         },
     ];
@@ -1400,8 +1409,8 @@ pub fn render_invoice_pdf(
 
     for (index, item) in items.iter().enumerate() {
         let qty = item.quantity.to_string();
-        let rate = money(item.unit_amount);
-        let amount = money(item.line_total);
+        let rate = document_money(item.unit_amount, &invoice.currency);
+        let amount = document_money(item.line_total, &invoice.currency);
         pdf.item_row(
             cols,
             &[&item.description, &qty, &rate, &amount],
@@ -1419,8 +1428,10 @@ pub fn render_invoice_pdf(
             pdf.vline(divider, table_top, pdf.y - 3.5);
         }
     }
-    pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
-    pdf.y += 6.0;
+    // No closing rule: every row draws the one beneath it, so the last row has
+    // already ruled the foot of the table. Drawing another here put two
+    // full-width rules a few millimetres apart.
+    pdf.y += 8.0;
 
     // --- the money block, right-aligned under the Amount column -------------
     // Which lines exist is `MoneySummary::lines()`'s decision, taken once for
@@ -1431,27 +1442,18 @@ pub fn render_invoice_pdf(
     // figures would not line up.
     let figure_right = PAGE_W - MARGIN_RIGHT - ITEM_COL_PAD;
     for line in summary.lines() {
-        let label = if line.label == "Total" {
-            format!("Total ({})", invoice.currency)
-        } else {
-            line.label.to_string()
-        };
-        // The rows the payment block introduced are new to both documents, so
-        // they read the same on both — `USD 60.00`, the page's own form. The
-        // older rows keep this document's `$` convention; reconciling those is
-        // TASK-87's, and widening it here would restyle every invoice ever sent.
-        let amount = if line.payment_row {
-            format!("{} {:.2}", invoice.currency, line.amount)
-        } else {
-            money(line.amount)
-        };
+        // No `(USD)` on the label: the figures name their own currency, and
+        // saying it twice on the one line that happens to be the total was the
+        // last of the block's inconsistencies.
+        let label = line.label;
+        let amount = document_money(line.amount, &invoice.currency);
         // One size for every line; weight alone says which one matters. Two
         // lines set large with a small one between them read as two headlines
         // and a whisper rather than as a column of figures.
         pdf.ensure_space(ROW_H);
-        pdf.text_right(&label, figure_right - 35.0, FONT_SIZE, line.emphasis);
+        pdf.text_right(label, figure_right - 35.0, FONT_SIZE, line.emphasis);
         pdf.text_right(&amount, figure_right, FONT_SIZE, line.emphasis);
-        pdf.y += ROW_H + 1.0;
+        pdf.y += ROW_H;
     }
 
     // --- the foot ------------------------------------------------------------
@@ -2374,6 +2376,73 @@ pub(crate) mod invoice_pdf_tests {
         );
     }
 
+    /// A heading crowded against the rule beside it reads as a mistake, and the
+    /// `Quantity` column was narrow enough that its heading overflowed its own
+    /// column and touched the divider on its left. Measured against the
+    /// dividers the document actually drew, so a column width that stops fitting
+    /// its heading fails here rather than in a screenshot.
+    #[test]
+    fn no_item_table_cell_crowds_a_column_divider() {
+        let mut inv = invoice();
+        inv.subtotal = 1234.0;
+        inv.total = 1234.0;
+        let money = MoneySummary::of(&inv, 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let long = vec![InvoiceLineItem {
+            description: "Design system audit and documentation".into(),
+            quantity: 12.0,
+            unit_amount: 102.83,
+            line_total: 1234.0,
+            ..items()[0].clone()
+        }];
+        let bytes = render_invoice_pdf(&inv, &client(), &block, None, &long, &money, "").unwrap();
+
+        // Only the item table: the party blocks above it carry vertical rules of
+        // their own at x positions the table's dividers also occupy, and their
+        // text is not in a column at all. PDF y counts up from the foot, so the
+        // table is everything at or below the header's baseline.
+        let page = drawn_text(&bytes);
+        let top = page[0]
+            .iter()
+            .find(|d| d.text == "Description")
+            .expect("the header")
+            .y;
+        let dividers: Vec<f32> = drawn_lines(&bytes)[0]
+            .iter()
+            .filter(|(x1, y1, x2, y2)| {
+                // A table divider runs down past the header into the rows; the
+                // party block's rule sits entirely above it.
+                (x1 - x2).abs() < 0.01 && y1.min(*y2) < top && *x1 > MARGIN_LEFT
+            })
+            .map(|(x, ..)| *x)
+            .collect();
+        assert!(
+            dividers.len() >= 3,
+            "the table drew its dividers: {dividers:?}"
+        );
+        let bottom = page[0]
+            .iter()
+            .find(|d| d.text == "Total")
+            .expect("the money block")
+            .y;
+        for drawn in page[0]
+            .iter()
+            .filter(|d| d.y <= top + 0.1 && d.y > bottom + 0.1)
+        {
+            let left = drawn.x;
+            let right = drawn.x + approx_text_width(&drawn.text, drawn.size);
+            for divider in &dividers {
+                let clear =
+                    right <= divider - ITEM_COL_PAD + 0.01 || left >= divider + ITEM_COL_PAD - 0.01;
+                assert!(
+                    clear,
+                    "{:?} spans {left:.1}..{right:.1} mm and crowds the divider at {divider:.1} mm",
+                    drawn.text
+                );
+            }
+        }
+    }
+
     #[test]
     fn an_unset_company_draws_no_from_block() {
         let text = extract_text(&pdf_of(&invoice(), &client(), ""));
@@ -2579,15 +2648,10 @@ pub(crate) mod invoice_pdf_tests {
 
         let mut at = 0;
         for line in money.lines() {
-            let label = if line.label == "Total" {
-                "Total (USD)".to_string()
-            } else {
-                line.label.to_string()
-            };
             let found = text[at..]
-                .find(&label)
-                .unwrap_or_else(|| panic!("{label} missing or out of order: {text}"));
-            at += found + label.len();
+                .find(line.label)
+                .unwrap_or_else(|| panic!("{} missing or out of order: {text}", line.label));
+            at += found + line.label.len();
         }
         assert_eq!(
             money.lines().len(),
@@ -2601,44 +2665,44 @@ pub(crate) mod invoice_pdf_tests {
         let text = text_of(&invoice(), &client(), 40.0);
         assert!(text.contains("Paid"), "got: {text}");
         assert!(text.contains("Balance due"), "got: {text}");
-        assert!(text.contains("USD 60.00"), "got: {text}");
+        assert!(text.contains("$60.00"), "got: {text}");
     }
 
-    /// The rows the payment block introduced are new to both documents, so
-    /// they read identically on both — `USD 60.00` — rather than this one
-    /// keeping a `$` that cannot say which currency it means.
+    /// Every figure on the document reads one way. The block used to mix
+    /// `$1,500.00` on the older rows with `USD 60.00` on the newer ones, and
+    /// the label said `Total (USD)` on top of that.
     #[test]
-    fn the_payment_rows_name_the_currency_the_way_the_page_does() {
+    fn every_money_figure_reads_the_same_way() {
         let text = text_of(&invoice(), &client(), 40.0);
-        assert!(text.contains("USD 40.00"), "paid: {text}");
-        assert!(text.contains("USD 60.00"), "balance: {text}");
-        assert!(
-            !text.contains("$40.00"),
-            "no dollar-only payment row: {text}"
-        );
-        assert!(
-            !text.contains("$60.00"),
-            "no dollar-only payment row: {text}"
-        );
+        for figure in ["$40.00", "$60.00", "$100.00"] {
+            assert!(text.contains(figure), "{figure} missing: {text}");
+        }
+        assert!(!text.contains("USD"), "no code on a dollar invoice: {text}");
+        assert!(!text.contains("(USD)"), "no currency on the label: {text}");
     }
 
-    /// A non-USD invoice is the case a bare `$` gets wrong.
+    /// The trap: `fmt::money` is dollar-only, so unifying on it alone would
+    /// print `$` on a euro invoice.
     #[test]
-    fn a_non_usd_payment_row_says_which_currency_it_means() {
+    fn a_non_usd_invoice_says_which_currency_it_means_everywhere() {
         let mut inv = invoice();
         inv.currency = "EUR".into();
         let text = text_of(&inv, &client(), 40.0);
-        assert!(text.contains("EUR 60.00"), "got: {text}");
+        assert!(text.contains("EUR 60.00"), "the balance: {text}");
+        assert!(text.contains("EUR 40.00"), "what was paid: {text}");
+        // The line-item figures too, not only the money block.
+        assert!(text.contains("EUR 100.00"), "the line item: {text}");
+        assert!(!text.contains('$'), "no dollar sign anywhere: {text}");
     }
 
     #[test]
     fn an_overpayment_draws_a_credit_row_and_no_negative_balance() {
         let text = text_of(&invoice(), &client(), 130.0);
         assert!(text.contains("Credit"), "got: {text}");
-        assert!(text.contains("USD 30.00"), "got: {text}");
-        assert!(text.contains("USD 0.00"), "the balance is zero: {text}");
+        assert!(text.contains("$30.00"), "got: {text}");
+        assert!(text.contains("$0.00"), "the balance is zero: {text}");
         // The dates carry hyphens; what may never appear is a negative amount.
-        assert!(!text.contains("USD -"), "no negative figure: {text}");
+        assert!(!text.contains("-$"), "no negative figure: {text}");
         assert!(!text.contains("$-"), "no negative figure: {text}");
     }
 
