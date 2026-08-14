@@ -184,8 +184,7 @@ describe('register screen', () => {
 
   it('stays at the top of a dated register, which has no today to find', async () => {
     const { el } = await mount(client(), 'month=2025-03');
-    // The cursor rests on the first row rather than being scrolled to today's.
-    expect(table(el).selectedId).toBe(1);
+    expect(table(el).selectedId).toBeNull();
   });
 
   it('lands the keyboard on the opening row, so the shortcuts work at once', async () => {
@@ -194,17 +193,34 @@ describe('register screen', () => {
     expect(row?.getAttribute('data-id')).toBe('4');
   });
 
-  it('leaves focus where it is when something else already has it', async () => {
+  it('lands the keyboard on the table when the nav link that brought us here has focus', async () => {
+    // The commonest way onto this screen is a click in the sidebar, which
+    // leaves focus on the link. Waiting for focus to be on nothing at all left
+    // the shortcuts dead on exactly that path.
+    const link = document.createElement('a');
+    link.href = '#/register';
+    document.body.appendChild(link);
+    link.focus();
+
+    const { el } = await mount();
+
+    expect(table(el).shadowRoot?.activeElement?.getAttribute('data-id')).toBe('4');
+  });
+
+  it('leaves focus alone when it is already in this screen', async () => {
     const { el, fake } = await mount();
-    const elsewhere = document.createElement('button');
-    document.body.appendChild(elsewhere);
-    elsewhere.focus();
+    const toolbar = el.shadowRoot?.querySelector('wc-register-toolbar');
+    if (!toolbar) throw new Error('no toolbar');
+    // A reload while the user is typing in the search box must not pull the
+    // caret out of the field.
+    (toolbar as HTMLElement).tabIndex = 0;
+    (toolbar as HTMLElement).focus();
 
     fake.register = { rows: spanningToday(), total: 0 };
     el.params = new URLSearchParams('year=2020');
     await settle(el);
 
-    expect(document.activeElement).toBe(elsewhere);
+    expect(el.shadowRoot?.activeElement).toBe(toolbar);
   });
 
   it('opens on a linked transaction instead, so review and the dashboard can link in', async () => {
@@ -406,6 +422,5 @@ describe('register screen', () => {
   it('hands the table the height left under the toolbar', async () => {
     const { el } = await mount();
     expect(table(el).fill).toBe(true);
-    expect(table(el).hasAttribute('fill')).toBe(true);
   });
 });

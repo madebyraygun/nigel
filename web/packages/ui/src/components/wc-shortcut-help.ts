@@ -25,9 +25,11 @@ export interface ShortcutHint {
  *
  * It is a disclosure rather than a dialog: the content is a definition list
  * with nothing focusable in it, so focus stays on the trigger and the panel
- * follows it in reading order, which is what a screen reader wants. `Escape`
- * and a click outside both close it, and closing always leaves focus on the
- * trigger the user opened it from.
+ * follows it in reading order, which is what a screen reader wants. A press
+ * outside, focus leaving, and `Escape` all close it; only an `Escape` pressed
+ * while focus is still on the trigger or in the panel is consumed and hands
+ * focus back, because every other Escape belongs to whatever the user is
+ * actually in.
  *
  * The trigger is a plain `<button>` rather than `wa-button` because
  * `aria-expanded` and `aria-controls` have to land on the real button, and a
@@ -74,7 +76,7 @@ export class WcShortcutHelp extends LitElement {
       top: calc(100% + var(--wa-space-2xs, 4px));
       inset-inline-end: 0;
       min-width: 16rem;
-      max-width: min(24rem, 90vw);
+      max-width: min(24rem, calc(100vw - 2rem));
       padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
       background: var(--wa-color-surface);
       color: var(--wa-color-text);
@@ -135,19 +137,28 @@ export class WcShortcutHelp extends LitElement {
 
   @query('.trigger') private trigger?: HTMLButtonElement;
 
+  @query('.panel') private panel?: HTMLElement;
+
   connectedCallback(): void {
     super.connectedCallback();
     // On the document rather than on the host: a pointer press anywhere else
-    // dismisses, and Escape has to work even after a click on the panel's own
-    // text has moved focus off the trigger.
+    // dismisses, focus landing anywhere else dismisses, and Escape has to be
+    // heard even after a click on the panel's own text has moved focus off the
+    // trigger.
     document.addEventListener('pointerdown', this.handleDocumentPointerDown, true);
+    document.addEventListener('focusin', this.handleDocumentFocusIn, true);
     document.addEventListener('keydown', this.handleDocumentKeydown, true);
   }
 
   disconnectedCallback(): void {
     document.removeEventListener('pointerdown', this.handleDocumentPointerDown, true);
+    document.removeEventListener('focusin', this.handleDocumentFocusIn, true);
     document.removeEventListener('keydown', this.handleDocumentKeydown, true);
     super.disconnectedCallback();
+  }
+
+  updated(): void {
+    if (this.open) this.clampToViewport();
   }
 
   /** Close, and hand focus back to the trigger the user opened this from. */
@@ -174,12 +185,60 @@ export class WcShortcutHelp extends LitElement {
     this.open = false;
   };
 
+  private handleDocumentFocusIn = (event: Event): void => {
+    if (!this.open) return;
+    if (event.composedPath().includes(this)) return;
+    // Closed, but focus is not ours to move: it has already gone where the
+    // user sent it.
+    this.open = false;
+  };
+
+  /**
+   * Escape closes the panel wherever it was pressed, but only *consumes* it —
+   * and only takes focus back — when the key was ours to begin with. An
+   * Escape typed into the register's inline editor has to reach that editor
+   * and cancel the edit; a legend that swallowed it would leave the edit open
+   * and pull the caret out of the field.
+   */
   private handleDocumentKeydown = (event: KeyboardEvent): void => {
     if (!this.open || event.key !== 'Escape') return;
-    event.stopPropagation();
-    event.preventDefault();
-    this.hide();
+
+    if (this.containsFocus) {
+      event.stopPropagation();
+      event.preventDefault();
+      this.hide();
+      return;
+    }
+
+    this.open = false;
   };
+
+  /** Whether focus is on the trigger or inside the panel. */
+  private get containsFocus(): boolean {
+    return this.shadowRoot?.activeElement != null;
+  }
+
+  /**
+   * Keep the panel on screen. It is anchored to the trigger's trailing edge,
+   * so a trigger sitting at the start of a wrapped toolbar would hang the
+   * panel off the left of the window.
+   */
+  private clampToViewport(): void {
+    const box = this.panel;
+    if (!box || typeof box.getBoundingClientRect !== 'function') return;
+
+    box.style.removeProperty('transform');
+    const rect = box.getBoundingClientRect();
+    if (rect.width === 0) return;
+
+    const margin = 8;
+    const viewport = window.innerWidth;
+    let shift = 0;
+    if (rect.left < margin) shift = margin - rect.left;
+    else if (rect.right > viewport - margin) shift = viewport - margin - rect.right;
+
+    if (shift !== 0) box.style.transform = `translateX(${Math.round(shift)}px)`;
+  }
 
   render() {
     return html`

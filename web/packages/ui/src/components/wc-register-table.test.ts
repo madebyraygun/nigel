@@ -1,20 +1,21 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-register-table.js';
-import type {
-  CategoryOption,
-  NcEditCommitDetail,
-  NcFlagToggleDetail,
-  NcRowEventDetail,
-  RegisterTableRow,
-  WcRegisterTable,
-} from './wc-register-table.js';
 import {
   REGISTER_SHORTCUTS,
-  WcRegisterTable as RegisterTableCtor,
+  WcRegisterTable,
+  type CategoryOption,
+  type NcEditCommitDetail,
+  type NcFlagToggleDetail,
+  type NcRowEventDetail,
+  type RegisterTableRow,
 } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-register-table.preview.js';
+
+/** Everything the component adopts into its shadow root — the only evidence
+    of layout available under jsdom, which has no layout engine. */
+const text = styleText(WcRegisterTable);
 
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
@@ -462,16 +463,20 @@ describe('the documented shortcuts', () => {
       await pressOnRow(el, 'Enter');
       expect(seen).toEqual([{ id: 101 }]);
     },
-    // Escape belongs to the editors, which is where the legend says it is:
-    // "cancel the edit". The table-level handler must leave it alone.
+    // Two jobs, as the legend says: the editors' cancel while one is open, and
+    // the TUI's clear-the-cursor when none is.
     Escape: async () => {
-      const el = await mount({ selectedId: 101, editingId: 101 });
-      const seen = listen<NcRowEventDetail>(el, 'nc-edit-cancel');
-      el.shadowRoot
+      const editing = await mount({ selectedId: 101, editingId: 101 });
+      const seen = listen<NcRowEventDetail>(editing, 'nc-edit-cancel');
+      editing.shadowRoot
         ?.querySelector('.category-input')
         ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await el.updateComplete;
+      await editing.updateComplete;
       expect(seen).toEqual([{ id: 101 }]);
+
+      const browsing = await mount({ selectedId: 101 });
+      await pressOnRow(browsing, 'Escape');
+      expect(selectedId(browsing)).toBeNull();
     },
     f: async () => {
       const el = await mount({ selectedId: 100 });
@@ -537,21 +542,40 @@ describe('reaching the register from the keyboard', () => {
     );
   });
 
-  it('answers a key pressed on the flag button, not only on the row', async () => {
+  it('answers a key pressed on the scroller, not only on a row', async () => {
+    // The original defect: the listener sat on the scroller, so a key only
+    // arrived when a row already had focus. It is on the host now, and the
+    // scroller is inside it.
     const el = await mount({ selectedId: 100 });
-    rowEls(el)[0]
-      ?.querySelector('button')
-      ?.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }),
-      );
-    await el.updateComplete;
+    await press(el, 'ArrowDown');
     expect(selectedId(el)).toBe(101);
+  });
+
+  it.each(['Enter', ' '])('lets the flag button answer %s itself', async (key) => {
+    // Intercepting these cancelled the button's own activation: Enter opened
+    // the row editor and never flagged anything, while Space flagged. A
+    // control inside a row keeps its keys.
+    const el = await mount({ selectedId: 100 });
+    const activations = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[0]?.querySelector('button')?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(activations).toEqual([]);
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it('focuses the row the cursor is on when asked', async () => {
     const el = await mount({ selectedId: 102 });
     expect(el.focusSelectedRow()).toBe(true);
     expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('102');
+    expect(selectedId(el)).toBe(102);
   });
 
   it('focuses the first row when nothing has been selected yet', async () => {
@@ -560,9 +584,123 @@ describe('reaching the register from the keyboard', () => {
     expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('100');
   });
 
+  it('selects nothing by landing the keyboard on the table', async () => {
+    // A register that opened with no cursor still has none afterwards: taking
+    // focus is not a decision about which transaction is current.
+    const el = await mount();
+    const seen = listen<NcRowEventDetail>(el, 'nc-row-select');
+    el.focusSelectedRow();
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not select the fallback tab stop when Tab lands on it', async () => {
+    // Nothing is selected, so the first row holds the stop as a fallback.
+    // Tab arriving there is not a decision about which transaction is current.
+    const el = await mount();
+    rowEls(el)[0]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+  });
+
+  it('selects a row Tab reaches that is not the fallback stop', async () => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[2]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
+  it('selects a row a pointer actually clicks', async () => {
+    const el = await mount();
+    rowEls(el)[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
   it('reports that an empty register had nothing to focus', async () => {
     const el = await mount({ rows: [] });
     expect(el.focusSelectedRow()).toBe(false);
+  });
+
+  it('clears the selection on Escape and consumes the key', async () => {
+    // TUI parity. Consuming it matters: an Escape that also reached the
+    // document would close the shortcut legend or leave fullscreen.
+    const el = await mount({ selectedId: 102 });
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[2]?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(selectedId(el)).toBeNull();
+    expect(event.defaultPrevented).toBe(true);
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0)).toHaveLength(1);
+  });
+});
+
+describe('keys the browser owns', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function chord(
+    el: WcRegisterTable,
+    key: string,
+    modifier: 'ctrlKey' | 'metaKey' | 'altKey',
+  ): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      [modifier]: true,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    el.shadowRoot?.querySelector('.scroller')?.dispatchEvent(event);
+    await el.updateComplete;
+    return event;
+  }
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'does not read %s+f as the flag shortcut',
+    async (modifier) => {
+      // Find-in-page must not write to the database.
+      const el = await mount({ selectedId: 100 });
+      const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+      const event = await chord(el, 'f', modifier);
+      expect(seen).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+    },
+  );
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'leaves %s+Home and +End to the browser',
+    async (modifier) => {
+      const el = await mount({ selectedId: 101 });
+      const home = await chord(el, 'Home', modifier);
+      const end = await chord(el, 'End', modifier);
+      expect(selectedId(el)).toBe(101);
+      expect(home.defaultPrevented).toBe(false);
+      expect(end.defaultPrevented).toBe(false);
+    },
+  );
+
+  it('leaves Alt+ArrowDown alone', async () => {
+    const el = await mount({ selectedId: 100 });
+    const event = await chord(el, 'ArrowDown', 'altKey');
+    expect(selectedId(el)).toBe(100);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('still answers the unmodified key', async () => {
+    const el = await mount({ selectedId: 100 });
+    const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    await press(el, 'f');
+    expect(seen).toEqual([{ id: 100, flag: true }]);
   });
 });
 
@@ -801,9 +939,18 @@ describe('wc-register-table height', () => {
     document.body.innerHTML = '';
   });
 
-  /** jsdom measures every box as zero, so the two boxes paging reads are given
-      sizes here: one row, and the viewport the scroller was granted. */
-  function stubLayout(el: WcRegisterTable, rowHeight: number, viewport: number): void {
+  /**
+   * jsdom measures every box as zero, so every box paging reads is given a
+   * size: one row, the scroller, and the sticky header and Net row that
+   * overlay it.
+   */
+  function stubLayout(
+    el: WcRegisterTable,
+    rowHeight: number,
+    viewport: number,
+    headHeight = 0,
+    footHeight = 0,
+  ): void {
     const scroller = el.shadowRoot?.querySelector('.scroller');
     if (!scroller) throw new Error('no scroller');
     Object.defineProperty(scroller, 'clientHeight', {
@@ -813,21 +960,56 @@ describe('wc-register-table height', () => {
     for (const row of rowEls(el)) {
       row.getBoundingClientRect = () => ({ height: rowHeight }) as DOMRect;
     }
+    const head = el.shadowRoot?.querySelector('thead');
+    if (head) head.getBoundingClientRect = () => ({ height: headHeight }) as DOMRect;
+    const foot = el.shadowRoot?.querySelector('tfoot');
+    if (foot) foot.getBoundingClientRect = () => ({ height: footHeight }) as DOMRect;
   }
 
   it('pages by the rows its own scroller shows, not by a fixed count', async () => {
     const rows = fixture(60);
-    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true });
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
 
-    // A short window: seven rows fit.
-    stubLayout(el, 24, 24 * 7 + 8);
+    // A short window: nine rows of box, two of which the header and the Net
+    // row sit over, so seven rows are ever visible.
+    stubLayout(el, 24, 24 * 9, 24, 24);
     await press(el, 'PageDown');
     expect(selectedId(el)).toBe(rows[7]?.id);
 
-    // A tall one: thirty-one do, and the same key moves that much further.
-    stubLayout(el, 24, 24 * 31 + 8);
+    // A tall one: thirty-one visible, and the same key moves that much further.
+    stubLayout(el, 24, 24 * 33, 24, 24);
     await press(el, 'PageDown');
     expect(selectedId(el)).toBe(rows[38]?.id);
+  });
+
+  it('never counts the rows hiding under the sticky header and Net row', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+
+    // Ten rows of scroller. The header and the Net row are painted over the
+    // top and bottom of it, so a row under either is never actually shown and
+    // paging by ten would skip two rows every press.
+    stubLayout(el, 24, 24 * 10, 24, 24);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[8]?.id);
+  });
+
+  it('pages by one row when only one row fits', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+
+    // A devtools-squashed window: three rows of box, two of them chrome.
+    stubLayout(el, 24, 24 * 3, 24, 24);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[1]?.id);
+  });
+
+  it('falls back to the TUI page size only when nothing could be measured', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true, total: 12 });
+    // No stub at all: jsdom reports every height as zero.
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[20]?.id);
   });
 
   it('reflects fill, which is what the height rules select on', async () => {
@@ -835,24 +1017,50 @@ describe('wc-register-table height', () => {
     expect(el.hasAttribute('fill')).toBe(true);
   });
 
-  const text = styleText(RegisterTableCtor);
-
   it('grows into the space a flex-column parent has left, and scrolls inside it', () => {
     // jsdom has no layout engine, so the rules themselves are the evidence.
-    // Filling takes three things and breaks without any one of them: the host
-    // has to be a growing flex item, the scroller has to be the part that
-    // grows, and `min-height: 0` has to override the automatic minimum that
-    // would otherwise size the scroller to all 1,800 rows.
+    // The host is what grows; the scroller only ever shrinks into it.
     expect(text).toMatch(/:host\(\[fill\]\)\s*{[^}]*flex:\s*1 1 auto/);
-    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*flex:\s*1 1 auto/);
     expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*min-height:\s*0/);
     expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*max-height:\s*none/);
   });
 
-  it('keeps the capped, content-sized shape when it is not filling', () => {
+  it('hugs its rows when the register is short, leaving no box below the Net row', () => {
+    // A sticky footer is pulled up by its scroller, never pushed down. A
+    // scroller told to *grow* therefore draws its border to the bottom of the
+    // window with three search matches stacked at the top of it — the dead
+    // space AC #2 forbids. Growing is the host's job; the scroller takes the
+    // lesser of its content and what the host has.
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*flex:\s*0 1 auto/);
+  });
+
+  it('stops shrinking a few rows in, and lets the page scroll instead', () => {
+    // On a viewport shortened by a docked devtools panel the toolbar keeps its
+    // height and the table would otherwise collapse to a sliver under the
+    // sticky Net row. The floor is on the host, which has no border of its
+    // own, so a short register still hugs its rows.
+    expect(text).toMatch(
+      /:host\(\[fill\]\)\s*{[^}]*min-height:\s*var\(--nc-register-min-height, 12rem\)/,
+    );
+  });
+
+  it('stays a block for a screen that never asked to fill', () => {
+    // The reports screen embeds this table in a normal page; only `fill`
+    // turns it into a flex column.
+    expect(text).toMatch(/:host\s*{[^}]*display:\s*block/);
+    expect(text).toMatch(/:host\(\[fill\]\)\s*{[^}]*display:\s*flex/);
+  });
+
+  it('honours --nc-register-height while it is sizing to its rows', () => {
     // The reports screen puts this table inside a page that scrolls as a
     // whole; a table that grew there would push the note below it off-screen.
     expect(text).toMatch(/\.scroller\s*{[^}]*max-height:\s*var\(--nc-register-height, 60vh\)/);
+  });
+
+  it('retires --nc-register-height under fill rather than half-honouring it', () => {
+    // A cap and a parent-driven height cannot both decide: under `fill` the
+    // parent wins, and the token is documented as having no effect there.
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*max-height:\s*none/);
   });
 
   it('keeps the Net row against the bottom of the scroller', () => {

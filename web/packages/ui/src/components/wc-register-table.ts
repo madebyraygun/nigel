@@ -22,7 +22,11 @@ export const REGISTER_SHORTCUTS: readonly ShortcutHint[] = [
   { keys: ['PageUp', 'PageDown'], display: 'PgUp PgDn', description: 'Move a screenful' },
   { keys: ['Home', 'End'], display: 'Home End', description: 'First or last row' },
   { keys: ['Enter'], display: 'Enter', description: 'Edit the category and vendor' },
-  { keys: ['Escape'], display: 'Esc', description: 'Cancel the edit' },
+  {
+    keys: ['Escape'],
+    display: 'Esc',
+    description: 'Cancel the edit, or clear the selection',
+  },
   { keys: ['f'], display: 'f', description: 'Flag or unflag the row' },
   { keys: ['/'], display: '/', description: 'Jump to the search box' },
 ];
@@ -106,13 +110,14 @@ export class WcRegisterTable extends LitElement {
     controlsCss,
     css`
       :host {
-        display: flex;
-        flex-direction: column;
+        display: block;
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
         min-height: 0;
       }
 
+      /* Content-sized under a cap: the shape a page that scrolls as a whole
+         wants, and the only mode --nc-register-height applies to. */
       .scroller {
         overflow: auto;
         max-height: var(--nc-register-height, 60vh);
@@ -120,17 +125,34 @@ export class WcRegisterTable extends LitElement {
         border-radius: var(--wa-radius-md, 8px);
       }
 
-      /* The fill attribute is the register screen's mode: the table is a flex
-         item that takes what is left between the toolbar and the bottom of
-         the window, and the scroller is the only thing that scrolls. Without
-         it the table is content-sized under a cap, which is what the
-         read-only view inside a longer report page wants. */
+      /* The fill attribute is the register screen's mode: the table takes what
+         is left between the toolbar and the bottom of the window.
+
+         The *host* is what grows, and it carries the floor. The scroller only
+         ever shrinks into it (flex: 0 1 auto), so three search matches draw a
+         three-row box rather than a full-height bordered one with the Net row
+         pulled up under them — a sticky footer is pulled up by its scroller
+         and never pushed down.
+
+         --nc-register-min-height is where shrinking stops. Below it the page
+         scrolls instead, which is what a viewport shortened by a docked
+         devtools panel needs: the alternative is a table collapsed to a sliver
+         under its own sticky Net row. It sits on the host rather than on the
+         scroller because the scroller has a border and must stay free to hug
+         short content.
+
+         --nc-register-height does not apply here and is not meant to: a cap
+         and a parent-driven height cannot both decide, and under fill the
+         parent decides. */
       :host([fill]) {
+        display: flex;
+        flex-direction: column;
         flex: 1 1 auto;
+        min-height: var(--nc-register-min-height, 12rem);
       }
 
       :host([fill]) .scroller {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
         min-height: 0;
         max-height: none;
       }
@@ -691,8 +713,12 @@ export class WcRegisterTable extends LitElement {
   }
 
   /**
-   * Put DOM focus on the row the cursor is on, so the shortcuts have somewhere
-   * to fire from. Answers whether there was a row to focus.
+   * Put DOM focus on the tab stop, so the shortcuts have somewhere to fire
+   * from. Answers whether there was a row to focus.
+   *
+   * It selects nothing: on a register that opened with no cursor the stop is
+   * the first row as a fallback, and landing the keyboard there is not a
+   * decision about which transaction is current.
    */
   focusSelectedRow(): boolean {
     const id = this.tabStopId;
@@ -714,14 +740,34 @@ export class WcRegisterTable extends LitElement {
    * where nothing lands a cursor on load.
    */
   private get tabStopId(): number | null {
+    if (this.selectionIsRendered) return this.activeId;
+    return this.rows[this.windowRange.start]?.id ?? null;
+  }
+
+  /**
+   * Whether the selected row is one the table has actually drawn — which on a
+   * windowed register means inside the current slice, not merely present in
+   * `rows`. A selection scrolled out of the window cannot hold the tab stop.
+   */
+  private get selectionIsRendered(): boolean {
+    if (this.activeId === null) return false;
+    const index = this.rows.findIndex((row) => row.id === this.activeId);
     const { start, end } = this.windowRange;
-    if (this.activeId !== null) {
-      const index = this.rows.findIndex((row) => row.id === this.activeId);
-      // A selection the user has scrolled away from is not in the DOM, so it
-      // cannot hold the tab stop; the first row on screen takes it instead.
-      if (index >= start && index < end) return this.activeId;
-    }
-    return this.rows[start]?.id ?? null;
+    return index >= start && index < end;
+  }
+
+  /**
+   * Focus arriving on a row.
+   *
+   * Focusing the fallback tab stop is not choosing it: Tab returns to the
+   * table without moving the cursor off the row that has it. A row focused
+   * any other way — clicked, or tabbed to while the selection sits on it —
+   * becomes the selection as it always did.
+   */
+  private handleRowFocusIn(row: RegisterTableRow): void {
+    if (this.activeId === row.id) return;
+    if (!this.selectionIsRendered && row.id === this.tabStopId) return;
+    this.setActive(row.id);
   }
 
   private rowElement(id: number): HTMLElement | null {
@@ -772,14 +818,47 @@ export class WcRegisterTable extends LitElement {
 
   private pageRows(): number {
     this.remeasureRowHeight();
-    const viewport = this.scroller?.clientHeight ?? 0;
-    const rows = this.rowHeight > 0 ? Math.floor(viewport / this.rowHeight) : 0;
-    return rows > 1 ? rows : DEFAULT_PAGE_ROWS;
+    const rows = Math.floor(this.visibleRowsHeight() / this.rowHeight);
+    // Zero means nothing could be measured, which is jsdom and a first paint.
+    // One is a real answer: a window with room for one row pages by one.
+    return rows > 0 ? rows : DEFAULT_PAGE_ROWS;
+  }
+
+  /**
+   * The height rows are actually visible in: the scroller less the header and
+   * the Net row, which are sticky and painted *over* it. Paging by the whole
+   * scroller skips the rows those two cover, every press.
+   */
+  private visibleRowsHeight(): number {
+    const scroller = this.scroller?.clientHeight ?? 0;
+    const head = this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+    const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
+    return Math.max(0, scroller - head - foot);
   }
 
   // -- keyboard -------------------------------------------------------------
 
+  /**
+   * Keys this table must never look at.
+   *
+   * A chord belongs to the browser or the OS: `Ctrl`/`Cmd+F` is find-in-page,
+   * and reading it as the flag shortcut turned a find into a write against the
+   * database. `Ctrl+Home`/`End` are the document's. And a control inside a row
+   * keeps its own keys — intercepting `Enter` on the flag button cancelled the
+   * button's activation and opened the row editor instead, while `Space` went
+   * through, so the same button answered the two keys differently.
+   */
+  private notOurs(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) return true;
+    const target = event.composedPath()[0];
+    return (
+      target instanceof HTMLElement &&
+      target.closest('button, a, input, select, textarea') !== null
+    );
+  }
+
   private handleKeydown = (event: KeyboardEvent): void => {
+    if (this.notOurs(event)) return;
     if (this.editingId !== null) return;
     if (this.rows.length === 0) return;
 
@@ -808,6 +887,13 @@ export class WcRegisterTable extends LitElement {
       case 'Enter':
         this.activateRow(this.rows[from]);
         break;
+      case 'Escape':
+        // The TUI's clear-the-cursor. Consumed, so it does not also close a
+        // popover or leave fullscreen; cancelling an *edit* is the two inline
+        // editors' own Escape, and this handler never runs while one is open.
+        this.activeId = null;
+        event.stopPropagation();
+        break;
       case 'f':
       case 'F':
         this.requestFlag(this.rows[from]);
@@ -818,9 +904,6 @@ export class WcRegisterTable extends LitElement {
         );
         break;
       default:
-        // Escape is the register's cancel-the-edit key and belongs to the two
-        // editors, which handle it themselves. Clearing the selection here
-        // instead used to take the table's only tab stop away with it.
         return;
     }
 
@@ -1088,7 +1171,8 @@ export class WcRegisterTable extends LitElement {
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
         aria-rowindex=${index + 2}
         tabindex=${row.id === tabStopId ? '0' : '-1'}
-        @focusin=${() => this.setActive(row.id)}
+        @focusin=${() => this.handleRowFocusIn(row)}
+        @click=${() => this.setActive(row.id)}
         @dblclick=${() => this.activateRow(row)}
       >
         <td role="gridcell" class="flag">

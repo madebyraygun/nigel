@@ -55,7 +55,11 @@ export class NigelRegisterScreen extends LitElement {
       /* The register is a full-height screen: the toolbar keeps its own
          height and the table takes everything between it and the bottom of
          the window, scrolling inside itself. Growing is what the shell's
-         content area answers. */
+         content area answers.
+
+         The automatic minimum is left in place — the toolbar plus the table's
+         own floor — so a window too short for both scrolls the page instead
+         of squeezing the table to nothing. */
       :host {
         display: flex;
         flex-direction: column;
@@ -64,7 +68,6 @@ export class NigelRegisterScreen extends LitElement {
         padding: var(--wa-space-l, 16px);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
-        min-height: 0;
       }
 
 
@@ -215,11 +218,14 @@ export class NigelRegisterScreen extends LitElement {
    * Land the keyboard on the table once the rows are there, so the register's
    * shortcuts work the way they do in the TUI instead of after three Tabs.
    *
-   * Only when nothing at all is focused: a reload while the user is typing in
-   * the search box must not pull the caret out from under them.
+   * The guard is "focus is already somewhere in this screen", which
+   * `shadowRoot.activeElement` answers exactly: a reload while the user is
+   * typing in the search box must not pull the caret out, but arriving from a
+   * sidebar click — the commonest way here, and one that leaves focus on the
+   * link — has to land the keyboard on the table.
    */
   private takeFocus(): void {
-    if (document.activeElement !== document.body) return;
+    if (this.shadowRoot?.activeElement != null) return;
     void this.updateComplete.then(() => this.table?.focusSelectedRow());
   }
 
