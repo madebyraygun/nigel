@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-14 01:16'
+updated_date: '2026-08-14 02:01'
 labels:
   - invoicing
   - pdf
@@ -146,6 +146,20 @@ Found in review before the layout round went back for the side-by-side. Two cons
 Invoice geometry unchanged after the fix (bands 8.6mm, rules 8.6mm apart, shared grey); reports back to black rules and their original column positions.
 
 Verified: 1362+117 / 1003+117 / 1276+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+Still halted for re-review. AC #9 stays unchecked.
+
+## Fourth round — the guardrail hook, and six layout items
+
+**A. Guardrail.** Scope written into the script header and CLAUDE.md: the gate is about content committed into the tree; git authorship is correct and never a violation, and neither is the org's own package metadata. Installed as a real hook — `.githooks/pre-commit` execs the script so the commit keys off its **exit status**, and `build.rs` sets `core.hooksPath` on the first build so a fresh clone picks it up without a setup step anyone can skip. Verified: staging a gate string makes `git commit` exit 1 with no commit created.
+
+**B. PDF.** (1) Header and body cells take the gutter on whichever side each is aligned; the real cause of the flush `Quantity` heading was that it needed 26.4mm of a 20mm column and overflowed into the divider, so the columns are rebalanced. (2) The duplicate foot rule is gone — each row already rules beneath itself. (3) One money format everywhere.
+
+**C. Page.** (4) The party blocks are aligned by construction: both bands are one grid with the same track list and the party column is pinned, because two `space-between` containers whose other child differs in width cannot be aligned by tuning a basis. (5) More air below the table. (6) The money lines tightened, on the PDF too.
+
+**TASK-87 closed.** `document::money` — separators, two decimals, `$` for USD, code prefix (`EUR 2,500.00`) otherwise, since `$` cannot say which dollar and not every symbol survives printpdf's WinAnsi built-ins. Applied to line items and totals on both documents. `fmt::money` stays dollar-only for the reports and the CLI. `MoneyLine::payment_row` removed — it existed only to carry the old two-format split. Rendering a real EUR invoice caught a second-order defect: the cell wrapper split `EUR 2,500.00` across two lines, so figure cells no longer wrap and the figure columns were widened.
+
+Verified: 1368+117 / 1007+117 / 1280+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 
 Still halted for re-review. AC #9 stays unchecked.
 <!-- SECTION:NOTES:END -->
