@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './register.js';
 import type { NigelRegisterScreen } from './register.js';
-import type { WcRegisterTable } from '@nigel/ui';
+import { REGISTER_SHORTCUTS, type WcRegisterTable, type WcShortcutHelp } from '@nigel/ui';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
@@ -184,7 +184,27 @@ describe('register screen', () => {
 
   it('stays at the top of a dated register, which has no today to find', async () => {
     const { el } = await mount(client(), 'month=2025-03');
-    expect(table(el).selectedId).toBeNull();
+    // The cursor rests on the first row rather than being scrolled to today's.
+    expect(table(el).selectedId).toBe(1);
+  });
+
+  it('lands the keyboard on the opening row, so the shortcuts work at once', async () => {
+    const { el } = await mount();
+    const row = table(el).shadowRoot?.activeElement;
+    expect(row?.getAttribute('data-id')).toBe('4');
+  });
+
+  it('leaves focus where it is when something else already has it', async () => {
+    const { el, fake } = await mount();
+    const elsewhere = document.createElement('button');
+    document.body.appendChild(elsewhere);
+    elsewhere.focus();
+
+    fake.register = { rows: spanningToday(), total: 0 };
+    el.params = new URLSearchParams('year=2020');
+    await settle(el);
+
+    expect(document.activeElement).toBe(elsewhere);
   });
 
   it('opens on a linked transaction instead, so review and the dashboard can link in', async () => {
@@ -369,6 +389,18 @@ describe('register screen', () => {
   it('hides the account column when the register is filtered to one account', async () => {
     const { el } = await mount(client(), 'account=BofA Checking');
     expect(table(el).showAccount).toBe(false);
+  });
+
+  it('offers the legend as a popover carrying the table own list of keys', async () => {
+    const { el } = await mount();
+    // The legend used to be a `details` block in the toolbar row, so opening
+    // it pushed the register down the page.
+    expect(el.shadowRoot?.querySelector('details')).toBeNull();
+
+    const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
+    expect(help).not.toBeNull();
+    expect(help?.open).toBe(false);
+    expect(help?.shortcuts).toEqual([...REGISTER_SHORTCUTS]);
   });
 
   it('hands the table the height left under the toolbar', async () => {

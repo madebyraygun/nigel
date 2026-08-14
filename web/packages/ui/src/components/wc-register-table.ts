@@ -5,9 +5,27 @@ import '../icons/icons.js';
 import './wc-money.js';
 import './wc-empty-state.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
+import type { ShortcutHint } from './wc-shortcut-help.js';
 import { controlsCss } from '@nigel/theme';
 
 export type { CategoryOption };
+
+/**
+ * The register's keyboard legend, beside the switch that implements it.
+ *
+ * A screen renders this through `wc-shortcut-help`; `keys` carries the real
+ * `KeyboardEvent.key` values so a test can walk the legend and prove every
+ * line of it does something, rather than the legend being prose that drifts.
+ */
+export const REGISTER_SHORTCUTS: readonly ShortcutHint[] = [
+  { keys: ['ArrowUp', 'ArrowDown'], display: '↑ ↓', description: 'Move between rows' },
+  { keys: ['PageUp', 'PageDown'], display: 'PgUp PgDn', description: 'Move a screenful' },
+  { keys: ['Home', 'End'], display: 'Home End', description: 'First or last row' },
+  { keys: ['Enter'], display: 'Enter', description: 'Edit the category and vendor' },
+  { keys: ['Escape'], display: 'Esc', description: 'Cancel the edit' },
+  { keys: ['f'], display: 'f', description: 'Flag or unflag the row' },
+  { keys: ['/'], display: '/', description: 'Jump to the search box' },
+];
 
 /** One transaction, in the shape the register table draws. */
 export interface RegisterTableRow {
@@ -373,6 +391,15 @@ export class WcRegisterTable extends LitElement {
 
   private pendingFocusId: number | null = null;
 
+  constructor() {
+    super();
+    // On the host, not on the scroller: the shortcuts have to fire from
+    // wherever focus is inside the table — a row, the flag button on a row,
+    // or the scroller itself — and a listener on one of those hears only its
+    // own subtree.
+    this.addEventListener('keydown', this.handleKeydown);
+  }
+
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('selectedId')) this.activeId = this.selectedId;
 
@@ -411,7 +438,35 @@ export class WcRegisterTable extends LitElement {
     return index === -1 ? false : this.scrollToIndex(index);
   }
 
+  /**
+   * Put DOM focus on the row the cursor is on, so the shortcuts have somewhere
+   * to fire from. Answers whether there was a row to focus.
+   */
+  focusSelectedRow(): boolean {
+    const id = this.tabStopId;
+    if (id === null) return false;
+    const row = this.rowElement(id);
+    if (!row) return false;
+    row.focus();
+    return true;
+  }
+
   // -- selection ------------------------------------------------------------
+
+  /**
+   * The one row in the tab order.
+   *
+   * A roving tabindex needs a home even before anything is selected, or the
+   * table is not reachable by Tab at all and none of its keys can ever fire —
+   * which is exactly what happened on a register opened with a date filter,
+   * where nothing lands a cursor on load.
+   */
+  private get tabStopId(): number | null {
+    if (this.activeId !== null && this.rows.some((row) => row.id === this.activeId)) {
+      return this.activeId;
+    }
+    return this.rows[0]?.id ?? null;
+  }
 
   private rowElement(id: number): HTMLElement | null {
     return this.shadowRoot?.querySelector<HTMLElement>(`tr[data-id="${id}"]`) ?? null;
@@ -460,7 +515,7 @@ export class WcRegisterTable extends LitElement {
 
   // -- keyboard -------------------------------------------------------------
 
-  private handleKeydown(event: KeyboardEvent): void {
+  private handleKeydown = (event: KeyboardEvent): void => {
     if (this.editingId !== null) return;
     if (this.rows.length === 0) return;
 
@@ -489,9 +544,6 @@ export class WcRegisterTable extends LitElement {
       case 'Enter':
         this.activateRow(this.rows[from]);
         break;
-      case 'Escape':
-        this.activeId = null;
-        break;
       case 'f':
       case 'F':
         this.requestFlag(this.rows[from]);
@@ -502,11 +554,14 @@ export class WcRegisterTable extends LitElement {
         );
         break;
       default:
+        // Escape is the register's cancel-the-edit key and belongs to the two
+        // editors, which handle it themselves. Clearing the selection here
+        // instead used to take the table's only tab stop away with it.
         return;
     }
 
     event.preventDefault();
-  }
+  };
 
   private activateRow(row: RegisterTableRow | undefined): void {
     if (!row) return;
@@ -657,7 +712,7 @@ export class WcRegisterTable extends LitElement {
     const columns = this.showAccount ? 7 : 6;
 
     return html`
-      <div class="scroller" @keydown=${this.handleKeydown}>
+      <div class="scroller">
         <table role="grid">
           <caption>
             ${this.caption}
@@ -728,6 +783,7 @@ export class WcRegisterTable extends LitElement {
   private renderRow(row: RegisterTableRow) {
     const selected = row.id === this.activeId;
     const editing = row.id === this.editingId;
+    const tabStop = row.id === this.tabStopId;
 
     return html`
       <tr
@@ -736,7 +792,7 @@ export class WcRegisterTable extends LitElement {
         data-flagged=${row.isFlagged ? 'true' : 'false'}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
-        tabindex=${selected ? '0' : '-1'}
+        tabindex=${tabStop ? '0' : '-1'}
         @focusin=${() => this.setActive(row.id)}
         @dblclick=${() => this.activateRow(row)}
       >

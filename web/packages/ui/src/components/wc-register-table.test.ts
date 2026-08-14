@@ -8,7 +8,10 @@ import type {
   RegisterTableRow,
   WcRegisterTable,
 } from './wc-register-table.js';
-import { WcRegisterTable as RegisterTableCtor } from './wc-register-table.js';
+import {
+  REGISTER_SHORTCUTS,
+  WcRegisterTable as RegisterTableCtor,
+} from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-register-table.preview.js';
@@ -50,10 +53,12 @@ function selectedId(el: WcRegisterTable): number | null {
   return row ? Number(row.dataset.id) : null;
 }
 
+/** `composed` because a real key event crosses the shadow boundary; the
+    table listens on its host so a key from any part of it is heard. */
 async function press(el: WcRegisterTable, key: string): Promise<void> {
   el.shadowRoot
     ?.querySelector('.scroller')
-    ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
   await el.updateComplete;
 }
 
@@ -393,6 +398,171 @@ describe('wc-register-table', () => {
       await press(el, 'ArrowDown');
       expect(selectedId(el)).toBe(101);
     });
+  });
+});
+
+/**
+ * Every key the legend prints, proved against the table.
+ *
+ * The register's shortcuts were all dead: the keydown listener sat on the
+ * scroller, and the roving tabindex had no home until something selected a
+ * row, so on a dated register no element inside the table was in the tab order
+ * at all and none of these keys could ever reach a handler. The list below is
+ * driven off `REGISTER_SHORTCUTS`, so a line added to the legend without a
+ * proof fails the suite rather than shipping as prose.
+ */
+describe('the documented shortcuts', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  /** Keydown from the focused row, which is where a real keystroke starts. */
+  async function pressOnRow(el: WcRegisterTable, key: string): Promise<void> {
+    const row = rowEls(el).find((tr) => tr.tabIndex === 0) ?? rowEls(el)[0];
+    row?.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+  }
+
+  const proofs: Record<string, () => Promise<void>> = {
+    ArrowDown: async () => {
+      const el = await mount({ selectedId: 100 });
+      await pressOnRow(el, 'ArrowDown');
+      expect(selectedId(el)).toBe(101);
+    },
+    ArrowUp: async () => {
+      const el = await mount({ selectedId: 101 });
+      await pressOnRow(el, 'ArrowUp');
+      expect(selectedId(el)).toBe(100);
+    },
+    PageDown: async () => {
+      const el = await mount({ rows: fixture(50), selectedId: 100 });
+      await pressOnRow(el, 'PageDown');
+      expect(selectedId(el)).toBe(120);
+    },
+    PageUp: async () => {
+      const el = await mount({ rows: fixture(50), selectedId: 130 });
+      await pressOnRow(el, 'PageUp');
+      expect(selectedId(el)).toBe(110);
+    },
+    Home: async () => {
+      const el = await mount({ selectedId: 103 });
+      await pressOnRow(el, 'Home');
+      expect(selectedId(el)).toBe(100);
+    },
+    End: async () => {
+      const el = await mount({ selectedId: 100 });
+      await pressOnRow(el, 'End');
+      expect(selectedId(el)).toBe(103);
+    },
+    Enter: async () => {
+      const el = await mount({ selectedId: 101 });
+      const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
+      await pressOnRow(el, 'Enter');
+      expect(seen).toEqual([{ id: 101 }]);
+    },
+    // Escape belongs to the editors, which is where the legend says it is:
+    // "cancel the edit". The table-level handler must leave it alone.
+    Escape: async () => {
+      const el = await mount({ selectedId: 101, editingId: 101 });
+      const seen = listen<NcRowEventDetail>(el, 'nc-edit-cancel');
+      el.shadowRoot
+        ?.querySelector('.category-input')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await el.updateComplete;
+      expect(seen).toEqual([{ id: 101 }]);
+    },
+    f: async () => {
+      const el = await mount({ selectedId: 100 });
+      const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+      await pressOnRow(el, 'f');
+      expect(seen).toEqual([{ id: 100, flag: true }]);
+    },
+    '/': async () => {
+      const el = await mount({ selectedId: 100 });
+      let asked = 0;
+      el.addEventListener('nc-search-focus', () => (asked += 1));
+      await pressOnRow(el, '/');
+      expect(asked).toBe(1);
+    },
+  };
+
+  it('is a list every key on which has a proof below', () => {
+    const documented = REGISTER_SHORTCUTS.flatMap((hint) => hint.keys);
+    expect(documented.filter((key) => !(key in proofs))).toEqual([]);
+    expect(Object.keys(proofs).filter((key) => !documented.includes(key))).toEqual([]);
+  });
+
+  it.each(REGISTER_SHORTCUTS.flatMap((hint) => hint.keys))('%s works', async (key) => {
+    await proofs[key]?.();
+  });
+});
+
+describe('reaching the register from the keyboard', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is in the tab order before anything has selected a row', async () => {
+    // A register opened with a date filter selects nothing on load. With the
+    // tab stop tied to the selection, that table had no tabbable element and
+    // was unreachable by keyboard, which is why none of its keys worked.
+    const el = await mount();
+    const stops = rowEls(el).filter((tr) => tr.tabIndex === 0);
+    expect(stops.map((tr) => tr.dataset.id)).toEqual(['100']);
+  });
+
+  it('keeps exactly one tab stop once a row is selected', async () => {
+    const el = await mount({ selectedId: 102 });
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0).map((tr) => tr.dataset.id)).toEqual(
+      ['102'],
+    );
+  });
+
+  it('still has a tab stop after Escape', async () => {
+    const el = await mount({ selectedId: 102 });
+    rowEls(el)[2]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it('moves its tab stop with the selection, never leaving two', async () => {
+    const el = await mount({ selectedId: 100 });
+    await press(el, 'ArrowDown');
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0).map((tr) => tr.dataset.id)).toEqual(
+      ['101'],
+    );
+  });
+
+  it('answers a key pressed on the flag button, not only on the row', async () => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[0]
+      ?.querySelector('button')
+      ?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }),
+      );
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it('focuses the row the cursor is on when asked', async () => {
+    const el = await mount({ selectedId: 102 });
+    expect(el.focusSelectedRow()).toBe(true);
+    expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('102');
+  });
+
+  it('focuses the first row when nothing has been selected yet', async () => {
+    const el = await mount();
+    expect(el.focusSelectedRow()).toBe(true);
+    expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('100');
+  });
+
+  it('reports that an empty register had nothing to focus', async () => {
+    const el = await mount({ rows: [] });
+    expect(el.focusSelectedRow()).toBe(false);
   });
 });
 
