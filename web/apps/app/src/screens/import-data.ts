@@ -2,6 +2,7 @@ import {
   EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
   type CountItem,
+  type GenericCsvMapping,
   type ImportAccountOption,
   type ImportFormValue,
 } from '@nigel/ui';
@@ -64,16 +65,34 @@ export function initialImportForm(accounts: ImportAccountOption[]): ImportFormVa
   return { ...EMPTY_IMPORT_FORM, account: accounts[0].name };
 }
 
+/**
+ * Every leaf of a form, flattened into one comparable record.
+ *
+ * The type is derived from `ImportFormValue` and `GenericCsvMapping` rather
+ * than written out, so a field added to either makes this literal incomplete —
+ * a compile error rather than a comparison that quietly stops noticing it.
+ */
+type FormLeaves = Record<keyof Omit<ImportFormValue, 'mapping'>, string> &
+  Record<keyof GenericCsvMapping, string | number>;
+
+function leaves(form: ImportFormValue): FormLeaves {
+  return {
+    account: form.account,
+    format: form.format,
+    saveProfile: form.saveProfile,
+    dateCol: form.mapping.dateCol,
+    descCol: form.mapping.descCol,
+    amountCol: form.mapping.amountCol,
+    dateFormat: form.mapping.dateFormat,
+  };
+}
+
 /** Whether two forms say the same thing, field by field. */
 export function sameImportForm(a: ImportFormValue, b: ImportFormValue): boolean {
-  return (
-    a.account === b.account &&
-    a.format === b.format &&
-    a.saveProfile === b.saveProfile &&
-    a.mapping.dateCol === b.mapping.dateCol &&
-    a.mapping.descCol === b.mapping.descCol &&
-    a.mapping.amountCol === b.mapping.amountCol &&
-    a.mapping.dateFormat === b.mapping.dateFormat
+  const left = leaves(a);
+  const right = leaves(b);
+  return (Object.keys(left) as (keyof FormLeaves)[]).every(
+    (key) => left[key] === right[key],
   );
 }
 

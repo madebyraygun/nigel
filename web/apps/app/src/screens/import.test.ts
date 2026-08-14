@@ -530,6 +530,66 @@ describe('nigel-import-screen', () => {
     expect(button(el, 'Preview')?.disabled).toBe(true);
   });
 
+  it('keeps edits made while the account list was still loading', async () => {
+    const fake = client();
+    fake.accounts = [ACCOUNTS[0]];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const getAccounts = fake.getAccounts.bind(fake);
+    fake.getAccounts = async () => {
+      await gate;
+      return getAccounts();
+    };
+
+    const el = document.createElement('nigel-import-screen');
+    el.client = fake;
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    await setForm(el, { format: GENERIC_FORMAT_CHOICE, saveProfile: 'chase' });
+    release();
+    await settle(el);
+
+    // The lists arrive after the screen does; the preselect is one field, not
+    // a replacement for whatever was typed while they were in flight.
+    expect(form(el).value.format).toBe(GENERIC_FORMAT_CHOICE);
+    expect(form(el).value.saveProfile).toBe('chase');
+    expect(form(el).value.account).toBe('BofA Checking');
+  });
+
+  it('offers no cancel on the screen a finished import resets to', async () => {
+    const { el } = await mount();
+    await toPreview(el);
+    await click(el, 'Import 42');
+    await click(el, 'Import another');
+
+    // The account the reset deliberately kept is the new baseline, not work
+    // waiting to be abandoned.
+    expect(form(el).value.account).toBe('BofA Checking');
+    expect(button(el, 'Cancel')).toBeNull();
+
+    await choose(el);
+    expect(button(el, 'Cancel')).not.toBeNull();
+  });
+
+  it('cancels back to what the reset kept, not to an empty form', async () => {
+    const { el } = await mount();
+    await toPreview(el);
+    await click(el, 'Import 42');
+    await click(el, 'Import another');
+    await choose(el, statement('may-2025.csv'));
+    await setForm(el, { format: 'bofa_checking' });
+
+    await click(el, 'Cancel');
+
+    expect(dropzone(el).filename).toBe('');
+    expect(form(el).value.account).toBe('BofA Checking');
+    expect(form(el).value.format).toBe('');
+    expect(button(el, 'Cancel')).toBeNull();
+  });
+
   it('offers no cancel until there is an import to abandon', async () => {
     const { el } = await mount();
     expect(button(el, 'Cancel')).toBeNull();

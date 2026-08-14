@@ -140,6 +140,15 @@ export class NigelImportScreen extends LitElement {
   @state() private loadError: string | null = null;
 
   @state() private form: ImportFormValue = EMPTY_IMPORT_FORM;
+
+  /**
+   * The form this attempt started from, and what cancel returns to.
+   *
+   * Not always the empty form: after a completed import the account and format
+   * that were kept are the state the screen is now sitting in, so they are what
+   * "untouched" means from then on, and cancelling must not take them away.
+   */
+  @state() private baseline: ImportFormValue = EMPTY_IMPORT_FORM;
   @state() private filename = '';
   @state() private filesize = 0;
 
@@ -188,8 +197,15 @@ export class NigelImportScreen extends LitElement {
         name: account.name,
         accountType: account.accountType,
       }));
-      if (this.form.account === '') {
-        this.form = initialImportForm(this.accounts);
+      // The lists arrive after the screen does, so the preselect lands on a
+      // form that may already have been typed into. One field, and only while
+      // no account has been named — everything else typed in the meantime is
+      // work somebody did. The baseline moves with it, because a preselection
+      // is not.
+      const { account: preselect } = initialImportForm(this.accounts);
+      if (preselect !== '' && this.form.account === '') {
+        this.form = { ...this.form, account: preselect };
+        this.baseline = { ...this.baseline, account: preselect };
       }
     } else {
       this.reportLoadFailure(accounts.reason, 'Could not load your accounts.');
@@ -241,12 +257,7 @@ export class NigelImportScreen extends LitElement {
   };
 
   private handleFileClear = (): void => {
-    this.file = null;
-    this.filename = '';
-    this.filesize = 0;
-    this.uploadId = null;
-    this.preview = null;
-    this.clearErrors();
+    this.discard();
   };
 
   private handleFormChange = (event: Event): void => {
@@ -268,17 +279,18 @@ export class NigelImportScreen extends LitElement {
   }
 
   /**
-   * Whether there is an import to abandon.
+   * Whether there is an import to abandon — measured against the baseline, so
+   * a preselected account and one kept by a reset both count as untouched.
    *
-   * An untouched screen is already in the state cancel returns it to, and a
-   * control that does nothing is worse than no control.
+   * A screen sitting on its baseline is already in the state cancel returns it
+   * to, and a control that does nothing is worse than no control.
    */
   private get dirty(): boolean {
     return (
       this.file !== null ||
       this.preview !== null ||
       this.dropzoneError !== '' ||
-      !sameImportForm(this.form, initialImportForm(this.accounts))
+      !sameImportForm(this.form, this.baseline)
     );
   }
 
@@ -420,20 +432,22 @@ export class NigelImportScreen extends LitElement {
   private handleReset = (): void => {
     this.discard();
     // The account and the format stay: a second statement for the same account
-    // is the ordinary next thing to do.
+    // is the ordinary next thing to do. They are the baseline from here, so the
+    // next cancel measures against them rather than taking them away.
+    this.baseline = this.form;
   };
 
   /**
    * Abandon the import: the file, the preview and the form together.
    *
-   * The form goes back too, which is what separates this from the reset a
-   * finished import offers — the wrong account is corrected here, not carried
-   * into the next attempt.
+   * The form goes back to the baseline, which is what separates this from the
+   * reset a finished import offers — an account chosen for *this* attempt is
+   * cleared, since correcting the wrong one is half of why anyone cancels.
    */
   private handleCancel = (): void => {
     if (this.busy !== null) return;
     this.discard();
-    this.form = initialImportForm(this.accounts);
+    this.form = this.baseline;
   };
 
   // -- rendering ------------------------------------------------------------
