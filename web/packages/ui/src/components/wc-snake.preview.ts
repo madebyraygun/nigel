@@ -4,11 +4,15 @@ import { BOARD_HEIGHT, BOARD_WIDTH, type SnakeState } from './snake-engine.js';
 import type { Preview } from '../../preview/types.js';
 
 /**
- * Boards written out rather than played, so a state is the same state every
+ * A board written out rather than played, so a state is the same state every
  * time it is reviewed — and so axe runs over a board that is not moving under
  * it. Every state is `paused` for the same reason.
+ *
+ * Exported because `wc-snake.test.ts` poses the same boards: a second copy
+ * would let a preview state and the test that covers it drift apart while both
+ * kept passing.
  */
-function board(partial: Partial<SnakeState> = {}): SnakeState {
+export function board(partial: Partial<SnakeState> = {}): SnakeState {
   return {
     body: [
       { x: 20, y: 10 },

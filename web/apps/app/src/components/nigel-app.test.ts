@@ -302,6 +302,80 @@ describe('nigel-app', () => {
       expect(snake(el)).toBeNull();
     });
 
+    it('stays shut over the boot-failure screen', async () => {
+      const client = new FakeApiClient();
+      client.statusError = new ApiError({
+        code: 'internal',
+        rawCode: 'internal',
+        message: 'database is on fire',
+        status: 500,
+      });
+      const el = await mount(client);
+
+      typeS();
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+    });
+
+    /**
+     * Every way out goes through the same close. A render branch that simply
+     * stops rendering the overlay would leave the open flag and the captured
+     * focus behind, and the next time that branch came back so would a game.
+     */
+    describe('closing', () => {
+      it('closes when the route changes underneath it', async () => {
+        const el = await mount();
+        typeS();
+        await el.updateComplete;
+        expect(snake(el)).toBeTruthy();
+
+        // The back button: the hash is the only writer of route state.
+        window.location.hash = '#/register';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await el.updateComplete;
+
+        expect(snake(el)).toBeNull();
+        expect(shell(el)?.hasAttribute('inert')).toBe(false);
+      });
+
+      it('closes when the database locks under it', async () => {
+        const el = await mount();
+        typeS();
+        await el.updateComplete;
+        expect(snake(el)).toBeTruthy();
+
+        appLocked.set(true);
+        await el.updateComplete;
+        expect(snake(el)).toBeNull();
+
+        // And unlocking returns the app, not a game nobody asked for twice.
+        appLocked.set(false);
+        await el.updateComplete;
+        expect(snake(el)).toBeNull();
+      });
+
+      it('falls back to the shell when the element it captured is gone', async () => {
+        const el = await mount();
+        const link = document.createElement('a');
+        link.href = '#/review';
+        document.body.appendChild(link);
+        link.focus();
+
+        typeS(link);
+        await el.updateComplete;
+
+        // Whatever the route change unmounted, it took the link with it.
+        link.remove();
+        window.location.hash = '#/register';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await el.updateComplete;
+        await el.updateComplete;
+
+        expect(el.shadowRoot?.activeElement).toBe(shell(el));
+      });
+    });
+
     it('stays shut when the keystroke belongs to a field', async () => {
       const el = await mount();
       const field = document.createElement('input');

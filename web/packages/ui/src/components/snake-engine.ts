@@ -5,7 +5,7 @@
  * games that look alike, so every rule the TUI has — the board size, the tick
  * that shortens as the snake grows, food worth between a dollar and ten, the
  * three ways it ends — lives here in the same form and is pinned to the Rust
- * source by `snake-engine.parity.test.ts`.
+ * source by `snake-parity.test.ts`.
  *
  * Pure and rendering-free: the component owns the clock and the pixels, this
  * owns the rules, and a state can be written out by hand for a preview.

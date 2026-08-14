@@ -13,7 +13,11 @@ import {
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
 import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
 import type { ScreenContext } from '../screens/context.js';
-import { deepActiveElement, isSnakeTrigger } from '../snake-trigger.js';
+import {
+  deepActiveElement,
+  isSnakeTrigger,
+  snakeAllowedOnBoot,
+} from '../snake-trigger.js';
 
 /**
  * Root container: owns the api client, the store, and the route.
@@ -86,8 +90,20 @@ export class NigelApp extends SignalWatcher(LitElement) {
   }
 
   private handleHashChange = (): void => {
+    // A route change takes the screen out from under the game, so the game
+    // goes with it rather than staying up over a screen nobody navigated to.
+    this.closeSnake();
     this.syncRouteFromHash();
   };
+
+  protected willUpdate(): void {
+    // The other way the dashboard disappears: locking, a failed status, a
+    // reload. Each of those swaps the render branch, and without this the
+    // overlay would only stop being *rendered* — the open flag and the focus
+    // capture would survive to strand the next one.
+    const boot = (this.store ?? getAppStore()).boot.get();
+    if (this.snakeOpen && !snakeAllowedOnBoot(boot)) this.closeSnake();
+  }
 
   private syncRouteFromHash(): void {
     if (!window.location.hash) {
@@ -127,12 +143,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private handleGlobalKeydown = (event: KeyboardEvent): void => {
     if (this.snakeOpen) return;
     if (this.route.screen !== 'dashboard') return;
-
-    // Nothing is behind the game yet while the app is booting or locked, and
-    // the unlock screen is a password field this must never eat a letter from.
-    const boot = (this.store ?? getAppStore()).boot.get();
-    if (boot === 'starting' || boot === 'locked') return;
-
+    if (!snakeAllowedOnBoot((this.store ?? getAppStore()).boot.get())) return;
     if (!isSnakeTrigger(event)) return;
 
     event.preventDefault();
@@ -141,13 +152,35 @@ export class NigelApp extends SignalWatcher(LitElement) {
     this.snakeOpen = true;
   };
 
-  /** Put the screen back, and the keyboard where it was before the game. */
+  /**
+   * The only way out, and every exit goes through it: Escape, a route change,
+   * and the boot phase moving off `ready`.
+   *
+   * One path because the open flag and the captured focus have to fall
+   * together. A render branch that simply stopped rendering the overlay —
+   * which is what locking does — would leave both behind, and unlocking would
+   * put a fresh game back over the app with a focus capture pointing at an
+   * element that no longer exists.
+   */
   private closeSnake = (): void => {
-    this.snakeOpen = false;
+    if (!this.snakeOpen) return;
+
     const restore = this.focusBeforeSnake;
+    this.snakeOpen = false;
     this.focusBeforeSnake = null;
+
     void this.updateComplete.then(() => {
-      if (restore?.isConnected) restore.focus();
+      // Whatever the game was covering may have been unmounted while it was
+      // up, so the shell is the fallback: focus has to land somewhere, and a
+      // `focus()` on a detached element lands on the body.
+      if (restore?.isConnected) {
+        restore.focus();
+        return;
+      }
+      const shell = this.shadowRoot?.querySelector('wc-app-shell');
+      if (!shell) return;
+      if (!shell.hasAttribute('tabindex')) shell.setAttribute('tabindex', '-1');
+      shell.focus();
     });
   };
 

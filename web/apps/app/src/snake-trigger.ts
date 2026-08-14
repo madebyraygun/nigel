@@ -10,6 +10,7 @@
  * the game" is the whole of the risk here, and it is worth being able to test
  * it against a hand-built event rather than through a mounted application.
  */
+import type { BootPhase } from './state/app-store.js';
 
 /** The letter, matching the TUI's dashboard menu. */
 export const SNAKE_KEY = 's';
@@ -45,6 +46,9 @@ const FORM_CONTROLS = new Set([
 
 /** Anything that has taken over the screen and should keep the keyboard. */
 const DIALOGS = new Set(['dialog', 'wa-dialog', 'wa-drawer']);
+
+/** The same set as a selector, for finding one that nothing is focused inside. */
+const OPEN_MODAL = 'dialog[open], wa-dialog[open], wa-drawer[open], [aria-modal="true"]';
 
 /** ARIA saying the same thing an element's tag might not. */
 const BLOCKING_ROLES = new Set([
@@ -105,18 +109,43 @@ function focusChain(): Element[] {
 }
 
 /**
+ * Is a modal open anywhere on the page?
+ *
+ * Shadow roots are walked rather than queried past, because every dialog in
+ * this app is inside one — `wc-confirm` renders a `wa-dialog`, which renders a
+ * native `dialog`, two boundaries down from the document. A flat
+ * `document.querySelector` would find none of them and the guard would be
+ * dead code that reads as protection. The walk costs a tree traversal on the
+ * `s` keystrokes that get this far, and nothing on any other key.
+ */
+export function hasOpenModal(root: Document | ShadowRoot = document): boolean {
+  if (root.querySelector(OPEN_MODAL)) return true;
+
+  for (const element of root.querySelectorAll('*')) {
+    const nested = (element as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+    if (nested && hasOpenModal(nested)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Would this keystroke land in a form control or a dialog?
  *
- * Two sources, because neither covers the other: the composed path is where
- * the event actually came from, and the focus chain catches a dialog holding
- * the screen while the keystroke was delivered to the body — which is what an
- * open dialog with nothing focusable inside it looks like.
+ * Three sources, because no one of them covers the others. The composed path
+ * is where the event actually came from. The focus chain is what has the
+ * caret, which the path misses when the event is retargeted. And a modal open
+ * anywhere catches the case both of those miss together: a dialog with nothing
+ * focusable inside it leaves the focus on the body, and the keystroke is then
+ * delivered to the body too, so neither the path nor the chain has anything in
+ * it to recognise while a dialog is very much on screen.
  */
 export function isTypingContext(event: KeyboardEvent): boolean {
   const path = event
     .composedPath()
     .filter((node): node is Element => node instanceof Element);
-  return [...path, ...focusChain()].some(blocks);
+  if ([...path, ...focusChain()].some(blocks)) return true;
+  return hasOpenModal();
 }
 
 /**
@@ -133,4 +162,28 @@ export function isSnakeTrigger(event: KeyboardEvent): boolean {
   if (event.repeat || event.isComposing) return false;
   if (event.defaultPrevented) return false;
   return !isTypingContext(event);
+}
+
+/**
+ * Is there a dashboard under the game to come back to?
+ *
+ * Only `ready` renders one. `failed` still draws the shell, but around a
+ * retry banner over a dashboard that could not load — not a screen to cover
+ * with a snake. Written as an exhaustive switch on purpose: a phase added to
+ * `BootPhase` later fails this to compile rather than falling through to a
+ * default that quietly lets the game open over it.
+ */
+export function snakeAllowedOnBoot(boot: BootPhase): boolean {
+  switch (boot) {
+    case 'ready':
+      return true;
+    case 'starting':
+    case 'locked':
+    case 'failed':
+      return false;
+    default: {
+      const unhandled: never = boot;
+      return unhandled;
+    }
+  }
 }

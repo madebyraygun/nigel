@@ -5,7 +5,14 @@
  * DOM test even though the module it covers is pure.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { SNAKE_KEY, deepActiveElement, isSnakeTrigger, isTypingContext } from './snake-trigger.js';
+import {
+  SNAKE_KEY,
+  deepActiveElement,
+  isSnakeTrigger,
+  isTypingContext,
+  snakeAllowedOnBoot,
+} from './snake-trigger.js';
+import type { BootPhase } from './state/app-store.js';
 
 /**
  * Ask the predicate from a window listener, mid-dispatch, which is where
@@ -164,10 +171,65 @@ describe('the typing guard', () => {
     expect(fires(document.body)).toBe(false);
   });
 
+  /**
+   * The third source. A modal with nothing focusable in it leaves the focus on
+   * the body, and the keystroke is then delivered to the body too — so neither
+   * the composed path nor the focus chain has anything in it to recognise,
+   * while a dialog is very much on screen.
+   */
+  describe('an open modal, wherever the keystroke went', () => {
+    it.each(['<dialog open></dialog>', '<div aria-modal="true"></div>'])(
+      'refuses while %s is open in the page',
+      (markup) => {
+        document.body.insertAdjacentHTML('beforeend', markup);
+        expect(fires(document.body)).toBe(false);
+      },
+    );
+
+    it('refuses while a dialog is open inside a shadow root', () => {
+      // Which is where every dialog in this app is: wc-confirm renders a
+      // wa-dialog, which renders a native dialog, two boundaries down.
+      const inner = document.createElement('wa-dialog');
+      inner.setAttribute('open', '');
+      shadowHost(inner);
+
+      expect(fires(document.body)).toBe(false);
+    });
+
+    it('fires again once the dialog has gone', () => {
+      document.body.insertAdjacentHTML('beforeend', '<dialog open></dialog>');
+      expect(fires(document.body)).toBe(false);
+
+      document.querySelector('dialog')?.remove();
+      expect(fires(document.body)).toBe(true);
+    });
+  });
+
   it('allows a keystroke from ordinary page furniture', () => {
     const heading = document.createElement('h1');
     document.body.appendChild(heading);
     expect(fires(heading)).toBe(true);
+  });
+});
+
+describe('snakeAllowedOnBoot', () => {
+  it('allows the game only where a dashboard is actually rendered', () => {
+    expect(snakeAllowedOnBoot('ready')).toBe(true);
+  });
+
+  it.each(['starting', 'locked', 'failed'] as const)(
+    'refuses over the %s screen',
+    (phase) => {
+      expect(snakeAllowedOnBoot(phase)).toBe(false);
+    },
+  );
+
+  it('covers every phase the store can be in', () => {
+    // The switch is exhaustive, so this list and BootPhase cannot disagree
+    // without failing the typecheck — the assertion is that it is a list at
+    // all, and that none of it throws.
+    const phases: BootPhase[] = ['starting', 'locked', 'failed', 'ready'];
+    expect(phases.map(snakeAllowedOnBoot)).toEqual([false, false, false, true]);
   });
 });
 

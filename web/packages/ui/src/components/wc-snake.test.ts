@@ -1,29 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-snake.js';
 import { WcSnake } from './wc-snake.js';
-import { BOARD_HEIGHT, BOARD_WIDTH, type SnakeState } from './snake-engine.js';
+import type { WcMoney } from './wc-money.js';
 import { NIGEL_PALETTE, gradientColor } from '@nigel/theme';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
-import preview from './wc-snake.preview.js';
-
-function board(partial: Partial<SnakeState> = {}): SnakeState {
-  return {
-    body: [
-      { x: 20, y: 10 },
-      { x: 19, y: 10 },
-      { x: 18, y: 10 },
-    ],
-    direction: 'right',
-    nextDirection: 'right',
-    food: { x: 28, y: 6 },
-    foodValue: 3,
-    score: 0,
-    gameOver: false,
-    boardWidth: BOARD_WIDTH,
-    boardHeight: BOARD_HEIGHT,
-    ...partial,
-  };
-}
+import { styleText } from '../../preview/controls-suite.js';
+import preview, { board } from './wc-snake.preview.js';
 
 async function mount(props: Partial<WcSnake> = {}): Promise<WcSnake> {
   const el = document.createElement('wc-snake');
@@ -33,14 +15,29 @@ async function mount(props: Partial<WcSnake> = {}): Promise<WcSnake> {
   return el;
 }
 
-const press = (el: WcSnake, key: string) => {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+const press = (el: WcSnake, key: string, init: KeyboardEventInit = {}) => {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
   el.dispatchEvent(event);
   return event;
 };
 
 const segments = (el: WcSnake) =>
   [...(el.shadowRoot?.querySelectorAll<HTMLElement>('.segment') ?? [])];
+
+/** What a money figure inside the board actually reads, one shadow root down. */
+const moneyIn = (el: WcSnake, selector: string) =>
+  el.shadowRoot?.querySelector<WcMoney>(`${selector} wc-money`)?.formatted;
+
+/** Send the page to a background tab and back. jsdom has no page lifecycle. */
+function hide(hidden: boolean): void {
+  Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 describe('wc-snake', () => {
   afterEach(() => {
@@ -88,9 +85,9 @@ describe('wc-snake', () => {
     });
   });
 
-  it('shows the score as money', async () => {
+  it('shows the score through the money component the rest of the app uses', async () => {
     const el = await mount({ game: board({ score: 12.5 }) });
-    expect(el.shadowRoot?.querySelector('.score')?.textContent).toContain('$12.50');
+    expect(moneyIn(el, '.score')).toBe('$12.50');
   });
 
   it('steers with the arrow keys and swallows the page scroll', async () => {
@@ -130,11 +127,50 @@ describe('wc-snake', () => {
     expect(press(el, 'Tab').defaultPrevented).toBe(false);
   });
 
+  /**
+   * The game holds the keyboard, not the browser. A chord belongs to whoever
+   * bound it — the reload, the tab switch, the word-wise cursor move — and a
+   * game that swallows Cmd+R to restart itself has stolen the reload.
+   */
+  describe('browser chords', () => {
+    it.each(['ctrlKey', 'metaKey', 'altKey'] as const)(
+      'lets %s+R reload rather than restarting the game',
+      async (modifier) => {
+        const el = await mount({ game: board({ gameOver: true, score: 9.25 }) });
+        const event = press(el, 'r', { [modifier]: true });
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(el.game.gameOver).toBe(true);
+      },
+    );
+
+    it.each(['ctrlKey', 'metaKey', 'altKey'] as const)(
+      'lets a %s+arrow chord through instead of steering with it',
+      async (modifier) => {
+        const el = await mount();
+        const event = press(el, 'ArrowUp', { [modifier]: true });
+        await el.updateComplete;
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(el.game.nextDirection).toBe('right');
+      },
+    );
+
+    it('does not exit on a modified Escape', async () => {
+      const el = await mount();
+      const spy = vi.fn();
+      el.addEventListener('nc-snake-exit', spy);
+
+      press(el, 'Escape', { ctrlKey: true });
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
   it('shows the game-over panel with the final score', async () => {
     const el = await mount({ game: board({ gameOver: true, score: 9.25 }) });
-    const over = el.shadowRoot?.querySelector('.over');
-    expect(over?.textContent).toContain('Game over');
-    expect(over?.textContent).toContain('$9.25');
+    expect(el.shadowRoot?.querySelector('.over')?.textContent).toContain('Game over');
+    expect(moneyIn(el, '.over')).toBe('$9.25');
   });
 
   it('restarts a finished game on R and nothing else', async () => {
@@ -190,6 +226,29 @@ describe('wc-snake', () => {
       expect(el.game).toBe(before);
     });
 
+    /**
+     * A background tab throttles timers to about once a minute, so a game left
+     * running there is a snake taking single steps into a wall it cannot be
+     * steered away from. The player comes back to a Game Over they never had a
+     * chance at.
+     */
+    it('holds still while the tab is hidden, and picks up when it comes back', async () => {
+      vi.useFakeTimers();
+      const el = await mount({ paused: false });
+
+      hide(true);
+      const hidden = el.game;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(el.game).toBe(hidden);
+
+      hide(false);
+      await el.updateComplete;
+      await vi.advanceTimersByTimeAsync(400);
+      await el.updateComplete;
+
+      expect(el.game).not.toBe(hidden);
+    });
+
     it('stops when it is removed from the page', async () => {
       vi.useFakeTimers();
       const el = await mount({ paused: false });
@@ -203,14 +262,26 @@ describe('wc-snake', () => {
   });
 
   describe('reduced motion', () => {
-    it('drops the drifting animation from the specks', async () => {
+    it('reflects the preference to an attribute the stylesheet can select', async () => {
       const still = await mount({ reducedMotion: true });
-      const speck = still.shadowRoot?.querySelector<HTMLElement>('.particle');
-      expect(speck?.style.getPropertyValue('--duration')).toBe('');
+      expect(still.hasAttribute('reduced-motion')).toBe(true);
 
       const moving = await mount({ reducedMotion: false });
-      const drifting = moving.shadowRoot?.querySelector<HTMLElement>('.particle');
-      expect(drifting?.style.getPropertyValue('--duration')).not.toBe('');
+      expect(moving.hasAttribute('reduced-motion')).toBe(false);
+    });
+
+    /**
+     * The drift is stopped in CSS, in both of the two places that can know
+     * about the preference — the attribute this component sets and the media
+     * query it may never be told about. jsdom applies neither, so what is
+     * assertable is that the rules are shipped.
+     */
+    it('stops the drift by attribute and by media query', () => {
+      const sheet = styleText(WcSnake).replace(/\s+/g, ' ');
+      expect(sheet).toContain(':host([reduced-motion]) .particle { animation: none; }');
+      expect(sheet).toMatch(
+        /@media \(prefers-reduced-motion: reduce\) \{ \.particle \{ animation: none; \}/,
+      );
     });
 
     it('keeps the specks on the board rather than removing them', async () => {

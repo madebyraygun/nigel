@@ -3,6 +3,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
 import { gradientColor, NIGEL_PALETTE } from '@nigel/theme';
 
+// The score is money, and there is one component in this package that renders
+// money. `plain` drops the income/expense colouring, which belongs to a ledger
+// rather than to a scoreboard on a dark board.
+import './wc-money.js';
+
 import {
   MAX_PARTICLES,
   PARTICLE_CHARS,
@@ -47,14 +52,6 @@ function seedParticles(rng: () => number): Particle[] {
     glyph: PARTICLE_CHARS[Math.floor(rng() * PARTICLE_CHARS.length)],
   }));
 }
-
-const money = (amount: number) =>
-  amount.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 const prefersReducedMotion = (): boolean =>
   typeof window !== 'undefined' &&
@@ -279,6 +276,15 @@ export class WcSnake extends LitElement {
 
   @state() private phase = 0;
 
+  /**
+   * Whether the page is in a background tab.
+   *
+   * Its own flag rather than a write to `paused`, which belongs to whoever
+   * mounted the component: a preview poses a paused board, and a tab coming
+   * back to the front must not start a game on it.
+   */
+  @state() private backgrounded = false;
+
   private particles = seedParticles(Math.random);
   private timer: ReturnType<typeof setTimeout> | null = null;
   private motionQuery: MediaQueryList | null = null;
@@ -297,6 +303,9 @@ export class WcSnake extends LitElement {
       this.motionQuery.addEventListener?.('change', this.handleMotionChange);
     }
 
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    this.backgrounded = document.hidden;
+
     this.sync();
   }
 
@@ -304,6 +313,7 @@ export class WcSnake extends LitElement {
     this.removeEventListener('keydown', this.handleKeydown);
     this.motionQuery?.removeEventListener?.('change', this.handleMotionChange);
     this.motionQuery = null;
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.stop();
     super.disconnectedCallback();
   }
@@ -336,6 +346,10 @@ export class WcSnake extends LitElement {
     this.reducedMotion = event.matches;
   };
 
+  private handleVisibilityChange = (): void => {
+    this.backgrounded = document.hidden;
+  };
+
   private stop(): void {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
@@ -348,9 +362,13 @@ export class WcSnake extends LitElement {
    * player from holding the snake still by drumming on the arrow keys: a turn
    * re-renders, and a re-render that rescheduled would push the next move back
    * every keystroke.
+   *
+   * A background tab counts as paused. Browsers throttle its timers to about
+   * once a minute, so a game left running there takes single blind steps into
+   * a wall — the player comes back to a Game Over they never had a chance at.
    */
   private sync(): void {
-    if (!this.isConnected || this.paused || this.game.gameOver) {
+    if (!this.isConnected || this.paused || this.backgrounded || this.game.gameOver) {
       this.stop();
       return;
     }
@@ -365,6 +383,11 @@ export class WcSnake extends LitElement {
   };
 
   private handleKeydown = (event: KeyboardEvent): void => {
+    // A chord belongs to whoever bound it — the reload, the tab switch, the
+    // word-wise cursor move. The game holds the keyboard, not the browser, and
+    // a Cmd+R that restarted the snake would have stolen the reload.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
     if (event.key === 'Escape') {
       event.preventDefault();
       this.dispatchEvent(
@@ -395,27 +418,33 @@ export class WcSnake extends LitElement {
     this.game = turn(this.game, direction);
   };
 
+  /**
+   * The specks. Every one of them is drawn in every state — still specks, in
+   * the same palette, when motion is unwelcome, so the board keeps its texture
+   * and nothing on it moves but the snake.
+   *
+   * Whether they drift is entirely the stylesheet's: `reduced-motion` is a
+   * reflected attribute and `:host([reduced-motion]) .particle` turns the
+   * animation off, with the media query behind it for a preference nothing
+   * here was told about. Withholding the timing from the inline style as well
+   * would be a second mechanism saying the same thing, and the one that goes
+   * stale first.
+   */
   private renderParticles() {
-    return this.particles.map((p) => {
-      const style: Record<string, string> = {
-        left: p.left,
-        '--rest': p.rest,
-        '--tint': p.tint,
-        '--brightness': p.brightness,
-      };
-
-      // Still specks, still the palette: the board keeps its texture and
-      // nothing on it moves but the snake. Withholding the timing is what
-      // stops the drift — `animation` resolves to none without a duration —
-      // and the media query in the stylesheet withholds it a second time, for
-      // a preference nothing here was told about.
-      if (!this.reducedMotion) {
-        style['--duration'] = p.duration;
-        style['--delay'] = p.delay;
-      }
-
-      return html`<span class="particle" style=${styleMap(style)}>${p.glyph}</span>`;
-    });
+    return this.particles.map(
+      (p) => html`<span
+        class="particle"
+        style=${styleMap({
+          left: p.left,
+          '--rest': p.rest,
+          '--tint': p.tint,
+          '--brightness': p.brightness,
+          '--duration': p.duration,
+          '--delay': p.delay,
+        })}
+        >${p.glyph}</span
+      >`,
+    );
   }
 
   private renderSnake() {
@@ -456,7 +485,7 @@ export class WcSnake extends LitElement {
                it rather than by the panel below, which is inside the board
                and so behind aria-hidden. -->
           <span class="score" role="status">
-            Score ${money(score)}
+            Score <wc-money variant="plain" .amount=${score}></wc-money>
             ${gameOver
               ? html`<span class="visually-hidden"
                   >— game over. Press R to play again, or Escape to close.</span
@@ -476,7 +505,9 @@ export class WcSnake extends LitElement {
             ? html`
                 <div class="over" part="game-over">
                   <h2>Game over</h2>
-                  <p>Final score ${money(score)}</p>
+                  <p>
+                    Final score <wc-money variant="plain" .amount=${score}></wc-money>
+                  </p>
                   <p><kbd>R</kbd> play again · <kbd>Esc</kbd> close</p>
                 </div>
               `
