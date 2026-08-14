@@ -1,7 +1,6 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
-import type { IconTag } from '../icons/icons.js';
 
 /**
  * The six derived statuses, in the order `refresh_status` reasons about them.
@@ -33,16 +32,25 @@ export type InvoiceStatusWord = (typeof INVOICE_STATUS_WORDS)[number];
  * from whatever fallback face the browser finds.
  */
 const STATUS_ICONS = {
-  draft: 'wc-icon-status-draft',
-  sent: 'wc-icon-status-sent',
-  partial: 'wc-icon-status-partial',
-  paid: 'wc-icon-status-paid',
-  overdue: 'wc-icon-status-overdue',
-  void: 'wc-icon-status-void',
-} satisfies Record<InvoiceStatusWord, IconTag>;
+  draft: html`<wc-icon-status-draft inline class="mark"></wc-icon-status-draft>`,
+  sent: html`<wc-icon-status-sent inline class="mark"></wc-icon-status-sent>`,
+  partial: html`<wc-icon-status-partial inline class="mark"></wc-icon-status-partial>`,
+  paid: html`<wc-icon-status-paid inline class="mark"></wc-icon-status-paid>`,
+  overdue: html`<wc-icon-status-overdue inline class="mark"></wc-icon-status-overdue>`,
+  void: html`<wc-icon-status-void inline class="mark"></wc-icon-status-void>`,
+} satisfies Record<InvoiceStatusWord, TemplateResult>;
+
+/**
+ * The same six, keyed for lookup by a string nobody vouched for.
+ *
+ * `status` is whatever the server wrote, and `invoices.status` has no CHECK
+ * constraint: `constructor` and `toString` are values a hand-edited row can
+ * hold, and an object lookup would answer those with an inherited function.
+ */
+const ICON_FOR_STATUS = new Map<string, TemplateResult>(Object.entries(STATUS_ICONS));
 
 /** What a status the six do not cover gets: a neutral mark, and its own word. */
-const UNKNOWN_STATUS_ICON: IconTag = 'wc-icon-dot';
+const UNKNOWN_STATUS_ICON = html`<wc-icon-dot inline class="mark"></wc-icon-dot>`;
 
 @customElement('wc-invoice-status')
 export class WcInvoiceStatus extends LitElement {
@@ -63,10 +71,6 @@ export class WcInvoiceStatus extends LitElement {
       line-height: 1.7;
       white-space: nowrap;
       color: var(--wa-color-text);
-    }
-
-    .glyph {
-      --nc-icon-size: 1em;
     }
 
     .chip[data-status='draft'] {
@@ -112,21 +116,10 @@ export class WcInvoiceStatus extends LitElement {
   render() {
     return html`
       <span class="chip" part="chip" data-status=${this.status}>
-        ${this.renderGlyph()}
+        ${ICON_FOR_STATUS.get(this.status) ?? UNKNOWN_STATUS_ICON}
         <span class="word">${this.status}</span>
       </span>
     `;
-  }
-
-  private renderGlyph() {
-    const tag =
-      STATUS_ICONS[this.status as InvoiceStatusWord] ?? UNKNOWN_STATUS_ICON;
-    // The icon names a custom element at runtime, so it is created
-    // imperatively rather than through a static template tag — wc-empty-state
-    // resolves its `icon` property the same way.
-    const el = document.createElement(tag);
-    el.classList.add('glyph');
-    return el;
   }
 }
 

@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
@@ -8,7 +8,6 @@ import { controlsCss } from '@nigel/theme';
 import './wc-notice-bar.js';
 import './wc-document-frame.js';
 import '../icons/icons.js';
-import type { IconTag } from '../icons/icons.js';
 
 /** Where a send is in its life. */
 export type SendPhase = 'confirm' | 'sending' | 'sent' | 'failed';
@@ -52,13 +51,19 @@ export interface SendFailureView {
  * The mark beside a step, as an SVG rather than a character: IBM Plex Mono has
  * no glyph for a cross or a reload arrow, so drawn as text they would come
  * from a fallback face while the label beside them did not.
+ *
+ * Templates rather than tag names, so Lit diffs the trace instead of rebuilding
+ * it: a send polls, and re-creating every icon element on each tick would
+ * re-upgrade custom elements the operator is looking at.
  */
-const STATE_ICONS: Record<SendStepState, IconTag> = {
-  pending: 'wc-icon-dot',
-  running: 'wc-icon-refresh',
-  ok: 'wc-icon-check',
-  reused: 'wc-icon-check',
-  failed: 'wc-icon-close',
+const DONE_MARK = html`<wc-icon-check inline class="mark"></wc-icon-check>`;
+
+const STATE_ICONS: Record<SendStepState, TemplateResult> = {
+  pending: html`<wc-icon-dot inline class="mark"></wc-icon-dot>`,
+  running: html`<wc-icon-refresh inline class="mark"></wc-icon-refresh>`,
+  ok: DONE_MARK,
+  reused: DONE_MARK,
+  failed: html`<wc-icon-close inline class="mark"></wc-icon-close>`,
 };
 
 const STATE_WORDS: Record<SendStepState, string> = {
@@ -69,16 +74,6 @@ const STATE_WORDS: Record<SendStepState, string> = {
   failed: 'failed',
 };
 
-/**
- * The mark for one step's state. The icon names a custom element at runtime,
- * so it is created imperatively rather than through a static template tag —
- * `wc-empty-state` resolves its `icon` property the same way.
- */
-function stepIcon(state: SendStepState) {
-  const el = document.createElement(STATE_ICONS[state]);
-  el.classList.add('glyph');
-  return el;
-}
 
 /**
  * The send confirmation, its step trace, and its outcome — one dialog that
@@ -136,6 +131,10 @@ export class WcSendDialog extends LitElement {
       }
 
       .steps {
+        /* Pinned rather than inherited: the mark's offset below is derived
+           from it, and a line box of an unknown height cannot be halved. */
+        --nc-step-line-height: 1.6;
+
         list-style: none;
         padding: 0;
         margin: 0 0 var(--wa-space-m, 12px);
@@ -143,20 +142,30 @@ export class WcSendDialog extends LitElement {
 
       .steps li {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: var(--wa-space-xs, 6px);
+        line-height: var(--nc-step-line-height);
       }
 
-      .glyph {
-        --nc-icon-size: 1em;
+      .mark {
+        /*
+         * A label long enough to wrap makes its row two lines tall. The mark
+         * belongs on the first of them, so it aligns to the row's start and
+         * then drops by half the leading — which is where a 1em mark sits in
+         * a line box of this height, wrapped or not. Centring the row instead
+         * would float the mark between the two lines of a wrapped label and
+         * leave it out of line with its single-line neighbours.
+         */
+        align-self: flex-start;
+        margin-block-start: calc((var(--nc-step-line-height) - 1) / 2 * 1em);
       }
 
       .steps li[data-state='pending'] {
         color: var(--wa-color-muted);
       }
 
-      .steps li[data-state='ok'] .glyph,
-      .steps li[data-state='reused'] .glyph {
+      .steps li[data-state='ok'] .mark,
+      .steps li[data-state='reused'] .mark {
         color: var(--nc-color-income, #1a7f5a);
       }
 
@@ -214,7 +223,7 @@ export class WcSendDialog extends LitElement {
         gap: var(--wa-space-s, 8px);
       }
 
-      /* The glyph beside a step is decoration; this is what says what it means. */
+      /* The mark beside a step is decoration; this is what says what it means. */
       .sr-only {
         position: absolute;
         width: 1px;
@@ -452,7 +461,7 @@ export class WcSendDialog extends LitElement {
         ${this.steps.map(
           (step) => html`
             <li data-step=${step.step} data-state=${step.state}>
-              ${stepIcon(step.state)}
+              ${STATE_ICONS[step.state]}
               <span>${step.label}</span>
               <span class="sr-only">— ${STATE_WORDS[step.state]}</span>
             </li>

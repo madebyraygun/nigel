@@ -5,6 +5,7 @@ import type {
   WcReconciliationHistory,
 } from './wc-reconciliation-history.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { iconSvg } from '../__tests__/settle.js';
 import preview from './wc-reconciliation-history.preview.js';
 
 const ROWS: ReconciliationHistoryRow[] = [
@@ -75,18 +76,20 @@ describe('wc-reconciliation-history', () => {
   });
 
   it('draws both results from one source rather than one from a fallback face', async () => {
-    // IBM Plex Mono has a `✓` and no `✗`, so as characters the two rows came
-    // from two different faces.
+    // IBM Plex Mono has a check mark and no cross, so as characters the two
+    // rows came from two different faces.
     const el = await mount();
     const marks = [...(el.shadowRoot?.querySelectorAll('.status .mark') ?? [])];
     expect(marks).toHaveLength(3);
 
     for (const mark of marks) {
-      await (mark as Element & { updateComplete: Promise<unknown> }).updateComplete;
-      const svg = mark.shadowRoot?.querySelector('svg');
+      const svg = await iconSvg(mark);
       // Decoration: the word beside it is what announces.
-      expect(svg?.getAttribute('aria-hidden')).toBe('true');
-      expect(svg?.getAttribute('stroke')).toBe('currentColor');
+      expect(svg.getAttribute('aria-hidden')).toBe('true');
+      expect(svg.getAttribute('stroke')).toBe('currentColor');
+      // Sized by the cell's own type, through WcIconBase's inline mode, so
+      // this table declares no icon size of its own.
+      expect(mark.hasAttribute('inline')).toBe(true);
     }
   });
 

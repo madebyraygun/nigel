@@ -89,10 +89,6 @@ export class WcReconciliationHistory extends LitElement {
       white-space: nowrap;
     }
 
-    .status .mark {
-      --nc-icon-size: 1em;
-    }
-
     .status.ok {
       color: var(--wa-color-success);
     }
@@ -189,8 +185,8 @@ export class WcReconciliationHistory extends LitElement {
         <td>
           <span class=${`status ${row.isReconciled ? 'ok' : 'off'}`}>
             ${row.isReconciled
-              ? html`<wc-icon-check class="mark"></wc-icon-check>Reconciled`
-              : html`<wc-icon-close class="mark"></wc-icon-close>Discrepancy`}
+              ? html`<wc-icon-check inline class="mark"></wc-icon-check>Reconciled`
+              : html`<wc-icon-close inline class="mark"></wc-icon-close>Discrepancy`}
           </span>
         </td>
         <td class=${row.reconciledAt === null ? 'muted' : ''}>

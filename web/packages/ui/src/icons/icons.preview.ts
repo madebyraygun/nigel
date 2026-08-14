@@ -20,12 +20,20 @@ const grid = (style = '') => html`
   </div>
 `;
 
-const STATUS_TAGS = ICON_TAGS.filter((tag) => tag.startsWith('wc-icon-status-'));
+/**
+ * Every mark that stands in for a character IBM Plex Mono has no glyph for.
+ * `wc-icon-dot` belongs here rather than in the status family: it is the
+ * neutral mark, drawn for a status outside the six and for a send step not
+ * started, and both of its uses are inline.
+ */
+const INLINE_TAGS = ICON_TAGS.filter(
+  (tag) => tag.startsWith('wc-icon-status-') || tag === 'wc-icon-dot',
+);
 
-/** One icon at the size of the text around it. */
-function withSize(tag: string) {
+/** One icon sized to the text around it rather than to the token. */
+function inlineIcon(tag: string) {
   const el = document.createElement(tag);
-  el.style.setProperty('--nc-icon-size', '1em');
+  el.setAttribute('inline', '');
   return el;
 }
 
@@ -34,7 +42,7 @@ const preview: Preview = {
   title: 'Icons',
   group: 'Foundations',
   description:
-    'WcIconBase subclasses. Sized by --nc-icon-size, colored by currentColor. Decorative unless given a label.',
+    'WcIconBase subclasses. Sized by --nc-icon-size, or by the surrounding type with the inline attribute; colored by currentColor. Decorative unless given a label.',
   layout: 'stack',
   states: [
     { name: 'default', render: () => grid() },
@@ -50,20 +58,29 @@ const preview: Preview = {
         html`<wc-icon-flag label="Flagged transaction"></wc-icon-flag>`,
     },
     {
-      // The status marks and the neutral dot stand in for characters IBM Plex
-      // Mono has no glyph for, so what matters is how they read at 1em beside
-      // the mono text they accompany.
+      // These marks stand in for characters IBM Plex Mono has no glyph for, so
+      // what matters is how they read beside the mono text they accompany —
+      // which is what `inline` is for, and the only way they are ever drawn.
       name: 'inline-with-text',
       render: () => html`
         <p style="max-width:60ch;">
-          ${STATUS_TAGS.map(
+          ${INLINE_TAGS.map(
             (tag) => html`
               <span style="display:inline-flex;align-items:center;gap:4px;margin-inline-end:12px;">
-                ${withSize(tag)}${tag.replace('wc-icon-status-', '')}
+                ${inlineIcon(tag)}${tag.replace('wc-icon-status-', '').replace('wc-icon-', '')}
               </span>
             `,
           )}
         </p>
+      `,
+    },
+    {
+      // The same marks at two text sizes, which is the claim `inline` makes:
+      // the mark tracks the type, and `--nc-icon-size` does not enter into it.
+      name: 'inline-follows-the-type-size',
+      render: () => html`
+        <p style="font-size:11px;">${INLINE_TAGS.map((tag) => inlineIcon(tag))} small</p>
+        <p style="font-size:22px;">${INLINE_TAGS.map((tag) => inlineIcon(tag))} large</p>
       `,
     },
   ],

@@ -6,6 +6,7 @@ import {
   WcInvoiceStatus,
 } from './wc-invoice-status.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { iconSvg } from '../__tests__/settle.js';
 import preview from './wc-invoice-status.preview.js';
 
 async function mount(status: string): Promise<WcInvoiceStatus> {
@@ -14,13 +15,6 @@ async function mount(status: string): Promise<WcInvoiceStatus> {
   document.body.appendChild(el);
   await el.updateComplete;
   return el;
-}
-
-/** An icon element once its own shadow root has rendered. */
-async function settled(node: Element | null | undefined): Promise<Element> {
-  expect(node).toBeTruthy();
-  await (node as Element & { updateComplete: Promise<unknown> }).updateComplete;
-  return node as Element;
 }
 
 /** Every colour custom property the chip reads, in source order. */
@@ -81,7 +75,7 @@ describe('wc-invoice-status', () => {
     const chip = el.shadowRoot?.querySelector('.chip');
     expect(chip?.getAttribute('data-status')).toBe(status);
     expect(chip?.querySelector('.word')?.textContent).toBe(status);
-    expect(chip?.querySelector('.glyph')?.tagName.toLowerCase()).toBe(
+    expect(chip?.querySelector('.mark')?.tagName.toLowerCase()).toBe(
       `wc-icon-status-${status}`,
     );
   });
@@ -90,26 +84,27 @@ describe('wc-invoice-status', () => {
     // None of ◻ ◆ ◑ ● ▲ ⊘ is in IBM Plex Mono, so as text each one came from
     // whatever fallback face the browser found.
     const el = await mount('paid');
-    const icon = await settled(el.shadowRoot?.querySelector('.glyph'));
-    const svg = icon.shadowRoot?.querySelector('svg');
+    const mark = el.shadowRoot?.querySelector('.mark');
+    const svg = await iconSvg(mark);
 
-    expect(svg?.querySelectorAll('path').length).toBeGreaterThan(0);
-    expect(icon.textContent?.trim()).toBe('');
+    expect(svg.querySelectorAll('path').length).toBeGreaterThan(0);
+    expect(mark?.textContent?.trim()).toBe('');
     // Decoration: the word is what a screen reader announces.
-    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    expect(svg.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('sizes the mark to the text it sits beside and lets it take the chip’s colour', async () => {
+    // The chip declares no size of its own: `inline` is WcIconBase's own 1em
+    // mode, so every mark in the app that sits in text asks for it the same way.
     const css = [WcInvoiceStatus.styles].flat().map(String).join('\n');
-    expect(css).toContain('--nc-icon-size: 1em');
+    expect(css).not.toContain('--nc-icon-size');
 
+    const el = await mount('overdue');
+    const mark = el.shadowRoot?.querySelector('.mark');
+    expect(mark?.hasAttribute('inline')).toBe(true);
     // WcIconBase inherits currentColor, so a status keeps its own colour with
     // nothing per-status to declare.
-    const el = await mount('overdue');
-    const icon = await settled(el.shadowRoot?.querySelector('.glyph'));
-    expect(icon.shadowRoot?.querySelector('svg')?.getAttribute('stroke')).toBe(
-      'currentColor',
-    );
+    expect((await iconSvg(mark)).getAttribute('stroke')).toBe('currentColor');
   });
 
   it('renders a status it has never seen rather than blanking it', async () => {
@@ -117,10 +112,43 @@ describe('wc-invoice-status', () => {
     // InvoiceShelf importer or by hand cannot be assumed to be one of the six.
     const el = await mount('imported');
     expect(el.shadowRoot?.querySelector('.word')?.textContent).toBe('imported');
-    expect(el.shadowRoot?.querySelector('.glyph')?.tagName.toLowerCase()).toBe(
+    expect(el.shadowRoot?.querySelector('.mark')?.tagName.toLowerCase()).toBe(
       'wc-icon-dot',
     );
   });
+
+  it('keeps the mark it already drew when the chip re-renders', async () => {
+    // A row in a list re-renders whenever anything around it changes. The mark
+    // is a template, so Lit updates it in place; rebuilding the element would
+    // re-upgrade a custom element the operator is looking at.
+    const el = await mount('paid');
+    const first = el.shadowRoot?.querySelector('.mark');
+
+    el.requestUpdate();
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.mark')).toBe(first);
+
+    el.status = 'void';
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.mark')?.tagName.toLowerCase()).toBe(
+      'wc-icon-status-void',
+    );
+  });
+
+  it.each(['constructor', 'toString', 'hasOwnProperty', '__proto__'])(
+    'renders the neutral mark for the inherited property name %s',
+    async (status) => {
+      // The bug this catches: an object lookup answers `constructor` with a
+      // function, and `document.createElement(fn)` throws — taking down the
+      // chip and the Lit update of every invoice row beside it, where the
+      // character it replaced simply fell through to the neutral mark.
+      const el = await mount(status);
+      expect(el.shadowRoot?.querySelector('.word')?.textContent).toBe(status);
+      expect(el.shadowRoot?.querySelector('.mark')?.tagName.toLowerCase()).toBe(
+        'wc-icon-dot',
+      );
+    },
+  );
 });
 
 describePreviewA11y(preview);
