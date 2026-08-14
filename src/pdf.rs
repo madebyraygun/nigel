@@ -39,7 +39,12 @@ const COL_PAD: f32 = 4.0;
 /// every report column's wrap width into the bargain.
 const CELL_PAD_Y: f32 = 1.8;
 
-/// The gutter inside a line-item cell, left and right.
+/// The gutter inside a line-item cell, on the sides that face a divider.
+///
+/// **Interior only.** The first column's left edge and the last column's right
+/// edge are the page's text margin, which the bands above and the payment block
+/// below also sit on; padding them would inset the table and make it read as
+/// narrower than the document.
 const ITEM_COL_PAD: f32 = 6.0;
 const FONT_SIZE: f32 = 10.0;
 const TITLE_SIZE: f32 = 16.0;
@@ -327,17 +332,32 @@ impl PdfWriter {
 
     /// Invoice-only, and named so: these measure against `ITEM_COL_PAD`, not
     /// the shared table machinery's `COL_PAD`.
+    /// The left and right gutters of column `i` of `n`: a pad on every side
+    /// that faces a divider, and nothing on the two outer edges.
+    fn item_gutters(index: usize, count: usize) -> (f32, f32) {
+        let left = if index == 0 { 0.0 } else { ITEM_COL_PAD };
+        let right = if index + 1 == count {
+            0.0
+        } else {
+            ITEM_COL_PAD
+        };
+        (left, right)
+    }
+
     fn wrap_item_cells(cols: &[Col], values: &[&str], font_size: f32) -> Vec<Vec<String>> {
         cols.iter()
             .enumerate()
             .map(|(i, col)| match values.get(i) {
-                Some(value) if value.is_empty() => vec![String::new()],
+                Some(&"") => vec![String::new()],
                 // A figure is one token. `EUR 2,500.00` has a space in it, and
                 // wrapping on that space puts the code on one line and the
                 // amount on the next — a number broken in half. Only the
                 // description column is prose.
                 Some(value) if matches!(col.align, Align::Right) => vec![(*value).to_string()],
-                Some(value) => wrap_text(value, col.width - 2.0 * ITEM_COL_PAD, font_size),
+                Some(value) => {
+                    let (left, right) = Self::item_gutters(i, cols.len());
+                    wrap_text(value, col.width - left - right, font_size)
+                }
                 None => vec![String::new()],
             })
             .collect()
@@ -354,13 +374,14 @@ impl PdfWriter {
         for line_idx in 0..max_lines {
             let mut x = MARGIN_LEFT;
             for (col_idx, col) in cols.iter().enumerate() {
+                let (left, right) = Self::item_gutters(col_idx, cols.len());
                 if let Some(text) = wrapped.get(col_idx).and_then(|c| c.get(line_idx)) {
                     if !text.is_empty() {
                         match col.align {
-                            Align::Left => self.text(text, x + ITEM_COL_PAD, font_size, bold),
+                            Align::Left => self.text(text, x + left, font_size, bold),
                             Align::Right => {
                                 let tw = approx_text_width(text, font_size);
-                                self.text(text, x + col.width - ITEM_COL_PAD - tw, font_size, bold);
+                                self.text(text, x + col.width - right - tw, font_size, bold);
                             }
                         }
                     }
@@ -379,17 +400,13 @@ impl PdfWriter {
         self.y += CELL_PAD_Y;
         let mut x = MARGIN_LEFT;
         for (i, col) in cols.iter().enumerate() {
+            let (left, right) = Self::item_gutters(i, cols.len());
             if i < headers.len() {
                 match col.align {
-                    Align::Left => self.text(headers[i], x + ITEM_COL_PAD, FONT_SIZE, true),
+                    Align::Left => self.text(headers[i], x + left, FONT_SIZE, true),
                     Align::Right => {
                         let tw = approx_text_width(headers[i], FONT_SIZE);
-                        self.text(
-                            headers[i],
-                            x + col.width - ITEM_COL_PAD - tw,
-                            FONT_SIZE,
-                            true,
-                        );
+                        self.text(headers[i], x + col.width - right - tw, FONT_SIZE, true);
                     }
                 }
             }
@@ -1437,10 +1454,9 @@ pub fn render_invoice_pdf(
     // Which lines exist is `MoneySummary::lines()`'s decision, taken once for
     // both documents. Only the total names the currency, which is where this
     // document has always put it.
-    // The Amount column's figures end at `PAGE_W - MARGIN_RIGHT - ITEM_COL_PAD`,
-    // so the money block below has to use the same gutter or the two columns of
-    // figures would not line up.
-    let figure_right = PAGE_W - MARGIN_RIGHT - ITEM_COL_PAD;
+    // The Amount column's figures end on the text margin, so these do too, or
+    // the two columns of figures would not line up.
+    let figure_right = PAGE_W - MARGIN_RIGHT;
     for line in summary.lines() {
         // No `(USD)` on the label: the figures name their own currency, and
         // saying it twice on the one line that happens to be the total was the
@@ -2373,6 +2389,53 @@ pub(crate) mod invoice_pdf_tests {
         assert!(
             baseline > band.1 + 0.5 && baseline < band.3 - 0.5,
             "the row's type is not inside its band: {baseline} in {band:?}"
+        );
+    }
+
+    /// The table is the document's full text measure, like the bands above it
+    /// and the payment block below. Padding its outer edges insets the first
+    /// column and the figures from the margin everything else sits on, which
+    /// reads as the table being narrower than the page.
+    #[test]
+    fn the_item_table_runs_edge_to_edge_with_the_text_margin() {
+        let money = MoneySummary::of(&invoice(), 0.0);
+        let block = company_block("Bluepeak LLC", "", "");
+        let bytes =
+            render_invoice_pdf(&invoice(), &client(), &block, None, &items(), &money, "").unwrap();
+        let page = drawn_text(&bytes);
+
+        let heading = page[0]
+            .iter()
+            .find(|d| d.text == "Description")
+            .expect("the first heading");
+        assert!(
+            (heading.x - MARGIN_LEFT).abs() < 0.01,
+            "Description starts at {} mm, not the {MARGIN_LEFT} mm text margin",
+            heading.x
+        );
+
+        let amount = page[0]
+            .iter()
+            .find(|d| d.text == "Amount")
+            .expect("the last heading");
+        let right = amount.x + approx_text_width(&amount.text, amount.size);
+        assert!(
+            (right - (PAGE_W - MARGIN_RIGHT)).abs() < 0.01,
+            "Amount ends at {right} mm, not the {} mm text margin",
+            PAGE_W - MARGIN_RIGHT
+        );
+
+        // And the figures under it, which are what a reader's eye runs down.
+        // The Unit Price column holds the same figure in this fixture, so take
+        // the rightmost.
+        let figure_right = page[0]
+            .iter()
+            .filter(|d| d.text == "$100.00")
+            .map(|d| d.x + approx_text_width(&d.text, d.size))
+            .fold(f32::MIN, f32::max);
+        assert!(
+            (figure_right - (PAGE_W - MARGIN_RIGHT)).abs() < 0.01,
+            "the Amount figures end at {figure_right} mm, not the text margin"
         );
     }
 

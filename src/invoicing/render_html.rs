@@ -1790,6 +1790,19 @@ mod tests {
     }
 
     /// Zebra striping is what lets a reader track one row across four columns.
+    /// The PDF's item table runs to its text margin, and this one has to as
+    /// well: the bands above and the payment block below sit on that edge, and
+    /// a table inset from it reads as narrower than the document.
+    #[test]
+    fn the_stock_pages_item_table_runs_edge_to_edge() {
+        for rule in [
+            "table.items tr>:first-child{padding-left:0}",
+            "table.items tr>:last-child{padding-right:0}",
+        ] {
+            assert!(DEFAULT_TEMPLATE.contains(rule), "missing: {rule}");
+        }
+    }
+
     #[test]
     fn the_stock_page_stripes_every_other_item_row() {
         assert!(
@@ -1829,45 +1842,94 @@ mod tests {
         );
     }
 
-    /// Where a party block's left edge actually falls, in `rem` from the body's
-    /// left edge, computed from the stylesheet the way a browser would.
+    /// Where a party block's **vertical rule** actually falls, in `rem` from the
+    /// body's left edge.
     ///
-    /// A `space-between` flex row cannot align two blocks that live in
-    /// different containers: each one is pushed right by whatever its sibling
-    /// happens to be, and the logo and the metadata table are not the same
-    /// width. Both bands are a grid with the same explicit track list instead,
-    /// which is the page's equivalent of the PDF's single `PARTY_TEXT_X` — so
-    /// this reads each band's own declaration and works out the edge, rather
-    /// than asserting that some declaration exists.
-    fn party_edge(container: &str) -> f32 {
-        let body_width: f32 = {
-            let at = DEFAULT_TEMPLATE.find("max-width:").expect("a body width") + 10;
+    /// The rule is `.party-body`'s left border, and what puts it somewhere is
+    /// the label ahead of it — not the grid cell the block sits in. Both bands
+    /// place their cell identically and always did; the rules were still about
+    /// 50px apart because `From` and `Invoice For` are different widths and a
+    /// content-sized label pushes the body along by its own text.
+    ///
+    /// So this resolves the label column the way the stylesheet does: a fixed
+    /// track if `.party` declares one, and the label's own rendered width if it
+    /// does not. A test that stopped at the grid cell — as the previous one did
+    /// — cannot fail for the reason this bug exists, which is why it survived
+    /// two rounds.
+    fn party_rule_edge(container: &str, label: &str) -> f32 {
+        let rem_after = |needle: &str| -> f32 {
+            let at = DEFAULT_TEMPLATE.find(needle).expect(needle) + needle.len();
             let rest = &DEFAULT_TEMPLATE[at..];
             rest[..rest.find("rem").expect("rem")]
                 .parse()
                 .expect("a number")
         };
-        // The rule that gives this container its tracks. One selector list may
-        // cover both bands, which is the point.
-        let rule = DEFAULT_TEMPLATE
-            .lines()
-            .find(|line| {
-                line.starts_with(&format!(".{container}"))
-                    || line.contains(&format!(",.{container}{{"))
-            })
-            .unwrap_or_else(|| panic!("no rule for .{container}"));
-        let tracks = rule
-            .split("grid-template-columns:")
-            .nth(1)
-            .unwrap_or_else(|| panic!(".{container} is not an explicit grid: {rule}"));
-        let tracks = &tracks[..tracks.find([';', '}']).expect("end of declaration")];
-        // `1fr <n>rem`: the party column is the last track, so its left edge is
-        // the measure less that track.
-        let last: f32 = {
-            let t = tracks.split_whitespace().last().expect("a last track");
-            t.trim_end_matches("rem").parse().expect("a rem track")
+        let rule_for = |selector: &str| -> &str {
+            DEFAULT_TEMPLATE
+                .lines()
+                .find(|line| {
+                    line.starts_with(&format!("{selector}{{"))
+                        || line.starts_with(&format!("{selector},"))
+                        || line.contains(&format!(",{selector}{{"))
+                })
+                .unwrap_or_else(|| panic!("no rule for {selector}"))
         };
-        body_width - last
+        let tracks = |rule: &str| -> Option<Vec<String>> {
+            let at = rule.split("grid-template-columns:").nth(1)?;
+            Some(
+                at[..at.find([';', '}']).expect("end of declaration")]
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect(),
+            )
+        };
+
+        let body_width = rem_after("max-width:");
+        let band = rule_for(&format!(".{container}"));
+        let band_tracks = tracks(band).unwrap_or_else(|| panic!(".{container} is not a grid"));
+        let party_track: f32 = band_tracks
+            .last()
+            .expect("a party track")
+            .trim_end_matches("rem")
+            .parse()
+            .expect("a rem track");
+        let cell_left = body_width - party_track;
+
+        let party = rule_for(".party");
+        let gap = {
+            let at = party.split("gap:").nth(1).expect("a gap");
+            at[..at.find([';', '}']).expect("end")]
+                .trim_end_matches("rem")
+                .parse::<f32>()
+                .expect("a rem gap")
+        };
+        let label_column = match tracks(party) {
+            // An explicit first track: the label occupies it whatever it says.
+            Some(t) => t
+                .first()
+                .expect("a label track")
+                .trim_end_matches("rem")
+                .parse()
+                .expect("a rem track"),
+            // Content-sized: the label is as wide as its own text, so the body
+            // behind it — and the rule — moves with the wording.
+            None => {
+                let size = {
+                    let at = rule_for(".party-label")
+                        .split("font-size:")
+                        .nth(1)
+                        .expect("a label size");
+                    at[..at.find([';', '}']).expect("end")]
+                        .trim_end_matches("rem")
+                        .parse::<f32>()
+                        .expect("a rem size")
+                };
+                // Uppercase sans runs about 0.62em per character, plus the
+                // 0.06em of letter-spacing the label sets.
+                label.chars().count() as f32 * 0.68 * size
+            }
+        };
+        cell_left + label_column + gap
     }
 
     /// The From block and the Invoice For block sit in different sections. Their
@@ -1886,12 +1948,29 @@ mod tests {
     }
 
     #[test]
-    fn both_party_blocks_resolve_to_the_same_left_edge() {
-        let letterhead = party_edge("letterhead");
-        let band = party_edge("band");
-        assert_eq!(
-            letterhead, band,
-            "the From block starts at {letterhead}rem and Invoice For at {band}rem"
+    fn both_party_rules_land_at_the_same_x() {
+        // The two labels the page actually uses, and they are different widths.
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &Branding {
+                company: "Bluepeak LLC",
+                ..Branding::with_template(DEFAULT_TEMPLATE)
+            },
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        for label in ["From", "Invoice For"] {
+            assert!(html.contains(label), "{label} is not on the page");
+        }
+
+        let from = party_rule_edge("letterhead", "From");
+        let invoice_for = party_rule_edge("band", "Invoice For");
+        assert!(
+            (from - invoice_for).abs() < 0.01,
+            "the From rule sits at {from}rem and the Invoice For rule at {invoice_for}rem"
         );
     }
 
