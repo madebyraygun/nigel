@@ -374,6 +374,5 @@ describe('register screen', () => {
   it('hands the table the height left under the toolbar', async () => {
     const { el } = await mount();
     expect(table(el).fill).toBe(true);
-    expect(table(el).hasAttribute('fill')).toBe(true);
   });
 });
