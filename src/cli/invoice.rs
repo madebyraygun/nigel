@@ -382,7 +382,8 @@ pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
 /// The guard is asked before the prompt, `client delete`'s shape: an invoice
 /// that cannot be deleted is never offered a confirmation, because there is
 /// nothing to confirm. The block's own sentence is returned rather than printed
-/// so `main` writes it once, with the pointer to `void` on the line below it.
+/// so `main` writes it once, with the pointer to `void` below it when there is
+/// one worth giving.
 pub fn delete(number: i64, yes: bool) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
