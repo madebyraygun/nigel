@@ -8,7 +8,9 @@ import type {
   RegisterTableRow,
   WcRegisterTable,
 } from './wc-register-table.js';
+import { WcRegisterTable as RegisterTableCtor } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-register-table.preview.js';
 
 const categories: CategoryOption[] = [
@@ -391,6 +393,71 @@ describe('wc-register-table', () => {
       await press(el, 'ArrowDown');
       expect(selectedId(el)).toBe(101);
     });
+  });
+});
+
+describe('wc-register-table height', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  /** jsdom measures every box as zero, so the two boxes paging reads are given
+      sizes here: one row, and the viewport the scroller was granted. */
+  function stubLayout(el: WcRegisterTable, rowHeight: number, viewport: number): void {
+    const scroller = el.shadowRoot?.querySelector('.scroller');
+    if (!scroller) throw new Error('no scroller');
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: viewport,
+      configurable: true,
+    });
+    for (const row of rowEls(el)) {
+      row.getBoundingClientRect = () => ({ height: rowHeight }) as DOMRect;
+    }
+  }
+
+  it('pages by the rows its own scroller shows, not by a fixed count', async () => {
+    const rows = fixture(60);
+    const el = await mount({ rows, selectedId: rows[0]?.id, fill: true });
+
+    // A short window: seven rows fit.
+    stubLayout(el, 24, 24 * 7 + 8);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[7]?.id);
+
+    // A tall one: thirty-one do, and the same key moves that much further.
+    stubLayout(el, 24, 24 * 31 + 8);
+    await press(el, 'PageDown');
+    expect(selectedId(el)).toBe(rows[38]?.id);
+  });
+
+  it('reflects fill, which is what the height rules select on', async () => {
+    const el = await mount({ fill: true });
+    expect(el.hasAttribute('fill')).toBe(true);
+  });
+
+  const text = styleText(RegisterTableCtor);
+
+  it('grows into the space a flex-column parent has left, and scrolls inside it', () => {
+    // jsdom has no layout engine, so the rules themselves are the evidence.
+    // Filling takes three things and breaks without any one of them: the host
+    // has to be a growing flex item, the scroller has to be the part that
+    // grows, and `min-height: 0` has to override the automatic minimum that
+    // would otherwise size the scroller to all 1,800 rows.
+    expect(text).toMatch(/:host\(\[fill\]\)\s*{[^}]*flex:\s*1 1 auto/);
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*flex:\s*1 1 auto/);
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*min-height:\s*0/);
+    expect(text).toMatch(/:host\(\[fill\]\)\s+\.scroller\s*{[^}]*max-height:\s*none/);
+  });
+
+  it('keeps the capped, content-sized shape when it is not filling', () => {
+    // The reports screen puts this table inside a page that scrolls as a
+    // whole; a table that grew there would push the note below it off-screen.
+    expect(text).toMatch(/\.scroller\s*{[^}]*max-height:\s*var\(--nc-register-height, 60vh\)/);
+  });
+
+  it('keeps the Net row against the bottom of the scroller', () => {
+    expect(text).toMatch(/tfoot td\s*{[^}]*position:\s*sticky/);
+    expect(text).toMatch(/tfoot td\s*{[^}]*bottom:\s*0/);
   });
 });
 

@@ -78,6 +78,24 @@ describePreviewA11y(preview);
 
 describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
 
+describe('wc-app-shell content area', () => {
+  const text = styleText(WcAppShell);
+
+  it('lets a screen ask for the whole window below the header', () => {
+    // The register is the screen that needs this: its table has to end at the
+    // bottom of the window rather than partway down it. A block content area
+    // gives a slotted screen no height to divide up, so `flex: 1` on the
+    // screen's own host would have nothing to grow into.
+    expect(text).toMatch(/\.content\s*{[^}]*display:\s*flex/);
+    expect(text).toMatch(/\.content\s*{[^}]*flex-direction:\s*column/);
+    expect(text).toMatch(/\.content\s*{[^}]*min-height:\s*0/);
+  });
+
+  it('still scrolls a screen that is taller than the window', () => {
+    expect(text).toMatch(/\.content\s*{[^}]*overflow:\s*auto/);
+  });
+});
+
 describe('wc-app-shell on paper', () => {
   const text = styleText(WcAppShell);
 

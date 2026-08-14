@@ -68,7 +68,8 @@ export class WcRegisterTable extends LitElement {
     controlsCss,
     css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
         min-height: 0;
@@ -79,6 +80,21 @@ export class WcRegisterTable extends LitElement {
         max-height: var(--nc-register-height, 60vh);
         border: 1px solid var(--wa-color-border);
         border-radius: var(--wa-radius-md, 8px);
+      }
+
+      /* The fill attribute is the register screen's mode: the table is a flex
+         item that takes what is left between the toolbar and the bottom of
+         the window, and the scroller is the only thing that scrolls. Without
+         it the table is content-sized under a cap, which is what the
+         read-only view inside a longer report page wants. */
+      :host([fill]) {
+        flex: 1 1 auto;
+      }
+
+      :host([fill]) .scroller {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: none;
       }
 
       table {
@@ -303,6 +319,13 @@ export class WcRegisterTable extends LitElement {
 
   @property({ type: Boolean, reflect: true })
   dense = false;
+
+  /**
+   * Take the height a flex-column parent has left over, and scroll inside it,
+   * rather than sizing to the rows under a cap.
+   */
+  @property({ type: Boolean, reflect: true })
+  fill = false;
 
   /**
    * Drop every affordance that writes: no flag button, no activation, no edit
