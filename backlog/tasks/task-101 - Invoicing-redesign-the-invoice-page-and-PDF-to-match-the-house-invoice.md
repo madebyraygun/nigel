@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@task-101'
 created_date: '2026-08-12 23:53'
-updated_date: '2026-08-13 21:04'
+updated_date: '2026-08-14 00:21'
 labels:
   - invoicing
   - pdf
@@ -100,6 +100,20 @@ SPA: client-side `MAX_LOGO_BYTES` check, a load-failure state with retry, hoiste
 **Binary measurement corrected.** The first-round baseline embedded the placeholder SPA while the branch embedded the real one, so ~740 KiB of web assets sat inside a number meant to be about printpdf. Like for like: feature off 26,075,256; feature on, unused 26,159,752 (**+84,496**); this branch 27,064,640 (+989,384, every line of the task).
 
 Verified after the fixes: 1343+117 / 995+117 / 1268+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+## Side-by-side review round — five layout changes
+
+Plan Task 10 ran; five changes came back and all five landed on both documents, with no parity exception.
+
+1. **Smaller logo.** Both caps are now `document::LOGO_WIDTH_FRACTION`/`LOGO_HEIGHT_FRACTION` — a fifth of each document's own measure, since the page counts in rem against its body width and the PDF in mm against its printable width. Page 14rem/4rem -> 8.8rem/2.5rem; PDF box 60x16mm -> 35.6x10mm. Aspect ratio and wordmark fallback untouched.
+2. **The number is printed once.** The page's `<h1>` and the PDF's title line are gone; the metadata band carries the identifier. `{{NUMBER}}` still satisfies REQUIRED from the `<title>` element (asserted, plus `validate_template` on the stock page), and the PDF keeps `Invoice #N` as its Info title. Nine existing tests were rewritten to the new order rather than deleted.
+3. **More space before the item table** on both — PDF gap 6mm -> 14mm under the band, measured by a test rather than eyeballed.
+4. **One medium grey for every border** (`document::BORDER_GRAY`), replacing `#111`/`#ddd`/`#eee`. Body type stays dark. A test reads the hex back out of the static template and fails on any remaining near-black `border-*`.
+5. **Row rules and zebra striping.** `document::row_is_shaded` decides which rows on both. printpdf fills rects, so no exception was needed; the fill colour is restored to black after each band because `use_text` inherits it, and the band is drawn after `ensure_space` and before the cells so striping and rules carry across a page break. Verified end to end on a 45-line invoice: 36 rows/18 bands on page 1, rows 37-45/4 bands on page 2, alternation continuing by row index rather than restarting.
+
+Verified after the changes: 1351+117 / 999+117 / 1272+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
+
+Still halted at Task 10 for re-review. AC #9 stays unchecked.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
