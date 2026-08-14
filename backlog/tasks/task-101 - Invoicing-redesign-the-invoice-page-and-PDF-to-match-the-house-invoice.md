@@ -176,6 +176,33 @@ Still halted for re-review. AC #9 stays unchecked.
 Verified: 1370+117 / 1008+117 / 1281+116 cargo, clippy and fmt clean, web 760 tests with build/lint/typecheck clean.
 
 Still halted for re-review. AC #9 stays unchecked.
+
+## Sixth round — the item columns, and the air above the totals
+
+**The description column.** The three figure columns were fixed at 27/36/36 mm — sized for the longest form a figure might ever take — leaving Description a fixed 78.8 mm, 44% of the 177.8 mm measure. It wrapped early with visible slack in every figure column: a description that set in three lines on the page took five here.
+
+`item_columns` now sizes each figure column to the wider of its heading and the widest figure the invoice being rendered actually holds, plus the gutters that face a divider, and gives Description everything left over. Measured from the real strings at the real font size, the way `Quantity` was found to need 26.4 mm of a 20 mm column.
+
+| | Quantity | Unit Price | Amount | Description |
+|---|---|---|---|---|
+| Before, any invoice | 27.0 | 36.0 | 36.0 | 78.8 |
+| A dollar invoice | 26.4 | 30.0 | 22.2 | **99.2** |
+| The same in euros | 26.4 | 33.6 | 29.4 | **88.4** |
+
+Description gains 20.4 mm on a dollar invoice and 9.6 mm on a euro one; the euro figures grow to fit rather than clip. Nothing bounds a quantity — `validate_items` asks only that the figures are finite — so the three are held to 60% of the measure between them and scale down together when they ask for more.
+
+Header and body read the same `cols` slice, and the money block's right edge is the Amount column's right edge, which is the text margin. Both are asserted rather than assumed.
+
+**The totals.** The page's block sat on the last item row's rule with `.15rem` above it. `table.items tfoot tr:first-child td` pads it by two body sizes. The PDF is unchanged: it already stood its block 11.5 mm — 3.3 body sizes — clear of the same rule, which is the one place the two documents differ and it is the page that was wrong. Both sides are now pinned by a test, so neither can close the gap quietly.
+
+**A shared-machinery leak, found while working in the same function.** `table_header` — the reports' own — was indenting every left-aligned heading by the invoice's `ITEM_COL_PAD`, so a report's headings stood 6 mm right of the cells beneath them. Reverted; `a_reports_headings_sit_over_their_own_columns` pins the heading against its own column's text.
+
+New tests, the first two watched failing first (`column 1 is 27.0 mm, not the 26.4 mm its widest string needs`): `the_figure_columns_take_only_what_they_hold_and_description_takes_the_rest`, `a_euro_invoice_widens_its_figure_columns_and_still_gains_description_width`, `each_figure_heading_ends_where_its_own_figures_end`, `the_money_block_ends_on_the_amount_columns_edge`, `an_outsized_figure_cannot_squeeze_the_description_column_away`, `the_money_block_stands_off_the_last_item_row`, `a_reports_headings_sit_over_their_own_columns` (red: `the first heading starts at 25.05 mm, not the 19.05 mm text margin`), and the page's `the_totals_block_stands_off_the_last_item_row` (red: `clears the table by 0.15rem`).
+
+Verified: 1378+117 / 1009+117 / 1282+116 cargo, clippy and fmt clean, web 2006 tests across three workspaces with build/lint/typecheck clean.
+
+Still halted for re-review. AC #9 stays unchecked.
+
 <!-- SECTION:NOTES:END -->
 
 ## Comments
