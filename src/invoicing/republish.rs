@@ -168,9 +168,9 @@ mod tests {
 
     fn brand() -> Branding<'static> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "Bluepeak LLC",
             contact_email: "billing@example.test",
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 

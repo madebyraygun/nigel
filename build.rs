@@ -19,11 +19,50 @@
 //! Directory `rerun-if-changed` tracks the directory's own mtime, which covers
 //! files appearing and disappearing but not edits nested under `assets/`. Vite
 //! rewrites `index.html` on every build, so that file is tracked by name too.
+//!
+//! It also points git at the repository's tracked hooks, because a check nobody
+//! is made to run is a check that eventually does not run — see `install_hooks`.
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
+
+/// Point `core.hooksPath` at the tracked `.githooks/`, so a fresh clone picks
+/// up the pre-commit guardrail on its first build.
+///
+/// Git does not clone hooks and will not run them from a tracked directory
+/// without being told, so the alternative is a setup step in a README that
+/// every new clone is free to skip. This is idempotent, touches only this
+/// repository's local config, and is silently skipped when there is no `.git`
+/// (a `cargo install` from a package, or a vendored copy) or when the hooks
+/// directory is absent. It never fails the build: a missing guardrail is worth
+/// a warning, not a broken `cargo build`.
+fn install_hooks() {
+    if !Path::new(".git").exists() || !Path::new(".githooks").is_dir() {
+        return;
+    }
+    let current = Command::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .output();
+    if let Ok(out) = &current {
+        if String::from_utf8_lossy(&out.stdout).trim() == ".githooks" {
+            return;
+        }
+    }
+    match Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        _ => println!(
+            "cargo:warning=could not set core.hooksPath; run `git config core.hooksPath .githooks` \
+             so the no-real-data check runs before each commit"
+        ),
+    }
+}
 
 fn main() {
+    install_hooks();
     println!("cargo:rerun-if-changed=web/dist");
     println!("cargo:rerun-if-changed=web/dist/index.html");
     println!("cargo:rerun-if-changed=web/placeholder/index.html");

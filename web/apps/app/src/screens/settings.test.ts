@@ -30,22 +30,32 @@ async function mount(client = new FakeApiClient()): Promise<{
   return { el, client };
 }
 
-const panel = (el: NigelSettingsScreen, index: number) =>
-  el.shadowRoot?.querySelectorAll('wc-panel')[index];
-
 const input = (el: NigelSettingsScreen, index: number) =>
   el.shadowRoot?.querySelectorAll('wa-input')[index] as HTMLElement & { value: string };
 
-function button(el: NigelSettingsScreen, panelIndex: number) {
-  return panel(el, panelIndex)?.querySelector('wa-button') as HTMLElement | undefined;
-}
+/** Fields move as settings are added; the label is the stable handle. */
+const inputLabelled = (el: NigelSettingsScreen, label: string) =>
+  [...(el.shadowRoot?.querySelectorAll('wa-input') ?? [])].find(
+    (i) => i.getAttribute('label') === label,
+  ) as HTMLElement & { value: string };
 
-/** Panels move as settings are added; the heading is the stable handle. */
+/**
+ * Panels move as settings are added; the heading is the stable handle. The
+ * action slot is named explicitly because a panel may hold other buttons — the
+ * letterhead's Remove-logo control sits above its Save.
+ */
 function buttonIn(el: NigelSettingsScreen, heading: string) {
   const found = [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
     (p) => p.getAttribute('heading') === heading,
   );
-  return found?.querySelector('wa-button') as HTMLElement | undefined;
+  return found?.querySelector('wa-button[slot="actions"]') as HTMLElement | undefined;
+}
+
+/** The panel itself, for assertions about what one panel is showing. */
+function panel(el: NigelSettingsScreen, heading: string) {
+  return [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
+    (p) => p.getAttribute('heading') === heading,
+  );
 }
 
 async function settle(el: NigelSettingsScreen): Promise<void> {
@@ -76,44 +86,173 @@ describe('settings screen', () => {
 
   it('labels the name field from the books profile', async () => {
     const { el } = await mount();
-    expect(panel(el, 0)?.getAttribute('heading')).toBe('Business name');
+    expect(input(el, 0).getAttribute('label')).toBe('Business name');
 
     const client = new FakeApiClient();
     client.status = { ...client.status, profile: 'personal' };
     const { el: personal } = await mount(client);
-    expect(panel(personal, 0)?.getAttribute('heading')).toBe('Household name');
+    expect(input(personal, 0).getAttribute('label')).toBe('Household name');
   });
 
-  describe('business name', () => {
-    it('saves the name and re-reads status so the sidebar follows', async () => {
+  describe('the letterhead', () => {
+    const textarea = (el: NigelSettingsScreen, index: number) =>
+      el.shadowRoot?.querySelectorAll('wa-textarea')[index] as HTMLElement & {
+        value: string;
+      };
+
+    it('seeds all five fields once and does not clobber typing', async () => {
+      const client = new FakeApiClient();
+      client.company = {
+        name: 'Bluepeak LLC',
+        address: 'P.O. Box 1234',
+        phone: '619.555.0123',
+        logo: '',
+        paymentInstructions: 'Wells Fargo',
+      };
+      const { el } = await mount(client);
+
+      expect(client.calls).toContain('getCompany');
+      expect(input(el, 0).value).toBe('Bluepeak LLC');
+      expect(input(el, 1).value).toBe('619.555.0123');
+      expect(textarea(el, 0).value).toBe('P.O. Box 1234');
+      expect(textarea(el, 1).value).toBe('Wells Fargo');
+
+      // A store refresh must not re-seed the form under someone typing.
+      input(el, 0).value = 'Bluepeak Studio';
+      input(el, 0).dispatchEvent(new Event('input'));
+      await el.updateComplete;
+      await client.getStatus();
+      await el.updateComplete;
+      expect(input(el, 0).value).toBe('Bluepeak Studio');
+    });
+
+    it('saves the whole letterhead in one request', async () => {
       const { el, client } = await mount();
+      input(el, 0).value = 'Bluepeak LLC';
+      input(el, 0).dispatchEvent(new Event('input'));
+      textarea(el, 0).value = 'P.O. Box 1234';
+      textarea(el, 0).dispatchEvent(new Event('input'));
+      textarea(el, 1).value = 'Wells Fargo';
+      textarea(el, 1).dispatchEvent(new Event('input'));
+      await el.updateComplete;
+
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+
+      expect(client.calls.filter((c) => c === 'setCompany')).toHaveLength(1);
+      expect(client.company.name).toBe('Bluepeak LLC');
+      expect(client.company.address).toBe('P.O. Box 1234');
+      expect(client.company.paymentInstructions).toBe('Wells Fargo');
+      // The name is shown from status, so a save that skipped the refresh would
+      // leave a stale sidebar behind it.
+      expect(client.calls.lastIndexOf('getStatus')).toBeGreaterThan(
+        client.calls.indexOf('setCompany'),
+      );
+      expect(client.status.companyName).toBe('Bluepeak LLC');
+    });
+
+    it('surfaces the server refusal for a bad logo without clearing the form', async () => {
+      const client = new FakeApiClient();
+      const { el } = await mount(client);
       input(el, 0).value = 'Bluepeak LLC';
       input(el, 0).dispatchEvent(new Event('input'));
       await el.updateComplete;
 
-      button(el, 0)?.click();
+      client.companyError = new ApiError({
+        code: 'bad_request',
+        rawCode: 'bad_request',
+        message: 'A logo of type image/svg+xml cannot be used.',
+        status: 400,
+      });
+      buttonIn(el, 'Letterhead')?.click();
       await settle(el);
 
-      expect(client.calls).toContain('setCompanyName');
-      // The name is shown from status, so a save that skipped the refresh would
-      // leave a stale sidebar behind it.
-      expect(client.calls.lastIndexOf('getStatus')).toBeGreaterThan(
-        client.calls.indexOf('setCompanyName'),
-      );
-      expect(client.status.companyName).toBe('Bluepeak LLC');
+      expect(el.shadowRoot?.textContent).toContain('image/svg+xml');
+      expect(input(el, 0).value).toBe('Bluepeak LLC');
+      expect(client.company.name).toBe('Test Consultancy');
+    });
+
+    it('reads a chosen file as a data URI before sending', async () => {
+      const { el, client } = await mount();
+      const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', {
+        type: 'image/png',
+      });
+      const picker = el.shadowRoot?.querySelector(
+        'input[type="file"]',
+      ) as HTMLInputElement;
+      expect(picker, 'the logo picker is on the screen').toBeTruthy();
+      Object.defineProperty(picker, 'files', { value: [file], configurable: true });
+      picker.dispatchEvent(new Event('change'));
+      // FileReader resolves on its own task; the save must see the result.
+      await vi.waitFor(() => {
+        expect(el.shadowRoot?.querySelector('.logo-preview')).toBeTruthy();
+      });
+      await settle(el);
+
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+
+      expect(client.company.logo).toMatch(/^data:/);
+    });
+
+    it('offers a retry when the letterhead cannot be loaded', async () => {
+      const client = new FakeApiClient();
+      client.companyLoadError = new ApiError({
+        code: 'internal',
+        rawCode: 'internal',
+        message: 'the database is unreadable',
+        status: 500,
+      });
+      const { el } = await mount(client);
+
+      // A failed load is its own state, never a form the data could not fill.
+      const letterhead = panel(el, 'Letterhead');
+      expect(letterhead?.querySelector('wc-spinner')).toBeFalsy();
+      expect(letterhead?.querySelector('wa-input')).toBeFalsy();
+      expect(letterhead?.textContent).toContain('the database is unreadable');
+      expect(buttonIn(el, 'Letterhead')?.textContent).toContain('Retry');
+
+      client.companyLoadError = null;
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+
+      expect(client.calls.filter((c) => c === 'getCompany')).toHaveLength(2);
+      expect(input(el, 0).value).toBe('Test Consultancy');
+    });
+
+    it('refuses an oversized logo before it reaches the server', async () => {
+      const { el, client } = await mount();
+      const oversized = new File([new Uint8Array(200 * 1024)], 'huge.png', {
+        type: 'image/png',
+      });
+      const picker = el.shadowRoot?.querySelector(
+        'input[type="file"]',
+      ) as HTMLInputElement;
+      Object.defineProperty(picker, 'files', { value: [oversized], configurable: true });
+      picker.dispatchEvent(new Event('change'));
+      await settle(el);
+
+      // Named, so it is a refusal about the file that was chosen and not the
+      // standing note about the cap.
+      expect(el.shadowRoot?.textContent).toContain('huge.png');
+      expect(el.shadowRoot?.querySelector('.logo-preview')).toBeFalsy();
+
+      buttonIn(el, 'Letterhead')?.click();
+      await settle(el);
+      expect(client.company.logo).toBe('');
     });
 
     it('reports a failed save without changing what is shown', async () => {
       const client = new FakeApiClient();
       const { el } = await mount(client);
-      client.settingsError = new ApiError({
+      client.companyError = new ApiError({
         code: 'internal',
         rawCode: 'internal',
         message: 'disk is full',
         status: 500,
       });
 
-      button(el, 0)?.click();
+      buttonIn(el, 'Letterhead')?.click();
       await settle(el);
 
       expect(client.status.companyName).toBe('Test Consultancy');
@@ -166,7 +305,7 @@ describe('settings screen', () => {
       vi.spyOn(ui, 'confirmDialog').mockResolvedValue(false);
 
       const { el, client } = await mount();
-      const field = input(el, 1);
+      const field = inputLabelled(el, 'Switch to');
       field.value = '/tmp/other';
       field.dispatchEvent(new Event('input'));
       await el.updateComplete;
@@ -182,7 +321,7 @@ describe('settings screen', () => {
       vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
 
       const { el, client } = await mount();
-      const field = input(el, 1);
+      const field = inputLabelled(el, 'Switch to');
       field.value = '/tmp/other';
       field.dispatchEvent(new Event('input'));
       await el.updateComplete;

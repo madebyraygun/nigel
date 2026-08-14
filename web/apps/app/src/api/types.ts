@@ -355,13 +355,21 @@ export interface UpdateAppSettingsRequest {
   updateCheck: boolean;
 }
 
-/** `PUT /api/settings/company-name` */
-export interface CompanyNameRequest {
+/**
+ * `GET`/`PUT /api/settings/company` — the whole letterhead, which both
+ * client-facing documents draw their sender block from.
+ *
+ * One shape rather than five single-field routes: the values are only ever
+ * correct together. Every field is trimmed server-side and an empty one clears
+ * its key. `logo` is a `data:` URI, refused with a message when it is not a
+ * usable PNG or JPEG.
+ */
+export interface Company {
   name: string;
-}
-
-export interface CompanyNameResponse {
-  companyName: string;
+  address: string;
+  phone: string;
+  logo: string;
+  paymentInstructions: string;
 }
 
 /** `POST /api/settings/data-dir` — answers with the new database's status. */

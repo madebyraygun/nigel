@@ -45,6 +45,13 @@ export const colorCss = css`
        navigates read as one continuous sheet. */
     --nc-color-sidebar-bg: #e8e6f0;
 
+    /* The ground a client-facing document is printed on. Deliberately not
+       mode-dependent, for --nc-color-on-gradient's reason inverted: a stored
+       logo may be transparent and both documents flatten it onto white, so a
+       preview of one on a dark card would show the operator something no
+       client will ever see. */
+    --nc-color-document-bg: #ffffff;
+
     /* Bar fills, separate from the text tokens above on purpose. A chart bar
        is a large block of colour and only has to clear the 3:1 that WCAG asks
        of a graphic, so it can be much lighter than a figure printed in the

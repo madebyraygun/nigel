@@ -1,4 +1,4 @@
-//! Settings: the business name, the auto-update toggle, the active data
+//! Settings: the letterhead, the auto-update toggle, the active data
 //! directory, and the database password.
 //!
 //! Parity target is `cli/settings_manager.rs` plus `nigel load`. The four
@@ -7,8 +7,8 @@
 //! and `decrypt_database` finish with a rename and drop the `-wal`/`-shm`
 //! sidecars, which a live connection elsewhere would not survive.
 //!
-//! Every route here sits behind the locked guard. `company-name` plainly needs
-//! the key; `settings/app` does not, but nothing on the unlock screen reads it,
+//! Every route here sits behind the locked guard. `settings/company` plainly
+//! needs the key; `settings/app` does not, but nothing on the unlock screen reads it,
 //! and exempting a route to serve a screen that does not exist is how a guard
 //! rots. `password/change` and `password/remove` carry the current password in
 //! the body and would technically work while locked — exempting them would hand
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +36,7 @@ use super::with_conn;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/settings/app", get(get_app).put(put_app))
-        .route("/settings/company-name", put(put_company_name))
+        .route("/settings/company", get(get_company).put(put_company))
         .route("/settings/data-dir", post(post_data_dir))
         .route("/settings/password/set", post(post_password_set))
         .route("/settings/password/change", post(post_password_change))
@@ -93,35 +93,78 @@ async fn put_app(ApiJson(patch): ApiJson<AppSettingsPatch>) -> ApiResult<Json<Ap
 }
 
 // ---------------------------------------------------------------------------
-// company name (database metadata)
+// the letterhead (database metadata)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+/// The five `metadata` keys both client-facing documents draw their sender
+/// block from. One route rather than five: they are only ever correct together,
+/// and two writers for one letterhead is how a name and an address end up
+/// disagreeing about whether they were saved.
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct CompanyNameRequest {
+pub struct Company {
     name: String,
+    address: String,
+    phone: String,
+    /// A `data:` URI. Validated by `document::parse_logo` before anything is
+    /// written, so a logo that cannot be embedded is refused at this screen
+    /// rather than in a client's inbox.
+    logo: String,
+    payment_instructions: String,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompanyNameResponse {
-    company_name: String,
-}
+/// The `metadata` key a letterhead field lives under, and how to reach that
+/// field, so reading and writing cannot drift.
+type CompanyKey = (&'static str, fn(&mut Company) -> &mut String);
 
-/// The name is trimmed, and an empty one is allowed: clearing the business name
-/// is what the TUI's settings screen does with an empty field, and refusing it
-/// here would make the web UI the only place you cannot undo a typo.
-async fn put_company_name(
-    State(state): State<AppState>,
-    ApiJson(request): ApiJson<CompanyNameRequest>,
-) -> ApiResult<Json<CompanyNameResponse>> {
-    let name = request.name.trim().to_string();
-    let stored = name.clone();
-    with_conn(&state, move |conn| {
-        db::set_metadata(conn, "company_name", &stored)
+const COMPANY_KEYS: &[CompanyKey] = &[
+    ("company_name", |c| &mut c.name),
+    ("company_address", |c| &mut c.address),
+    ("company_phone", |c| &mut c.phone),
+    ("company_logo", |c| &mut c.logo),
+    ("payment_instructions", |c| &mut c.payment_instructions),
+];
+
+async fn get_company(State(state): State<AppState>) -> ApiResult<Json<Company>> {
+    let company = with_conn(&state, |conn| {
+        let mut company = Company::default();
+        for (key, field) in COMPANY_KEYS {
+            *field(&mut company) = db::get_metadata(conn, key).unwrap_or_default();
+        }
+        Ok(company)
     })
     .await?;
-    Ok(Json(CompanyNameResponse { company_name: name }))
+    Ok(Json(company))
+}
+
+/// Every field is trimmed, and an empty one clears its key: clearing a value is
+/// what the TUI's settings screen does with an empty field, and refusing it
+/// here would make the web UI the only place you cannot undo a typo.
+async fn put_company(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<Company>,
+) -> ApiResult<Json<Company>> {
+    let mut company = request;
+    for (_, field) in COMPANY_KEYS {
+        let value = field(&mut company);
+        *value = value.trim().to_string();
+    }
+    // Checked before any write, so a bad logo leaves the other four alone. The
+    // refusal is `parse_logo`'s own sentence, which is what the TUI shows too.
+    crate::invoicing::document::parse_logo(&company.logo)?;
+
+    let stored = with_conn(&state, move |conn| {
+        // One transaction: a rejected value must not leave a half-written
+        // letterhead behind.
+        let tx = conn.unchecked_transaction()?;
+        for (key, field) in COMPANY_KEYS {
+            db::set_metadata(&tx, key, field(&mut company))?;
+        }
+        tx.commit()?;
+        Ok(company)
+    })
+    .await?;
+    Ok(Json(stored))
 }
 
 // ---------------------------------------------------------------------------
@@ -422,23 +465,65 @@ mod tests {
         (config, dir, db_path)
     }
 
-    // -- company name -------------------------------------------------------
+    // -- the letterhead -----------------------------------------------------
+
+    /// A 2x1 PNG as the SPA's `FileReader` would hand it over.
+    fn png_data_uri() -> String {
+        use base64::Engine as _;
+        let png: &[u8] = &[
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae,
+            0x42, 0x60, 0x82,
+        ];
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        )
+    }
 
     #[tokio::test]
-    async fn company_name_round_trips_through_status() {
+    async fn get_company_answers_all_five_fields() {
         let (_config, _dir, db_path) = fixture();
         let (app, token) = app_for(&db_path);
 
+        let body = ok_json(&app, "/api/settings/company", &token).await;
+        for field in ["name", "address", "phone", "logo", "paymentInstructions"] {
+            assert_eq!(body[field], "", "{field} missing or set: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn put_company_writes_all_five_and_trims_them() {
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+        let logo = png_data_uri();
+
         let (status, body) = put_json(
             &app,
-            "/api/settings/company-name",
+            "/api/settings/company",
             &token,
-            &json!({ "name": "  Bluepeak LLC  " }),
+            &json!({
+                "name": "  Bluepeak LLC  ",
+                "address": "  P.O. Box 1234\nSpringfield, CA 90001  ",
+                "phone": "  619.555.0123  ",
+                "logo": logo,
+                "paymentInstructions": "  Wells Fargo\nRouting 121000248  ",
+            }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["companyName"], "Bluepeak LLC", "not trimmed");
+        assert_eq!(body["name"], "Bluepeak LLC", "not trimmed");
+        assert_eq!(body["address"], "P.O. Box 1234\nSpringfield, CA 90001");
+        assert_eq!(body["phone"], "619.555.0123");
+        assert_eq!(
+            body["paymentInstructions"],
+            "Wells Fargo\nRouting 121000248"
+        );
 
+        let after = ok_json(&app, "/api/settings/company", &token).await;
+        assert_eq!(after, body);
+        // The sidebar and the document title still read the name from status.
         assert_eq!(
             status_json(&app, &token).await["companyName"],
             "Bluepeak LLC"
@@ -446,30 +531,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_empty_company_name_clears_it() {
-        // Parity with the TUI settings screen, where blanking the field clears
-        // the name rather than being refused.
+    async fn put_company_with_an_empty_field_clears_that_key() {
+        // Parity with the TUI settings screen, where blanking a field clears
+        // the value rather than being refused.
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+
+        let filled = json!({
+            "name": "Bluepeak LLC",
+            "address": "P.O. Box 1234",
+            "phone": "619.555.0123",
+            "logo": png_data_uri(),
+            "paymentInstructions": "Wells Fargo",
+        });
+        put_json(&app, "/api/settings/company", &token, &filled).await;
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &json!({
+                "name": "",
+                "address": "",
+                "phone": "",
+                "logo": "",
+                "paymentInstructions": "",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        for field in ["name", "address", "phone", "logo", "paymentInstructions"] {
+            assert_eq!(body[field], "", "{field} survived: {body}");
+        }
+        assert_eq!(status_json(&app, &token).await["companyName"], "");
+    }
+
+    #[tokio::test]
+    async fn put_company_with_a_bad_logo_is_a_400_and_writes_nothing() {
         let (_config, _dir, db_path) = fixture();
         let (app, token) = app_for(&db_path);
 
         put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &json!({
+                "name": "Bluepeak LLC",
+                "address": "P.O. Box 1234",
+                "phone": "619.555.0123",
+                "logo": "",
+                "paymentInstructions": "Wells Fargo",
+            }),
+        )
+        .await;
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &json!({
+                "name": "Someone Else",
+                "address": "",
+                "phone": "",
+                "logo": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+                "paymentInstructions": "",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("image/svg+xml"),
+            "the refusal names the type: {body}"
+        );
+
+        let after = ok_json(&app, "/api/settings/company", &token).await;
+        assert_eq!(after["name"], "Bluepeak LLC", "nothing was written");
+        assert_eq!(after["address"], "P.O. Box 1234");
+        assert_eq!(after["paymentInstructions"], "Wells Fargo");
+    }
+
+    #[tokio::test]
+    async fn the_old_company_name_route_is_gone() {
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+
+        let (status, _) = put_json(
             &app,
             "/api/settings/company-name",
             &token,
             &json!({ "name": "Bluepeak LLC" }),
         )
         .await;
-        let (status, body) = put_json(
-            &app,
-            "/api/settings/company-name",
-            &token,
-            &json!({ "name": "" }),
-        )
-        .await;
-
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["companyName"], "");
-        assert_eq!(status_json(&app, &token).await["companyName"], "");
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     // -- application settings ----------------------------------------------

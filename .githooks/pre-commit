@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Refuses a commit that would put real book data or an operator identity into
+# the tree. Installed by pointing `core.hooksPath` at `.githooks/`, which
+# `build.rs` does on the first `cargo build` in a fresh clone; see
+# `scripts/check-no-real-data.sh` for what is in scope.
+#
+# The check is the script's **exit status**. Reading its output instead — a
+# `grep` for "OK", say — reports success whenever the word appears anywhere,
+# including in a failure report, which is how a bad commit got through once.
+exec "$(git rev-parse --show-toplevel)/scripts/check-no-real-data.sh" --staged

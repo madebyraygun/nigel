@@ -1234,7 +1234,8 @@ database — see below.
 |---|---|---|---|
 | `/api/settings/app` | `GET` | — | `AppSettings` |
 | `/api/settings/app` | `PUT` | `updateCheck` | `AppSettings` |
-| `/api/settings/company-name` | `PUT` | `name` | `{ companyName }` |
+| `/api/settings/company` | `GET` | — | `Company` |
+| `/api/settings/company` | `PUT` | `name`, `address`, `phone`, `logo`, `paymentInstructions` | `Company` |
 | `/api/settings/data-dir` | `POST` | `path` | `StatusResponse` |
 | `/api/settings/password/set` | `POST` | `newPassword` | `{ encrypted, locked }` |
 | `/api/settings/password/change` | `POST` | `currentPassword`, `newPassword` | `{ encrypted, locked }` |
@@ -1255,12 +1256,33 @@ display-only here, and sending them is ignored rather than refused. There is no
 opened, and one value with two sources is one value that will disagree with
 itself.
 
-### Business name
+### The letterhead
 
-`PUT /api/settings/company-name` writes the `company_name` metadata key — the
-name `/api/status` reports and the SPA puts in the sidebar. The name is trimmed,
-and an empty one is allowed: clearing the business name is what the TUI does
-with a blank field.
+`GET`/`PUT /api/settings/company` read and write the five `metadata` keys both
+client-facing documents draw their sender block from:
+
+```json
+{
+  "name": "Bluepeak LLC",
+  "address": "P.O. Box 1234\nSpringfield, CA 90001",
+  "phone": "619.555.0123",
+  "logo": "data:image/png;base64,…",
+  "paymentInstructions": "Bank transfer to Example Bank\nAccount 000123456"
+}
+```
+
+One route rather than five: the fields are only ever correct together, and two
+writers for one letterhead is how a name and an address end up disagreeing about
+whether they were saved. The `PUT` takes all five, trims each, and writes them in
+one transaction, so a refusal leaves nothing half-applied. An empty field clears
+its key — clearing a value is what the TUI does with a blank field, and refusing
+it here would make the browser the only place a typo cannot be undone. The
+response is what was stored.
+
+`logo` is a `data:` URI holding a PNG or a JPEG of at most 128 KiB, checked
+**before** any write: a logo that cannot be embedded is a `400` naming the
+problem, with the other four keys untouched. `/api/status` still reports
+`companyName` on its own — the sidebar and the document title want a bare name.
 
 ### Switching data directory
 
@@ -1309,8 +1331,8 @@ wait rather than opening a file that is about to stop being the database.
 
 ### Why none of these is exempt from the locked guard
 
-`company-name` needs the key, so it could not work while locked in any case. The
-other five could:
+`settings/company` needs the key, so it could not work while locked in any case.
+The other five could:
 
 - `settings/app` reads only `settings.json`, but nothing on the unlock screen
   needs it. Exempting a route to serve a screen that does not exist is how a

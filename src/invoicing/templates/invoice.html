@@ -1,21 +1,44 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Invoice {{NUMBER}}</title>
-<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem}
-table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;border-bottom:1px solid #ddd}
-.total{font-weight:700}.pay{display:inline-block;margin:1rem 0;padding:.6rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:.4rem}
-.company{font-weight:700;margin:0 0 .25rem}.bill-to{margin-top:0}
-tfoot td{border-bottom:none}tfoot td:first-child{text-align:right}</style>
+<style>body{font-family:system-ui,sans-serif;max-width:44rem;margin:2rem auto;padding:0 1rem;color:#111}
+.letterhead,.band{display:grid;grid-template-columns:1fr 19rem;align-items:start;gap:2rem;margin-bottom:2rem}
+.letterhead:empty{display:none}
+.logo{max-width:8.8rem;max-height:2.5rem}
+.party{display:grid;grid-template-columns:6rem 1fr;gap:.75rem;grid-column:2}
+.party-label{text-align:right;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#666;white-space:nowrap}
+.party-body{border-left:1px solid #909090;padding-left:.75rem;line-height:1.5}
+table.meta{border-collapse:collapse;width:auto}
+table.meta th,table.meta td{border:none;padding:.15rem 1.5rem .15rem 0;text-align:left;font-weight:400;color:#444;white-space:nowrap}
+table.meta td{color:#111}
+table.meta td.strong{font-weight:700}
+table.items{width:100%;border-collapse:collapse;margin-top:1.5rem;margin-bottom:1.25rem}
+table.items th,table.items td{padding:.7rem .9rem;border-bottom:1px solid #909090;border-right:1px solid #909090;text-align:left}
+table.items th:last-child,table.items td:last-child{border-right:none}
+table.items tr>:first-child{padding-left:0}
+table.items tr>:last-child{padding-right:0}
+table.items thead th{border-bottom:2px solid #909090;white-space:nowrap}
+table.items tbody tr:nth-child(even){background:#f4f4f4}
+table.items th+th,table.items td+td{text-align:right;white-space:nowrap}
+table.items tfoot td{border-bottom:none;border-right:none;text-align:right;white-space:nowrap;padding:.15rem .9rem}
+table.items tfoot tr:first-child td{padding-top:2rem}
+table.items tfoot tr.total td{font-weight:700}
+.pay{display:inline-block;margin:1rem 0;padding:.6rem 1rem;background:#111;color:#fff;text-decoration:none;border-radius:.4rem}
+.pay-line{text-align:right;margin:.5rem 0 0}
+.foot-rule{border:none;border-top:1px solid #909090;margin:2.5rem 0 1rem}
+h3{margin:1.25rem 0 .25rem;font-size:.95rem}</style>
 </head><body>
-{{COMPANY_BLOCK}}
-<h1>Invoice #{{NUMBER}}</h1>
-<p class="bill-to">Billed to: {{CLIENT}}{{CLIENT_ADDRESS_BLOCK}}{{CLIENT_EMAIL_BLOCK}}<br>
-Issued: {{ISSUE}}{{DUE}}</p>
-<table><thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
+<header class="letterhead">{{LOGO}}{{COMPANY_BLOCK}}</header>
+<section class="band">
+<table class="meta">{{META_ROWS}}</table>
+<div class="party"><span class="party-label">Invoice For</span>
+<div class="party-body"><strong>{{CLIENT}}</strong>{{CLIENT_ADDRESS_BLOCK}}{{CLIENT_EMAIL_BLOCK}}</div></div>
+</section>
+<table class="items"><thead><tr><th>Description</th><th>Quantity</th><th>Unit Price</th><th>Amount</th></tr></thead>
 <tbody>{{ROWS}}</tbody>
 <tfoot>{{TOTALS}}</tfoot></table>
-{{PAY}}
+<p class="pay-line">{{PAY}}</p>
+<hr class="foot-rule">
 {{NOTES}}
-{{TERMS}}
-<h3>Direct deposit</h3>
-<p>To pay by bank transfer, reference invoice <strong>#{{NUMBER}}</strong>. Contact {{CONTACT}} for account details.</p>
+{{TERMS_BLOCK}}
+{{PAYMENT_BLOCK}}
 </body></html>

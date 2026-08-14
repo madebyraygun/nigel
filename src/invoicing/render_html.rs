@@ -2,7 +2,10 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::error::{NigelError, Result};
-use crate::invoicing::document::{address_lines, email_line, MoneySummary};
+use crate::invoicing::document::{
+    address_lines, company_block, email_line, meta_rows, money as document_money, parse_logo,
+    payment_lines, terms_block_text, MoneySummary,
+};
 use crate::models::{Client, Invoice, InvoiceLineItem};
 
 /// The page Nigel renders when the data directory holds no template of its own.
@@ -18,10 +21,14 @@ pub const PLACEHOLDERS: &[&str] = &[
     "CLIENT_ADDRESS",
     "CLIENT_ADDRESS_BLOCK",
     "COMPANY",
+    "COMPANY_ADDRESS",
+    "COMPANY_PHONE",
     "COMPANY_BLOCK",
+    "LOGO",
     "ISSUE",
     "DUE_DATE",
     "DUE",
+    "META_ROWS",
     "ROWS",
     "CURRENCY",
     "SUBTOTAL",
@@ -30,6 +37,9 @@ pub const PLACEHOLDERS: &[&str] = &[
     "TOTALS",
     "NOTES",
     "TERMS",
+    "TERMS_BLOCK",
+    "PAYMENT_INSTRUCTIONS",
+    "PAYMENT_BLOCK",
     "PAY_URL",
     "PAY",
     "CONTACT",
@@ -243,11 +253,44 @@ pub enum PayButton<'a> {
 
 /// What the page says about the sender, as opposed to what it says about the
 /// invoice. `src/invoicing/` reads no settings and no database, so the CLI layer
-/// resolves all three and passes them in.
+/// resolves the whole letterhead and passes it in.
+///
+/// Every field is a borrowed `&str` and empty means unset, so a caller with
+/// nothing to say says nothing rather than reaching for an `Option` — with one
+/// exception: `template`, for which empty is not "unset" but "render a blank
+/// document". There is deliberately **no `Default`**: it would make that state
+/// reachable by omission, and a caller who forgot the template would get an
+/// empty page rather than a compile error. Tests that are about something else
+/// use `with_template`.
 pub struct Branding<'a> {
     pub template: &'a str,
     pub company: &'a str,
+    pub company_address: &'a str,
+    pub company_phone: &'a str,
+    /// The stored `company_logo` data URI. Parsed by the render seam, once, for
+    /// both documents.
+    pub logo: &'a str,
+    /// The operator's own payment instructions, multi-line.
+    pub payment_instructions: &'a str,
     pub contact_email: &'a str,
+}
+
+#[cfg(test)]
+impl<'a> Branding<'a> {
+    /// A branding carrying a template and no letterhead, for the tests that are
+    /// about something else. It takes the one field that has no honest empty
+    /// value, which is why this exists instead of `Default`.
+    pub(crate) fn with_template(template: &'a str) -> Self {
+        Self {
+            template,
+            company: "",
+            company_address: "",
+            company_phone: "",
+            logo: "",
+            payment_instructions: "",
+            contact_email: "",
+        }
+    }
 }
 
 /// The page that replaces a published invoice when it is voided.
@@ -283,11 +326,11 @@ pub fn render_invoice_html(
         .iter()
         .map(|i| {
             format!(
-                "<tr><td>{}</td><td>{}</td><td>{:.2}</td><td>{:.2}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(&i.description),
                 i.quantity,
-                i.unit_amount,
-                i.line_total
+                document_money(i.unit_amount, &invoice.currency),
+                document_money(i.line_total, &invoice.currency)
             )
         })
         .collect();
@@ -318,9 +361,84 @@ pub fn render_invoice_html(
         _ => String::new(),
     };
 
-    let company_block = match branding.company.trim() {
-        "" => String::new(),
-        name => format!("<p class=\"company\">{}</p>", esc(name)),
+    // The From block, whole. It carries its own wrapper and its own label so
+    // that an installation with no letterhead renders nothing at all — a
+    // "From" heading over an empty rule is the thing this avoids, and a `:empty`
+    // CSS rule would not survive an operator's own template.
+    let company = company_block(
+        branding.company,
+        branding.company_address,
+        branding.company_phone,
+    );
+    let company_block = if company.is_empty() {
+        String::new()
+    } else {
+        let mut body = String::new();
+        if !company.name.is_empty() {
+            body.push_str(&format!("<strong>{}</strong>", esc(company.name)));
+        }
+        for line in &company.address {
+            body.push_str(&format!("<br>{}", esc(line)));
+        }
+        if let Some(phone) = company.phone {
+            body.push_str(&format!("<br>ph. {}", esc(phone)));
+        }
+        // A leading `<br>` when there is no name at all: the block starts on
+        // its first line either way.
+        let body = body.strip_prefix("<br>").unwrap_or(&body).to_string();
+        format!(
+            "<div class=\"party from\"><span class=\"party-label\">From</span>\
+             <div class=\"party-body\">{body}</div></div>"
+        )
+    };
+
+    // The image the operator configured, or nothing. A stored value that cannot
+    // be used renders no `<img>` at all rather than a broken one, and never an
+    // error: a logo is decoration on a document about money.
+    let logo = match parse_logo(branding.logo) {
+        Ok(Some(logo)) => format!(
+            "<img class=\"logo\" src=\"data:{};base64,{}\" alt=\"{}\">",
+            logo.mime,
+            esc(&logo.base64),
+            esc(branding.company.trim())
+        ),
+        Ok(None) | Err(_) => String::new(),
+    };
+
+    let meta_rows: String = meta_rows(invoice)
+        .iter()
+        .map(|row| {
+            let class = if row.emphasis {
+                " class=\"strong\""
+            } else {
+                ""
+            };
+            format!(
+                "<tr><th>{}</th><td{class}>{}</td></tr>",
+                row.label,
+                esc(&row.value)
+            )
+        })
+        .collect();
+
+    let terms_block = match terms_block_text(invoice) {
+        Some(terms) => format!("<h3>Terms</h3><p>{}</p>", esc(terms)),
+        None => String::new(),
+    };
+
+    // One paragraph, one line per typed line. Both documents print exactly
+    // these lines, and an installation that takes no bank transfers prints no
+    // heading either.
+    let payment_block = match payment_lines(branding.payment_instructions) {
+        lines if lines.is_empty() => String::new(),
+        lines => format!(
+            "<h3>Payment</h3><p>{}</p>",
+            lines
+                .iter()
+                .map(|line| esc(line))
+                .collect::<Vec<_>>()
+                .join("<br>")
+        ),
     };
     // One `<br>`-prefixed line per typed line, so a two-line address stays two
     // lines and an absent one contributes nothing at all — not even a break.
@@ -353,8 +471,9 @@ pub fn render_invoice_html(
                 ""
             };
             format!(
-                "<tr{class}><td colspan=\"3\">{}</td><td>{currency} {:.2}</td></tr>",
-                line.label, line.amount
+                "<tr{class}><td colspan=\"3\">{}</td><td>{}</td></tr>",
+                line.label,
+                document_money(line.amount, &invoice.currency)
             )
         })
         .collect();
@@ -375,10 +494,14 @@ pub fn render_invoice_html(
             ),
             ("CLIENT_ADDRESS_BLOCK", &address_block),
             ("COMPANY", &esc(branding.company)),
+            ("COMPANY_ADDRESS", &esc(branding.company_address)),
+            ("COMPANY_PHONE", &esc(branding.company_phone)),
             ("COMPANY_BLOCK", &company_block),
+            ("LOGO", &logo),
             ("ISSUE", &esc(&invoice.issue_date)),
             ("DUE_DATE", &due_date),
             ("DUE", &due),
+            ("META_ROWS", &meta_rows),
             ("ROWS", &rows),
             ("CURRENCY", &currency),
             ("SUBTOTAL", &format!("{:.2}", invoice.subtotal)),
@@ -387,6 +510,9 @@ pub fn render_invoice_html(
             ("TOTALS", &totals),
             ("NOTES", &block("Notes", invoice.notes.as_ref())),
             ("TERMS", &block("Terms", invoice.terms.as_ref())),
+            ("TERMS_BLOCK", &terms_block),
+            ("PAYMENT_INSTRUCTIONS", &esc(branding.payment_instructions)),
+            ("PAYMENT_BLOCK", &payment_block),
             ("PAY_URL", &esc(pay_url)),
             ("PAY", &pay),
             ("CONTACT", &esc(branding.contact_email)),
@@ -460,30 +586,36 @@ mod tests {
         assert!(html.contains("Design"));
         assert!(html.contains("250.00"));
         assert!(html.contains("https://pay.stripe.test/x"));
-        assert!(html.contains("Direct deposit"));
         assert!(html.contains("Acme &lt;Co&gt;")); // escaped
     }
 
+    /// `{{CONTACT}}` shipped and keeps its exact meaning. Only the stock page
+    /// stopped using it — payment instructions are the operator's own text now.
     #[test]
-    fn direct_deposit_line_uses_the_supplied_contact_email() {
+    fn the_contact_placeholder_still_expands_to_the_contact_address() {
         let (inv, client, items) = sample();
         let html = render_invoice_html(
-            &brand("ap@acme.test"),
+            &brand_with(
+                "[{{CONTACT}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+                "ap@acme.test",
+            ),
             &inv,
             &client,
             &items,
             &money(&inv),
             PayButton::Omitted,
         );
-        assert!(html.contains("Contact ap@acme.test for account details"));
-        assert!(!html.contains("example.com"));
+        assert!(html.starts_with("[ap@acme.test]"), "got: {html}");
     }
 
     #[test]
     fn contact_email_is_escaped() {
         let (inv, client, items) = sample();
         let html = render_invoice_html(
-            &brand("<script>alert(1)</script>"),
+            &brand_with(
+                "{{CONTACT}}{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+                "<script>alert(1)</script>",
+            ),
             &inv,
             &client,
             &items,
@@ -583,17 +715,17 @@ mod tests {
 
     fn brand(contact_email: &str) -> Branding<'_> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 
     fn brand_with<'a>(template: &'a str, contact_email: &'a str) -> Branding<'a> {
         Branding {
-            template,
             company: "",
             contact_email,
+            ..Branding::with_template(template)
         }
     }
 
@@ -764,7 +896,6 @@ mod tests {
             PayButton::Omitted,
         );
         assert!(!html.contains("Pay online"));
-        assert!(html.contains("Direct deposit"));
     }
 
     #[test]
@@ -821,9 +952,9 @@ mod tests {
     fn company_renders_and_is_escaped() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "A & B <Co>",
             contact_email: "b@e.test",
+            ..Branding::with_template("<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
         let html = render_invoice_html(
             &branding,
@@ -863,9 +994,9 @@ mod tests {
     fn the_company_block_carries_the_name_and_disappears_without_one() {
         let (inv, client, items) = sample();
         let branding = Branding {
-            template: FRAGMENTS,
             company: "A & B <Co>",
             contact_email: "b@e.test",
+            ..Branding::with_template(FRAGMENTS)
         };
         let html = render_invoice_html(
             &branding,
@@ -876,7 +1007,10 @@ mod tests {
             PayButton::Omitted,
         );
         assert!(
-            html.starts_with("[<p class=\"company\">A &amp; B &lt;Co&gt;</p>]"),
+            html.starts_with(
+                "[<div class=\"party from\"><span class=\"party-label\">From</span>\
+                 <div class=\"party-body\"><strong>A &amp; B &lt;Co&gt;</strong></div></div>]"
+            ),
             "got: {html}"
         );
 
@@ -889,6 +1023,304 @@ mod tests {
             PayButton::Omitted,
         );
         assert!(html.starts_with("[]"), "got: {html}");
+    }
+
+    #[test]
+    fn the_company_block_is_the_whole_from_block() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            company: "Bluepeak LLC",
+            company_address: "P.O. Box 1234\nSpringfield, CA 90001",
+            company_phone: "619.555.0123",
+            contact_email: "b@e.test",
+            ..Branding::with_template(FRAGMENTS)
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<strong>Bluepeak LLC</strong>"),
+            "got: {html}"
+        );
+        assert!(html.contains("<br>P.O. Box 1234"), "got: {html}");
+        assert!(html.contains("<br>Springfield, CA 90001"), "got: {html}");
+        assert!(html.contains("<br>ph. 619.555.0123"), "got: {html}");
+    }
+
+    #[test]
+    fn the_from_block_omits_the_lines_it_does_not_have() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            company: "Bluepeak LLC",
+            contact_email: "b@e.test",
+            ..Branding::with_template(FRAGMENTS)
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.starts_with(
+                "[<div class=\"party from\"><span class=\"party-label\">From</span>\
+                 <div class=\"party-body\"><strong>Bluepeak LLC</strong></div></div>]"
+            ),
+            "no empty address rows and no bare ph.: {html}"
+        );
+    }
+
+    /// A phone but no name is a letterhead too, and its first line must not be
+    /// a stray break.
+    #[test]
+    fn a_from_block_with_no_name_still_starts_on_its_first_line() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            company_phone: "619.555.0123",
+            contact_email: "b@e.test",
+            ..Branding::with_template(FRAGMENTS)
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<div class=\"party-body\">ph. 619.555.0123</div>"),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn a_company_address_containing_markup_is_text() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            company: "Bluepeak",
+            company_address: "<script>alert(1)</script>",
+            contact_email: "b@e.test",
+            ..Branding::with_template(FRAGMENTS)
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.contains("&lt;script&gt;"), "got: {html}");
+        assert!(!html.contains("<script>"), "got: {html}");
+    }
+
+    /// A 2x1 PNG as a data URI. The renderer neither decodes nor draws it; it
+    /// has to be a real one only because `parse_logo` checks.
+    fn png_data_uri() -> String {
+        use base64::Engine as _;
+        let png: &[u8] = &[
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae,
+            0x42, 0x60, 0x82,
+        ];
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        )
+    }
+
+    fn logo_html(logo: &str) -> String {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            company: "Bluepeak <LLC>",
+            logo,
+            contact_email: "b@e.test",
+            ..Branding::with_template("[{{LOGO}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
+        };
+        render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        )
+    }
+
+    #[test]
+    fn the_logo_is_an_img_with_the_company_name_as_its_alt_text() {
+        let uri = png_data_uri();
+        let html = logo_html(&uri);
+        assert!(
+            html.contains(&format!("<img class=\"logo\" src=\"{uri}\"")),
+            "the src is the stored data URI: {html}"
+        );
+        assert!(
+            html.contains("alt=\"Bluepeak &lt;LLC&gt;\""),
+            "a Gmail reader sees the name: {html}"
+        );
+    }
+
+    #[test]
+    fn no_logo_renders_no_img() {
+        assert!(logo_html("").starts_with("[]"), "got: {}", logo_html(""));
+    }
+
+    /// A stored value that cannot be used is no `<img>` at all — never a broken
+    /// one, and never a failed render.
+    #[test]
+    fn an_unusable_logo_renders_no_img_rather_than_failing() {
+        for bad in [
+            "data:image/png;base64,!!!",
+            "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+            "https://example.test/logo.png",
+            "data:image/png;base64,bm90IGEgcG5n",
+        ] {
+            let html = logo_html(bad);
+            assert!(html.starts_with("[]"), "{bad} rendered something: {html}");
+        }
+    }
+
+    #[test]
+    fn the_meta_rows_are_table_rows_in_the_shared_order() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand_with(
+                "[{{META_ROWS}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+                "b@e.test",
+            ),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        let expected: String = crate::invoicing::document::meta_rows(&inv)
+            .iter()
+            .map(|row| {
+                let class = if row.emphasis {
+                    " class=\"strong\""
+                } else {
+                    ""
+                };
+                format!(
+                    "<tr><th>{}</th><td{class}>{}</td></tr>",
+                    row.label, row.value
+                )
+            })
+            .collect();
+        assert!(html.starts_with(&format!("[{expected}]")), "got: {html}");
+        assert!(
+            html.contains("<th>Invoice ID</th><td class=\"strong\">1248</td>"),
+            "the number is what a client quotes back: {html}"
+        );
+    }
+
+    #[test]
+    fn a_due_date_with_terms_reads_as_one_value() {
+        let (mut inv, client, items) = sample();
+        inv.terms = Some("Net 30".into());
+        let html = render_invoice_html(
+            &brand_with(
+                "[{{META_ROWS}}][{{TERMS_BLOCK}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+                "b@e.test",
+            ),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<th>Due Date</th><td>2026-09-03 (Net 30)</td>"),
+            "one cell, not two rows: {html}"
+        );
+        assert!(
+            html.contains("][]"),
+            "the terms rode beside the date: {html}"
+        );
+    }
+
+    #[test]
+    fn multi_line_terms_are_a_block_beside_a_bare_due_date() {
+        let (mut inv, client, items) = sample();
+        inv.terms = Some("Net 30\nLate fees after 60 days.".into());
+        let html = render_invoice_html(
+            &brand_with(
+                "[{{META_ROWS}}][{{TERMS_BLOCK}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+                "b@e.test",
+            ),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<th>Due Date</th><td>2026-09-03</td>"),
+            "no parenthetical paragraph: {html}"
+        );
+        assert!(html.contains("<h3>Terms</h3>"), "got: {html}");
+        assert!(html.contains("Late fees after 60 days."), "got: {html}");
+    }
+
+    fn payment_html(instructions: &str) -> String {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            payment_instructions: instructions,
+            contact_email: "b@e.test",
+            ..Branding::with_template(
+                "[{{PAYMENT_BLOCK}}][{{PAYMENT_INSTRUCTIONS}}]\
+                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            )
+        };
+        render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        )
+    }
+
+    #[test]
+    fn the_payment_block_is_the_configured_text_one_line_per_line() {
+        let html = payment_html("Wells Fargo\nRouting 121000248\nAccount 1234567890");
+        assert!(
+            html.starts_with(
+                "[<h3>Payment</h3><p>Wells Fargo<br>Routing 121000248<br>Account 1234567890</p>]"
+            ),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn no_payment_instructions_render_no_payment_block() {
+        assert!(payment_html("").starts_with("[][]"), "{}", payment_html(""));
+        // `{{PAYMENT_INSTRUCTIONS}}` is the raw escaped value an author placed,
+        // so whitespace stays whitespace there; the *block* is what disappears.
+        assert!(
+            payment_html("  \n ").starts_with("[]"),
+            "{}",
+            payment_html("  \n ")
+        );
+    }
+
+    #[test]
+    fn payment_instructions_containing_markup_are_text() {
+        let html = payment_html("<script>alert(1)</script>");
+        assert!(html.contains("&lt;script&gt;"), "got: {html}");
+        assert!(!html.contains("<script>"), "got: {html}");
     }
 
     #[test]
@@ -969,19 +1401,20 @@ mod tests {
                 .unwrap_or_else(|| panic!("{label} missing or out of order in: {totals}"));
             at += found + label.len();
         }
-        for emphasised in [
-            "<tr class=\"total\"><td colspan=\"3\">Total</td><td>USD 250.00</td></tr>",
-            "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>USD 150.00</td></tr>",
-        ] {
-            assert!(
-                totals.contains(emphasised),
-                "the emphasised rows carry the existing class: {totals}"
-            );
-        }
+        // Exactly one row carries the class, and it is the bottom one — what
+        // this invoice actually leaves owing.
         assert!(
-            totals.contains("<tr><td colspan=\"3\">Paid</td><td>USD 100.00</td></tr>"),
-            "Paid is not the line the eye lands on: {totals}"
+            totals.contains(
+                "<tr class=\"total\"><td colspan=\"3\">Balance due</td><td>$150.00</td></tr>"
+            ),
+            "the balance is the line the eye lands on: {totals}"
         );
+        for plain in [
+            "<tr><td colspan=\"3\">Total</td><td>$250.00</td></tr>",
+            "<tr><td colspan=\"3\">Paid</td><td>$100.00</td></tr>",
+        ] {
+            assert!(totals.contains(plain), "still emphasised: {totals}");
+        }
     }
 
     #[test]
@@ -996,9 +1429,9 @@ mod tests {
             &summary,
             PayButton::Omitted,
         );
-        assert!(html.contains("Balance due</td><td>USD 0.00"), "got: {html}");
-        assert!(html.contains("Credit</td><td>USD 50.00"), "got: {html}");
-        assert!(!html.contains("USD -"), "no negative figure: {html}");
+        assert!(html.contains("Balance due</td><td>$0.00"), "got: {html}");
+        assert!(html.contains("Credit</td><td>$50.00"), "got: {html}");
+        assert!(!html.contains("-$"), "no negative figure: {html}");
     }
 
     #[test]
@@ -1041,10 +1474,12 @@ mod tests {
         client.billing_address = Some("123 Main St".into());
 
         let branding = Branding {
-            template: "[{{SUBTOTAL}}][{{TAX}}][{{COMPANY}}][{{CLIENT_ADDRESS}}][{{CLIENT_EMAIL}}]\
-                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
+            ..Branding::with_template(
+                "[{{SUBTOTAL}}][{{TAX}}][{{COMPANY}}][{{CLIENT_ADDRESS}}][{{CLIENT_EMAIL}}]\
+                       {{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
+            )
         };
         let html = render_invoice_html(
             &branding,
@@ -1065,9 +1500,9 @@ mod tests {
         let (inv, mut client, items) = sample();
         client.billing_address = Some("123 Main St\nSpringfield, IL 62704".into());
         let branding = Branding {
-            template: DEFAULT_TEMPLATE,
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         };
         let html = render_invoice_html(
             &branding,
@@ -1082,11 +1517,117 @@ mod tests {
             html.find(needle)
                 .unwrap_or_else(|| panic!("missing {needle}: {html}"))
         };
-        assert!(at("Bluepeak LLC") < at("Invoice #1248"));
-        assert!(at("Billed to:") < at("123 Main St"));
+        // The letterhead is the masthead, and the metadata band follows it —
+        // there is no title line between them any more.
+        assert!(at("Bluepeak LLC") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
+        assert!(at("Invoice For") < at("123 Main St"));
         assert!(at("123 Main St") < at("Springfield, IL 62704"));
         assert!(at("Springfield, IL 62704") < at("a@b.test"));
-        assert!(at("a@b.test") < at("Issued:"));
+        assert!(at("a@b.test") < at("Description"));
+    }
+
+    /// The seven house blocks, in document order.
+    #[test]
+    fn the_stock_page_carries_all_seven_house_blocks() {
+        let (mut inv, mut client, items) = sample();
+        inv.notes = Some("Thanks for your business.".into());
+        client.billing_address = Some("123 Main St".into());
+        let uri = png_data_uri();
+        let branding = Branding {
+            template: DEFAULT_TEMPLATE,
+            company: "Bluepeak LLC",
+            company_address: "P.O. Box 1234",
+            company_phone: "619.555.0123",
+            logo: &uri,
+            payment_instructions: "Wells Fargo, routing 121000248",
+            contact_email: "b@e.test",
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Link("https://pay.stripe.test/x"),
+        );
+
+        let at = |needle: &str| {
+            html.find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}: {html}"))
+        };
+        assert!(at("class=\"logo\"") < at(">From<"));
+        assert!(at(">From<") < at("Invoice ID"));
+        assert!(at("Invoice ID") < at("Invoice For"));
+        assert!(at("Invoice For") < at("<th>Description</th>"));
+        assert!(at("<th>Description</th>") < at("<td colspan=\"3\">Total</td>"));
+        assert!(at("<td colspan=\"3\">Total</td>") < at("<hr class=\"foot-rule\">"));
+        assert!(at("<hr class=\"foot-rule\">") < at("<h3>Notes</h3>"));
+        assert!(at("<h3>Notes</h3>") < at("<h3>Payment</h3>"));
+    }
+
+    #[test]
+    fn the_stock_page_item_table_says_quantity_and_unit_price() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.contains("<th>Quantity</th>"), "got: {html}");
+        assert!(html.contains("<th>Unit Price</th>"), "got: {html}");
+        assert!(!html.contains("<th>Qty</th>"), "got: {html}");
+        assert!(!html.contains("<th>Unit</th>"), "got: {html}");
+        assert!(!html.contains("<th>Rate</th>"), "got: {html}");
+    }
+
+    /// The wording that used to be compiled into the page for everyone,
+    /// whether or not they have ever taken a bank transfer.
+    #[test]
+    fn the_stock_page_no_longer_hardcodes_a_bank_transfer_paragraph() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("ap@acme.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        for absence in [
+            "Direct deposit",
+            "bank transfer",
+            "account details",
+            "ap@acme.test",
+        ] {
+            assert!(!html.contains(absence), "{absence} survived in: {html}");
+        }
+    }
+
+    #[test]
+    fn the_stock_page_prints_the_configured_payment_instructions() {
+        let (inv, client, items) = sample();
+        let branding = Branding {
+            payment_instructions: "Wells Fargo\nRouting 121000248",
+            contact_email: "b@e.test",
+            ..Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let html = render_invoice_html(
+            &branding,
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(html.contains("<h3>Payment</h3>"), "got: {html}");
+        assert!(
+            html.contains("Wells Fargo<br>Routing 121000248"),
+            "got: {html}"
+        );
     }
 
     #[test]
@@ -1110,16 +1651,397 @@ mod tests {
         for absence in [
             "<p></p>",
             "<h3></h3>",
-            "Due:",
+            "Due Date",
             "<br><br>",
             "Notes",
             "Terms",
-            "class=\"company\"",
+            "Payment",
+            "From",
+            "ph.",
+            "class=\"logo\"",
             "Subtotal",
             "Tax",
             "Paid",
         ] {
             assert!(!html.contains(absence), "{absence} survived in: {html}");
+        }
+    }
+
+    /// The letterhead holds two fragments, so neither can own the wrapper the
+    /// way `{{COMPANY_BLOCK}}` owns its own `.party` div. An installation with
+    /// no logo and no company would otherwise reserve the band's whole margin
+    /// above the title for nothing, where the PDF draws nothing at all.
+    #[test]
+    fn an_empty_letterhead_takes_up_no_room_on_the_stock_page() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        assert!(
+            html.contains("<header class=\"letterhead\"></header>"),
+            "nothing to draw: {html}"
+        );
+        assert!(
+            html.contains(".letterhead:empty{display:none}"),
+            "and so nothing is drawn: {html}"
+        );
+    }
+
+    /// The stock page and the PDF share one grey for every structural rule, one
+    /// tint for the zebra, and one logo size. The template is a static file, so
+    /// the only thing that can hold it to `document.rs`'s values is a test that
+    /// reads them back out of it.
+    #[test]
+    fn the_stock_pages_stylesheet_uses_the_shared_document_colours() {
+        use crate::invoicing::document::{BORDER_GRAY, ROW_SHADE};
+        assert!(
+            DEFAULT_TEMPLATE.contains(&BORDER_GRAY.hex()),
+            "the border grey is not in the stylesheet"
+        );
+        assert!(
+            DEFAULT_TEMPLATE.contains(&ROW_SHADE.hex()),
+            "the row tint is not in the stylesheet"
+        );
+        // The near-blacks the rules used to be drawn in are gone; `#111` stays
+        // only as body type and the Pay button's ground.
+        // `border-radius` is a shape, not a rule, and the Pay button's ground
+        // is deliberately near-black.
+        let rules: Vec<&str> = DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                line.contains("#111")
+                    && [
+                        "border:",
+                        "border-left",
+                        "border-right",
+                        "border-top",
+                        "border-bottom",
+                    ]
+                    .iter()
+                    .any(|edge| line.contains(edge))
+            })
+            .collect();
+        assert!(rules.is_empty(), "a rule is still near-black: {rules:?}");
+    }
+
+    /// A masthead, not a banner. The page measures in `rem` against its body
+    /// width and the PDF in millimetres against its printable width, so the one
+    /// thing that can agree is the share of the measure the mark occupies.
+    #[test]
+    fn the_stock_pages_logo_cap_is_the_shared_fraction_of_its_measure() {
+        use crate::invoicing::document::{LOGO_HEIGHT_FRACTION, LOGO_WIDTH_FRACTION};
+
+        let rem_after = |needle: &str| -> f32 {
+            let at = DEFAULT_TEMPLATE
+                .find(needle)
+                .unwrap_or_else(|| panic!("missing {needle}"))
+                + needle.len();
+            let rest = &DEFAULT_TEMPLATE[at..];
+            let end = rest.find("rem").expect("a rem length");
+            rest[..end].parse().expect("a number")
+        };
+        let body = rem_after("max-width:");
+        let logo_w = rem_after(".logo{max-width:");
+        let logo_h = rem_after("max-height:");
+
+        assert!(
+            (logo_w / body - LOGO_WIDTH_FRACTION).abs() < 0.01,
+            "the logo is {:.3} of the measure, not {LOGO_WIDTH_FRACTION}",
+            logo_w / body
+        );
+        assert!(
+            (logo_h / body - LOGO_HEIGHT_FRACTION).abs() < 0.01,
+            "the logo's height cap is {:.3} of the measure, not {LOGO_HEIGHT_FRACTION}",
+            logo_h / body
+        );
+    }
+
+    /// The reference has no title line: the letterhead is the masthead and the
+    /// metadata band carries the identifier.
+    #[test]
+    fn the_stock_page_prints_the_number_once_in_the_metadata_band() {
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        let body = &html[html.find("<body").expect("a body")..];
+        assert!(!body.contains("<h1"), "no heading at all: {body}");
+        assert!(!body.contains("Invoice #"), "no title line: {body}");
+        assert_eq!(
+            body.matches("1248").count(),
+            1,
+            "the number appears once, in the metadata band: {body}"
+        );
+        // `{{NUMBER}}` still satisfies REQUIRED from the `<title>` element, and
+        // the tab still names the invoice.
+        assert!(html.contains("<title>Invoice 1248</title>"), "got: {html}");
+        validate_template(DEFAULT_TEMPLATE, Path::new("stock"))
+            .expect("the stock page still validates");
+    }
+
+    /// Zebra striping is what lets a reader track one row across four columns.
+    /// The PDF's item table runs to its text margin, and this one has to as
+    /// well: the bands above and the payment block below sit on that edge, and
+    /// a table inset from it reads as narrower than the document.
+    #[test]
+    fn the_stock_pages_item_table_runs_edge_to_edge() {
+        for rule in [
+            "table.items tr>:first-child{padding-left:0}",
+            "table.items tr>:last-child{padding-right:0}",
+        ] {
+            assert!(DEFAULT_TEMPLATE.contains(rule), "missing: {rule}");
+        }
+    }
+
+    #[test]
+    fn the_stock_page_stripes_every_other_item_row() {
+        assert!(
+            DEFAULT_TEMPLATE.contains("tbody tr:nth-child(even)"),
+            "the item rows are not striped"
+        );
+    }
+
+    /// Weight, not size, carries the emphasis — and it is the same line the PDF
+    /// picks out, because both ask `MoneySummary::lines()`.
+    #[test]
+    fn the_money_block_is_one_size_with_only_its_bottom_line_emphasised() {
+        let (mut inv, client, items) = sample();
+        inv.subtotal = 100.0;
+        inv.total = 100.0;
+        let money = MoneySummary::of(&inv, 40.0);
+        let html = render_invoice_html(
+            &brand("b@e.test"),
+            &inv,
+            &client,
+            &items,
+            &money,
+            PayButton::Omitted,
+        );
+
+        // One emphasised row, and it is the last one.
+        assert_eq!(html.matches("class=\"total\"").count(), 1, "got: {html}");
+        let emphasised = html.rfind("class=\"total\"").expect("an emphasised row");
+        assert!(
+            html[emphasised..].contains("Balance due"),
+            "the emphasised row is not the balance: {html}"
+        );
+        // The stylesheet emphasises by weight alone: no size change on it.
+        assert!(
+            DEFAULT_TEMPLATE.contains("tfoot tr.total td{font-weight:700}"),
+            "the emphasised row still changes size"
+        );
+    }
+
+    /// Where a party block's **vertical rule** actually falls, in `rem` from the
+    /// body's left edge.
+    ///
+    /// The rule is `.party-body`'s left border, and what puts it somewhere is
+    /// the label ahead of it — not the grid cell the block sits in. Both bands
+    /// place their cell identically and always did; the rules were still about
+    /// 50px apart because `From` and `Invoice For` are different widths and a
+    /// content-sized label pushes the body along by its own text.
+    ///
+    /// So this resolves the label column the way the stylesheet does: a fixed
+    /// track if `.party` declares one, and the label's own rendered width if it
+    /// does not. A test that stopped at the grid cell — as the previous one did
+    /// — cannot fail for the reason this bug exists, which is why it survived
+    /// two rounds.
+    fn party_rule_edge(container: &str, label: &str) -> f32 {
+        let rem_after = |needle: &str| -> f32 {
+            let at = DEFAULT_TEMPLATE.find(needle).expect(needle) + needle.len();
+            let rest = &DEFAULT_TEMPLATE[at..];
+            rest[..rest.find("rem").expect("rem")]
+                .parse()
+                .expect("a number")
+        };
+        let rule_for = |selector: &str| -> &str {
+            DEFAULT_TEMPLATE
+                .lines()
+                .find(|line| {
+                    line.starts_with(&format!("{selector}{{"))
+                        || line.starts_with(&format!("{selector},"))
+                        || line.contains(&format!(",{selector}{{"))
+                })
+                .unwrap_or_else(|| panic!("no rule for {selector}"))
+        };
+        let tracks = |rule: &str| -> Option<Vec<String>> {
+            let at = rule.split("grid-template-columns:").nth(1)?;
+            Some(
+                at[..at.find([';', '}']).expect("end of declaration")]
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect(),
+            )
+        };
+
+        let body_width = rem_after("max-width:");
+        let band = rule_for(&format!(".{container}"));
+        let band_tracks = tracks(band).unwrap_or_else(|| panic!(".{container} is not a grid"));
+        let party_track: f32 = band_tracks
+            .last()
+            .expect("a party track")
+            .trim_end_matches("rem")
+            .parse()
+            .expect("a rem track");
+        let cell_left = body_width - party_track;
+
+        let party = rule_for(".party");
+        let gap = {
+            let at = party.split("gap:").nth(1).expect("a gap");
+            at[..at.find([';', '}']).expect("end")]
+                .trim_end_matches("rem")
+                .parse::<f32>()
+                .expect("a rem gap")
+        };
+        let label_column = match tracks(party) {
+            // An explicit first track: the label occupies it whatever it says.
+            Some(t) => t
+                .first()
+                .expect("a label track")
+                .trim_end_matches("rem")
+                .parse()
+                .expect("a rem track"),
+            // Content-sized: the label is as wide as its own text, so the body
+            // behind it — and the rule — moves with the wording.
+            None => {
+                let size = {
+                    let at = rule_for(".party-label")
+                        .split("font-size:")
+                        .nth(1)
+                        .expect("a label size");
+                    at[..at.find([';', '}']).expect("end")]
+                        .trim_end_matches("rem")
+                        .parse::<f32>()
+                        .expect("a rem size")
+                };
+                // Uppercase sans runs about 0.62em per character, plus the
+                // 0.06em of letter-spacing the label sets.
+                label.chars().count() as f32 * 0.68 * size
+            }
+        };
+        cell_left + label_column + gap
+    }
+
+    /// The From block and the Invoice For block sit in different sections. Their
+    /// labels and their rules have to line up down the page, and the only thing
+    /// that makes that true is both bands laying their party column on the same
+    /// track.
+    /// Grid auto-placement would drop the party block into the first column of
+    /// a letterhead that has no logo, which would put the From block on the
+    /// left of the page and the Invoice For block on the right.
+    #[test]
+    fn the_party_column_is_pinned_so_a_logoless_letterhead_still_aligns() {
+        assert!(
+            DEFAULT_TEMPLATE.contains("grid-column:2"),
+            "the party block is auto-placed and will move when the logo is absent"
+        );
+    }
+
+    #[test]
+    fn both_party_rules_land_at_the_same_x() {
+        // The two labels the page actually uses, and they are different widths.
+        let (inv, client, items) = sample();
+        let html = render_invoice_html(
+            &Branding {
+                company: "Bluepeak LLC",
+                ..Branding::with_template(DEFAULT_TEMPLATE)
+            },
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+        for label in ["From", "Invoice For"] {
+            assert!(html.contains(label), "{label} is not on the page");
+        }
+
+        let from = party_rule_edge("letterhead", "From");
+        let invoice_for = party_rule_edge("band", "Invoice For");
+        assert!(
+            (from - invoice_for).abs() < 0.01,
+            "the From rule sits at {from}rem and the Invoice For rule at {invoice_for}rem"
+        );
+    }
+
+    /// A declared value, or `None` when the stylesheet does not set it. The
+    /// property is matched with its colon, so `padding` never picks up
+    /// `padding-top`.
+    fn declared(selector: &str, property: &str) -> Option<String> {
+        let rule = DEFAULT_TEMPLATE
+            .lines()
+            .find(|line| line.starts_with(&format!("{selector}{{")))?;
+        let at = rule.split(&format!("{property}:")).nth(1)?;
+        Some(at[..at.find([';', '}'])?].to_string())
+    }
+
+    fn rem(value: &str) -> f32 {
+        value
+            .trim()
+            .trim_end_matches("rem")
+            .parse()
+            .expect("a rem length")
+    }
+
+    /// The padding above the **first** totals row, in `rem`, resolved the way
+    /// the cascade resolves it: the shorthand on `table.items tfoot td` sets all
+    /// four sides, and a later, more specific rule for the first row's cells
+    /// overrides the top. Reading the shorthand alone would report the block's
+    /// own leading and never see the stand-off at all.
+    fn totals_top_padding() -> f32 {
+        declared("table.items tfoot tr:first-child td", "padding-top")
+            .map(|value| rem(&value))
+            .unwrap_or_else(|| {
+                let shorthand =
+                    declared("table.items tfoot td", "padding").expect("the tfoot padding");
+                rem(shorthand.split_whitespace().next().expect("a top value"))
+            })
+    }
+
+    /// The totals are not another row of the table, and they read as one when
+    /// they sit on the last item row's rule with a tenth of a line above them.
+    /// Both documents stand the block off by air of their own — this document
+    /// by two body sizes of padding over the first row, the PDF by three between
+    /// that rule and the first figure's baseline.
+    #[test]
+    fn the_totals_block_stands_off_the_last_item_row() {
+        let air = totals_top_padding();
+        assert!(
+            air >= 2.0,
+            "the totals block clears the table by {air}rem, under the two body sizes it takes to read as its own block"
+        );
+
+        // Above the first row only. Leading that on every totals line would
+        // space the figures apart instead of setting the block off from the
+        // table, which is a different document.
+        let shorthand = declared("table.items tfoot td", "padding").expect("the tfoot padding");
+        let between = rem(shorthand.split_whitespace().next().expect("a top value"));
+        assert!(
+            between < air,
+            "every totals row carries {between}rem above it — the block is spaced, not stood off"
+        );
+    }
+
+    /// A date is one token: `2026-07-` on one line and `15` on the next is not
+    /// a date. Nor is a column heading that breaks in half a heading.
+    #[test]
+    fn the_stock_page_never_breaks_a_date_a_heading_or_an_amount() {
+        for rule in [
+            "table.meta th,table.meta td{border:none;padding:.15rem 1.5rem .15rem 0;text-align:left;font-weight:400;color:#444;white-space:nowrap}",
+            "table.items thead th{border-bottom:2px solid #909090;white-space:nowrap}",
+            "table.items tfoot td{border-bottom:none;border-right:none;text-align:right;white-space:nowrap;padding:.15rem .9rem}",
+        ] {
+            assert!(DEFAULT_TEMPLATE.contains(rule), "missing: {rule}");
         }
     }
 
@@ -1331,6 +2253,51 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;bo
         assert!(html.contains("Billed to: Acme"), "got: {html}");
         assert!(html.contains("Total: USD 250.00"), "got: {html}");
         assert!(!html.contains("{{"), "no unexpanded placeholder: {html}");
+    }
+
+    /// The house layout added seven placeholders and rewrote the stock page. A
+    /// template exported before any of that carries none of the new keys, and
+    /// every key it does carry has to render what it always rendered — so the
+    /// upgrade is invisible to an operator who owns their own template.
+    #[test]
+    fn the_pre_204_template_gains_nothing_and_loses_nothing_from_the_house_layout() {
+        let (mut inv, client, items) = sample();
+        inv.due_date = Some("2026-09-05".into());
+        inv.terms = Some("Net 30".into());
+
+        let html = render_invoice_html(
+            &brand_with(LEGACY_TEMPLATE, "ap@acme.test"),
+            &inv,
+            &client,
+            &items,
+            &money(&inv),
+            PayButton::Omitted,
+        );
+
+        assert!(html.contains("Billed to: Acme"), "got: {html}");
+        assert!(
+            html.contains("Due: 2026-09-05"),
+            "the old {{{{DUE}}}} shape, unchanged: {html}"
+        );
+        assert!(
+            !html.contains("(Net 30)"),
+            "{{{{DUE}}}} did not gain the parenthetical: {html}"
+        );
+        assert!(
+            html.contains("<h3>Terms</h3>"),
+            "the old {{{{TERMS}}}} block, unchanged: {html}"
+        );
+        assert!(html.contains("ap@acme.test"), "{{{{CONTACT}}}}: {html}");
+        assert!(!html.contains("{{"), "no unexpanded placeholder: {html}");
+    }
+
+    /// The list a template must satisfy never grows: every placeholder the
+    /// house layout added is optional, which is what makes the test above hold
+    /// for every template exported from every earlier release.
+    #[test]
+    fn required_is_still_exactly_four_keys() {
+        assert_eq!(REQUIRED, &["NUMBER", "CLIENT", "ROWS", "TOTAL"]);
+        assert_eq!(REQUIRED_ALTERNATIVES, &[("TOTAL", "TOTALS")]);
     }
 
     #[test]

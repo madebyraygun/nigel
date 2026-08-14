@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
+import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
@@ -9,7 +10,13 @@ import { confirmDialog, dispatchNcToast, type NcPasswordSubmitDetail } from '@ni
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
-import type { AppSettings } from '../api/types.js';
+import type { AppSettings, Company } from '../api/types.js';
+
+/**
+ * The cap `document::parse_logo` enforces, in the one place the browser needs
+ * it: `MAX_LOGO_BYTES` in `src/invoicing/document.rs`.
+ */
+const MAX_LOGO_BYTES = 128 * 1024;
 import type { ScreenContext } from './context.js';
 import {
   applyMode,
@@ -75,6 +82,28 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         font-size: var(--wa-font-size-s, 13px);
         margin: var(--wa-space-xs, 6px) 0 0;
       }
+
+      wa-textarea {
+        display: block;
+        margin-top: var(--wa-space-s, 8px);
+      }
+
+      .logo-field {
+        display: grid;
+        gap: var(--wa-space-2xs, 4px);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+
+      .logo-preview {
+        max-height: 3rem;
+        max-width: 12rem;
+        /* The stored image may be transparent, and both documents flatten it
+           onto white. Showing it on the card would misrepresent it in dark
+           mode, which is why this token is deliberately mode-independent. */
+        background: var(--nc-color-document-bg);
+        border-radius: var(--wa-radius-s, 6px);
+        padding: var(--wa-space-2xs, 4px);
+      }
     `,
   ];
 
@@ -83,7 +112,10 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   client!: ApiClient;
 
   @state() private appSettings: AppSettings | null = null;
-  @state() private companyDraft = '';
+  @state() private company: Company | null = null;
+  @state() private companyError = '';
+  /** A failed *load*, which is a different state from a failed save. */
+  @state() private companyLoadError = '';
   @state() private dataDirDraft = '';
   @state() private busy: string | null = null;
   @state() private passwordError = '';
@@ -92,7 +124,6 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private resolvedMode: ResolvedMode = 'light';
 
   private store: AppStore = getAppStore();
-  private seededCompany = false;
 
   /**
    * Only there to keep the "currently dark" hint honest while System is
@@ -107,6 +138,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   connectedCallback(): void {
     super.connectedCallback();
     void this.loadAppSettings();
+    void this.loadCompany();
 
     this.colorMode = readMode();
     this.darkQuery = darkModeQuery();
@@ -148,31 +180,112 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     dispatchNcToast(this, { message, variant: 'success' });
   }
 
-  // -- business name --------------------------------------------------------
+  // -- the letterhead -------------------------------------------------------
 
-  private get companyName(): string {
-    // Seeded once: re-reading the store on every render would overwrite what
-    // the user is in the middle of typing.
-    if (!this.seededCompany) {
-      this.seededCompany = true;
-      this.companyDraft = this.store.status.get()?.companyName ?? '';
+  /**
+   * Loaded once and then edited in place. The draft is the loaded object, not a
+   * projection of the store, so nothing re-seeds it under someone who is
+   * halfway through typing an address.
+   */
+  private async loadCompany(): Promise<void> {
+    this.companyLoadError = '';
+    try {
+      this.company = await this.client.getCompany();
+    } catch (error) {
+      // A failed load is its own state, never a form the data could not fill:
+      // an empty letterhead form would save five blank fields over whatever is
+      // actually stored.
+      this.companyLoadError =
+        error instanceof ApiError ? error.message : 'Could not load the letterhead.';
+      this.toastError(error, 'Could not load the letterhead.');
     }
-    return this.companyDraft;
   }
 
-  private handleCompanyInput = (event: Event) => {
-    this.companyDraft = (event.target as HTMLInputElement).value;
+  private retryCompany = () => {
+    void this.loadCompany();
   };
 
-  private saveCompanyName = async () => {
+  private editCompany(field: keyof Company, value: string): void {
+    if (!this.company) return;
+    this.company = { ...this.company, [field]: value };
+  }
+
+  /**
+   * One bound handler per field, built once. A factory called from `render`
+   * hands Lit a new function on every pass, so the listener is torn down and
+   * re-attached each time for no gain.
+   */
+  private readonly companyInput: Record<keyof Company, (event: Event) => void> = {
+    name: this.onCompanyInput('name'),
+    address: this.onCompanyInput('address'),
+    phone: this.onCompanyInput('phone'),
+    logo: this.onCompanyInput('logo'),
+    paymentInstructions: this.onCompanyInput('paymentInstructions'),
+  };
+
+  private onCompanyInput(field: keyof Company): (event: Event) => void {
+    return (event: Event) =>
+      this.editCompany(field, (event.target as HTMLInputElement).value);
+  }
+
+  /**
+   * The logo travels as a `data:` URI, so the file is read here.
+   *
+   * The size is checked **before** anything is read. Base64 inflates the
+   * payload by a third, so an oversized image would arrive as a body axum
+   * refuses outright — a generic 413 in place of the server's own sentence
+   * about the 128 KiB cap. `wc-dropzone` checks extension and size client-side
+   * for exactly this reason. Everything else about the file — the magic bytes,
+   * the type actually inside it, whether it decodes — is still the server's to
+   * answer, because only it can.
+   */
+  private handleLogoFile = async (event: Event) => {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_LOGO_BYTES) {
+      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KiB; the limit is ${MAX_LOGO_BYTES / 1024} KiB.`;
+      input.value = '';
+      return;
+    }
+    try {
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error('unreadable'));
+        reader.readAsDataURL(file);
+      });
+      this.editCompany('logo', dataUri);
+      this.companyError = '';
+    } catch {
+      this.companyError = `Could not read ${file.name}.`;
+    } finally {
+      // So choosing the same file twice still fires a change event.
+      input.value = '';
+    }
+  };
+
+  private clearLogo = () => {
+    this.editCompany('logo', '');
+  };
+
+  private saveCompany = async () => {
+    if (!this.company) return;
+    this.companyError = '';
     this.busy = 'company';
     try {
-      await this.client.setCompanyName(this.companyDraft);
-      // The sidebar and the document title read this from status.
+      // The response is the stored values, trimmed — so the form shows what
+      // was actually saved rather than what was typed.
+      this.company = await this.client.setCompany(this.company);
+      // The sidebar and the document title read the name from status.
       await this.store.refreshStatus();
-      this.toastOk('Name saved.');
+      this.toastOk('Letterhead saved.');
     } catch (error) {
-      this.toastError(error, 'Could not save the name.');
+      // Kept beside the fields rather than only in a toast: a refused logo is
+      // about one control, and the form must not be cleared under it.
+      this.companyError =
+        error instanceof ApiError ? error.message : 'Could not save the letterhead.';
+      this.toastError(error, 'Could not save the letterhead.');
     } finally {
       this.busy = null;
     }
@@ -271,6 +384,79 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     }
   };
 
+  /**
+   * The three states this panel has: loaded, loading, and could-not-load. The
+   * last one is not a form — an empty letterhead over a load failure would save
+   * five blank fields on top of whatever is really stored.
+   */
+  private renderCompanyBody(nameLabel: string): TemplateResult {
+    if (this.companyLoadError) {
+      return html`<p class="error">${this.companyLoadError}</p>`;
+    }
+    if (!this.company) {
+      return html`<wc-spinner label="Loading the letterhead"></wc-spinner>`;
+    }
+    return this.renderCompanyFields(this.company, nameLabel);
+  }
+
+  private renderCompanyFields(company: Company, nameLabel: string): TemplateResult {
+    const disabled = this.busy === 'company';
+    return html`
+      <div class="row">
+        <wa-input
+          label=${nameLabel}
+          .value=${company.name}
+          ?disabled=${disabled}
+          @input=${this.companyInput.name}
+        ></wa-input>
+        <wa-input
+          label="Phone"
+          .value=${company.phone}
+          ?disabled=${disabled}
+          @input=${this.companyInput.phone}
+        ></wa-input>
+      </div>
+      <wa-textarea
+        label="Address"
+        rows="3"
+        .value=${company.address}
+        ?disabled=${disabled}
+        @input=${this.companyInput.address}
+      ></wa-textarea>
+      <wa-textarea
+        label="Payment instructions"
+        rows="3"
+        .value=${company.paymentInstructions}
+        ?disabled=${disabled}
+        @input=${this.companyInput.paymentInstructions}
+      ></wa-textarea>
+      <p class="note">
+        Printed on both the invoice page and the PDF, or on neither. Leave it
+        empty if you do not take bank transfers.
+      </p>
+      <div class="row">
+        <label class="logo-field">
+          Logo
+          <input
+            type="file"
+            accept="image/png,image/jpeg"
+            ?disabled=${disabled}
+            @change=${this.handleLogoFile}
+          />
+        </label>
+        ${company.logo
+          ? html`<img class="logo-preview" src=${company.logo} alt="The configured logo" />
+              <wa-button ?disabled=${disabled} @click=${this.clearLogo}>Remove</wa-button>`
+          : nothing}
+      </div>
+      <p class="note">
+        PNG or JPEG, up to 128 KiB. It is embedded in the PDF and inlined in the
+        page; Gmail does not render inlined images, so a Gmail reader sees your
+        name in the email body and the logo on the attachment.
+      </p>
+    `;
+  }
+
   render() {
     const status = this.store.status.get();
     const encrypted = status?.encrypted ?? false;
@@ -279,24 +465,22 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
 
     return html`
       <wc-panel
-        heading=${nameLabel}
-        description="Shown in the sidebar, on reports, and in the browser tab."
+        heading="Letterhead"
+        description="What the invoice page and the PDF say about you. The name is also shown in the sidebar, on reports, and in the browser tab."
       >
-        <div class="row">
-          <wa-input
-            label=${nameLabel}
-            .value=${this.companyName}
-            ?disabled=${this.busy === 'company'}
-            @input=${this.handleCompanyInput}
-          ></wa-input>
-        </div>
-        <wa-button
-          slot="actions"
-          variant="brand"
-          ?disabled=${this.busy === 'company'}
-          @click=${this.saveCompanyName}
-          >Save</wa-button
-        >
+        ${this.renderCompanyBody(nameLabel)}
+        ${this.companyError ? html`<p class="error">${this.companyError}</p>` : nothing}
+        ${this.companyLoadError
+          ? html`<wa-button slot="actions" variant="brand" @click=${this.retryCompany}
+              >Retry</wa-button
+            >`
+          : html`<wa-button
+              slot="actions"
+              variant="brand"
+              ?disabled=${this.busy === 'company' || this.company === null}
+              @click=${this.saveCompany}
+              >Save</wa-button
+            >`}
       </wc-panel>
 
       <wc-panel

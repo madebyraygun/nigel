@@ -1540,8 +1540,13 @@ fn invoice_preview_writes_html_to_the_data_dir() {
 
     let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html"))
         .expect("preview html missing");
-    assert!(html.contains("Invoice #1248"), "got: {html}");
-    assert!(html.contains("1500.00"), "got: {html}");
+    // The number is in the tab title and in the metadata band; the document
+    // itself carries no heading line.
+    assert!(html.contains("<title>Invoice 1248</title>"), "got: {html}");
+    assert!(html.contains("Invoice ID"), "got: {html}");
+    // One figure format on both documents: separators, two decimals, and the
+    // currency named — a bare `1500.00` is what the page used to print.
+    assert!(html.contains("$1,500.00"), "got: {html}");
 }
 
 #[test]
@@ -1647,9 +1652,16 @@ fn invoice_send_refuses_a_from_address_carrying_a_line_break() {
 }
 
 #[test]
-fn invoice_preview_names_contact_email_when_neither_key_is_set() {
+fn invoice_preview_names_contact_email_when_a_template_prints_it() {
     let env = TestEnv::new();
     init_with_client_and_invoice(&env);
+    // The stock page stopped printing `{{CONTACT}}` — payment instructions are
+    // the operator's own text now — so the notice belongs to a template that
+    // actually uses it.
+    write_template(
+        &env,
+        "<p>{{CONTACT}} {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
+    );
 
     env.cmd()
         .args(["invoice", "preview", "1248"])
@@ -1667,12 +1679,93 @@ fn invoice_preview_names_contact_email_when_neither_key_is_set() {
     );
 }
 
+/// A notice about a placeholder the document does not carry is noise.
+#[test]
+fn the_stock_page_prints_no_contact_line_and_says_nothing_about_one() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("contact_email").not());
+
+    let html = std::fs::read_to_string(previews_dir(&env).join("invoice-1248.html")).unwrap();
+    assert!(!html.contains("Direct deposit"), "got: {html}");
+    assert!(
+        !html.contains("(contact_email not configured)"),
+        "got: {html}"
+    );
+}
+
+/// The stock page no longer hardcodes a way to pay, so an installation with
+/// nothing configured now sends a document that says how much is owed and
+/// nothing about how to settle it. That is a legitimate choice and a silent one,
+/// so it is said out loud — once, on stderr, where the old placeholder notice
+/// was.
+#[test]
+fn a_document_with_no_way_to_pay_says_so_on_stderr() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions"));
+}
+
+#[test]
+fn configured_payment_instructions_draw_no_notice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.db()
+        .execute(
+            "INSERT INTO metadata (key, value) VALUES ('payment_instructions', ?1)",
+            ["Bank transfer to Example Bank"],
+        )
+        .unwrap();
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions").not());
+}
+
+/// An operator who owns their template owns what it says about paying, and a
+/// notice about a key their page may not even use is noise.
+#[test]
+fn a_custom_template_draws_no_payment_notice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} — pay however we agreed</p>",
+    );
+
+    env.cmd()
+        .args(["invoice", "preview", "1248"])
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("payment_instructions").not());
+}
+
 /// AC #3 end to end: the page's direct-deposit line is `contact_email`, not the
 /// address the email is sent from.
 #[test]
 fn contact_email_is_what_the_page_prints_not_from_email() {
     let env = TestEnv::new();
     init_with_client_and_invoice(&env);
+    write_template(
+        &env,
+        "<p>{{CONTACT}} {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
+    );
 
     env.cmd()
         .args(["invoice", "preview", "1248"])

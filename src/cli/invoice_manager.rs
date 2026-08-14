@@ -9,8 +9,8 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::invoice::{
-    build_clients, company_name, contact_email_for_preview, optional_gateway, optional_publisher,
-    PUBLISHED_VOID_NOTICE,
+    build_clients, company_name, company_profile, contact_email_for_preview, optional_gateway,
+    optional_publisher, PUBLISHED_VOID_NOTICE,
 };
 use crate::error::{NigelError, Result};
 use crate::fmt::money;
@@ -1143,10 +1143,10 @@ impl InvoiceManager {
         cfg: InvoicingConfig,
         data_dir: &std::path::Path,
     ) {
-        let company = company_name(conn);
+        let profile = company_profile(conn);
         let contact_email = contact_email_for_preview(&cfg).0;
         let prepared = load_template(data_dir).and_then(|template| {
-            let clients = build_clients(cfg, &company)?;
+            let clients = build_clients(cfg, &profile.name)?;
             Ok((template, clients))
         });
         match prepared {
@@ -1158,11 +1158,7 @@ impl InvoiceManager {
                 for warning in &clients.warnings {
                     self.set_status(warning.clone());
                 }
-                let branding = Branding {
-                    template: &template,
-                    company: &company,
-                    contact_email: &contact_email,
-                };
+                let branding = profile.branding(&template, &contact_email);
                 self.perform_send(
                     conn,
                     today,
@@ -3388,9 +3384,9 @@ mod tests {
 
         fn branding() -> Branding<'static> {
             Branding {
-                template: DEFAULT_TEMPLATE,
                 company: "",
                 contact_email: "billing@example.test",
+                ..Branding::with_template(DEFAULT_TEMPLATE)
             }
         }
 

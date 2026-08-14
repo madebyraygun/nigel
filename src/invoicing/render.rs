@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 use crate::error::Result;
-use crate::invoicing::document::MoneySummary;
+use crate::invoicing::document::{company_block, parse_logo, CompanyBlock, Logo, MoneySummary};
 use crate::invoicing::invoices::{is_void, line_items, paid_amount};
 use crate::invoicing::render_html::{render_invoice_html, Branding, PayButton};
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoiceStatus};
@@ -50,29 +50,83 @@ pub fn render_invoice(
     // the same figures without asking for them.
     let items = line_items(conn, invoice.id)?;
     let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
+
+    // Whether there is a usable logo is decided **here**, once, and both
+    // documents are then rendered from that one answer.
+    //
+    // `parse_logo` is everything a check can establish without a decoder, and it
+    // holds in every build. `logo_is_embeddable` is the rest, and it only exists
+    // where the `pdf` feature brought a decoder in. A value that fails either is
+    // erased from the branding the page is rendered from, so the page is handed
+    // no logo rather than asked to reach the same verdict a second time — which
+    // is what stops a file the page would display and the PDF would refuse.
+    // Neither refusal is an error: a logo never fails an invoice.
+    let logo = parse_logo(branding.logo).ok().flatten();
+    #[cfg(feature = "pdf")]
+    let logo = logo.filter(crate::pdf::logo_is_embeddable);
+    let branding = &Branding {
+        logo: if logo.is_some() { branding.logo } else { "" },
+        template: branding.template,
+        company: branding.company,
+        company_address: branding.company_address,
+        company_phone: branding.company_phone,
+        payment_instructions: branding.payment_instructions,
+        contact_email: branding.contact_email,
+    };
+
     let html = render_invoice_html(branding, invoice, client, &items, &money, pay);
-    let pdf = render_pdf(invoice, client, &items, branding.company, &money)?;
+
+    // The From block is decided once, above both renderers, for the same
+    // reason: the page and the attachment agree by construction, not by review.
+    let company = company_block(
+        branding.company,
+        branding.company_address,
+        branding.company_phone,
+    );
+    let pdf = render_pdf(
+        invoice,
+        client,
+        &company,
+        logo.as_ref(),
+        &items,
+        &money,
+        branding.payment_instructions,
+    )?;
     Ok(RenderedInvoice { html, pdf })
 }
 
 #[cfg(feature = "pdf")]
+#[allow(clippy::too_many_arguments)]
 fn render_pdf(
     invoice: &Invoice,
     client: &Client,
+    company: &CompanyBlock<'_>,
+    logo: Option<&Logo>,
     items: &[InvoiceLineItem],
-    company: &str,
     money: &MoneySummary,
+    payment_instructions: &str,
 ) -> Result<Option<Vec<u8>>> {
-    crate::pdf::render_invoice_pdf(invoice, client, items, company, money).map(Some)
+    crate::pdf::render_invoice_pdf(
+        invoice,
+        client,
+        company,
+        logo,
+        items,
+        money,
+        payment_instructions,
+    )
+    .map(Some)
 }
 
 #[cfg(not(feature = "pdf"))]
 fn render_pdf(
     _invoice: &Invoice,
     _client: &Client,
+    _company: &CompanyBlock<'_>,
+    _logo: Option<&Logo>,
     _items: &[InvoiceLineItem],
-    _company: &str,
     _money: &MoneySummary,
+    _payment_instructions: &str,
 ) -> Result<Option<Vec<u8>>> {
     Ok(None)
 }
@@ -90,9 +144,9 @@ mod tests {
 
     fn brand(contact_email: &str) -> Branding<'_> {
         Branding {
-            template: DEFAULT_TEMPLATE,
             company: "",
             contact_email,
+            ..Branding::with_template(DEFAULT_TEMPLATE)
         }
     }
 
@@ -133,8 +187,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(out.html.contains("Invoice #1248"), "got: {}", out.html);
-        assert!(out.html.contains("Contact ap@acme.test"));
+        // The number is in the tab title and in the metadata band; there is no
+        // heading line on the document any more.
+        assert!(
+            out.html.contains("<title>Invoice 1248</title>"),
+            "got: {}",
+            out.html
+        );
+        assert!(out.html.contains("Invoice ID"), "got: {}", out.html);
+        assert!(out.html.contains("Acme"), "got: {}", out.html);
         assert!(out.html.contains("100.00"));
     }
 
@@ -146,9 +207,9 @@ mod tests {
         let client = get_client(&conn, invoice.client_id).unwrap();
 
         let branding = Branding {
-            template: "<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>",
             company: "",
             contact_email: "b@e.test",
+            ..Branding::with_template("<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>")
         };
         let out = render_invoice(&conn, &invoice, &client, PayButton::Omitted, &branding).unwrap();
 
@@ -250,7 +311,7 @@ mod tests {
     /// apart and a client comparing the two sees one figure.
     #[cfg(feature = "pdf")]
     #[test]
-    fn the_pdf_and_the_page_render_the_payment_rows_identically() {
+    fn the_pdf_and_the_page_render_every_figure_identically() {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
         crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
@@ -268,13 +329,45 @@ mod tests {
         .unwrap();
         let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
 
-        for figure in ["USD 40.00", "USD 60.00"] {
+        // The money block and the line items both, in one style: the page used
+        // to print a bare `100.00` in its table where this document printed
+        // `$100.00`, and the block mixed `$` rows with `USD` rows.
+        for figure in ["$40.00", "$60.00", "$100.00"] {
             assert!(out.html.contains(figure), "{figure} missing from the page");
             assert!(
                 text.contains(figure),
                 "{figure} missing from the pdf: {text}"
             );
         }
+        assert!(!out.html.contains("USD"), "no code on a dollar page");
+        assert!(!text.contains("USD"), "nor on the attachment: {text}");
+    }
+
+    /// The non-USD case both documents have to get right together.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_non_usd_invoice_names_its_currency_on_both_documents() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        conn.execute("UPDATE invoices SET currency = 'EUR' WHERE id = ?1", [id])
+            .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        assert!(out.html.contains("EUR 100.00"), "got: {}", out.html);
+        assert!(text.contains("EUR 100.00"), "got: {text}");
+        assert!(!out.html.contains('$'), "no dollar sign on the page");
+        assert!(!text.contains('$'), "nor on the attachment: {text}");
     }
 
     #[test]
@@ -408,15 +501,284 @@ mod tests {
         let client = get_client(&conn, invoice.client_id).unwrap();
 
         let branding = Branding {
-            template: "<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}",
             company: "Bluepeak LLC",
             contact_email: "b@e.test",
+            ..Branding::with_template("<h1>{{COMPANY}}</h1>{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
         let out = render_invoice(&conn, &invoice, &client, PayButton::Omitted, &branding).unwrap();
 
         assert!(out.html.contains("<h1>Bluepeak LLC</h1>"));
         let text = crate::pdf::extract_text(&out.pdf.unwrap());
         assert!(text.contains("Bluepeak LLC"), "got: {text}");
+    }
+
+    fn letterhead<'a>(logo: &'a str, payment_instructions: &'a str) -> Branding<'a> {
+        Branding {
+            template: DEFAULT_TEMPLATE,
+            company: "Bluepeak LLC",
+            company_address: "P.O. Box 1234\nSpringfield, CA 90001",
+            company_phone: "619.555.0123",
+            logo,
+            payment_instructions,
+            contact_email: "b@e.test",
+        }
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_pdf_and_the_page_carry_the_same_company_block() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead("", ""),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        for line in [
+            "Bluepeak LLC",
+            "P.O. Box 1234",
+            "Springfield, CA 90001",
+            "619.555.0123",
+        ] {
+            assert!(out.html.contains(line), "{line} missing from the page");
+            assert!(text.contains(line), "{line} missing from the pdf: {text}");
+        }
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_pdf_and_the_page_carry_the_same_metadata_rows() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", Some("ap@acme.test"), None, None).unwrap();
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-08-04",
+            Some("2026-09-03"),
+            "USD",
+            &one_item(),
+            None,
+            Some("Net 30"),
+        )
+        .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead("", ""),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        for row in crate::invoicing::document::meta_rows(&invoice) {
+            assert!(
+                out.html.contains(&row.value),
+                "{} missing from the page",
+                row.value
+            );
+            assert!(
+                text.contains(&row.value),
+                "{} missing from the pdf: {text}",
+                row.value
+            );
+        }
+        assert!(out.html.contains("2026-09-03 (Net 30)"));
+        assert!(text.contains("2026-09-03 (Net 30)"), "got: {text}");
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_sparse_invoice_omits_the_same_blocks_in_both_documents() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-08-04",
+            None,
+            "USD",
+            &one_item(),
+            None,
+            None,
+        )
+        .unwrap();
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &brand("b@e.test"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+
+        for absence in ["From", "ph.", "Due Date", "Notes", "Terms", "Payment"] {
+            assert!(
+                !out.html.contains(absence),
+                "{absence} survived on the page"
+            );
+            assert!(!text.contains(absence), "{absence} survived on the pdf");
+        }
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_same_logo_reaches_both_documents() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+        let uri = crate::pdf::logo_uri(400, 60);
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead(&uri, ""),
+        )
+        .unwrap();
+
+        assert!(out.html.contains(&uri), "the page carries the data URI");
+        assert_eq!(
+            crate::pdf::image_xobjects(&out.pdf.expect("a pdf")).len(),
+            1,
+            "the attachment carries the image"
+        );
+    }
+
+    /// A logo may never cost an invoice. A stored value that cannot be used
+    /// degrades both documents to the company name and fails neither.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn an_unusable_logo_degrades_on_both_documents_and_fails_neither() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead("data:image/png;base64,bm90IGEgcG5n", ""),
+        )
+        .expect("a bad logo is not a failed render");
+
+        assert!(!out.html.contains("<img"), "no broken image on the page");
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+        assert!(
+            text.contains("Bluepeak LLC"),
+            "the wordmark stands in: {text}"
+        );
+    }
+
+    /// A logo that passes every structural check and still will not decode is
+    /// the case where the two documents could disagree: the page has no decoder
+    /// to consult, so it would show a broken `<img>` beside a PDF drawing the
+    /// wordmark. The seam decides once and neither document uses it.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_logo_that_will_not_decode_is_dropped_from_both_documents() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        // A well-formed PNG wrapper — signature, `IHDR` declaring a size, and
+        // the `IEND` that says the file is whole — around no image data at all.
+        let mut hollow = vec![
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        hollow.extend_from_slice(&[
+            0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82,
+        ]);
+        let uri = {
+            use base64::Engine as _;
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&hollow)
+            )
+        };
+        assert!(
+            crate::invoicing::document::parse_logo(&uri)
+                .unwrap()
+                .is_some(),
+            "the premise: it passes every check that costs no decoder"
+        );
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead(&uri, ""),
+        )
+        .expect("an undecodable logo is not a failed render");
+
+        assert!(!out.html.contains("<img"), "no broken image on the page");
+        let pdf = out.pdf.expect("a pdf");
+        assert!(
+            crate::pdf::image_xobjects(&pdf).is_empty(),
+            "and nothing embedded in the attachment"
+        );
+        assert!(
+            crate::pdf::extract_text(&pdf).contains("Bluepeak LLC"),
+            "the wordmark stands in on both"
+        );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_payment_instructions_reach_both_documents_or_neither() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn, &one_item());
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead("", "Wells Fargo\nRouting 121000248"),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+        for line in ["Payment", "Wells Fargo", "Routing 121000248"] {
+            assert!(out.html.contains(line), "{line} missing from the page");
+            assert!(text.contains(line), "{line} missing from the pdf: {text}");
+        }
+
+        let out = render_invoice(
+            &conn,
+            &invoice,
+            &client,
+            PayButton::Omitted,
+            &letterhead("", ""),
+        )
+        .unwrap();
+        let text = crate::pdf::extract_text(&out.pdf.expect("a pdf"));
+        assert!(!out.html.contains("Payment"), "got: {}", out.html);
+        assert!(!text.contains("Payment"), "got: {text}");
     }
 
     #[cfg(not(feature = "pdf"))]
@@ -436,6 +798,9 @@ mod tests {
         )
         .unwrap();
         assert!(out.pdf.is_none());
-        assert!(out.html.contains("Invoice #1248"));
+        // The number is the tab title and the metadata band; the document
+        // carries no heading line.
+        assert!(out.html.contains("<title>Invoice 1248</title>"));
+        assert!(out.html.contains("Invoice ID"));
     }
 }
