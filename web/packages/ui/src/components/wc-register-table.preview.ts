@@ -60,7 +60,9 @@ const rows: RegisterTableRow[] = [
  * IBM Plex Mono advances every glyph at 0.6em — 8.4px at the 14px base — so
  * that description alone wants about 500px before padding. This is where a
  * monospace UI overflows first, which is why the state is declared
- * permanently rather than checked once.
+ * permanently rather than checked once. The row clips rather than wraps: one
+ * line per transaction is what lets the window place rows by arithmetic, and
+ * the full text stays in the DOM and on the cell's title.
  */
 const widestRow: RegisterTableRow[] = [
   {
@@ -80,6 +82,16 @@ const widestRow: RegisterTableRow[] = [
 const longRegister: RegisterTableRow[] = Array.from({ length: 32 }, (_, index) => {
   const base = rows[index % rows.length] as RegisterTableRow;
   return { ...base, id: 1000 + index };
+});
+
+/**
+ * Past the windowing threshold, so this state shows what a real unfiltered
+ * register looks like: a scrollbar the length of 1,872 rows over a few dozen
+ * of them in the DOM.
+ */
+const wholeYear: RegisterTableRow[] = Array.from({ length: 1872 }, (_, index) => {
+  const base = rows[index % rows.length] as RegisterTableRow;
+  return { ...base, id: 2000 + index };
 });
 
 const categories: CategoryOption[] = [
@@ -132,6 +144,21 @@ const preview = {
             .selectedId=${1000}
             .total=${8281.51}
             footer-note="32 of 1,872 rows"
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
+      name: 'windowed',
+      render: () => html`
+        <div style="display: flex; flex-direction: column; height: 22rem">
+          <wc-register-table
+            fill
+            .rows=${wholeYear}
+            .categories=${categories}
+            .selectedId=${2000}
+            .total=${-12480.19}
+            footer-note="1,872 rows"
           ></wc-register-table>
         </div>
       `,
