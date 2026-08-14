@@ -21,60 +21,48 @@ import { css } from 'lit';
  * properties inherit, which is why the document sheet still owns them.
  */
 export const controlsCss = css`
-  wa-button[variant='brand']::part(base),
-  wa-button[variant='primary']::part(base) {
+  wa-button[variant='brand']::part(base) {
     background: var(--nc-grad-brand);
     color: var(--nc-color-on-gradient);
     border-color: transparent;
   }
 
-  wa-button[variant='brand']:hover::part(base),
-  wa-button[variant='primary']:hover::part(base) {
+  wa-button[variant='brand']:hover::part(base) {
     background: var(--nc-grad-brand-hover);
     filter: brightness(1.04);
   }
 
-  wa-button[variant='brand']:active:not([disabled])::part(base),
-  wa-button[variant='primary']:active:not([disabled])::part(base) {
+  wa-button[variant='brand']:active:not([disabled])::part(base) {
     transform: translateY(1px);
   }
 
-  /* Hover and focus-visible put a glow under a button in the ramp's own hues.
-     The token flips to the pastels in dark mode; the ink ramp is what reads on
-     a pale surface.
-
-     The pseudo-class is written twice on purpose. wa-button sets
-     delegatesFocus, so the host matches :focus-visible when the inner control
-     does — and the part itself is that control, which is the direct statement
-     of the same thing.
-
-     No transition is declared here. wa-button's own base part already
-     transitions box-shadow over --wa-transition-fast, which wa-contract.ts
-     points at --nc-duration-fast — 0ms under prefers-reduced-motion. A
-     transition in this rule would replace that whole list rather than add to
-     it, taking the background and colour transitions with it. */
-  :is(wa-button[variant='brand'], wa-button[variant='primary']):not([disabled]):is(
-      :hover,
-      :focus-visible
-    )::part(base),
-  :is(wa-button[variant='brand'], wa-button[variant='primary']):not(
-      [disabled]
-    )::part(base):focus-visible {
-    box-shadow: var(--nc-glow-brand);
+  /* Which halo a button draws. One line per variant, so the rule that applies
+     it below is written once and every button is excluded on the same terms. */
+  wa-button {
+    --nc-glow: var(--nc-glow-neutral);
   }
 
-  /* Secondary: the neutral variant, filled or outlined. A plain button is a
-     row action drawn as bare text and a semantic variant is its own colour —
-     neither takes the brand halo. */
-  :is(wa-button:not([variant]), wa-button[variant='neutral']):not(
-      [appearance='plain'],
-      [disabled]
-    ):is(:hover, :focus-visible)::part(base),
-  :is(wa-button:not([variant]), wa-button[variant='neutral']):not(
-      [appearance='plain'],
-      [disabled]
-    )::part(base):focus-visible {
-    box-shadow: var(--nc-glow-neutral);
+  wa-button[variant='brand'] {
+    --nc-glow: var(--nc-glow-brand);
+  }
+
+  wa-button[variant='danger'] {
+    --nc-glow: var(--nc-glow-danger);
+  }
+
+  wa-button[variant='success'] {
+    --nc-glow: var(--nc-glow-success);
+  }
+
+  wa-button[variant='warning'] {
+    --nc-glow: var(--nc-glow-warning);
+  }
+
+  /* A plain button is a row action drawn as bare text, a disabled one is
+     refusing, and a loading one drops the click in handleClick — none of the
+     three should be carrying the strongest click invitation in the theme. */
+  wa-button:not([appearance='plain'], [disabled], [loading]):is(:hover, :focus-visible)::part(base) {
+    box-shadow: var(--nc-glow);
   }
 
   wa-button::part(label) {

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 04:57'
+updated_date: '2026-08-14 17:54'
 labels:
   - web
   - ui
@@ -45,6 +45,15 @@ Buttons currently change little on hover. Add a subtle glow (soft box-shadow in 
 - controls.ts adds two rules: brand/primary and neutral (excluding `appearance=plain` and disabled), each on `:hover` and `:focus-visible`, with focus-visible stated on the host *and* on the part because wa-button sets delegatesFocus.
 - No transition is declared: wa-button already transitions box-shadow on its base part over `--wa-transition-fast`, which wa-contract.ts points at `--nc-duration-fast` and motion.ts zeroes under prefers-reduced-motion. An outer-tree transition would replace that list rather than extend it.
 - The preview harness cannot force :hover/:focus-visible (no state forcing, and previews render in preview-app's shadow root, which does not adopt controlsCss — a bare wa-button there would show no part styling at all). Buttons stay previewable only through the wc-* components that host them; the glow itself needs a real pointer or keyboard in a browser.
+
+Review round on PR #9 (7 findings):
+- Semantic variants glow in their own hue. wc-confirm renders its destructive action as variant="danger", so a glow limited to brand/neutral lit the Cancel button and left the primary dark — an inverted affordance. `--nc-glow-danger/-success/-warning` mix from `--wa-color-danger` and friends, which carry dark overrides already, so one declaration serves both modes.
+- `:not([loading])` joins the exclusions: wa-button's handleClick calls preventDefault + stopImmediatePropagation while loading, so a busy button was drawing the strongest click invitation in the theme and ignoring the click.
+- The dead `variant='primary'` selectors are gone from the whole sheet — Web Awesome has no such variant and nothing in packages/ or apps/ ever set it.
+- The part-level `::part(base):focus-visible` duplicate is gone; delegatesFocus makes the host match, and the test now asserts the behaviour rather than the duplication.
+- The anti-regression transition comment and the palette-derivation comment are gone; the rationale lives in the guard test and the CLAUDE.md bullet.
+- One shared rule now applies the glow, with the variant hue named one line each, so the plain/disabled/loading exclusions cannot drift apart between variants.
+- The glow family moved to tokens/shadow.ts, which is where box-shadow tokens live; gradient.ts is back to being only the ramps.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -54,6 +54,9 @@ describe('nigelTheme', () => {
     '--nc-transition-base',
     '--nc-glow-brand',
     '--nc-glow-neutral',
+    '--nc-glow-danger',
+    '--nc-glow-success',
+    '--nc-glow-warning',
   ])('defines the nigel token %s', (token) => {
     expect(text).toContain(`${token}:`);
   });
@@ -147,9 +150,30 @@ describe('the button glow', () => {
     }
   });
 
+  /**
+   * A semantic button is already drawn in its own colour, and that colour has
+   * a dark override of its own — so one declaration reading the token serves
+   * both modes, where the ramp (which is not a token) needs two.
+   */
+  it.each(['danger', 'success', 'warning'])(
+    'mixes the %s halo from the colour the button is drawn in',
+    (name) => {
+      const declared = values(`--nc-glow-${name}`);
+      expect(declared).toHaveLength(1);
+      expect(declared[0]).toContain(`var(--wa-color-${name})`);
+    },
+  );
+
   it('stays a glow rather than a neon edge', () => {
     // Subtlety is the whole brief, and it lives in these percentages.
-    const mixes = [...values('--nc-glow-brand'), ...values('--nc-glow-neutral')]
+    const mixes = [
+      '--nc-glow-brand',
+      '--nc-glow-neutral',
+      '--nc-glow-danger',
+      '--nc-glow-success',
+      '--nc-glow-warning',
+    ]
+      .flatMap(values)
       .flatMap((value) => [...value.matchAll(/(\d+)%/g)])
       .map((m) => Number(m[1]));
 

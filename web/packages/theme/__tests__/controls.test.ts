@@ -44,49 +44,56 @@ describe('controlsCss', () => {
 
 /** The rules behind AC #1: a glow on hover and on focus-visible. */
 describe('the button glow', () => {
-  /** Selector and token for each rule that draws a glow, whitespace collapsed. */
-  const glowRules = [
-    ...text.replace(/\s+/g, '').matchAll(/([^{}]+)\{box-shadow:var\((--nc-glow-[a-z]+)\)/g),
-  ];
+  /** Rules with their comments stripped and their whitespace collapsed. */
+  const rules = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
 
-  it('is drawn for the brand buttons and for the neutral ones', () => {
-    expect(glowRules.map((m) => m[2])).toEqual(['--nc-glow-brand', '--nc-glow-neutral']);
+  /** The one rule that draws a glow, and the selector it draws it for. */
+  const applied = rules.match(/([^{}]+)\{box-shadow:var\(--nc-glow\)/);
+  const selectors = applied?.[1] ?? '';
+
+  /** Which token a variant points `--nc-glow` at. */
+  const hueFor = (selector: string): string | undefined =>
+    rules.match(new RegExp(`${selector}\\{--nc-glow:var\\((--nc-glow-[a-z]+)\\)`))?.[1];
+
+  it('is applied by one rule, so every button is excluded on the same terms', () => {
+    expect(applied).not.toBeNull();
   });
 
-  it.each(['--nc-glow-brand', '--nc-glow-neutral'])(
-    '%s reaches both hover and focus-visible',
-    (token) => {
-      const selectors = glowRules.find((m) => m[2] === token)?.[1] ?? '';
-      expect(selectors).toContain(':hover');
-      expect(selectors).toContain(':focus-visible');
-    },
-  );
-
-  it('states focus-visible on the host and on the part', () => {
-    // wa-button sets delegatesFocus, so the host matches when the inner
-    // control does; the part *is* that control.
-    for (const [selectors] of glowRules) {
-      expect(selectors).toMatch(/:focus-visible\)?::part\(base\)/);
-      expect(selectors).toContain('::part(base):focus-visible');
-    }
+  it('draws on hover and on keyboard focus', () => {
+    expect(selectors).toContain(':hover');
+    expect(selectors).toContain(':focus-visible');
   });
 
-  it('skips a disabled button, which nothing is inviting a click on', () => {
-    for (const [selectors] of glowRules) {
-      expect(selectors).toMatch(/:not\((\[appearance='plain'],)?\[disabled]\)/);
-    }
+  it('reaches the control through the host, which wa-button delegates focus to', () => {
+    expect(selectors).toMatch(/::part\(base\)$/);
   });
 
-  it('skips a plain button, a row action drawn as bare text', () => {
-    const forNeutral = glowRules.find((m) => m[2] === '--nc-glow-neutral')?.[1] ?? '';
-    expect(forNeutral).toContain(":not([appearance='plain'],[disabled])");
+  it.each([
+    ['wa-button', '--nc-glow-neutral'],
+    ["wa-button\\[variant='brand']", '--nc-glow-brand'],
+    ["wa-button\\[variant='danger']", '--nc-glow-danger'],
+    ["wa-button\\[variant='success']", '--nc-glow-success'],
+    ["wa-button\\[variant='warning']", '--nc-glow-warning'],
+  ])('gives %s a halo in its own hue', (selector, token) => {
+    expect(hueFor(selector)).toBe(token);
+  });
+
+  it('excludes the three buttons that must not invite a click', () => {
+    // A plain button is a row action drawn as bare text; a disabled one is
+    // refusing; a loading one swallows the click in handleClick.
+    expect(selectors).toContain(":not([appearance='plain'],[disabled],[loading])");
+  });
+
+  it('names no variant Web Awesome does not have', () => {
+    // wa-button's variants are neutral, brand, success, warning and danger.
+    expect(rules).not.toContain("variant='primary'");
   });
 
   it('declares no duration of its own', () => {
     // wa-button's base part already transitions box-shadow over
     // --wa-transition-fast, which the theme zeroes under reduced motion. A
     // transition written here would replace that whole list instead.
-    expect(text).not.toMatch(/transition(-[a-z]+)?\s*:/);
+    expect(rules).not.toContain('transition');
   });
 });
 

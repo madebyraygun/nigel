@@ -1,5 +1,5 @@
 import { css } from 'lit';
-import { glowDarkTokens } from './gradient.js';
+import { glowDarkTokens } from './shadow.js';
 
 /**
  * The brand, danger, success, warning and info entries are darkened
@@ -95,9 +95,8 @@ const darkTokens = css`
   /* The pastel ramp is legible on a dark surface, so the wordmark keeps it. */
   --nc-grad-brand-text: var(--nc-grad-brand);
 
-  /* Same split, for the button glow: pastel hues on a dark surface, the ink
-     ramp on a light one. The values live beside the ramps they are mixed
-     from, in gradient.ts. */
+  /* Same split, for the button glow. The semantic halos need no override:
+     they read --wa-color-danger and friends, which are overridden above. */
   ${glowDarkTokens}
 `;
 
