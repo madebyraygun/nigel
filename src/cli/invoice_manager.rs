@@ -22,7 +22,7 @@ use crate::invoicing::invoices::{
     validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use crate::invoicing::render_html::{load_template, Branding};
-use crate::invoicing::send::send_invoice;
+use crate::invoicing::send::{send_invoice, SendOutcome};
 use crate::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
@@ -1209,7 +1209,7 @@ impl InvoiceManager {
         self.finish_send(conn, outcome);
     }
 
-    fn finish_send(&mut self, conn: &Connection, outcome: Result<String>) {
+    fn finish_send(&mut self, conn: &Connection, outcome: Result<SendOutcome>) {
         let Some(detail) = &self.detail else {
             return;
         };
@@ -1224,12 +1224,19 @@ impl InvoiceManager {
         let reloaded = self.detail.as_ref().expect("just loaded");
 
         let (title, lines, is_error) = match outcome {
-            Ok(url) => (
+            // The warnings land on the result screen rather than the status
+            // line, because the status line is about to be covered by it — and
+            // a logo that did not publish is a thing to read once, beside the
+            // address the invoice went out at.
+            Ok(sent) => (
                 format!("Invoice #{number} sent"),
-                vec![
-                    url,
+                [
+                    sent.public_url,
                     format!("Emailed to {}.", optional_display(reloaded.client_email())),
-                ],
+                ]
+                .into_iter()
+                .chain(sent.warnings)
+                .collect(),
                 false,
             ),
             // The second sentence is derived from the reloaded row: a failed
@@ -3176,6 +3183,12 @@ mod tests {
                 *self.pages.borrow_mut() += 1;
                 Ok(format!("https://billing.example.test/i/{token}/index.html"))
             }
+            fn public_base(&self) -> &str {
+                "https://billing.example.test/i"
+            }
+            fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+                unreachable!("void publishes no logo")
+            }
         }
 
         /// A sent invoice, as far as the teardown can tell: a link and a page.
@@ -3331,6 +3344,12 @@ mod tests {
             fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
                 Ok(format!("https://billing.example.com/i/{token}/index.html"))
             }
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
+            }
+            fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+                Ok(self.logo_url(bytes, mime))
+            }
         }
         struct FailPub;
         impl AssetPublisher for FailPub {
@@ -3338,6 +3357,12 @@ mod tests {
                 Err(NigelError::Other("upload down".into()))
             }
             fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
+                Err(NigelError::Other("upload down".into()))
+            }
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
+            }
+            fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))
             }
         }

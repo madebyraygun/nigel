@@ -12,6 +12,7 @@ import {
   confirmDialog,
   dispatchNcToast,
   EMPTY_INVOICE_FORM,
+  newInvoiceForm,
   paymentFormFor,
   validateInvoiceForm,
   validatePaymentForm,
@@ -375,7 +376,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         this.clients = clients;
         this.nextNumber = next.number;
         this.detail = null;
-        this.form = { ...EMPTY_INVOICE_FORM, issueDate: today() };
+        this.form = newInvoiceForm(today());
         this.formErrors = {};
         this.formError = null;
       } else if (number !== null) {
@@ -641,7 +642,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     try {
       const result = await this.client.sendInvoice(detail.number);
       this.sendSteps = sendStepViews({ completed: result.steps });
-      this.sendWarnings = result.configWarnings ?? [];
+      this.sendWarnings = [...(result.configWarnings ?? []), ...(result.warnings ?? [])];
       this.sentUrl = result.publicUrl;
       this.sendPhase = 'sent';
       this.detail = result.invoice;

@@ -615,6 +615,15 @@ struct SendResult {
     /// the way a void's `teardownWarnings` are, because the server's stderr is
     /// not somewhere a browser can read.
     config_warnings: Vec<String>,
+    /// What the send itself went ahead despite: a letterhead logo that could
+    /// not be published beside the page, which leaves the page carrying it
+    /// inline. Separate from `configWarnings` because it is not about a
+    /// setting — nothing is misconfigured, an upload did not work.
+    ///
+    /// Always serialized, empty and all, because `configWarnings` beside it is:
+    /// one struct answering the same question two ways is how a client ends up
+    /// with an `undefined` where it expected a list.
+    warnings: Vec<String>,
 }
 
 /// The refusal a request that never named the invoicing settings gets.
@@ -774,6 +783,7 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
             .collect(),
         // Filled in by the handler, which is where the configuration was read.
         config_warnings: Vec::new(),
+        warnings: outcome.warnings,
     })
 }
 
@@ -2374,6 +2384,7 @@ mod tests {
     struct FakePub {
         pages: RefCell<Vec<String>>,
         pairs: RefCell<Vec<String>>,
+        logos: RefCell<Vec<Vec<u8>>>,
     }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
@@ -2386,6 +2397,13 @@ mod tests {
                 .push(String::from_utf8(html.to_vec()).expect("utf-8"));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> NigelResult<String> {
+            self.logos.borrow_mut().push(bytes.to_vec());
+            Ok(self.logo_url(bytes, mime))
+        }
     }
 
     /// R2 refusing the way it does when the credentials are wrong.
@@ -2397,6 +2415,14 @@ mod tests {
             ))
         }
         fn publish_page(&self, _t: &str, _h: &[u8]) -> NigelResult<String> {
+            Err(NigelError::Other(
+                "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
+            ))
+        }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> NigelResult<String> {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
