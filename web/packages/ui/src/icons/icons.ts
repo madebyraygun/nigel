@@ -186,6 +186,13 @@ export class WcIconClients extends WcIconBase {
   }
 }
 
+@customElement('wc-icon-menu')
+export class WcIconMenu extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M4 7h16M4 12h16M4 17h16"/>`;
+  }
+}
+
 /**
  * The neutral marker: a status nothing else describes, and a step not started.
  *
@@ -277,6 +284,7 @@ export const ICON_TAGS = [
   'wc-icon-trash',
   'wc-icon-invoice',
   'wc-icon-clients',
+  'wc-icon-menu',
   'wc-icon-dot',
   'wc-icon-status-draft',
   'wc-icon-status-sent',
@@ -315,6 +323,7 @@ declare global {
     'wc-icon-trash': WcIconTrash;
     'wc-icon-invoice': WcIconInvoice;
     'wc-icon-clients': WcIconClients;
+    'wc-icon-menu': WcIconMenu;
     'wc-icon-dot': WcIconDot;
     'wc-icon-status-draft': WcIconStatusDraft;
     'wc-icon-status-sent': WcIconStatusSent;

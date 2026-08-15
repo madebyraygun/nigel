@@ -1,4 +1,4 @@
-export { WcAppShell } from './wc-app-shell.js';
+export { WcAppShell, narrowViewport } from './wc-app-shell.js';
 export { WcNavSidebar, type NavItem } from './wc-nav-sidebar.js';
 export {
   WcToast,
