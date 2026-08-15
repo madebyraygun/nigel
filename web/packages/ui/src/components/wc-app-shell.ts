@@ -149,6 +149,11 @@ export class WcAppShell extends LitElement {
       :host([sidebar-collapsed]) ::slotted([slot='sidebar']) {
         transform: translateX(-100%);
       }
+
+      /* 16px a side is a tenth of a phone's width spent on margin. */
+      .content {
+        padding: 10px;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {

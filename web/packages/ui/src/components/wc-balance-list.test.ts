@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-balance-list.js';
+import { WcBalanceList as WcBalanceListCtor } from './wc-balance-list.js';
 import type { BalanceRow, WcBalanceList } from './wc-balance-list.js';
 import type { WcMoney } from './wc-money.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-balance-list.preview.js';
 
 const items: BalanceRow[] = [
@@ -94,3 +96,13 @@ describe('wc-balance-list', () => {
 });
 
 describePreviewA11y(preview);
+
+describe('wc-balance-list in a narrow panel', () => {
+  const text = styleText(WcBalanceListCtor);
+
+  it('scrolls a table it cannot fit rather than cutting the balance off', () => {
+    // Account names are user data: any width budget is one long name away
+    // from clipping the column that carries the money.
+    expect(text).toMatch(/\.scroller\s*{[^}]*overflow-x:\s*auto/);
+  });
+});

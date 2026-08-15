@@ -323,6 +323,11 @@ describe('wc-app-shell on a phone', () => {
     );
   });
 
+  it('narrows the gutter so the cards get the width', () => {
+    // 16px each side is a tenth of a phone's width spent on margin.
+    expect(text).toMatch(/@media \(max-width: 48rem\)[\s\S]*\.content[^{]*{[^}]*padding:\s*10px/);
+  });
+
   it('stops sliding for anyone who asked motion to stop', () => {
     expect(text).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*::slotted\(\[slot='sidebar'\]\)[^{]*{[^}]*transition:\s*none/,

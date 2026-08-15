@@ -65,6 +65,16 @@ export class WcBarChart extends LitElement {
       color: var(--wa-color-muted);
     }
 
+    /* Thirteen months and their labels need more width than a phone has. A
+       grid item's automatic minimum is its content, so without this the chart
+       widened the whole dashboard rather than the page giving it a scrollbar;
+       a scroll container's minimum is zero. The plot and the labels sit inside
+       the same scroller and size their columns identically, so they stay in
+       step whichever way it is scrolled. */
+    .chart {
+      overflow-x: auto;
+    }
+
     .plot {
       display: flex;
       align-items: flex-end;
@@ -78,6 +88,7 @@ export class WcBarChart extends LitElement {
       /* Grow to share the width, but never balloon: a three-month history
          should read as three months, not as three slabs. */
       flex: 1 1 0;
+      min-width: var(--nc-bar-bucket-min-width, 24px);
       max-width: 72px;
       display: flex;
       align-items: flex-end;
@@ -109,6 +120,7 @@ export class WcBarChart extends LitElement {
 
     .tick {
       flex: 1 1 0;
+      min-width: var(--nc-bar-bucket-min-width, 24px);
       max-width: 72px;
       text-align: center;
       font-size: var(--wa-font-size-s, 13px);
