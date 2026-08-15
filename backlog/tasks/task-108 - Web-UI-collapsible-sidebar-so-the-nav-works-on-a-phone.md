@@ -1,10 +1,10 @@
 ---
 id: TASK-108
 title: 'Web UI: collapsible sidebar so the nav works on a phone'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-15 18:05'
-updated_date: '2026-08-15 18:33'
+updated_date: '2026-08-15 19:33'
 labels:
   - web
   - ui
