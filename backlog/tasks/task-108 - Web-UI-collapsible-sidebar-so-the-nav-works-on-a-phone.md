@@ -4,7 +4,7 @@ title: 'Web UI: collapsible sidebar so the nav works on a phone'
 status: Done
 assignee: []
 created_date: '2026-08-15 18:05'
-updated_date: '2026-08-15 19:33'
+updated_date: '2026-08-15 19:46'
 labels:
   - web
   - ui
@@ -41,6 +41,11 @@ A 56px rail is still a poor trade on a 390px screen, so below the breakpoint the
 - narrowViewport()/NARROW_QUERY name the breakpoint once. The query is injectable because jsdom answers matchMedia false to everything — color-mode.ts already does this.
 - Escape, backdrop and nc-navigate close the drawer; each is a no-op on a docked sidebar, which covers nothing. Focus returns to the toggle only on the narrow path, since collapsing to the rail is not a dismissal.
 - Added wc-icon-menu; the icon set had no hamburger.
+
+- Follow-up from testing on the phone: the page still scrolled sideways, and the cause was not the sidebar. Measured it in headless chrome at 390px rather than guessing — wc-bar-chart has a 376px min-content (13 buckets + month labels), and a grid track automatic minimum is its content, so the panel holding it widened the whole page to 410px. wc-balance-list table was clipped for the same reason a level down.
+- Fixed at the container: the chart and the table scroll inside their own panels, and the narrow .panels track is minmax(0, 1fr). Account names are user data, so a width budget was never going to hold.
+- Content gutter is 10px below the breakpoint.
+- Verified by measuring document.documentElement.scrollWidth against the viewport on all twelve screens at 390px: every one fits.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
@@ -60,4 +65,6 @@ Changes:
 Tests: 21 new specs across the shell, sidebar and root container — the event contract in both directions, the three ways the drawer closes, the two it must not, focus return and focus restraint, and the CSS read off the adopted stylesheet the way the register fill rules are. Four new preview states carry the drawer through describePreviewA11y.
 
 Verification: npm run build, npm test (270 + 1230 + 788 passing), npm run lint, npm run typecheck, cargo build --release. Deployed to the tailnet instance at https://nigel.books with demo data and checked on the phone that reported it.
+
+Follow-up after testing on the device: the page itself still scrolled sideways at 390px. Measured rather than guessed — wc-bar-chart cannot render below 376px (thirteen buckets and their labels), and a grid track automatic minimum is its content, so the panel holding it widened the whole dashboard to 410px. The balances table was clipped mid-word for the same reason. Both now scroll inside their own panels, the narrow .panels track is capped with minmax(0, ...), and the content gutter drops to 10px on a phone. All twelve screens measured at 390px: scrollWidth equals viewport on every one.
 <!-- SECTION:FINAL_SUMMARY:END -->
