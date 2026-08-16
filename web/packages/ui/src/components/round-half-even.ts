@@ -1,6 +1,6 @@
 /**
  * Round to `digits` decimals the way Rust's `{:.N}` does, which is how every
- * figure in `src/fmt.rs` and `cli/report/text.rs` reaches the page.
+ * figure in `crates/nigel-core/src/fmt.rs` and `crates/nigel-core/src/reports/text.rs` reaches the page.
  *
  * Two rules, and JavaScript's own formatters break one each. `Intl` rounds the
  * shortest decimal that identifies the double rather than the double itself, so

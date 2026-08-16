@@ -2,7 +2,7 @@ import { css, unsafeCSS } from 'lit';
 
 /**
  * Nigel's pastel rainbow, in the order `GRADIENT` declares it in
- * `src/effects.rs`. The TUI splash, goodbye, onboarding, and snake screens
+ * `crates/nigel/src/effects.rs`. The TUI splash, goodbye, onboarding, and snake screens
  * interpolate along these stops; the web UI reuses them so the two front ends
  * are recognisably the same product.
  *
@@ -30,7 +30,7 @@ export const NIGEL_PALETTE = [
  * `contrast.test.ts` holds it to.
  *
  * `NIGEL_PALETTE` itself is untouched, which matters: `palette-parity.test.ts`
- * pins it to `GRADIENT` in `src/effects.rs` so the TUI and the browser cannot
+ * pins it to `GRADIENT` in `crates/nigel/src/effects.rs` so the TUI and the browser cannot
  * drift, and this is a second, browser-only ramp rather than an edit to the
  * shared one. Dark mode keeps the pastels — see `--nc-grad-brand-text` in
  * `color.ts`.
@@ -47,7 +47,7 @@ export const NIGEL_PALETTE_INK = [
 
 /**
  * The ramp with its first stop repeated at the end, which is how `GRADIENT` in
- * `src/effects.rs` is written: the interpolation runs over seven segments and
+ * `crates/nigel/src/effects.rs` is written: the interpolation runs over seven segments and
  * closes on the colour it started from, so a phase that keeps advancing cycles
  * smoothly instead of snapping back at the wrap.
  */

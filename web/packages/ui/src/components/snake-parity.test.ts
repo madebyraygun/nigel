@@ -16,29 +16,29 @@ import {
 /**
  * The web Snake is meant to *be* the terminal's Snake, not merely resemble it,
  * which is `palette-parity.test.ts`'s claim about the colours applied to the
- * rules. This reads `src/cli/snake.rs` and fails if a number that decides how
+ * rules. This reads `crates/nigel/src/cli/snake.rs` and fails if a number that decides how
  * the game plays has drifted on either side.
  *
  * It reads the source rather than a port of it for the reason that test does:
  * a written-down copy of the Rust constants would agree with itself forever.
  */
 const here = dirname(fileURLToPath(import.meta.url));
-const snakeRs = resolve(here, '../../../../../src/cli/snake.rs');
+const snakeRs = resolve(here, '../../../../../crates/nigel/src/cli/snake.rs');
 
 function source(): string {
   const text = readFileSync(snakeRs, 'utf8');
-  expect(text.length, `src/cli/snake.rs is empty at ${snakeRs}`).toBeGreaterThan(0);
+  expect(text.length, `crates/nigel/src/cli/snake.rs is empty at ${snakeRs}`).toBeGreaterThan(0);
   return text;
 }
 
 /** The value of a `const NAME: T = <int>;` declaration. */
 function rustConst(name: string): number {
   const match = source().match(new RegExp(`const ${name}:[^=]*=\\s*(\\d+)`));
-  expect(match, `${name} not found in src/cli/snake.rs`).not.toBeNull();
+  expect(match, `${name} not found in crates/nigel/src/cli/snake.rs`).not.toBeNull();
   return Number(match![1]);
 }
 
-describe('snake parity with src/cli/snake.rs', () => {
+describe('snake parity with crates/nigel/src/cli/snake.rs', () => {
   it('ticks at the same base rate', () => {
     expect(BASE_TICK_MS).toBe(rustConst('BASE_TICK_MS'));
   });

@@ -10,12 +10,12 @@ import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
  * derivation load bearing instead of decorative.
  */
 const here = dirname(fileURLToPath(import.meta.url));
-const effectsRs = resolve(here, '../../../../src/effects.rs');
+const effectsRs = resolve(here, '../../../../crates/nigel/src/effects.rs');
 
 function paletteFromRust(): string[] {
   const source = readFileSync(effectsRs, 'utf8');
   const start = source.indexOf('pub const GRADIENT');
-  expect(start, 'GRADIENT const not found in src/effects.rs').toBeGreaterThan(-1);
+  expect(start, 'GRADIENT const not found in crates/nigel/src/effects.rs').toBeGreaterThan(-1);
   const end = source.indexOf('];', start);
   const block = source.slice(start, end);
   const hexes = [...block.matchAll(/#([0-9a-fA-F]{6})/g)].map(
@@ -26,7 +26,7 @@ function paletteFromRust(): string[] {
   return [...new Set(hexes)];
 }
 
-describe('palette parity with src/effects.rs', () => {
+describe('palette parity with crates/nigel/src/effects.rs', () => {
   it('reads a non-empty palette out of the Rust source', () => {
     expect(paletteFromRust().length).toBeGreaterThan(0);
   });

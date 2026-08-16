@@ -44,7 +44,7 @@ function changes(el: WcRuleForm): RuleFormValue[] {
 }
 
 describe('match types', () => {
-  it('are the three the categorizer understands, in cli/rules.rs order', () => {
+  it('are the three the categorizer understands, in crates/nigel-core/src/rules.rs order', () => {
     expect(MATCH_TYPES).toEqual(['contains', 'starts_with', 'regex']);
   });
 

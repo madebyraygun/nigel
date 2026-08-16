@@ -217,7 +217,7 @@ export function reportParamsFrom(
 
 // -- table mappers ----------------------------------------------------------
 //
-// Pure, and deliberately shaped like `cli/report/text.rs`: same rows, same
+// Pure, and deliberately shaped like `crates/nigel-core/src/reports/text.rs`: same rows, same
 // order, same figures. The parity test compares what these produce against the
 // CLI's own text export, so a divergence here is a test failure rather than a
 // discrepancy someone notices at tax time.

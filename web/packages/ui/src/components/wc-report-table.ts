@@ -8,7 +8,7 @@ import { roundHalfEven } from './round-half-even.js';
  * How a cell is formatted, which also decides its default alignment.
  *
  * `money` keeps the sign and the income/expense colouring; `moneyAbs` prints
- * the magnitude in plain ink, which is the shape `cli/report/text.rs` uses for
+ * the magnitude in plain ink, which is the shape `crates/nigel-core/src/reports/text.rs` uses for
  * expense and deduction columns where the column heading already says which
  * direction the money went.
  */

@@ -16,7 +16,7 @@ import {
 } from './snake-engine.js';
 
 /**
- * These are `mod tests` in `src/cli/snake.rs`, case for case and in its order.
+ * These are `mod tests` in `crates/nigel/src/cli/snake.rs`, case for case and in its order.
  * Keeping the names recognisable is the point: a rule changed on one side and
  * not the other should fail a test whose Rust twin still passes.
  */
