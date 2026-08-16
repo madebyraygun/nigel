@@ -2,8 +2,6 @@ pub mod view;
 
 pub use crate::reports::text;
 pub use crate::reports::{export_file_stem, PDF_DISABLED_MESSAGE};
-#[cfg(feature = "pdf")]
-pub(crate) use crate::reports::{register_range_label, register_subtitle};
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -198,7 +196,6 @@ fn default_text_path(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::reports::{
         register_range_label, register_subtitle, CategorySelection, RegisterFilters,
     };

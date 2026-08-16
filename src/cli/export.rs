@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::settings::get_data_dir;
 
 #[cfg(feature = "pdf")]
-use crate::cli::report::{register_range_label, register_subtitle};
+use crate::reports::{register_range_label, register_subtitle};
 
 #[cfg(feature = "pdf")]
 fn default_path(name: &str) -> PathBuf {

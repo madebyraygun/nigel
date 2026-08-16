@@ -85,7 +85,7 @@ pub fn temp_db() -> (tempfile::TempDir, PathBuf) {
 }
 
 pub fn encrypt(db_path: &Path) {
-    crate::cli::password::encrypt_database(db_path, PASSWORD).expect("encrypt db");
+    crate::password::encrypt_database(db_path, PASSWORD).expect("encrypt db");
 }
 
 /// Resolve settings from a temporary directory alone for the life of the guard
