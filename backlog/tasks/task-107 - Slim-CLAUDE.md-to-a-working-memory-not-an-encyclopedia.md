@@ -1,9 +1,11 @@
 ---
 id: TASK-107
 title: 'Slim CLAUDE.md to a working memory, not an encyclopedia'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-14 18:29'
+updated_date: '2026-08-16 18:36'
 labels:
   - docs
   - dx
@@ -32,10 +34,22 @@ Nothing may be lost, only moved: every fact deleted from CLAUDE.md must land in 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 CLAUDE.md is under 400 lines and under 25 KB
-- [ ] #2 Every fact removed from CLAUDE.md exists in a docs/ file, a module doc comment, or was verifiably redundant — an accounting in the PR body maps each removed section to its new home
-- [ ] #3 The no-real-data section survives verbatim
-- [ ] #4 The Documentation Policy is amended so routine feature changes update docs/ files, with CLAUDE.md changing only for commands, rules or pointers
-- [ ] #5 A stated size budget lives in CLAUDE.md itself
-- [ ] #6 The full verification matrix still passes (nothing behavioral depends on the file, but the guard scripts that read it must still find what they grep for)
+- [x] #1 CLAUDE.md is under 400 lines and under 25 KB
+- [x] #2 Every fact removed from CLAUDE.md exists in a docs/ file, a module doc comment, or was verifiably redundant — an accounting in the PR body maps each removed section to its new home
+- [x] #3 The no-real-data section survives verbatim
+- [x] #4 The Documentation Policy is amended so routine feature changes update docs/ files, with CLAUDE.md changing only for commands, rules or pointers
+- [x] #5 A stated size budget lives in CLAUDE.md itself
+- [x] #6 The full verification matrix still passes (nothing behavioral depends on the file, but the guard scripts that read it must still find what they grep for)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+CLAUDE.md 215,925 bytes / 1,142 lines -> 11,014 bytes / 158 lines. The file had grown past the 177 KB the task recorded, because the merges landing that day each appended to it under the old policy.
+
+Moved verbatim rather than condensed, so the nothing-lost claim is provable rather than asserted: docs/architecture.md (Architecture + the Project Structure tree, 110 KB), docs/design-constraints.md (60 KB), docs/commands.md (the full CLI reference, 10 KB), docs/backlog-cli.md (the Backlog manual the tool injects, 26 KB). CLAUDE.md keeps the no-real-data section verbatim, the commands that are NOT discoverable from --help, the component-first workflow, the backlog rules specific to this project, the amended policy and a pointer table.
+
+Accounting: of the 721 lines over 40 characters in the old file, 5 do not appear anywhere in the new corpus — the boilerplate intro line and the four lines of the old Documentation Policy, which this task replaces. The README rule inside that policy was carried into the new one rather than dropped.
+
+The backlog tool writes its own manual into CLAUDE.md on some upgrades, so the file says to move it back out when it reappears.
+<!-- SECTION:NOTES:END -->
