@@ -19,7 +19,7 @@ use crate::invoicing::mailgun::{
     MailgunClient,
 };
 use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
-use crate::invoicing::render_html::load_template;
+use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::republish::republish_invoice;
 use crate::invoicing::stripe::StripeClient;
 use crate::models::Invoice;
@@ -64,6 +64,27 @@ pub fn company_profile(conn: &Connection) -> CompanyProfile {
         phone: read("company_phone"),
         logo: read("company_logo"),
         payment_instructions: read("payment_instructions"),
+    }
+}
+
+impl CompanyProfile {
+    /// The branding for this profile, with the template and contact address the
+    /// caller resolved. One constructor, so no site can forget a field.
+    pub fn branding<'a>(&'a self, template: &'a str, contact_email: &'a str) -> Branding<'a> {
+        Branding {
+            template,
+            company: &self.name,
+            company_address: &self.address,
+            company_phone: &self.phone,
+            logo: &self.logo,
+            // The self-contained page. `send` and a republish point it at the
+            // hosted object through `with_logo_url`; `preview` and the API's
+            // preview routes never do, which is what keeps a preview a file that
+            // renders with no network and no configuration.
+            logo_url: None,
+            payment_instructions: &self.payment_instructions,
+            contact_email,
+        }
     }
 }
 

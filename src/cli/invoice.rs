@@ -15,7 +15,7 @@ use crate::invoicing::invoices::{
     InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::render::{render_invoice, RenderedInvoice};
-use crate::invoicing::render_html::{load_template, template_path, Branding, DEFAULT_TEMPLATE};
+use crate::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
 use crate::invoicing::send::send_invoice;
 use crate::invoicing::sync::sync_all_report;
 use crate::invoicing::void::void_invoice_with_teardown;
@@ -86,31 +86,6 @@ fn find_invoice(conn: &Connection, number: i64) -> Result<Invoice> {
 /// What voiding a published invoice will do, before it does it — the sentence
 /// the CLI's confirmation and the TUI's dialog both show.
 pub(crate) use crate::invoicing::void::PUBLISHED_VOID_NOTICE;
-
-impl CompanyProfile {
-    /// The branding for this profile, with the template and contact address the
-    /// caller resolved. One constructor, so no site can forget a field.
-    pub(crate) fn branding<'a>(
-        &'a self,
-        template: &'a str,
-        contact_email: &'a str,
-    ) -> Branding<'a> {
-        Branding {
-            template,
-            company: &self.name,
-            company_address: &self.address,
-            company_phone: &self.phone,
-            logo: &self.logo,
-            // The self-contained page. `send` and a republish point it at the
-            // hosted object through `with_logo_url`; `preview` and the API's
-            // preview routes never do, which is what keeps a preview a file that
-            // renders with no network and no configuration.
-            logo_url: None,
-            payment_instructions: &self.payment_instructions,
-            contact_email,
-        }
-    }
-}
 
 pub fn new(
     client_id: i64,
