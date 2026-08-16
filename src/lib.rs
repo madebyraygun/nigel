@@ -20,6 +20,7 @@ pub mod imports;
 pub mod invoicing;
 pub mod migrations;
 pub mod models;
+pub mod password;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod reconciler;

@@ -22,7 +22,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::password;
+use crate::password;
 use crate::db;
 use crate::settings::{self, Settings};
 
