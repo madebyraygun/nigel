@@ -5,8 +5,8 @@ use axum::routing::{patch, post};
 use axum::{extract::State, Json, Router};
 use serde::Deserialize;
 
-use crate::categorizer::{self, CategorizeResult};
 use crate::categories::ensure_category_exists;
+use crate::categorizer::{self, CategorizeResult};
 use crate::reports::{self, RegisterRow};
 use crate::reviewer;
 

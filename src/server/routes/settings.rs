@@ -22,8 +22,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::password;
 use crate::db;
+use crate::password;
 use crate::settings::{self, Settings};
 
 use super::super::error::{ApiError, ApiResult};

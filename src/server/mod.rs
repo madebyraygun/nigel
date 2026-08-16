@@ -97,9 +97,7 @@ async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
 fn spawn_update_check(state: AppState) {
     tokio::spawn(async move {
         // The check is blocking (`reqwest::blocking`) and reads settings.json.
-        if let Ok(found) =
-            tokio::task::spawn_blocking(crate::updater::check_with_cooldown).await
-        {
+        if let Ok(found) = tokio::task::spawn_blocking(crate::updater::check_with_cooldown).await {
             state.set_update_available(found.map(|info| info.version));
         }
     });

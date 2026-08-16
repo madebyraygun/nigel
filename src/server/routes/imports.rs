@@ -16,11 +16,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::categorizer::categorize_transactions;
 use crate::backup;
+use crate::categorizer::categorize_transactions;
 use crate::error::NigelError;
-use crate::imports::{self, ImportListItem};
 use crate::importer::{self, CsvProfile, GenericCsvConfig, ImportResult, ImporterFormat};
+use crate::imports::{self, ImportListItem};
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};

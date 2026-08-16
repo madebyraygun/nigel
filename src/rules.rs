@@ -4,8 +4,8 @@ use regex::Regex;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::categorizer::matches as rule_matches;
 use crate::categories::ensure_category_exists;
+use crate::categorizer::matches as rule_matches;
 use crate::error::{NigelError, Result};
 
 /// An active categorization rule joined to the category it assigns.

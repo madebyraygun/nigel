@@ -61,7 +61,12 @@ fn cli_references() -> Vec<String> {
         let text = fs::read_to_string(&file).expect("read source file");
         for (number, line) in text.lines().enumerate() {
             if line.contains("crate::cli::") {
-                hits.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
+                hits.push(format!(
+                    "{}:{}: {}",
+                    file.display(),
+                    number + 1,
+                    line.trim()
+                ));
             }
         }
     }
