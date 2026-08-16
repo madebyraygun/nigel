@@ -13,6 +13,7 @@ pub mod send;
 pub mod stripe;
 pub mod sync;
 pub mod void;
+pub mod wiring;
 
 use std::time::Duration;
 

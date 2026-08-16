@@ -431,8 +431,8 @@ async fn void(
     // required: `optional_gateway`/`optional_publisher` answer `None` and the
     // teardown reports what it could not reach.
     let config = crate::settings::invoicing_config();
-    let gateway = crate::cli::invoice::optional_gateway(&config);
-    let publisher = crate::cli::invoice::optional_publisher(&config);
+    let gateway = crate::invoicing::wiring::optional_gateway(&config);
+    let publisher = crate::invoicing::wiring::optional_publisher(&config);
 
     let result = with_conn_api(&state, move |conn| {
         void_with(conn, number, &today, gateway.as_ref(), publisher.as_ref())
@@ -527,7 +527,7 @@ async fn pay(
         let state = state.clone();
         move |conn| {
             let cfg = crate::settings::invoicing_config();
-            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            let publisher = crate::invoicing::wiring::optional_publisher(&cfg);
             pay_with(
                 conn,
                 number,
@@ -572,7 +572,7 @@ fn pay_with<P: AssetPublisher>(
     // same republish identically.
     let refreshed = find_invoice(conn, number)?;
     let republish_warnings =
-        crate::cli::invoice::republish_with(conn, &refreshed, cfg, data_dir, publisher);
+        crate::invoicing::wiring::republish_with(conn, &refreshed, cfg, data_dir, publisher);
     Ok(PayResult {
         invoice: detail_for(conn, refreshed)?,
         republish_warnings,
@@ -696,7 +696,7 @@ async fn send(
     if !status.send_configured {
         return Err(not_configured("Sending invoices", &status.missing));
     }
-    let contact_email = crate::cli::invoice::contact_email_for_preview(&config).0;
+    let contact_email = crate::invoicing::wiring::contact_email_for_preview(&config).0;
     // `build_clients` refuses an unusable `public_base_url` too, but its
     // sentence quotes the value for the terminal that is answering whoever
     // typed the command. No response carries a configured setting, so the same
@@ -716,8 +716,12 @@ async fn send(
     // and it keeps `build_clients` — and its 409 — outside the database work
     // below. It is the same constructor `nigel invoice send` uses, kept rather
     // than reimplemented so the two front ends build the same clients.
-    let company = with_conn(&state, |conn| Ok(crate::cli::invoice::company_name(conn))).await?;
-    let clients = crate::cli::invoice::build_clients(config, &company).map_err(misconfigured)?;
+    let company = with_conn(&state, |conn| {
+        Ok(crate::invoicing::wiring::company_name(conn))
+    })
+    .await?;
+    let clients =
+        crate::invoicing::wiring::build_clients(config, &company).map_err(misconfigured)?;
     let today = crate::clock::today();
     let warnings = clients.warnings.clone();
 
@@ -764,7 +768,7 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // Loaded before the Stripe link, so a broken override costs no link, no
     // upload and no email.
     let template = load_template(data_dir)?;
-    let profile = crate::cli::invoice::company_profile(conn);
+    let profile = crate::invoicing::wiring::company_profile(conn);
     let branding = profile.branding(&template, contact_email);
 
     let outcome = send_invoice_traced(
@@ -847,12 +851,12 @@ async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
         move |conn| {
             // Read under the gate, for the reason `pay` reads under it.
             let cfg = crate::settings::invoicing_config();
-            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            let publisher = crate::invoicing::wiring::optional_publisher(&cfg);
             let report = sync_with(conn, &today, &gateway)?;
             // Every invoice the run moved gets its page corrected, for the
             // reason `pay` does: a client following their bookmark must not see
             // a balance they have already settled.
-            let republish_warnings = crate::cli::invoice::republish_all_with(
+            let republish_warnings = crate::invoicing::wiring::republish_all_with(
                 conn,
                 &report.recorded_invoices,
                 &cfg,
@@ -919,16 +923,16 @@ fn render(
     // Loaded before anything is rendered, so a broken override is a 400 naming
     // the path rather than a page nobody approved.
     let template = load_template(data_dir)?;
-    let profile = crate::cli::invoice::company_profile(conn);
+    let profile = crate::invoicing::wiring::company_profile(conn);
     let (contact_email, _placeholder) =
-        crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
+        crate::invoicing::wiring::contact_email_for_preview(&crate::settings::invoicing_config());
     let branding = profile.branding(&template, &contact_email);
 
     Ok(render_invoice(
         conn,
         &invoice,
         &client,
-        crate::cli::invoice::pay_button_for(&invoice),
+        crate::invoicing::render::pay_button_for(&invoice),
         &branding,
     )?)
 }

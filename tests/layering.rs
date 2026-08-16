@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 
 /// Files and directories that must not reach into the CLI/TUI layer — the
 /// modules this plan has moved (or is moving) to the core side of the split.
-const CORE_PATHS: [&str; 10] = [
+const CORE_PATHS: [&str; 11] = [
     "src/server",
     "src/reports",
+    "src/invoicing",
     "src/accounts.rs",
     "src/categories.rs",
     "src/rules.rs",
