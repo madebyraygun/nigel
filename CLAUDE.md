@@ -59,6 +59,8 @@ are not discoverable from `--help`:
 cargo build --release                                  # Release build
 cargo test -- --test-threads=1                         # All tests — SERIAL, the DB password is a process global
 cargo test --no-default-features -- --test-threads=1   # Without gusto/pdf
+cargo test -p nigel-core -- --test-threads=1            # nigel-core alone — a root-level run unifies its deps'
+                                                         #   features with nigel's, masking what nigel-core ships
 cargo fmt --check                                      # CI runs this first; a failure here fails the build
 ./scripts/check-no-real-data.sh --staged               # Judge by EXIT STATUS, never by grepping its output
 nigel                                                  # Interactive dashboard

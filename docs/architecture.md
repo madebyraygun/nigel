@@ -6,7 +6,7 @@ The companion documents are `docs/api.md` (HTTP endpoint inventory and error env
 
 ## Architecture
 
-- **Crate layout:** lib + bin. `src/lib.rs` exposes every module (`db`, `models`, `reports`, `reviewer`, `importer`, `invoicing`, `categorizer`, `reconciler`, `migrations`, `settings`, `error`, `fmt`, `browser`, `tui`, `effects`, `pdf`, `cli`, `server`, and the eight single-file data layers `accounts`, `categories`, `rules`, `imports`, `backup`, `password`, `updater`, `clock`) as the `nigel` library; `src/main.rs` is the `nigel` binary and holds only clap parsing, the ratatui panic hook, and the dispatch pre-flight, calling into the library via `nigel::`
+- **Crate layout:** a two-member workspace. `nigel-core`'s `src/lib.rs` exposes every module that does not need a terminal (`db`, `models`, `reports`, `reviewer`, `importer`, `invoicing`, `categorizer`, `reconciler`, `migrations`, `settings`, `error`, `fmt`, `pdf`, `server`, and the eight single-file data layers `accounts`, `categories`, `rules`, `imports`, `backup`, `password`, `updater`, `clock`) as the `nigel_core` library. `nigel`'s `src/lib.rs` exposes `cli`, `browser`, `tui` and `effects` as the `nigel` library, built on `nigel_core`; `src/main.rs` is the `nigel` binary and holds only clap parsing, the ratatui panic hook, and the dispatch pre-flight, calling into the two libraries via `nigel_core::` and `nigel::`. See "Crate boundary" below
 - **CLI:** Clap derive app in `src/cli/mod.rs` — subcommands are optional; running `nigel` with no arguments launches the interactive dashboard. Subcommands: init, demo, import, undo, categorize, recategorize, review, reconcile, accounts, categories, rules, report, browse, client, invoice, load, backup, restore, serve, status, password, update, completions
 - **Database:** SQLite via rusqlite (bundled-sqlcipher) in `src/db.rs` — tables: accounts, categories (with form_line for 1120-S mapping), transactions, rules, imports, reconciliations, metadata (key-value store for per-database settings like company_name, profile, and next_invoice_number), clients, invoices, invoice_line_items, invoice_payments. Two chart-of-accounts templates (`BUSINESS_CATEGORIES`, `PERSONAL_CATEGORIES`); `init_db_with_profile()` seeds the chosen one and stamps the `profile` metadata key together, only when the categories table is empty, so re-running init never reseeds or restamps; `get_profile()` reads it back with absent-means-business (every pre-profile database carried the business chart). Optional SQLCipher encryption via `PRAGMA key`; password stored in runtime global `Mutex<Option<String>>` (`set_db_password`/`get_db_password`); `get_connection()` reads it internally so zero call-site changes needed; `open_connection()` for explicit password; `is_encrypted()` probes a DB file; `validate_password()` tests a password without side effects; `prompt_password_if_needed()` prompts via rpassword with 3 retries (used by CLI subcommands)
 - **Importers:** `src/importer.rs` — `ImporterKind` enum dispatch (bofa_checking, bofa_credit_card, bofa_line_of_credit, gusto_payroll); each variant implements `detect()` and `parse()`; `GenericCsvConfig` supports user-defined column mappings stored as profiles in `csv_profiles` table (`save_csv_profile`/`load_csv_profile`/`list_csv_profiles`, the last returning `CsvProfile { name, config }` for the API); malformed CSV rows are counted and reported in import output; `built_in_formats()` lists the compiled-in importers (`ImporterFormat { key, name, account_types }`) for the API's format picker; `ImportResult` reports `format` (the resolved importer key, a profile name, or `generic` — `None` for a duplicate file, which is answered before resolution) and `import_id` (the `imports` row created, `None` for a dry run)
@@ -65,127 +65,159 @@ The companion documents are `docs/api.md` (HTTP endpoint inventory and error env
 - **Data directory:** `~/Documents/nigel/` by default, configurable via `nigel init --data-dir`; switch with `nigel load <path>`. Contains `backups/` (manual backups) and `snapshots/` (automatic pre-import snapshots)
 - **Demo:** `nigel demo` dynamically generates 18 months of sample transactions (counting backwards from the current date) + 10 rules directly into the DB (no CSV files), then runs categorization; dates are computed at runtime so reports always show current-year data. `insert_demo_invoicing` adds three clients and four invoices covering paid, partial, sent and draft, dated relative to today the same way, so the invoicing screens are not empty on the one database meant for exploring. No seeded invoice carries a payment link, so the launch sync's `stripe_payment_link_id IS NOT NULL` query skips all of them
 
+## Crate boundary
+
+The workspace has two members, and the line between them is what a client needs a terminal for.
+
+`nigel-core` (`crates/nigel-core/`) is the `nigel_core` library: the SQLite data layer, importers,
+the rules engine, reports, invoicing, and the web server (`server`, feature-gated behind `serve`).
+It links without clap, ratatui or crossterm, so any client — the `nigel` binary, a future desktop
+shell, a test — can depend on it without pulling in a terminal UI.
+
+`nigel` (`crates/nigel/`) is the binary: the clap CLI (`cli/`), the shared ratatui/TUI helpers
+(`tui.rs`, `effects.rs`), the interactive register browser (`browser.rs`), and `main.rs`, which
+holds only argument parsing, the panic hook, and the dispatch pre-flight. Everything in it is
+built on `nigel-core` through `nigel_core::`.
+
+The crate boundary is what enforces the split, not a convention: `nigel-core`'s `Cargo.toml`
+carries no dependency on `nigel`, so a core module naming the CLI does not compile.
+`crates/nigel/tests/layering.rs` backs that up in source terms — it scans every `.rs` file under
+`nigel-core/src` for a reference to the terminal-UI crate and fails the build if one appears, so
+the boundary is guarded even where a stray reference would otherwise still compile inside a
+single crate.
+
 ## Project Structure
 
 ```
-src/
-  lib.rs                # Library root — exposes all modules as the `nigel` crate
-  main.rs               # Binary entry point: clap parse, panic hook, command dispatch
-  cli/                  # CLI subcommands
-    mod.rs              # Clap structs (Cli, Commands, subcommands), shared helpers
-    dashboard.rs        # nigel (no args) — interactive dashboard with inline screen transitions
-    init.rs             # nigel init
-    demo.rs             # nigel demo (sample data + setup_demo for isolated demo DB)
-    onboarding.rs       # First-run onboarding TUI (animated logo, name collection, action picker)
-    account_manager.rs  # TUI account management screen (list, add, rename, delete)
-    accounts.rs         # nigel accounts add/list/rename/delete — a printing wrapper over top-level `accounts`
-    categories.rs       # nigel categories list/add/rename/delete — a printing wrapper over top-level `categories`
-    category_manager.rs # TUI category management screen (list, add, edit, delete)
-    import.rs           # nigel import
-    import_manager.rs   # TUI import screen (file path + account selector + result)
-    undo.rs             # nigel undo (undo last import) — a printing wrapper over top-level `imports`
-    undo_manager.rs     # TUI undo screen (confirm + execute from dashboard)
-    categorize.rs       # nigel categorize
-    recategorize.rs     # nigel recategorize (bulk category reassignment by IDs or filters)
-    rules.rs            # nigel rules add/list/update/delete/test — a printing wrapper over top-level `rules`
-    rules_manager.rs    # TUI rules screen (scrollable list + delete)
-    password.rs         # nigel password set/change/remove — a printing wrapper over top-level `password`
-    password_manager.rs # TUI password management screen (set/change/remove via settings)
-    settings_manager.rs # TUI settings screen (business name + password management)
-    reconcile_manager.rs # TUI reconcile screen (account/month/balance form + result)
-    load_manager.rs     # TUI load screen (data directory switcher with reload)
-    review.rs           # nigel review
-    report/             # nigel report (unified view/export command)
-      mod.rs            # Dispatch: view vs export, TTY detection, text export
-      view.rs           # Ratatui interactive report views (scrollable, colored)
-    browse.rs           # nigel browse (interactive browsers)
-    client.rs           # nigel client add/list/show/edit/delete/archive/unarchive (+ --contact)
-    client_manager.rs   # TUI client screen (list, add, edit, delete, archive, contacts)
-    invoice.rs          # nigel invoice new/edit/void/list/show/preview/send/sync/pay/aging/import/template
-    invoice_manager.rs  # TUI invoice screen (list, detail, send/pay/void)
-    snake.rs            # Snake game easter egg (ratatui, accessible from dashboard)
-    splash.rs           # Splash screen (1.5s animated logo + particles, shown on launch)
-    goodbye.rs          # Goodbye screen (reverse logo animation + particles, shown on quit)
-    export.rs           # PDF export helpers (per-function feature-gated behind "pdf")
-    reconcile.rs        # nigel reconcile
-    load.rs             # nigel load (switch data directory)
-    backup.rs           # nigel backup (database backup)
-    restore.rs          # nigel restore (restore database from backup)
-    serve.rs            # nigel serve (feature gate + pre-flight, delegates to src/server/)
-    status.rs           # nigel status (show active DB + stats)
-    update.rs           # nigel update — a printing wrapper over top-level `updater` (version check + self-replace from GitHub Releases)
-  server/               # Web server (feature-gated behind "serve")
-    mod.rs              # Tokio runtime, router assembly, middleware order, graceful shutdown
-    auth.rs             # Session token, Host/Origin validation, cookie parsing, /auth handler
-    error.rs            # ApiError + ApiErrorCode, JSON error envelope, status mapping
-    extract.rs          # ApiJson/ApiPath: axum extractors whose rejections use the error envelope
-    state.rs            # AppState (db path, session token, build features, unlock gate, db file gate)
-    secret.rs           # Secret: redacted-Debug, zeroize-on-drop password wrapper
-    uploads.rs          # Spooled browser uploads: sanitize, store 0600/0700, resolve by id, purge
-    static_files.rs     # rust-embed hosting of web/dist with SPA index fallback
-    fixture_capture.rs  # cfg(test) only — captures the web UI's report and invoicing fixtures
-    testutil.rs         # Test-only: temp/seeded databases, session router, JSON request helpers
-    routes/
-      mod.rs            # API router; GET /api/ping, JSON 404 fallback, guarded data_router(), with_conn()
-      status.rs         # GET /api/status, POST /api/unlock, locked guard middleware
-      reports.rs        # The eight GET /api/reports/* endpoints + query param validation
-      exports.rs        # The eight GET /api/exports/* downloads (format=pdf|text)
-      accounts.rs       # GET/POST /api/accounts, PATCH/DELETE /api/accounts/:id
-      categories.rs     # GET/POST /api/categories, PATCH/DELETE /api/categories/:id
-      rules.rs          # GET/POST /api/rules, PATCH/DELETE /api/rules/:id, POST /api/rules/test
-      imports.rs        # GET /api/imports, /api/imports/formats, /api/csv-profiles; DELETE /api/imports/:id; POST upload/preview/confirm
-      transactions.rs   # PATCH /api/transactions/:id, POST /api/categorize
-      review.rs         # GET /api/review/queue, GET /api/review/:id, POST apply/undo
-      reconcile.rs      # POST /api/reconcile, GET /api/reconciliations
-      clients.rs        # GET/POST /api/clients, GET/PATCH/DELETE /api/clients/:id
-      invoices.rs       # GET/POST /api/invoices, GET/PATCH /api/invoices/:number(+/void, /pay,
-                        #   /send, /preview[.pdf]), /aging, /next-number, POST /api/invoices/sync
-      settings.rs       # GET/PUT /api/settings/app, PUT company-name, POST data-dir, POST password/{set,change,remove}
-  db.rs                 # SQLite schema, connection, category seeding
-  migrations.rs          # Schema migration runner (version tracking, sequential up() functions)
-  models.rs             # Structs (Account, Transaction, Rule, ParsedRow, etc.)
-  importer.rs           # ImporterKind enum, format detection, CSV/XLSX parsing
-  accounts.rs           # Account data layer (add/list/rename/delete, delete_blocker)
-  categories.rs         # Category (chart of accounts) data layer (add/list/rename/delete, delete_blocker)
-  rules.rs              # Categorization rules data layer (list/add/update/deactivate/test)
-  imports.rs            # Import history data layer (list_imports, get_last_import)
-  backup.rs             # Database backup/restore (rusqlite Backup API)
-  password.rs           # Database encryption data layer (set/change/remove, rekey)
-  updater.rs            # GitHub Releases version check + self-replace
-  clock.rs              # The app's one clock read (`today()`)
-  invoicing/            # Invoicing (A/R): clients, invoices, publish, email, payment sync
-    mod.rs              # Module declarations
-    clients.rs          # Client data layer
-    invoices.rs         # Invoice/line-item/payment data layer, numbering, status, aging
-    document.rs         # MoneySummary/MoneyLine + address_lines — what both documents say, decided once
-    gateway.rs          # PaymentGateway / AssetPublisher / Mailer traits + shared types
-    stripe.rs           # Stripe payment links and paid checkout sessions
-    r2.rs               # Cloudflare R2 publisher (S3 API via rusty-s3)
-    mailgun.rs          # Mailgun sender (HTML body + PDF attachment)
-    render_html.rs      # Invoice HTML rendering ({{KEY}} expansion, PayButton, Branding, template loading)
-    logo.rs             # The letterhead logo as an object beside the page (once per distinct image)
-    render.rs           # render_invoice — the HTML+PDF pair send publishes and preview writes
-    republish.rs        # Best-effort re-publish of a paid invoice's page and PDF
-    templates/          # invoice.html
-    send.rs             # Send orchestration (link → render → publish → email → publish mark)
-    sync.rs             # Pull Stripe payments into invoice_payments
-    void.rs             # Void + best-effort teardown (deactivate link, republish voided page)
-    import_invoiceshelf.rs # One-time InvoiceShelf SQLite import
-    wiring.rs           # Assembles a send/republish from settings — the one place invoicing meets `settings`
-  categorizer.rs        # Rules engine (categorize_transactions)
-  reviewer.rs           # Interactive review flow
-  reports/              # Report data functions (pnl, expenses, tax, cashflow, balance, flagged, k1_prep) + RegisterFilters
-    mod.rs              # Report data functions, ReportKind/DateGranularity, register_range_label/register_subtitle
-    text.rs             # comfy_table text formatters (used for stdout + text file export + HTTP exports)
-  browser.rs            # Interactive register browser (ratatui, row selection, inline editing, flag toggle, scroll navigation)
-  effects.rs            # Shared gradient/particle effects (used by splash, onboarding, snake)
-  tui.rs                # Shared ratatui helpers (styles, money_span, wrap_text, ReportView trait, run_report_view)
-  pdf.rs                # PDF rendering engine (feature-gated behind "pdf")
-  reconciler.rs         # Monthly reconciliation
-  settings.rs           # Settings management (~/.config/nigel/)
-  fmt.rs                # Number formatting helpers
-  error.rs              # Error types
-build.rs                # Seeds web/dist from the placeholder; rerun-if-changed for rust-embed
+Cargo.toml                # Workspace manifest — members = ["crates/nigel", "crates/nigel-core"]
+crates/
+  nigel-core/              # Library: data layer, importers, rules, reports, invoicing, web server
+    Cargo.toml
+    build.rs               # Seeds web/dist from the placeholder; rerun-if-changed for rust-embed; installs the git hooks path
+    src/
+      lib.rs               # Library root — exposes every module as the `nigel_core` crate
+      db.rs                 # SQLite schema, connection, category seeding
+      migrations.rs         # Schema migration runner (version tracking, sequential up() functions)
+      models.rs             # Structs (Account, Transaction, Rule, ParsedRow, etc.)
+      importer.rs           # ImporterKind enum, format detection, CSV/XLSX parsing
+      accounts.rs           # Account data layer (add/list/rename/delete, delete_blocker)
+      categories.rs         # Category (chart of accounts) data layer (add/list/rename/delete, delete_blocker)
+      rules.rs              # Categorization rules data layer (list/add/update/deactivate/test)
+      imports.rs            # Import history data layer (list_imports, get_last_import)
+      backup.rs             # Database backup/restore (rusqlite Backup API)
+      password.rs           # Database encryption data layer (set/change/remove, rekey)
+      updater.rs            # GitHub Releases version check + self-replace
+      clock.rs              # The app's one clock read (`today()`)
+      invoicing/            # Invoicing (A/R): clients, invoices, publish, email, payment sync
+        mod.rs                 # Module declarations
+        clients.rs             # Client data layer
+        invoices.rs            # Invoice/line-item/payment data layer, numbering, status, aging
+        document.rs            # MoneySummary/MoneyLine + address_lines — what both documents say, decided once
+        gateway.rs             # PaymentGateway / AssetPublisher / Mailer traits + shared types
+        stripe.rs              # Stripe payment links and paid checkout sessions
+        r2.rs                  # Cloudflare R2 publisher (S3 API via rusty-s3)
+        mailgun.rs             # Mailgun sender (HTML body + PDF attachment)
+        render_html.rs         # Invoice HTML rendering ({{KEY}} expansion, PayButton, Branding, template loading)
+        logo.rs                # The letterhead logo as an object beside the page (once per distinct image)
+        render.rs              # render_invoice — the HTML+PDF pair send publishes and preview writes
+        republish.rs           # Best-effort re-publish of a paid invoice's page and PDF
+        templates/             # invoice.html
+        send.rs                # Send orchestration (link -> render -> publish -> email -> publish mark)
+        sync.rs                # Pull Stripe payments into invoice_payments
+        void.rs                # Void + best-effort teardown (deactivate link, republish voided page)
+        import_invoiceshelf.rs # One-time InvoiceShelf SQLite import
+        wiring.rs              # Assembles a send/republish from settings — the one place invoicing meets `settings`
+      categorizer.rs         # Rules engine (categorize_transactions)
+      reviewer.rs            # Interactive review flow
+      reports/               # Report data functions (pnl, expenses, tax, cashflow, balance, flagged, k1_prep) + RegisterFilters
+        mod.rs                 # Report data functions, ReportKind/DateGranularity, register_range_label/register_subtitle
+        text.rs                # comfy_table text formatters (used for stdout + text file export + HTTP exports)
+      reconciler.rs           # Monthly reconciliation
+      settings.rs             # Settings management (~/.config/nigel/)
+      fmt.rs                  # Number formatting helpers
+      error.rs                # Error types
+      pdf.rs                  # PDF rendering engine (feature-gated behind "pdf")
+      server/                 # Web server (feature-gated behind "serve")
+        mod.rs                 # Tokio runtime, router assembly, middleware order, graceful shutdown
+        auth.rs                # Session token, Host/Origin validation, cookie parsing, /auth handler
+        error.rs               # ApiError + ApiErrorCode, JSON error envelope, status mapping
+        extract.rs             # ApiJson/ApiPath: axum extractors whose rejections use the error envelope
+        state.rs               # AppState (db path, session token, build features, unlock gate, db file gate)
+        secret.rs              # Secret: redacted-Debug, zeroize-on-drop password wrapper
+        uploads.rs             # Spooled browser uploads: sanitize, store 0600/0700, resolve by id, purge
+        static_files.rs        # rust-embed hosting of web/dist with SPA index fallback
+        testutil.rs            # Test-only: temp/seeded databases, session router, JSON request helpers — behind the `testutil` feature dependents' tests enable
+        routes/
+          mod.rs                 # API router; GET /api/ping, JSON 404 fallback, guarded data_router(), with_conn()
+          status.rs              # GET /api/status, POST /api/unlock, locked guard middleware
+          reports.rs             # The eight GET /api/reports/* endpoints + query param validation
+          exports.rs             # The eight GET /api/exports/* downloads (format=pdf|text)
+          accounts.rs            # GET/POST /api/accounts, PATCH/DELETE /api/accounts/:id
+          categories.rs          # GET/POST /api/categories, PATCH/DELETE /api/categories/:id
+          rules.rs               # GET/POST /api/rules, PATCH/DELETE /api/rules/:id, POST /api/rules/test
+          imports.rs             # GET /api/imports, /api/imports/formats, /api/csv-profiles; DELETE /api/imports/:id; POST upload/preview/confirm
+          transactions.rs        # PATCH /api/transactions/:id, POST /api/categorize
+          review.rs              # GET /api/review/queue, GET /api/review/:id, POST apply/undo
+          reconcile.rs           # POST /api/reconcile, GET /api/reconciliations
+          clients.rs             # GET/POST /api/clients, GET/PATCH/DELETE /api/clients/:id
+          invoices.rs            # GET/POST /api/invoices, GET/PATCH /api/invoices/:number(+/void, /pay,
+                                  #   /send, /preview[.pdf]), /aging, /next-number, POST /api/invoices/sync
+          settings.rs            # GET/PUT /api/settings/app, PUT company-name, POST data-dir, POST password/{set,change,remove}
+  nigel/                    # Binary: clap CLI, ratatui screens — links nigel-core
+    Cargo.toml
+    tests/
+      cli_dispatch.rs        # End-to-end CLI dispatch tests (assert_cmd)
+      layering.rs            # Fails the build if a nigel-core source file references the terminal-UI crate
+    src/
+      main.rs                # Binary entry point: clap parse, panic hook, command dispatch, launch-time Stripe sync
+      lib.rs                 # Library root — exposes cli, browser, effects, tui as the `nigel` crate
+      browser.rs             # Interactive register browser (ratatui, row selection, inline editing, flag toggle, scroll navigation)
+      effects.rs             # Shared gradient/particle effects (used by splash, onboarding, snake)
+      tui.rs                 # Shared ratatui helpers (styles, money_span, wrap_text, ReportView trait, run_report_view)
+      cli/                   # CLI subcommands
+        mod.rs                 # Clap structs (Cli, Commands, subcommands), shared helpers
+        dashboard.rs           # nigel (no args) — interactive dashboard with inline screen transitions
+        init.rs                # nigel init
+        demo.rs                # nigel demo (sample data + setup_demo for isolated demo DB)
+        onboarding.rs          # First-run onboarding TUI (animated logo, name collection, action picker)
+        account_manager.rs     # TUI account management screen (list, add, rename, delete)
+        accounts.rs            # nigel accounts add/list/rename/delete — a printing wrapper over nigel_core::accounts
+        categories.rs          # nigel categories list/add/rename/delete — a printing wrapper over nigel_core::categories
+        category_manager.rs    # TUI category management screen (list, add, edit, delete)
+        import.rs              # nigel import
+        import_manager.rs      # TUI import screen (file path + account selector + result)
+        undo.rs                # nigel undo (undo last import) — a printing wrapper over nigel_core::imports
+        undo_manager.rs        # TUI undo screen (confirm + execute from dashboard)
+        categorize.rs          # nigel categorize
+        recategorize.rs        # nigel recategorize (bulk category reassignment by IDs or filters)
+        rules.rs               # nigel rules add/list/update/delete/test — a printing wrapper over nigel_core::rules
+        rules_manager.rs       # TUI rules screen (scrollable list + delete)
+        password.rs            # nigel password set/change/remove — a printing wrapper over nigel_core::password
+        password_manager.rs    # TUI password management screen (set/change/remove via settings)
+        settings_manager.rs    # TUI settings screen (business name + password management)
+        reconcile_manager.rs   # TUI reconcile screen (account/month/balance form + result)
+        load_manager.rs        # TUI load screen (data directory switcher with reload)
+        review.rs              # nigel review
+        report/                # nigel report (unified view/export command)
+          mod.rs                 # Dispatch: view vs export, TTY detection, text export
+          view.rs                # Ratatui interactive report views (scrollable, colored)
+        browse.rs              # nigel browse (interactive browsers)
+        client.rs              # nigel client add/list/show/edit/delete/archive/unarchive (+ --contact)
+        client_manager.rs      # TUI client screen (list, add, edit, delete, archive, contacts)
+        invoice.rs             # nigel invoice new/edit/void/list/show/preview/send/sync/pay/aging/import/template
+        invoice_manager.rs     # TUI invoice screen (list, detail, send/pay/void)
+        snake.rs               # Snake game easter egg (ratatui, accessible from dashboard)
+        splash.rs              # Splash screen (1.5s animated logo + particles, shown on launch)
+        goodbye.rs             # Goodbye screen (reverse logo animation + particles, shown on quit)
+        export.rs              # PDF export helpers (per-function feature-gated behind "pdf")
+        reconcile.rs           # nigel reconcile
+        load.rs                # nigel load (switch data directory)
+        backup.rs              # nigel backup (database backup)
+        restore.rs             # nigel restore (restore database from backup)
+        serve.rs               # nigel serve (feature gate + pre-flight, delegates to nigel_core::server)
+        status.rs              # nigel status (show active DB + stats)
+        update.rs              # nigel update — a printing wrapper over nigel_core::updater (version check + self-replace from GitHub Releases)
+        fixture_capture.rs     # cfg(test) only — captures the web UI's report and invoicing fixtures, rendering through this crate's own CLI formatters
 web/                    # npm workspace for the SPA (see web/README.md)
   package.json          # Workspace root: packages/*, apps/* — no turbo
   placeholder/
@@ -194,7 +226,7 @@ web/                    # npm workspace for the SPA (see web/README.md)
   packages/
     theme/              # @nigel/theme — token modules composed into one CSSResult + a plain .css
       src/tokens/       # color, gradient, typography, spacing, radius, shadow, motion
-      src/global.ts     # ::part() overrides for wa-* primitives (document-level)
+      src/controls.ts   # controlsCss — the wa-* primitive treatment components adopt (not document-level)
       src/print.ts      # @media print — composed last so it wins over dark mode
       scripts/build-css.js
     ui/                 # @nigel/ui — wc-* components + preview harness
