@@ -4,12 +4,14 @@ title: 'Remote server mode: desktop client for a shared instance'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
+updated_date: '2026-08-15 23:38'
 labels:
   - tauri
   - multiuser
 dependencies:
   - TASK-33.2
   - TASK-32.2
+  - TASK-33.8
 parent_task_id: TASK-33
 priority: low
 ---

@@ -11,7 +11,7 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::cli::rules::{self, NewRule, RuleRow, RuleTestResult, RuleUpdate};
+use crate::rules::{self, NewRule, RuleRow, RuleTestResult, RuleUpdate};
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};

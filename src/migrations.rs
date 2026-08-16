@@ -340,7 +340,7 @@ fn re_derive_status(conn: &Connection, invoice_ids: &BTreeSet<i64>) -> Result<()
             }
         }
     }
-    let today = crate::cli::today();
+    let today = crate::clock::today();
     for id in live {
         refresh_status(conn, id, &today)?;
     }
