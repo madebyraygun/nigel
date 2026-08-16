@@ -696,40 +696,11 @@ fn env_password(db_path: &Path, raw: Option<OsString>) -> Result<Option<String>>
     )))
 }
 
-/// If the database is encrypted, unlock it from `NIGEL_DB_PASSWORD`, falling
-/// back to prompting the user (up to 3 attempts). Sets the global password on
-/// success. Returns an error if the environment holds an unusable password, or
-/// after 3 failed prompts.
-pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
-    if !is_encrypted(db_path)? {
-        return Ok(());
-    }
-
-    if let Some(pw) = env_password(db_path, std::env::var_os(PASSWORD_ENV_VAR))? {
-        set_db_password(Some(pw));
-        return Ok(());
-    }
-
-    for attempt in 1..=3 {
-        let pw = rpassword::prompt_password("Database password: ")
-            .map_err(|e| crate::error::NigelError::Other(e.to_string()))?;
-        set_db_password(Some(pw));
-        // get_connection runs PRAGMAs that read the DB header, so it will fail
-        // on a wrong password. Match on the result instead of using ? to avoid
-        // short-circuiting the retry loop.
-        match get_connection(db_path) {
-            Ok(_) => return Ok(()),
-            Err(_) => {
-                set_db_password(None);
-                if attempt < 3 {
-                    eprintln!("Wrong password. Try again ({attempt}/3).");
-                }
-            }
-        }
-    }
-    Err(crate::error::NigelError::Other(
-        "Failed to unlock database after 3 attempts.".into(),
-    ))
+/// Resolve a password for `db_path` from `NIGEL_DB_PASSWORD`, if set.
+/// `Ok(None)` means the variable is unset and the caller should ask the user
+/// some other way — this function never touches stdin.
+pub fn env_password_if_set(db_path: &Path) -> Result<Option<String>> {
+    env_password(db_path, std::env::var_os(PASSWORD_ENV_VAR))
 }
 
 pub fn init_db(conn: &Connection) -> Result<()> {
@@ -1165,19 +1136,6 @@ mod tests {
         assert!(err.contains("password may be wrong"), "{err}");
         assert!(err.contains("may be damaged"), "{err}");
         assert!(err.contains(&db_path.display().to_string()), "{err}");
-    }
-
-    /// The companion `backup_ignores_env_password_on_plain_database` covers the
-    /// case this cannot: setting the variable requires a child process, because
-    /// the environment is shared across cargo's parallel test threads.
-    #[test]
-    fn test_plain_db_needs_no_password() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("plain.db");
-        let conn = open_connection(&db_path, None).unwrap();
-        init_db(&conn).unwrap();
-        drop(conn);
-        assert!(prompt_password_if_needed(&db_path).is_ok());
     }
 
     #[test]

@@ -117,7 +117,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
     }
 
     if needs_password && db_path.exists() {
-        nigel::db::prompt_password_if_needed(&db_path)?;
+        nigel::cli::password::prompt_password_if_needed(&db_path)?;
     }
 
     // `restore` overwrites the database file and then migrates the restored copy itself,
