@@ -17,6 +17,7 @@ import {
   sendStepViews,
   today,
   voidConfirmationMessage,
+  deleteConfirmationMessage,
 } from './invoice-data.js';
 import type {
   Client,
@@ -80,6 +81,7 @@ const DETAIL: InvoiceDetail = {
   canSend: true,
   canVoid: true,
   canPay: true,
+  canDelete: false,
 };
 
 const FORM: InvoiceFormValue = invoiceFormFrom(DETAIL);
@@ -467,6 +469,21 @@ describe('voidConfirmationMessage', () => {
     expect(message).toContain('deactivates its Stripe payment link');
     // What is actually configured is the server's to report, afterwards.
     expect(message).toContain('wherever each of those is configured');
+  });
+});
+
+describe('deleteConfirmationMessage', () => {
+  it('names the invoice, its line items, and that the number will stay a gap', () => {
+    const message = deleteConfirmationMessage(DETAIL);
+    expect(message).toContain('Invoice #1250');
+    expect(message).toContain(`${DETAIL.items.length} line items`);
+    expect(message).toContain('numbers are not reused');
+    expect(message).toContain('#1250 will stay a gap');
+  });
+
+  it('counts one line item in the singular', () => {
+    const message = deleteConfirmationMessage({ ...DETAIL, items: [DETAIL.items[0]] });
+    expect(message).toContain('1 line item will be removed');
   });
 });
 

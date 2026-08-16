@@ -44,7 +44,7 @@ use crate::settings::InvoicingConfig;
 use super::super::error::{ApiError, ApiErrorCode, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
 use super::super::state::AppState;
-use super::{double_option, not_found_because, with_conn, with_conn_api};
+use super::{double_option, not_found_because, with_conn, with_conn_api, Deleted};
 
 pub fn routes() -> Router<AppState> {
     // The two literal paths are mounted before the `{number}` pattern. axum
@@ -55,7 +55,10 @@ pub fn routes() -> Router<AppState> {
         .route("/invoices/aging", get(aging))
         .route("/invoices/next-number", get(next_number))
         .route("/invoices/sync", post(sync))
-        .route("/invoices/{number}", get(detail).patch(update))
+        .route(
+            "/invoices/{number}",
+            get(detail).patch(update).delete(destroy),
+        )
         .route("/invoices/{number}/send", post(send))
         .route("/invoices/{number}/void", post(void))
         .route("/invoices/{number}/pay", post(pay))
@@ -89,6 +92,7 @@ struct InvoiceDetail {
     can_send: bool,
     can_void: bool,
     can_pay: bool,
+    can_delete: bool,
 }
 
 #[derive(Serialize)]
@@ -118,6 +122,7 @@ fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
     let not_void = inv::ensure_not_void(&invoice, "sent").is_ok();
     let can_send = not_void && client.email.is_some() && invoice.total > 0.0;
     let can_pay = not_void && inv::payment_amount(&invoice, paid, None).is_ok();
+    let can_delete = inv::delete_blocker(conn, &invoice)?.is_none();
 
     Ok(InvoiceDetail {
         public_url: public_url(&invoice),
@@ -131,6 +136,7 @@ fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
         can_send,
         can_void,
         can_pay,
+        can_delete,
     })
 }
 
@@ -265,6 +271,27 @@ fn enrich_conflict(err: NigelError, invoice: &Invoice, paid: f64) -> ApiError {
         Some(details) => ApiError::conflict(err.to_string(), details),
         None => ApiError::from(err),
     }
+}
+
+/// A refused delete, plus the two facts a client needs to say something true
+/// about it.
+///
+/// `enrich_conflict`'s job for `NigelError::Blocked`: the code and the sentence
+/// stay the data layer's, and the route adds only what a screen would otherwise
+/// have to guess. `canVoid` is `ensure_voidable` **called** — the same question
+/// `nigel invoice delete` asks before it offers the same advice — because
+/// "void it instead" is a dead end for an invoice with payments, which refuses
+/// void as well. `status` carries the already-void case.
+fn enrich_block(err: NigelError, conn: &Connection, invoice: &Invoice) -> ApiError {
+    let NigelError::Blocked(block) = &err else {
+        return ApiError::from(err);
+    };
+    let details = serde_json::json!({
+        "reason": block.reason_code(),
+        "status": invoice.status,
+        "canVoid": inv::ensure_voidable(conn, invoice).is_ok(),
+    });
+    ApiError::conflict(err.to_string(), details)
 }
 
 fn default_currency() -> String {
@@ -461,6 +488,26 @@ fn void_with<G: PaymentGateway, P: AssetPublisher>(
         payment_link_url: outcome.payment_link_url.clone(),
         teardown_warnings: outcome.warnings(),
     })
+}
+
+/// `DELETE /api/invoices/{number}` — remove a draft entered by mistake.
+///
+/// The opposite of void in every way that matters: no gateway, no publisher, no
+/// network, and no row left behind. Everything that has been sent, paid or
+/// voided refuses here as a 409 carrying `delete_blocker`'s reason and its own
+/// sentence — the route adds nothing to either, because the rule has one home
+/// and `canDelete` on the detail is that same guard called.
+async fn destroy(
+    State(state): State<AppState>,
+    ApiPath(number): ApiPath<i64>,
+) -> ApiResult<Json<Deleted>> {
+    let id = with_conn_api(&state, move |conn| {
+        let invoice = find_invoice(conn, number)?;
+        inv::delete_invoice(conn, invoice.id).map_err(|e| enrich_block(e, conn, &invoice))?;
+        Ok(invoice.id)
+    })
+    .await?;
+    Ok(Deleted::new(id))
 }
 
 /// `amount` omitted means the whole outstanding balance, exactly as `--amount`
@@ -1120,6 +1167,7 @@ mod tests {
         assert_eq!(body["canVoid"], false);
         assert_eq!(body["canPay"], true);
         assert_eq!(body["canSend"], true);
+        assert_eq!(body["canDelete"], false);
     }
 
     #[tokio::test]
@@ -1133,12 +1181,13 @@ mod tests {
         assert_eq!(draft["canEdit"], true);
         assert_eq!(draft["canVoid"], true);
         assert_eq!(draft["canPay"], true);
+        assert_eq!(draft["canDelete"], true);
         // Never published, so no address to hand out.
         assert!(draft["publicUrl"].is_null(), "{draft}");
 
         let voided = ok_json(&app, "/api/invoices/1247", &token).await;
         assert_eq!(voided["status"], "void");
-        for flag in ["canEdit", "canSend", "canVoid", "canPay"] {
+        for flag in ["canEdit", "canSend", "canVoid", "canPay", "canDelete"] {
             assert_eq!(voided[flag], false, "{flag} on a void invoice: {voided}");
         }
 
@@ -1602,6 +1651,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{paid}");
         assert_eq!(paid["status"], "draft");
         assert_eq!(paid["canEdit"], false);
+        // Still a draft, and still not deletable: the money is what refuses it.
+        assert_eq!(paid["canDelete"], false);
 
         let (status, body) = patch_json(
             &app,
@@ -1614,6 +1665,100 @@ mod tests {
         assert_eq!(body["error"]["details"]["reason"], "has_payments");
         assert_eq!(body["error"]["details"]["paid"], 400.0);
         assert_eq!(body["error"]["details"]["total"], 2400.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Delete
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn deleting_a_draft_removes_it_and_its_line_items() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let draft = ok_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(draft["canDelete"], true);
+
+        let (status, body) = delete_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["deleted"], true);
+        assert_eq!(body["id"], draft["id"]);
+
+        let (status, gone) = get_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{gone}");
+        assert_eq!(gone["error"]["details"]["reason"], "invoice_not_found");
+
+        let conn = crate::db::get_connection(&db_path).expect("conn");
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM invoice_line_items li
+                 LEFT JOIN invoices i ON i.id = li.invoice_id WHERE i.id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(orphans, 0, "the line items went with the invoice");
+    }
+
+    /// Every refusal is one 409 with one reason and the data layer's own
+    /// sentence. No `count`: this block is about the invoice's own state.
+    #[tokio::test]
+    async fn a_sent_paid_or_void_invoice_refuses_deletion_with_one_reason() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        // 1247 void, 1248 paid, 1249 overdue, 1250 partial, 1251 sent.
+        for number in [1247, 1248, 1249, 1250, 1251] {
+            let detail = ok_json(&app, &format!("/api/invoices/{number}"), &token).await;
+            assert_eq!(detail["canDelete"], false, "#{number}: {detail}");
+
+            let (status, body) =
+                delete_json(&app, &format!("/api/invoices/{number}"), &token).await;
+            assert_eq!(status, StatusCode::CONFLICT, "#{number}: {body}");
+            let details = &body["error"]["details"];
+            assert_eq!(details["reason"], "not_deletable");
+            assert!(
+                details["count"].is_null(),
+                "a state refusal counts nothing: {body}"
+            );
+            // The facts a client needs to say something true about it. Void is
+            // a dead end for anything with payments, and the route reports
+            // `ensure_voidable` rather than leaving it to be guessed at.
+            assert_eq!(details["status"], detail["status"]);
+            assert_eq!(details["canVoid"], detail["canVoid"]);
+            assert_eq!(
+                body["error"]["message"],
+                "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_invoice_is_a_404_with_a_reason() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = delete_json(&app, "/api/invoices/9999", &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "invoice_not_found");
+    }
+
+    /// The gap is the decision. A delete must not hand the number back out.
+    #[tokio::test]
+    async fn deleting_a_draft_leaves_the_number_counter_where_it_was() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let before = ok_json(&app, "/api/invoices/next-number", &token).await;
+        let (status, body) = delete_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let after = ok_json(&app, "/api/invoices/next-number", &token).await;
+        assert_eq!(after["number"], before["number"]);
     }
 
     // -----------------------------------------------------------------------
@@ -1636,7 +1781,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{voided}");
         assert_eq!(voided["status"], "void");
         assert!(voided["voidedAt"].as_str().is_some(), "{voided}");
-        for flag in ["canEdit", "canSend", "canVoid", "canPay"] {
+        for flag in ["canEdit", "canSend", "canVoid", "canPay", "canDelete"] {
             assert_eq!(voided[flag], false, "{flag} after a void: {voided}");
         }
 
@@ -2186,6 +2331,7 @@ mod tests {
                 "canSend",
                 "canVoid",
                 "canPay",
+                "canDelete",
             ] {
                 assert!(
                     json.get(key).is_some(),

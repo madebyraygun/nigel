@@ -1192,6 +1192,188 @@ fn invoice_void_with_yes_voids_and_blocks_pay() {
 }
 
 #[test]
+fn invoice_delete_removes_a_draft_and_its_line_items() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deleted invoice #1248"));
+
+    let db = env.db();
+    let invoices: i64 = db
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .expect("count");
+    let items: i64 = db
+        .query_row("SELECT COUNT(*) FROM invoice_line_items", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!((invoices, items), (0, 0));
+}
+
+/// The gap is the decision: `nigel invoice delete` says so, and the next draft
+/// proves it by getting the number after the deleted one.
+#[test]
+fn invoice_delete_leaves_the_number_counter_where_it_was() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Invoice numbers are not reused — the next draft will be #1249.",
+        ));
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-08-05",
+            "--item",
+            "Work:1:50",
+        ])
+        .assert()
+        .success();
+
+    let number: i64 = env
+        .db()
+        .query_row("SELECT number FROM invoices", [], |r| r.get(0))
+        .expect("the replacement draft");
+    assert_eq!(number, 1249);
+}
+
+#[test]
+fn invoice_delete_refuses_a_void_invoice_without_telling_it_to_void_again() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
+        ))
+        // The pointer is advice, and there is nothing left to cancel.
+        .stderr(predicate::str::contains("nigel invoice void").not());
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(count, 1);
+}
+
+/// A paid invoice refuses void as well, so pointing at it would be a dead end:
+/// the operator runs the suggested command and gets a second refusal. The
+/// honest answer names what is actually true of the invoice.
+#[test]
+fn invoice_delete_of_a_paid_invoice_does_not_point_at_a_void_that_would_refuse() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.cmd()
+        .args([
+            "invoice",
+            "pay",
+            "1248",
+            "--amount",
+            "100",
+            "--date",
+            "2026-08-06",
+        ])
+        .assert()
+        .success();
+
+    // The premise: void refuses this invoice too.
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be voided"));
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot delete: invoice has been"))
+        .stderr(predicate::str::contains("nigel invoice void").not())
+        .stderr(predicate::str::contains(
+            "A payment has been recorded against it, so it stays on the books.",
+        ));
+}
+
+/// The one case where the pointer is real advice: a sent invoice with nothing
+/// paid against it, which `ensure_voidable` allows.
+#[test]
+fn invoice_delete_of_a_sent_invoice_points_at_the_void_that_would_work() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+    env.db()
+        .execute(
+            "UPDATE invoices SET published_at = '2026-08-05', status = 'sent' WHERE number = 1248",
+            [],
+        )
+        .expect("publish");
+
+    env.cmd()
+        .args(["invoice", "delete", "1248", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cannot delete: invoice has been"))
+        .stderr(predicate::str::contains(
+            "Run `nigel invoice void 1248` to cancel it instead.",
+        ));
+
+    // And the advice holds: the command it names succeeds.
+    env.cmd()
+        .args(["invoice", "void", "1248", "--yes"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn invoice_delete_without_yes_on_a_pipe_refuses_rather_than_guessing() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "delete", "1248"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Refusing to delete invoice #1248 without confirmation. Pass --yes.",
+        ));
+
+    let count: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn invoice_delete_of_a_number_that_is_not_there_says_so() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "delete", "9999", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No invoice #9999"));
+}
+
+#[test]
 fn client_add_then_contacts_then_show_lists_them_all() {
     let env = TestEnv::new();
     env.cmd()

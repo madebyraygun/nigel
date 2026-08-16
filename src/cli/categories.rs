@@ -339,7 +339,7 @@ mod tests {
         .unwrap();
         let block = delete_blocker(&conn, cat_id).unwrap().expect("blocked");
         assert_eq!(block.reason_code(), "has_active_rules");
-        assert_eq!(block.count, 1);
+        assert_eq!(block.count(), Some(1));
 
         // Transactions outrank rules when a category has both.
         conn.execute(

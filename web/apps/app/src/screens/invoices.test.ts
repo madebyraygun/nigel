@@ -159,6 +159,7 @@ function detail(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
     canSend: true,
     canVoid: false,
     canPay: true,
+    canDelete: false,
     ...overrides,
   };
 }
@@ -532,6 +533,110 @@ describe('nigel-invoices-screen', () => {
     button(el, '[data-void]').click();
     await settle(el);
     expect(fake.calls).toContain('voidInvoice:1252');
+  });
+
+  it('deletes a draft behind a confirm dialog, and does nothing when declined', async () => {
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canDelete: true });
+
+    await answerConfirm(false);
+    const { el, routes } = await mount('number=1252', fake);
+    button(el, '[data-delete]').click();
+    await settle(el);
+    expect(fake.calls.some((call) => call.startsWith('deleteInvoice'))).toBe(false);
+
+    const toasts: string[] = [];
+    const onToast = (event: Event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener('nc-toast', onToast);
+
+    await answerConfirm(true);
+    button(el, '[data-delete]').click();
+    await settle(el);
+    window.removeEventListener('nc-toast', onToast);
+
+    expect(fake.calls).toContain('deleteInvoice:1252');
+    // Nothing left to refresh: the route goes back to the list, which reloads,
+    // so the toast is the only place the success can be said.
+    expect(routes.at(-1)).toEqual({ screen: 'invoices', params: '' });
+    expect(toasts).toEqual([
+      'Deleted invoice #1252. Invoice numbers are not reused.',
+    ]);
+  });
+
+  it('offers Delete only for an invoice the server says is deletable', async () => {
+    // The flag is the server's guard called, never re-derived here: a draft
+    // with a payment recorded against it is still a draft and still not
+    // deletable, which a status comparison would get wrong.
+    const { el } = await mount('number=1250');
+    expect(button(el, '[data-delete]').hasAttribute('disabled')).toBe(true);
+
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canDelete: true });
+    const draft = await mount('number=1252', fake);
+    expect(button(draft.el, '[data-delete]').hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders a refused delete beside the invoice, in our words', async () => {
+    await answerConfirm(true);
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, canDelete: true });
+    fake.deleteInvoiceError = conflictError('not_deletable', {
+      message:
+        'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      status: 'sent',
+      canVoid: true,
+    });
+    const { el, routes } = await mount('number=1252', fake);
+
+    button(el, '[data-delete]').click();
+    await settle(el);
+
+    const notice = el.shadowRoot?.querySelector('[data-action-error]');
+    expect(notice?.getAttribute('message')).toBe(
+      'Only a draft that was never sent and has no payments can be deleted. Void this invoice instead.',
+    );
+    // The invoice being explained is still on screen, and the route stood still.
+    expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeTruthy();
+    expect(routes).toEqual([]);
+  });
+
+  /// The screen renders whatever the reason table produced, so the dead-end
+  /// advice must not reappear here for an invoice void would also refuse.
+  it('does not tell a paid invoice to void itself when the delete is refused', async () => {
+    await answerConfirm(true);
+    const fake = client();
+    // A real refusal, built by the fake from the invoice's own flags.
+    fake.invoiceDetails[1252] = detail({
+      number: 1252,
+      status: 'paid',
+      canDelete: false,
+      canVoid: false,
+    });
+    // canDelete is false, so the button is disabled — drive the handler the way
+    // a stale view would, with the flag on and the server refusing.
+    fake.invoiceDetails[1253] = detail({
+      number: 1253,
+      status: 'paid',
+      canDelete: true,
+      canVoid: false,
+    });
+    fake.deleteInvoiceError = conflictError('not_deletable', {
+      message:
+        'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      status: 'paid',
+      canVoid: false,
+    });
+    const { el } = await mount('number=1253', fake);
+
+    button(el, '[data-delete]').click();
+    await settle(el);
+
+    const message = el.shadowRoot
+      ?.querySelector('[data-action-error]')
+      ?.getAttribute('message');
+    expect(message).not.toContain('Void this invoice instead');
+    expect(message).toContain('it stays on the books');
   });
 
   it('renders what a void could not take down, without calling it a failure', async () => {

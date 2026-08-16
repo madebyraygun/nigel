@@ -588,6 +588,7 @@ export const CONFLICT_REASONS = [
   'send_not_configured',
   'send_misconfigured',
   'client_archived',
+  'not_deletable',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -600,8 +601,14 @@ export interface ConflictDetails {
   /** `no_transactions` names the account and month it found nothing in. */
   account?: string;
   month?: string;
-  /** `not_draft` names the status that blocked the edit. */
+  /** `not_draft` and `not_deletable` name the status behind the refusal. */
   status?: string;
+  /**
+   * `not_deletable` carries whether void would be accepted — `ensure_voidable`
+   * called, not re-derived — because void refuses a paid invoice too and
+   * suggesting it there is advice that fails.
+   */
+  canVoid?: boolean;
   /** `has_payments` and `no_balance` carry the figures behind the refusal. */
   total?: number;
   paid?: number;
@@ -998,6 +1005,11 @@ export interface InvoiceDetail {
   canSend: boolean;
   canVoid: boolean;
   canPay: boolean;
+  /**
+   * Whether this invoice is still the draft nobody has seen. Delete is for the
+   * one entered by mistake; void is for everything that has left the building.
+   */
+  canDelete: boolean;
 }
 
 /**

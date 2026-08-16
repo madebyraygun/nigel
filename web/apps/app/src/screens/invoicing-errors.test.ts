@@ -115,6 +115,55 @@ describe('invoicingGuardrailMessage', () => {
     expect(invoicingGuardrailMessage(error, 'invoice')).toBe(error.message);
   });
 
+  const NOT_DELETABLE =
+    'Only a draft that was never sent and has no payments can be deleted.';
+
+  it('explains a refused delete in our words, and points at a void that would work', () => {
+    // The server says "Cannot delete: invoice has been sent, paid or voided —
+    // only an unsent draft with no payments can be deleted"; the details carry
+    // the facts the sentence branches on.
+    const message = invoicingGuardrailMessage(
+      conflict(
+        'not_deletable',
+        { status: 'sent', canVoid: true },
+        'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      ),
+      'invoice',
+    );
+    expect(message).toBe(`${NOT_DELETABLE} Void this invoice instead.`);
+    expect(message).not.toContain('Cannot delete:');
+  });
+
+  /// Void refuses a paid invoice too, so suggesting it would send the reader to
+  /// a second refusal.
+  it('does not send a paid invoice to a void that would refuse it', () => {
+    const message = invoicingGuardrailMessage(
+      conflict('not_deletable', { status: 'paid', canVoid: false }),
+      'invoice',
+    );
+    expect(message).not.toContain('Void this invoice instead');
+    expect(message).toBe(
+      `${NOT_DELETABLE} A payment has been recorded against it, so it stays on the books.`,
+    );
+  });
+
+  it('does not tell an already-void invoice to void itself', () => {
+    const message = invoicingGuardrailMessage(
+      conflict('not_deletable', { status: 'void', canVoid: false }),
+      'invoice',
+    );
+    expect(message).not.toContain('Void this invoice instead');
+    expect(message).toBe(`${NOT_DELETABLE} This invoice is already void.`);
+  });
+
+  it('offers no advice at all when the server named no facts to branch on', () => {
+    // Guessing here is what produced the dead ends: with nothing known, the
+    // rule is stated and nothing is suggested.
+    const message = invoicingGuardrailMessage(conflict('not_deletable'), 'invoice');
+    expect(message).toBe(NOT_DELETABLE);
+    expect(message).not.toContain('Void this invoice instead');
+  });
+
   it('falls back to the server sentence for an unrecognized 409 reason', () => {
     expect(
       invoicingGuardrailMessage(conflict('some_new_rule', {}, 'Nigel refused that'), 'invoice'),

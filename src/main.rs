@@ -268,6 +268,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 &cli::today(),
             ),
             InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
+            InvoiceCommands::Delete { number, yes } => cli::invoice::delete(number, yes),
             InvoiceCommands::List => cli::invoice::list(),
             InvoiceCommands::Show { number } => cli::invoice::show(number),
             InvoiceCommands::Preview { number, output_dir } => {

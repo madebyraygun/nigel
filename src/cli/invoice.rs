@@ -10,9 +10,9 @@ use crate::fmt::money;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use crate::invoicing::invoices::{
-    create_invoice, ensure_not_void, ensure_voidable, get_invoice, get_invoice_by_number, is_void,
-    line_items, list_invoices, paid_amount, payment_amount, record_payment, update_invoice,
-    InvoiceListRow, InvoiceUpdate, NewLineItem,
+    create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
+    get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
+    payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::render::{render_invoice, RenderedInvoice};
 use crate::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
@@ -180,6 +180,68 @@ pub fn void(number: i64, yes: bool, today: &str) -> Result<()> {
         println!("{warning}");
     }
     Ok(())
+}
+
+/// `nigel invoice delete <number>` — remove a draft entered by mistake.
+///
+/// The guard is asked before the prompt, `client delete`'s shape: an invoice
+/// that cannot be deleted is never offered a confirmation, because there is
+/// nothing to confirm. The block's own sentence is returned rather than printed
+/// so `main` writes it once, with the pointer to `void` below it when there is
+/// one worth giving.
+pub fn delete(number: i64, yes: bool) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let invoice = find_invoice(&conn, number)?;
+
+    if let Some(block) = delete_blocker(&conn, &invoice)? {
+        return Err(NigelError::Other(format!(
+            "{}{}",
+            NigelError::Blocked(block),
+            delete_alternative(&conn, &invoice)?
+        )));
+    }
+
+    let client = get_client(&conn, invoice.client_id)?;
+    println!("{}", void_summary(&invoice, &client.name));
+    println!("Deleting removes the draft and its line items. This cannot be undone.");
+    if !crate::cli::confirm_or_refuse(
+        "Delete it? [y/N]",
+        &format!("Refusing to delete invoice #{number} without confirmation. Pass --yes."),
+        yes,
+    )? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    delete_invoice(&conn, invoice.id)?;
+    println!("Deleted invoice #{number}.");
+    println!(
+        "Invoice numbers are not reused — the next draft will be #{}.",
+        next_number(&conn)?
+    );
+    Ok(())
+}
+
+/// The line under a refused delete, derived from what this invoice can actually
+/// do rather than from what usually follows a refusal.
+///
+/// Void is only worth naming when `ensure_voidable` would allow it — the same
+/// call `nigel invoice void` makes — because advice the reader can follow
+/// straight into a second refusal is worse than none. An invoice with payments
+/// is that case: it refuses delete *and* void, so what it gets is the fact
+/// rather than a suggestion. An already-void invoice gets nothing: there is
+/// nothing left to do to it.
+fn delete_alternative(conn: &Connection, invoice: &Invoice) -> Result<String> {
+    if is_void(invoice) {
+        return Ok(String::new());
+    }
+    if ensure_voidable(conn, invoice).is_ok() {
+        return Ok(format!(
+            "\nRun `nigel invoice void {}` to cancel it instead.",
+            invoice.number
+        ));
+    }
+    Ok("\nA payment has been recorded against it, so it stays on the books.".to_string())
 }
 
 fn confirm_void(invoice: &Invoice, yes: bool) -> Result<bool> {

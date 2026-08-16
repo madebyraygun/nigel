@@ -861,7 +861,7 @@ mod tests {
 
         let block = delete_blocker(&conn, id).unwrap().expect("blocked");
         assert_eq!(block.reason_code(), "has_invoices");
-        assert_eq!(block.count, 2);
+        assert_eq!(block.count(), Some(2));
 
         let err = delete_client(&conn, id).unwrap_err();
         assert!(matches!(err, NigelError::Blocked(_)), "got: {err:?}");
@@ -893,7 +893,7 @@ mod tests {
         crate::invoicing::invoices::void_invoice(&conn, cancelled, "2026-07-02").unwrap();
 
         let block = delete_blocker(&conn, id).unwrap().expect("blocked");
-        assert_eq!(block.count, 2);
+        assert_eq!(block.count(), Some(2));
         assert!(matches!(
             delete_client(&conn, id).unwrap_err(),
             NigelError::Blocked(_)
@@ -1049,8 +1049,8 @@ mod tests {
             2
         );
         assert_eq!(
-            delete_blocker(&conn, id).unwrap().expect("blocked").count,
-            2
+            delete_blocker(&conn, id).unwrap().expect("blocked").count(),
+            Some(2)
         );
     }
 

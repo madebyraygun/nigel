@@ -73,6 +73,22 @@ function sentenceFor(details: ConflictDetails): string | null {
       return details.paid !== undefined && details.total !== undefined
         ? `This invoice has no outstanding balance — ${money(details.paid)} of ${money(details.total)} is already recorded.`
         : 'This invoice has no outstanding balance.';
+    // Delete is for the draft entered by mistake; everything a client has seen
+    // is void's business. One reason covers published, paid and void — but the
+    // *advice* is not one sentence, because void refuses a paid invoice too and
+    // an already-void one has nothing left to cancel. The server sends the
+    // facts (`canVoid` is `ensure_voidable` called, `status` the derived word)
+    // rather than leaving them to be re-derived here, and with neither present
+    // the rule is stated and nothing is suggested.
+    case 'not_deletable': {
+      const rule = 'Only a draft that was never sent and has no payments can be deleted.';
+      if (details.status === 'void') return `${rule} This invoice is already void.`;
+      if (details.canVoid === true) return `${rule} Void this invoice instead.`;
+      if (details.canVoid === false) {
+        return `${rule} A payment has been recorded against it, so it stays on the books.`;
+      }
+      return rule;
+    }
     case 'has_invoices':
       return `${plural(count, 'invoice')} ${count === 1 ? 'bills' : 'bill'} this client. Nigel will not delete a client that has been billed.`;
     case 'duplicate_name':

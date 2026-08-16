@@ -247,7 +247,7 @@ mod tests {
 
         let block = delete_blocker(&conn, id).unwrap().expect("blocked");
         assert_eq!(block.reason_code(), "has_transactions");
-        assert_eq!(block.count, 2);
+        assert_eq!(block.count(), Some(2));
         assert!(matches!(
             delete_account(&conn, id).unwrap_err(),
             NigelError::Blocked(_)

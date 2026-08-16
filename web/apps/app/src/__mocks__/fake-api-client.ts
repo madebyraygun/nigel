@@ -977,6 +977,7 @@ export class FakeApiClient implements ApiClient {
   createInvoiceError: Error | null = null;
   updateInvoiceError: Error | null = null;
   voidInvoiceError: Error | null = null;
+  deleteInvoiceError: Error | null = null;
   /** What a void could not take down, as the route reports it. */
   voidTeardown: { paymentLinkUrl?: string; teardownWarnings?: string[] } = {};
   /** What the republish behind a payment could not do, as the route reports it. */
@@ -1228,6 +1229,7 @@ export class FakeApiClient implements ApiClient {
       canSend: client.email !== null,
       canVoid: true,
       canPay: true,
+      canDelete: true,
     };
     this.invoiceDetails[number] = created;
     return created;
@@ -1276,9 +1278,30 @@ export class FakeApiClient implements ApiClient {
       canSend: false,
       canVoid: false,
       canPay: false,
+      canDelete: false,
     };
     this.invoiceDetails[number] = updated;
     return { ...updated, ...this.voidTeardown };
+  }
+
+  async deleteInvoice(number: number): Promise<Deleted> {
+    this.calls.push(`deleteInvoice:${number}`);
+    if (this.deleteInvoiceError) throw this.deleteInvoiceError;
+
+    const detail = this.detail(number);
+    if (!detail.canDelete) {
+      // The shape the route sends: the code and the sentence are the data
+      // layer's, plus the two facts the sentence branches on.
+      throw conflictError('not_deletable', {
+        message:
+          'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+        status: detail.status,
+        canVoid: detail.canVoid,
+      });
+    }
+    delete this.invoiceDetails[number];
+    this.invoices = this.invoices.filter((row) => row.number !== number);
+    return { id: detail.id, deleted: true };
   }
 
   async payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult> {
