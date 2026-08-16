@@ -69,17 +69,7 @@ pub(crate) fn confirm_or_refuse(
     Ok(answer.trim().eq_ignore_ascii_case("y"))
 }
 
-pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
-    if let Some(m) = month {
-        let parts: Vec<&str> = m.split('-').collect();
-        if parts.len() == 2 {
-            let year = parts[0].parse().ok();
-            let month = parts[1].parse().ok();
-            return (year, month);
-        }
-    }
-    (None, None)
-}
+pub(crate) use crate::reports::parse_month_opt;
 
 #[derive(Parser)]
 #[command(

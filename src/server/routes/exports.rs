@@ -390,7 +390,7 @@ mod tests {
     /// The CLI's text export is `with_header(company, format_x(report))` written
     /// to a file; the only thing this endpoint does differently is skip the file.
     ///
-    /// Calling `cli::report::text::pnl()` itself would prove the last step too,
+    /// Calling `reports::text::pnl()` itself would prove the last step too,
     /// but those wrappers open their own connection through
     /// `settings::get_data_dir()` — the developer's real data directory, which a
     /// test has no business repointing.

@@ -1,12 +1,11 @@
 use colored::Colorize;
 use comfy_table::{Cell, Table};
 
-use crate::cli::report::{register_range_label, register_subtitle};
-use crate::cli::{parse_month_opt, RegisterFilterArgs};
 use crate::db::{get_connection, get_metadata};
 use crate::error::Result;
 use crate::fmt::money;
 use crate::reports;
+use crate::reports::{parse_month_opt, register_range_label, register_subtitle, RegisterFilters};
 use crate::settings::get_data_dir;
 
 /// Prepend company name as a header line if non-empty.
@@ -73,22 +72,21 @@ pub fn register(
     year: Option<i32>,
     from_date: Option<String>,
     to_date: Option<String>,
-    filters: &RegisterFilterArgs,
+    filters: &RegisterFilters,
 ) -> Result<String> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
-    let filters = filters.resolve(&conn)?;
     let data = reports::get_register(
         &conn,
         y,
         mm,
         from_date.as_deref(),
         to_date.as_deref(),
-        &filters,
+        filters,
     )?;
-    let subtitle = register_subtitle(&register_range_label(y, mm), &filters);
+    let subtitle = register_subtitle(&register_range_label(y, mm), filters);
     Ok(with_header(
         &company,
         with_subtitle(&subtitle, format_register(&data)),
