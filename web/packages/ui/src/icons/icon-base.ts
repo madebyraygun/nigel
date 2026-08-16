@@ -8,6 +8,11 @@ import { property } from 'lit/decorators.js';
  * An icon with no `label` is decorative and hidden from assistive tech — the
  * common case, since icons here sit beside their own text label. Setting
  * `label` promotes it to `role="img"` with an accessible name.
+ *
+ * Sizing has two modes. By default an icon is `--nc-icon-size` (20px), the
+ * size a standalone mark wants — a toolbar button, an empty state. `inline`
+ * makes it 1em instead, so a mark set in a run of text tracks the text rather
+ * than the token, which is what every status mark needs.
  */
 export abstract class WcIconBase extends LitElement {
   static styles = css`
@@ -21,6 +26,11 @@ export abstract class WcIconBase extends LitElement {
       flex-shrink: 0;
     }
 
+    :host([inline]) {
+      width: 1em;
+      height: 1em;
+    }
+
     svg {
       width: 100%;
       height: 100%;
@@ -29,6 +39,10 @@ export abstract class WcIconBase extends LitElement {
 
   @property({ type: String })
   label = '';
+
+  /** Size to the text this icon sits in rather than to `--nc-icon-size`. */
+  @property({ type: Boolean, reflect: true })
+  inline = false;
 
   protected abstract renderIcon(): SVGTemplateResult;
 

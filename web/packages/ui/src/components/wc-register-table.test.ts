@@ -10,6 +10,11 @@ import {
   type RegisterTableRow,
 } from './wc-register-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import {
+  describeColumnLayout,
+  describePrintsAsBlock,
+  resolvedBox,
+} from '../../preview/layout-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-register-table.preview.js';
 
@@ -1216,3 +1221,15 @@ describe('wc-register-table height', () => {
 });
 
 describePreviewA11y(preview);
+
+describeColumnLayout(WcRegisterTable);
+
+describePrintsAsBlock(WcRegisterTable);
+
+describe('the table box', () => {
+  it('takes the screen height the toolbar left over', () => {
+    // Full of rows that is invisible — the scroller caps its own height. With
+    // no rows it is the box the empty state centres itself in.
+    expect(resolvedBox(WcRegisterTable).flexGrow).toBe('1');
+  });
+});

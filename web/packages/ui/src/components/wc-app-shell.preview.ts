@@ -5,14 +5,24 @@ import './wc-empty-state.js';
 import { NAV_ITEMS } from './__mocks__/nav.js';
 import type { Preview } from '../../preview/types.js';
 
-const shell = (extra = html``, attrs = {}) => html`
+interface ShellAttrs {
+  title?: string;
+  collapsed?: boolean;
+  /** Stands in for a phone-width viewport, which a desktop preview is not. */
+  narrow?: boolean;
+}
+
+const shell = (extra = html``, attrs: ShellAttrs = {}) => html`
   <div style="height:420px;border:1px solid var(--wa-color-border);overflow:hidden;">
     <wc-app-shell
-      screen-title=${(attrs as { title?: string }).title ?? 'Dashboard'}
+      screen-title=${attrs.title ?? 'Dashboard'}
+      ?sidebar-collapsed=${attrs.collapsed ?? false}
+      .narrowQuery=${attrs.narrow ? { matches: true } : undefined}
       style="height:100%;"
     >
       <wc-nav-sidebar
         slot="sidebar"
+        ?collapsed=${attrs.collapsed ?? false}
         .items=${NAV_ITEMS}
         active="dashboard"
       ></wc-nav-sidebar>
@@ -34,6 +44,18 @@ const preview: Preview = {
   layout: 'stack',
   states: [
     { name: 'default', render: () => shell() },
+    {
+      name: 'sidebar-collapsed',
+      render: () => shell(html``, { collapsed: true }),
+    },
+    {
+      name: 'drawer-open',
+      render: () => shell(html``, { narrow: true }),
+    },
+    {
+      name: 'drawer-closed',
+      render: () => shell(html``, { narrow: true, collapsed: true }),
+    },
     {
       name: 'with-header-actions',
       render: () =>

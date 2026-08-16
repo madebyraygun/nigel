@@ -496,6 +496,17 @@ describe('nigel-review-screen', () => {
         'Nothing to review',
       );
     });
+
+    it('gives the empty state the whole screen to centre itself in', async () => {
+      const { el } = await mount(client([]));
+      // The screen is a column stretched to the content area, so the empty
+      // state is centred in that area only while it is the column's one child
+      // and nothing wraps it in a box of its own.
+      const rendered = [...(el.shadowRoot?.children ?? [])]
+        .map((node) => node.tagName.toLowerCase())
+        .filter((tag) => tag !== 'style');
+      expect(rendered).toEqual(['wc-empty-state']);
+    });
   });
 
   describe('the rule test preview', () => {

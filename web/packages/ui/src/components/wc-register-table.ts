@@ -113,8 +113,12 @@ export class WcRegisterTable extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* A column filling the screen: with rows that is invisible, and with none
+         it is what lets the empty state centre itself where the table was. */
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
         min-height: 0;
@@ -413,6 +417,15 @@ export class WcRegisterTable extends LitElement {
       .edit-actions button:focus-visible {
         outline: 2px solid var(--wa-color-focus);
         outline-offset: 1px;
+      }
+
+      /* Block flow for the sheets, where a register runs to many pages: a flex
+         container is not required to fragment, and the leftover height the
+         column hands out is a property of a viewport. */
+      @media print {
+        :host {
+          display: block;
+        }
       }
     `,
   ];

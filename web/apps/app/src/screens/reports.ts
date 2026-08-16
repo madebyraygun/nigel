@@ -96,9 +96,9 @@ function money(amount: number): string {
 export class NigelReportsScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--wa-space-l, 16px);
-      align-content: start;
       padding: var(--wa-space-l, 16px);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);

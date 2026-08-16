@@ -5,6 +5,14 @@ import '../icons/icons.js';
 /**
  * The "nothing here yet" panel: an empty result set, an unbuilt screen, a
  * filter that matched no rows.
+ *
+ * It centres its content in the box it is given, on both axes, and asks a
+ * flex-column parent for the space left over. Screens are flex columns and
+ * `wc-app-shell` stretches them to the whole content area, so an empty state
+ * that is the only thing on a screen is centred in that area without the
+ * screen saying anything about it. Where the box is content-sized — a table's
+ * own empty row, a panel body — `flex-grow` finds nothing to take and the
+ * centring is a no-op, which is why the same element serves both.
  */
 @customElement('wc-empty-state')
 export class WcEmptyState extends LitElement {
@@ -12,6 +20,8 @@ export class WcEmptyState extends LitElement {
     :host {
       display: grid;
       place-items: center;
+      align-content: center;
+      flex: 1 1 auto;
       gap: var(--wa-space-s, 8px);
       padding: var(--wa-space-2xl, 32px);
       text-align: center;

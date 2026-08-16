@@ -158,7 +158,14 @@ async fn put_company(
         // letterhead behind.
         let tx = conn.unchecked_transaction()?;
         for (key, field) in COMPANY_KEYS {
-            db::set_metadata(&tx, key, field(&mut company))?;
+            // The logo goes through its own writer, which forgets what was
+            // published when the value is cleared — the same rule the TUI's
+            // settings screen writes through.
+            if *key == crate::invoicing::logo::COMPANY_LOGO_KEY {
+                crate::invoicing::logo::set_company_logo(&tx, field(&mut company))?;
+            } else {
+                db::set_metadata(&tx, key, field(&mut company))?;
+            }
         }
         tx.commit()?;
         Ok(company)

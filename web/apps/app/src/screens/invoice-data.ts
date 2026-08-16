@@ -1,5 +1,6 @@
 import {
   EMPTY_INVOICE_FORM,
+  dueTermFor,
   invoiceFormItems,
   parseLineNumber,
   validateInvoiceForm,
@@ -115,13 +116,20 @@ export function newInvoiceRequest(value: InvoiceFormValue): NewInvoiceRequest | 
   };
 }
 
-/** The form as it should look when an existing invoice is opened for editing. */
+/**
+ * The form as it should look when an existing invoice is opened for editing.
+ *
+ * A stored due date opens as a date, never as a net preset inferred from the
+ * arithmetic: editing the issue date of an existing invoice must not move a
+ * due date the operator can see.
+ */
 export function invoiceFormFrom(detail: InvoiceDetail): InvoiceFormValue {
   return {
     ...EMPTY_INVOICE_FORM,
     clientId: String(detail.clientId),
     issueDate: detail.issueDate,
     dueDate: detail.dueDate ?? '',
+    dueTerm: dueTermFor(detail.dueDate ?? ''),
     currency: detail.currency,
     notes: detail.notes ?? '',
     terms: detail.terms ?? '',

@@ -66,7 +66,8 @@ interface Editor {
 export class NigelRulesScreen extends LitElement {
   static styles = css`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
     }
 
     .filter {

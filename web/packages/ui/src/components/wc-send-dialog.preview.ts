@@ -155,6 +155,30 @@ const preview: Preview = {
       `,
     },
     {
+      // A step label wide enough to wrap in the dialog. The mark belongs on
+      // the label's first line and in line with the single-line row above it.
+      name: 'in-flight-wrapping-label',
+      render: () => html`
+        <wc-send-dialog
+          open
+          phase="sending"
+          .number=${1251}
+          .total=${1850}
+          .recipient=${'ap@acme.test'}
+          .steps=${[
+            { step: 'config', label: LABELS.config, state: 'ok' },
+            {
+              step: 'publish',
+              label:
+                'Publishing the rendered invoice page and its PDF attachment to the configured R2 bucket',
+              state: 'running',
+            },
+            { step: 'email', label: LABELS.email, state: 'pending' },
+          ] satisfies SendStepView[]}
+        ></wc-send-dialog>
+      `,
+    },
+    {
       name: 'sent',
       render: () => html`
         <wc-send-dialog

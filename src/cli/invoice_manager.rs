@@ -22,7 +22,7 @@ use crate::invoicing::invoices::{
     validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use crate::invoicing::render_html::{load_template, Branding};
-use crate::invoicing::send::send_invoice;
+use crate::invoicing::send::{send_invoice, SendOutcome};
 use crate::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
@@ -1131,7 +1131,7 @@ impl InvoiceManager {
         }
         match self.screen {
             Screen::Voiding => self.perform_pending_void(conn, today, cfg),
-            Screen::Republishing => self.perform_pending_republish(conn),
+            Screen::Republishing => self.perform_pending_republish(conn, &cfg, data_dir),
             _ => self.perform_pending_send(conn, today, cfg, data_dir),
         }
     }
@@ -1209,7 +1209,7 @@ impl InvoiceManager {
         self.finish_send(conn, outcome);
     }
 
-    fn finish_send(&mut self, conn: &Connection, outcome: Result<String>) {
+    fn finish_send(&mut self, conn: &Connection, outcome: Result<SendOutcome>) {
         let Some(detail) = &self.detail else {
             return;
         };
@@ -1224,12 +1224,19 @@ impl InvoiceManager {
         let reloaded = self.detail.as_ref().expect("just loaded");
 
         let (title, lines, is_error) = match outcome {
-            Ok(url) => (
+            // The warnings land on the result screen rather than the status
+            // line, because the status line is about to be covered by it — and
+            // a logo that did not publish is a thing to read once, beside the
+            // address the invoice went out at.
+            Ok(sent) => (
                 format!("Invoice #{number} sent"),
-                vec![
-                    url,
+                [
+                    sent.public_url,
                     format!("Emailed to {}.", optional_display(reloaded.client_email())),
-                ],
+                ]
+                .into_iter()
+                .chain(sent.warnings)
+                .collect(),
                 false,
             ),
             // The second sentence is derived from the reloaded row: a failed
@@ -1478,13 +1485,22 @@ impl InvoiceManager {
     /// The republish that follows a payment, run after the blocking frame has
     /// been painted. It cannot fail: every outcome is one of
     /// `RepublishOutcome`'s sentences, and the payment is already recorded.
-    fn perform_pending_republish(&mut self, conn: &Connection) {
+    ///
+    /// Its config and data directory come from `perform_pending_with`, which is
+    /// where this screen resolves settings — the seam `begin_send` established.
+    fn perform_pending_republish(
+        &mut self,
+        conn: &Connection,
+        cfg: &InvoicingConfig,
+        data_dir: &std::path::Path,
+    ) {
         let Some(detail) = &self.detail else {
             self.screen = Screen::List;
             return;
         };
         let invoice_id = detail.invoice.id;
-        let warnings = crate::cli::invoice::republish_after_payment(conn, invoice_id);
+        let warnings =
+            crate::cli::invoice::republish_after_payment(conn, invoice_id, cfg, data_dir);
         self.screen = Screen::Detail;
         if !warnings.is_empty() {
             self.screen = Screen::ActionResult {
@@ -1993,20 +2009,6 @@ mod tests {
         (dir, conn)
     }
 
-    /// A whole isolated installation: a temp config directory *and* a temp data
-    /// directory. `perform_pending_republish` resolves both from ambient
-    /// settings rather than taking them as arguments the way `begin_send` does,
-    /// so without this a test answers from the developer's own settings.json —
-    /// and on a machine with R2 configured, republishes to the real bucket.
-    /// `cli::invoice`'s own `isolated` is the same guard for the same reason.
-    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
-        let guard = crate::settings::TempConfigDir::new();
-        let mut settings = crate::settings::load_settings();
-        settings.data_dir = dir.to_string_lossy().into_owned();
-        crate::settings::save_settings(&settings).expect("settings");
-        guard
-    }
-
     fn manager(conn: &Connection) -> InvoiceManager {
         InvoiceManager::new(conn, "Hello, Sam.")
     }
@@ -2438,7 +2440,6 @@ mod tests {
     #[test]
     fn paying_a_published_invoice_paints_a_frame_before_it_republishes() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
         mark_published(&conn, id, "2026-07-16").unwrap();
         let mut mgr = manager(&conn);
@@ -2459,7 +2460,7 @@ mod tests {
 
         // Nothing is configured, so the page is still stale — and the result
         // screen says so rather than passing the republish off as done.
-        mgr.perform_pending_republish(&conn);
+        mgr.perform_pending_republish(&conn, &no_config(), _d.path());
         let after = rendered(&mut mgr);
         assert!(after.contains("old balance"), "{after}");
     }
@@ -2935,21 +2936,10 @@ mod tests {
         assert_eq!(payment_rows(&conn), 0);
     }
 
+    /// An installation with nothing configured — the state `InvoicingConfig`'s
+    /// `Default` is, and the one a test hands over to reach nothing.
     fn no_config() -> InvoicingConfig {
-        InvoicingConfig {
-            stripe_secret_key: None,
-            mailgun_api_key: None,
-            mailgun_domain: None,
-            from_email: None,
-            from_name: None,
-            reply_to_email: None,
-            contact_email: None,
-            r2_account_id: None,
-            r2_access_key: None,
-            r2_secret_key: None,
-            r2_bucket: None,
-            public_base_url: None,
-        }
+        InvoicingConfig::default()
     }
 
     fn full_config() -> InvoicingConfig {
@@ -3193,6 +3183,12 @@ mod tests {
                 *self.pages.borrow_mut() += 1;
                 Ok(format!("https://billing.example.test/i/{token}/index.html"))
             }
+            fn public_base(&self) -> &str {
+                "https://billing.example.test/i"
+            }
+            fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+                unreachable!("void publishes no logo")
+            }
         }
 
         /// A sent invoice, as far as the teardown can tell: a link and a page.
@@ -3348,6 +3344,12 @@ mod tests {
             fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
                 Ok(format!("https://billing.example.com/i/{token}/index.html"))
             }
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
+            }
+            fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+                Ok(self.logo_url(bytes, mime))
+            }
         }
         struct FailPub;
         impl AssetPublisher for FailPub {
@@ -3355,6 +3357,12 @@ mod tests {
                 Err(NigelError::Other("upload down".into()))
             }
             fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
+                Err(NigelError::Other("upload down".into()))
+            }
+            fn public_base(&self) -> &str {
+                "https://billing.example.com/i"
+            }
+            fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
                 Err(NigelError::Other("upload down".into()))
             }
         }

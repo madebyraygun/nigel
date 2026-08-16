@@ -54,12 +54,22 @@ type Phase = 'loading' | 'empty' | 'reviewing' | 'summary' | 'error';
 export class NigelReviewScreen extends LitElement {
   static styles = css`
     :host {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--wa-space-m, 12px);
-      align-content: start;
       padding: var(--wa-space-l, 16px);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
+    }
+
+    /* The reading width belongs to the things being read: one transaction, the
+       form under it, the summary at the end. The screen itself is the whole
+       content area, so what fills it — the empty state — is centred in the
+       area rather than in a column down its left. */
+    wc-review-progress,
+    wc-review-card,
+    wc-review-form,
+    wc-panel {
       max-width: 52rem;
     }
 

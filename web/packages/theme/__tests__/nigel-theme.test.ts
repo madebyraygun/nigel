@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
+import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
 
 const text = nigelTheme.cssText;
 
@@ -43,6 +44,7 @@ describe('nigelTheme', () => {
     '--nc-color-flagged',
     '--nc-color-selected-bg',
     '--nc-grad-brand',
+    '--nc-grad-brand-size',
     '--nc-grad-brand-soft',
     '--nc-font-money',
     '--nc-icon-size',
@@ -51,6 +53,7 @@ describe('nigelTheme', () => {
     '--nc-header-height',
     '--nc-transition-fast',
     '--nc-transition-base',
+    '--nc-duration-slow',
   ])('defines the nigel token %s', (token) => {
     expect(text).toContain(`${token}:`);
   });
@@ -84,6 +87,17 @@ describe('nigelTheme', () => {
     expect(text).toMatch(/prefers-reduced-motion:\s*reduce/);
   });
 
+  it('zeroes the durations a button animates over when motion is reduced', () => {
+    // WA's own base-part transitions run at --wa-transition-fast; the hover
+    // edge runs at --nc-duration-slow. Zeroing both is the whole of
+    // prefers-reduced-motion for a button's chrome — the brand drift is an
+    // animation rather than a transition and is turned off in controlsCss.
+    expect(text).toMatch(/--wa-transition-fast:\s*var\(--nc-duration-fast\)/);
+    const reduced = text.slice(text.indexOf('prefers-reduced-motion'));
+    expect(reduced).toMatch(/--nc-duration-fast:\s*0ms/);
+    expect(reduced).toMatch(/--nc-duration-slow:\s*0ms/);
+  });
+
   it('orders light tokens before dark overrides before print', () => {
     // Specificity alone does not settle this: the dark block and the light
     // block both target :root, so the later one wins. Order is the contract.
@@ -93,5 +107,59 @@ describe('nigelTheme', () => {
     expect(light).toBeGreaterThan(-1);
     expect(light).toBeLessThan(dark);
     expect(dark).toBeLessThan(print);
+  });
+});
+
+/**
+ * The brand ramp as the button draws it: a periodic image plus the size that
+ * makes one `background-position: 100%` shift exactly one period.
+ *
+ * The pair is the whole of the hover drift's seamlessness, and the pair is
+ * also what keeps a button that never moves looking as it always did — so the
+ * arithmetic is asserted rather than eyeballed.
+ */
+describe('the brand ramp', () => {
+  /** Every value declared for a token, light declaration first. */
+  function values(name: string): string[] {
+    return [...text.matchAll(new RegExp(`${name}:([^;]*);`, 'g'))].map((m) => m[1]);
+  }
+
+  const image = values('--nc-grad-brand')[0];
+  const stops = [...image.matchAll(/(#[0-9a-f]{6}) ([\d.]+)%/gi)].map((m) => ({
+    color: m[1],
+    at: Number(m[2]),
+  }));
+  const size = Number(values('--nc-grad-brand-size')[0].match(/([\d.]+)%/)![1]);
+
+  it('repeats, which is what the drift scrolls through', () => {
+    expect(image).toContain('repeating-linear-gradient');
+  });
+
+  it('carries the seven stops of the palette and then returns to the first', () => {
+    // The wrap is what makes it periodic; magenta back to pink is a short hue
+    // step, so it reads as part of the rainbow rather than as a join.
+    expect(stops.map((s) => s.color)).toEqual([...NIGEL_PALETTE, NIGEL_PALETTE[0]]);
+  });
+
+  it('puts the ramp exactly across the element at rest, as the plain one did', () => {
+    // A stop's position within the image, times the image's size, is where it
+    // lands on the element. The last hue belongs at the right-hand edge.
+    const magenta = stops[NIGEL_PALETTE.length - 1];
+    expect((magenta.at * size) / 100).toBeCloseTo(100, 2);
+    expect(stops[0].at).toBe(0);
+  });
+
+  it('shifts one whole period per iteration, so the loop has no seam', () => {
+    // background-position: 100% offsets by image minus element. That has to
+    // equal the period — the distance from a stop to its repeat.
+    const period = stops[NIGEL_PALETTE.length].at * (size / 100);
+    expect(size - 100).toBeCloseTo(period, 2);
+  });
+
+  it('is evenly spaced, so no hue is wider than its neighbours', () => {
+    const steps = stops.slice(1).map((s, i) => s.at - stops[i].at);
+    for (const step of steps) {
+      expect(step).toBeCloseTo(steps[0], 3);
+    }
   });
 });
