@@ -119,13 +119,20 @@ fn the_core_manifest_does_not_depend_on_the_binary_crate() {
 }
 
 /// Checks `dependencies`, `dev-dependencies` and `build-dependencies` directly
-/// under `table` for a `nigel` key, then recurses into `table.target.*`,
+/// under `table` for an edge to `nigel` — either as the key, or renamed under a
+/// different key with `package = "nigel"` — then recurses into `table.target.*`,
 /// where Cargo allows the same three tables to reappear per build target.
 fn check_dependency_tables(table: &toml::Table, path: &str, hits: &mut Vec<String>) {
     for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
         if let Some(toml::Value::Table(deps)) = table.get(kind) {
-            if deps.contains_key("nigel") {
-                hits.push(format!("[{path}{kind}]"));
+            for (name, spec) in deps {
+                let renamed = spec
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|package| package == "nigel");
+                if name == "nigel" || renamed {
+                    hits.push(format!("[{path}{kind}] {name}"));
+                }
             }
         }
     }
