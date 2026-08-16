@@ -1,4 +1,5 @@
 import { css } from 'lit';
+import { brandRamp } from './gradient.js';
 
 /**
  * The brand, danger, success, warning and info entries are darkened
@@ -101,8 +102,10 @@ const darkTokens = css`
   --nc-color-income-fill: #7fe0a0;
   --nc-color-expense-fill: #ff9fa8;
 
-  /* The pastel ramp is legible on a dark surface, so the wordmark keeps it. */
-  --nc-grad-brand-text: var(--nc-grad-brand);
+  /* The pastel ramp is legible on a dark surface, so the wordmark keeps it.
+     It names the plain ramp rather than --nc-grad-brand, which is periodic and
+     sized for the button's hover drift. */
+  --nc-grad-brand-text: ${brandRamp};
 `;
 
 /**

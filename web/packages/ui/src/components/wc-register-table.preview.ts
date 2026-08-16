@@ -76,6 +76,12 @@ const widestRow: RegisterTableRow[] = [
   },
 ];
 
+/** More rows than any sensible window shows, so the scroller has work to do. */
+const longRegister: RegisterTableRow[] = Array.from({ length: 32 }, (_, index) => {
+  const base = rows[index % rows.length] as RegisterTableRow;
+  return { ...base, id: 1000 + index };
+});
+
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
   { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
@@ -83,7 +89,7 @@ const categories: CategoryOption[] = [
   { id: 30, name: 'Meals', categoryType: 'expense' },
 ];
 
-const preview: Preview = {
+const preview = {
   id: 'wc-register-table',
   title: 'Register table',
   group: 'Data',
@@ -116,6 +122,21 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'filling-its-parent',
+      render: () => html`
+        <div style="display: flex; flex-direction: column; height: 18rem">
+          <wc-register-table
+            fill
+            .rows=${longRegister}
+            .categories=${categories}
+            .selectedId=${1000}
+            .total=${8281.51}
+            footer-note="32 of 1,872 rows"
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
       name: 'dense',
       render: () => html`
         <wc-register-table dense .rows=${rows} .categories=${categories}></wc-register-table>
@@ -128,6 +149,22 @@ const preview: Preview = {
           .rows=${[]}
           empty-message="No transactions match this search."
         ></wc-register-table>
+      `,
+    },
+    {
+      // The register screen is a flex column filling the content area, and the
+      // table takes what the toolbar left; with no rows that height is what its
+      // empty state centres in. The dashed box stands in for the area.
+      name: 'empty-filling-a-screen',
+      render: () => html`
+        <div
+          style="display:flex; flex-direction:column; block-size:22rem; border:1px dashed var(--wa-color-border);"
+        >
+          <wc-register-table
+            .rows=${[]}
+            empty-message="No transactions in this period."
+          ></wc-register-table>
+        </div>
       `,
     },
     {
@@ -184,6 +221,6 @@ const preview: Preview = {
       `,
     },
   ],
-};
+} satisfies Preview;
 
 export default preview;

@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-empty-state.js';
-import type { WcEmptyState } from './wc-empty-state.js';
+import { WcEmptyState } from './wc-empty-state.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { describeFillsItsBox } from '../../preview/layout-suite.js';
 import preview from './wc-empty-state.preview.js';
 
 async function mount(props: Partial<WcEmptyState> = {}): Promise<WcEmptyState> {
@@ -47,3 +48,5 @@ describe('wc-empty-state', () => {
 });
 
 describePreviewA11y(preview);
+
+describeFillsItsBox(WcEmptyState);

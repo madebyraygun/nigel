@@ -112,10 +112,16 @@ export const waContractCss = css`
     --wa-color-mix-hover: var(--wa-color-surface) 12%;
     --wa-color-mix-active: var(--wa-color-surface) 20%;
 
-    /* The fill / on / border × quiet / normal / loud families, for the two
-       palettes our components actually ask for. "on" is the readable
-       foreground for the matching fill, which is why each one names a token
-       the contrast suite already holds against its partner. */
+    /* The fill / on / border × quiet / normal / loud families. WA colours a
+       variant in two hops — variants.styles points --wa-color-fill-loud at
+       --wa-color-<variant>-fill-loud and the component reads the first — so a
+       family nothing defines is not a default but nothing, and the control
+       renders in the neutral fill. All five variants WA ships are answered
+       here; wa-contract.test.ts fails the build on a sixth.
+
+       "on" is the readable foreground for the matching fill, and every pairing
+       is held to AA by contrast.test.ts, which resolves these through to the
+       hex they end at rather than reading the declaration. */
     --wa-color-neutral-fill-quiet: var(--wa-color-surface-alt);
     --wa-color-neutral-fill-normal: var(--wa-color-border-soft);
     --wa-color-neutral-fill-loud: var(--wa-color-muted);
@@ -124,8 +130,16 @@ export const waContractCss = css`
     --wa-color-neutral-on-loud: var(--wa-color-bg);
     --wa-color-neutral-border-quiet: var(--wa-color-border-soft);
     --wa-color-neutral-border-normal: var(--wa-color-border);
-    --wa-color-neutral-border-loud: var(--wa-color-border);
+    /* Loud is the outlined button's edge — the only thing separating that
+       control from the canvas, so it owes WCAG 1.4.11's 3:1 where the panel
+       border it used to name sits at 1.2:1. */
+    --wa-color-neutral-border-loud: var(--wa-color-muted);
 
+    /* Brand's loud fill is the solid brand colour and is what an outlined or
+       plain brand control shows; on the default appearance nothing sees it,
+       because controls.ts paints --nc-grad-brand over the button's base part
+       and an outer-tree part rule wins for the same property. The two do not
+       fight — the gradient covers exactly the case this fills. */
     --wa-color-brand-fill-quiet: var(--wa-color-surface-alt);
     --wa-color-brand-fill-normal: var(--wa-color-border-soft);
     --wa-color-brand-fill-loud: var(--wa-color-brand);
@@ -135,6 +149,42 @@ export const waContractCss = css`
     --wa-color-brand-border-quiet: var(--wa-color-border-soft);
     --wa-color-brand-border-normal: var(--wa-color-brand);
     --wa-color-brand-border-loud: var(--wa-color-brand);
+
+    /* The three semantic families, each mixed from the colour the variant is
+       named after so light and dark follow it for free. The washes are what an
+       outlined button hovers to and a filled one sits on; a neutral grey there
+       reads as a different control. The loud fill is the solid colour, and its
+       label is --wa-color-on-brand: the mode's ink for a saturated fill, white
+       on a light-mode ramp and near-black on the dark pastels. */
+    --wa-color-danger-fill-quiet: color-mix(in srgb, var(--wa-color-danger) 10%, var(--wa-color-surface));
+    --wa-color-danger-fill-normal: color-mix(in srgb, var(--wa-color-danger) 16%, var(--wa-color-surface));
+    --wa-color-danger-fill-loud: var(--wa-color-danger);
+    --wa-color-danger-on-quiet: var(--wa-color-danger);
+    --wa-color-danger-on-normal: var(--wa-color-danger);
+    --wa-color-danger-on-loud: var(--wa-color-on-brand);
+    --wa-color-danger-border-quiet: color-mix(in srgb, var(--wa-color-danger) 30%, var(--wa-color-surface));
+    --wa-color-danger-border-normal: var(--wa-color-danger);
+    --wa-color-danger-border-loud: var(--wa-color-danger);
+
+    --wa-color-success-fill-quiet: color-mix(in srgb, var(--wa-color-success) 10%, var(--wa-color-surface));
+    --wa-color-success-fill-normal: color-mix(in srgb, var(--wa-color-success) 16%, var(--wa-color-surface));
+    --wa-color-success-fill-loud: var(--wa-color-success);
+    --wa-color-success-on-quiet: var(--wa-color-success);
+    --wa-color-success-on-normal: var(--wa-color-success);
+    --wa-color-success-on-loud: var(--wa-color-on-brand);
+    --wa-color-success-border-quiet: color-mix(in srgb, var(--wa-color-success) 30%, var(--wa-color-surface));
+    --wa-color-success-border-normal: var(--wa-color-success);
+    --wa-color-success-border-loud: var(--wa-color-success);
+
+    --wa-color-warning-fill-quiet: color-mix(in srgb, var(--wa-color-warning) 10%, var(--wa-color-surface));
+    --wa-color-warning-fill-normal: color-mix(in srgb, var(--wa-color-warning) 16%, var(--wa-color-surface));
+    --wa-color-warning-fill-loud: var(--wa-color-warning);
+    --wa-color-warning-on-quiet: var(--wa-color-warning);
+    --wa-color-warning-on-normal: var(--wa-color-warning);
+    --wa-color-warning-on-loud: var(--wa-color-on-brand);
+    --wa-color-warning-border-quiet: color-mix(in srgb, var(--wa-color-warning) 30%, var(--wa-color-surface));
+    --wa-color-warning-border-normal: var(--wa-color-warning);
+    --wa-color-warning-border-loud: var(--wa-color-warning);
 
     /* Buttons keep their press feedback; controls.ts translates the brand
        button on top of this. */

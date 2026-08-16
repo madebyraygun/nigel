@@ -62,7 +62,8 @@ interface Editor {
 export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
     }
   `;
 

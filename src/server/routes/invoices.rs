@@ -39,6 +39,7 @@ use crate::invoicing::send::{send_invoice_traced, SendFailure, SendStep, StepOut
 use crate::invoicing::sync::{sync_all_report_within, SyncReport};
 use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
+use crate::settings::InvoicingConfig;
 
 use super::super::error::{ApiError, ApiErrorCode, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
@@ -513,21 +514,44 @@ async fn pay(
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
 
-    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
-    let result = with_conn_api(&state, move |conn| {
-        pay_with(conn, number, &request, publisher.as_ref())
+    // The config and the data directory are resolved **inside** the closure,
+    // which runs after `with_conn_api` has taken the `db_gate` read guard. A
+    // data-directory switch holds the write side, so a value read before the
+    // wait belongs to the database this request is no longer serving — the
+    // payment would record in the new books while the republish loaded its
+    // template and its bucket from the old ones, and publish a wrongly branded
+    // page. `state.data_dir()` is the same source `send_with` reads for the
+    // same reason: it follows `db_path`, which the switch rebinds under the
+    // write guard.
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            let cfg = crate::settings::invoicing_config();
+            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            pay_with(
+                conn,
+                number,
+                &request,
+                publisher.as_ref(),
+                &cfg,
+                &state.data_dir(),
+            )
+        }
     })
     .await?;
     Ok(Json(result))
 }
 
-/// The pay with its publisher passed in, which is what makes the republish
-/// testable without a network — the seam `void_with` and `send_with` established.
+/// The pay with its publisher, its config and its data directory passed in,
+/// which is what makes the republish testable without a network and without an
+/// ambient settings file — the seam `void_with` and `send_with` established.
 fn pay_with<P: AssetPublisher>(
     conn: &Connection,
     number: i64,
     request: &PayRequest,
     publisher: Option<&P>,
+    cfg: &InvoicingConfig,
+    data_dir: &std::path::Path,
 ) -> ApiResult<PayResult> {
     let invoice = find_invoice(conn, number)?;
     let paid = inv::paid_amount(conn, invoice.id)?;
@@ -543,41 +567,16 @@ fn pay_with<P: AssetPublisher>(
     )
     .map_err(|e| enrich_conflict(e, &invoice, paid))?;
 
-    // After the write has committed, and unable to undo it: the branding is
-    // resolved the way `cli::invoice::republish_after_payment` resolves it, and
-    // every failure out here is a sentence rather than a status.
+    // After the write has committed, and unable to undo it: the CLI layer owns
+    // the resolution and the sentences, so a terminal and a browser describe the
+    // same republish identically.
     let refreshed = find_invoice(conn, number)?;
-    let republish_warnings = republish_page(conn, &refreshed, publisher);
+    let republish_warnings =
+        crate::cli::invoice::republish_with(conn, &refreshed, cfg, data_dir, publisher);
     Ok(PayResult {
         invoice: detail_for(conn, refreshed)?,
         republish_warnings,
     })
-}
-
-/// Re-render one published invoice through the CLI layer's resolver, with the
-/// publisher the route was given. Infallible: the payment is already recorded.
-fn republish_page<P: AssetPublisher>(
-    conn: &Connection,
-    invoice: &Invoice,
-    publisher: Option<&P>,
-) -> Vec<String> {
-    if invoice.published_at.is_none() {
-        return Vec::new();
-    }
-    let client = match get_client(conn, invoice.client_id) {
-        Ok(client) => client,
-        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (reading the client: {e}).")],
-    };
-    let template = match load_template(&crate::settings::get_data_dir()) {
-        Ok(template) => template,
-        Err(e) => return vec![format!("Warning: the payment is recorded, but the published page could not be republished (loading the invoice template: {e}).")],
-    };
-    let (contact_email, _) =
-        crate::cli::invoice::contact_email_for_preview(&crate::settings::invoicing_config());
-    let profile = crate::cli::invoice::company_profile(conn);
-    let branding = profile.branding(&template, &contact_email);
-    crate::invoicing::republish::republish_invoice(conn, invoice, &client, &branding, publisher)
-        .warnings()
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +615,15 @@ struct SendResult {
     /// the way a void's `teardownWarnings` are, because the server's stderr is
     /// not somewhere a browser can read.
     config_warnings: Vec<String>,
+    /// What the send itself went ahead despite: a letterhead logo that could
+    /// not be published beside the page, which leaves the page carrying it
+    /// inline. Separate from `configWarnings` because it is not about a
+    /// setting — nothing is misconfigured, an upload did not work.
+    ///
+    /// Always serialized, empty and all, because `configWarnings` beside it is:
+    /// one struct answering the same question two ways is how a client ends up
+    /// with an `undefined` where it expected a list.
+    warnings: Vec<String>,
 }
 
 /// The refusal a request that never named the invoicing settings gets.
@@ -775,6 +783,7 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
             .collect(),
         // Filled in by the handler, which is where the configuration was read.
         config_warnings: Vec::new(),
+        warnings: outcome.warnings,
     })
 }
 
@@ -825,32 +834,36 @@ struct SyncResult {
 }
 
 async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
+    // The gateway is the one thing resolved before the gate, because an
+    // unconfigured installation owes the caller a refusal rather than a wait.
     let Some(secret_key) = crate::settings::invoicing_config().stripe_secret_key else {
         return Err(not_configured("Payment sync", &["stripe_secret_key"]));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
     let today = crate::cli::today();
-    let publisher = crate::cli::invoice::optional_publisher(&crate::settings::invoicing_config());
 
-    let result = with_conn_api(&state, move |conn| {
-        let report = sync_with(conn, &today, &gateway)?;
-        // Every invoice the run moved gets its page corrected, for the reason
-        // `pay` does: a client following their bookmark must not see a balance
-        // they have already settled.
-        let republish_warnings = report
-            .recorded_invoices
-            .iter()
-            .flat_map(|number| match inv::get_invoice_by_number(conn, *number) {
-                Ok(invoice) => republish_page(conn, &invoice, publisher.as_ref()),
-                Err(e) => vec![format!(
-                    "Warning: could not republish invoice #{number}'s page ({e})."
-                )],
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            // Read under the gate, for the reason `pay` reads under it.
+            let cfg = crate::settings::invoicing_config();
+            let publisher = crate::cli::invoice::optional_publisher(&cfg);
+            let report = sync_with(conn, &today, &gateway)?;
+            // Every invoice the run moved gets its page corrected, for the
+            // reason `pay` does: a client following their bookmark must not see
+            // a balance they have already settled.
+            let republish_warnings = crate::cli::invoice::republish_all_with(
+                conn,
+                &report.recorded_invoices,
+                &cfg,
+                &state.data_dir(),
+                publisher.as_ref(),
+            );
+            Ok(SyncResult {
+                report,
+                republish_warnings,
             })
-            .collect();
-        Ok(SyncResult {
-            report,
-            republish_warnings,
-        })
+        }
     })
     .await?;
     Ok(Json(result))
@@ -985,7 +998,10 @@ async fn preview_pdf(
 #[cfg(test)]
 mod tests {
     use crate::server::testutil::*;
+    use crate::server::AppState;
+    use crate::settings::InvoicingConfig;
     use axum::http::StatusCode;
+    use serde_json::json;
 
     #[tokio::test]
     async fn invoices_list_is_newest_first_and_carries_the_balance() {
@@ -1655,6 +1671,71 @@ mod tests {
         }
     }
 
+    /// The gate is the whole point of `with_conn_api`, and a value read before
+    /// it belongs to a database this request may no longer be serving.
+    ///
+    /// A data-directory switch holds `db_gate` for writing. If `pay` resolved
+    /// the data directory before waiting on the read side, a switch landing in
+    /// that window would record the payment in the **new** database while the
+    /// republish loaded its template — and its bucket — from the **old**
+    /// directory, and publish a wrongly branded page to R2 without a word.
+    ///
+    /// The switch is simulated exactly as it happens: the write guard is held,
+    /// the path is rebound under it, and the guard is dropped. The second data
+    /// directory carries a broken invoice template, so the warning names which
+    /// directory the republish actually read.
+    #[tokio::test]
+    async fn pay_reads_its_config_and_data_dir_under_the_db_gate() {
+        let _config = TempConfig::new();
+        let (_dir_a, db_a) = seeded_db();
+        let (_dir_b, db_b) = seeded_db();
+
+        // The tell: only the second directory has a template, and it is broken.
+        let template = crate::invoicing::render_html::template_path(db_b.parent().unwrap());
+        std::fs::create_dir_all(template.parent().unwrap()).expect("templates dir");
+        std::fs::write(
+            &template,
+            "<p>{{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}} {{TOTL}}</p>",
+        )
+        .expect("write template");
+
+        let token = crate::server::auth::generate_token();
+        let state = AppState::new(db_a.clone(), token.clone());
+        let app = crate::server::build_router(state.clone());
+
+        let gate = state.db_gate.clone().write_owned().await;
+        let request = tokio::spawn({
+            let app = app.clone();
+            let token = token.clone();
+            async move {
+                post_json(
+                    &app,
+                    "/api/invoices/1251/pay",
+                    &token,
+                    &json!({ "amount": 100.0, "date": AS_OF, "method": "other" }),
+                )
+                .await
+            }
+        });
+
+        // Long enough for the handler to reach the gate and block there; the
+        // assertion does not depend on the sleep, only the red half does.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        state.set_db_path(db_b.clone());
+        drop(gate);
+
+        let (status, body) = request.await.expect("the request finishes");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let warnings = body["republishWarnings"]
+            .as_array()
+            .expect("the broken template warns");
+        assert!(
+            warnings[0].as_str().unwrap().contains("{{TOTL}}"),
+            "the republish read the directory the switch bound, not the one \
+             resolved before the wait: {body}"
+        );
+    }
+
     /// 1251 is the seeded sent invoice: published, with a live payment link. A
     /// payment against it puts a corrected page back where the client is
     /// looking.
@@ -1665,8 +1746,15 @@ mod tests {
         let conn = open_db(&db_path);
         let publisher = FakePub::default();
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&publisher))
-            .expect("the payment goes through");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            Some(&publisher),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment goes through");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0, "{json}");
@@ -1688,8 +1776,15 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let conn = open_db(&db_path);
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), Some(&ForbiddenPub))
-            .expect("a failed republish is not a failed payment");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            Some(&ForbiddenPub),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("a failed republish is not a failed payment");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0, "the money is recorded: {json}");
@@ -1713,8 +1808,15 @@ mod tests {
         let conn = open_db(&db_path);
         let publisher = FakePub::default();
 
-        let result = pay_with(&conn, 1252, &pay_request(10.0), Some(&publisher))
-            .expect("the payment goes through");
+        let result = pay_with(
+            &conn,
+            1252,
+            &pay_request(10.0),
+            Some(&publisher),
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment goes through");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert!(json.get("republishWarnings").is_none(), "{json}");
@@ -1732,8 +1834,15 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let conn = open_db(&db_path);
 
-        let result = pay_with(&conn, 1251, &pay_request(100.0), None::<&FakePub>)
-            .expect("the payment lands");
+        let result = pay_with(
+            &conn,
+            1251,
+            &pay_request(100.0),
+            None::<&FakePub>,
+            &InvoicingConfig::default(),
+            _dir.path(),
+        )
+        .expect("the payment lands");
 
         let json = serde_json::to_value(&result).expect("serializes");
         assert_eq!(json["paid"], 100.0);
@@ -2275,6 +2384,7 @@ mod tests {
     struct FakePub {
         pages: RefCell<Vec<String>>,
         pairs: RefCell<Vec<String>>,
+        logos: RefCell<Vec<Vec<u8>>>,
     }
     impl AssetPublisher for FakePub {
         fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> NigelResult<String> {
@@ -2287,6 +2397,13 @@ mod tests {
                 .push(String::from_utf8(html.to_vec()).expect("utf-8"));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> NigelResult<String> {
+            self.logos.borrow_mut().push(bytes.to_vec());
+            Ok(self.logo_url(bytes, mime))
+        }
     }
 
     /// R2 refusing the way it does when the credentials are wrong.
@@ -2298,6 +2415,14 @@ mod tests {
             ))
         }
         fn publish_page(&self, _t: &str, _h: &[u8]) -> NigelResult<String> {
+            Err(NigelError::Other(
+                "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
+            ))
+        }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> NigelResult<String> {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))

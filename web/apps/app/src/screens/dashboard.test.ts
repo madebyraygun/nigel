@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import './dashboard.js';
+import { NigelDashboardScreen as DashboardCtor } from './dashboard.js';
 import type { NigelDashboardScreen } from './dashboard.js';
 import { appLocked } from '../api/index.js';
 import { initializeAppStore, resetAppStore } from '../state/app-store.js';
@@ -216,5 +217,18 @@ describe('dashboard screen', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(client.calls).toEqual(['getBalance']);
+  });
+});
+
+describe('nigel-dashboard-screen on a phone', () => {
+  // jsdom has no layout engine, so the rules are read rather than measured.
+  const text = [DashboardCtor.styles].flat().map(String).join('\n');
+
+  it('never lets a card decide how wide the page is', () => {
+    // A grid track's automatic minimum is its content, so one child that
+    // cannot shrink — a thirteen-month chart, a long account name — widens the
+    // whole page and the phone scrolls sideways. minmax(0, …) caps that at the
+    // track, leaving the child to scroll inside its own panel.
+    expect(text).toMatch(/@media \(max-width: 60rem\)[\s\S]*\.panels\s*{[^}]*grid-template-columns:\s*minmax\(0/);
   });
 });

@@ -34,6 +34,18 @@ const preview: Preview = {
         </wc-panel>`,
     },
     {
+      name: 'with-two-actions',
+      render: () =>
+        html`<wc-panel
+          heading="Preview"
+          description="Nothing is written until you confirm."
+        >
+          <p>42 transactions would be imported.</p>
+          <button slot="actions" type="button">Cancel</button>
+          <button slot="actions" type="button">Import 42 transactions</button>
+        </wc-panel>`,
+    },
+    {
       name: 'dense',
       render: () => html`<wc-panel dense heading="Auto-update">
         <p>Check for new versions on launch.</p>
