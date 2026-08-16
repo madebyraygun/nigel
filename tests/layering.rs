@@ -1,15 +1,13 @@
 //! What may reach into the terminal UI, and what may not.
 //!
-//! `src/server/` is the half a desktop client links without a terminal (see
-//! backlog/decisions/decision-1). Every `crate::cli::` reference here is a
-//! build error waiting for the workspace split in TASK-33.1, so it is one
-//! here first, where the fix is cheap.
+//! The paths below are the half of this crate a desktop client links without a
+//! terminal. `src/cli/` is clap and ratatui, so anything under those paths that
+//! names `crate::cli::` cannot be linked without them, and this test says so.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Files and directories that must not reach into the CLI/TUI layer — the
-/// modules this plan has moved (or is moving) to the core side of the split.
+/// The files and directories that must not reach into the CLI/TUI layer.
 const CORE_PATHS: [&str; 11] = [
     "src/server",
     "src/reports",
@@ -27,7 +25,6 @@ const CORE_PATHS: [&str; 11] = [
 /// Test support that drives the CLI's own formatters on purpose: the figure
 /// parity fixtures compare what a browser renders against what `nigel invoice
 /// list` prints, which means naming both. Neither ships in a release binary.
-/// Both move to the CLI crate when the workspace splits.
 ///
 /// Matched by their full path from the repo root, not by bare filename: a
 /// bare-filename match would also exclude any future `testutil.rs` dropped
@@ -52,7 +49,17 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
 fn cli_references() -> Vec<String> {
     let mut files = Vec::new();
     for path in CORE_PATHS {
-        rust_files(Path::new(path), &mut files);
+        let path = Path::new(path);
+        // A directory that has been renamed away is neither a directory nor a
+        // `.rs` file, so `rust_files` would walk nothing and this test would
+        // pass having checked that entry not at all.
+        assert!(
+            path.exists(),
+            "CORE_PATHS names {}, which does not exist — rename it here or the \
+             guard silently stops covering it",
+            path.display()
+        );
+        rust_files(path, &mut files);
     }
     files.sort();
 

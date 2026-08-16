@@ -22,10 +22,6 @@ use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 
-/// The wiring functions that used to live here — moved to
-/// `crate::invoicing::wiring` so the HTTP layer can reach them without reaching
-/// into the CLI. The CLI's own command surface keeps compiling against these
-/// names unchanged.
 pub(crate) use crate::invoicing::wiring::*;
 
 fn parse_item(s: &str) -> Result<NewLineItem> {
