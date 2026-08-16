@@ -6,6 +6,7 @@
 //! and the terminal-restoring panic hook.
 
 pub mod accounts;
+pub mod backup;
 pub mod browser;
 pub mod categories;
 pub mod categorizer;
