@@ -48,6 +48,9 @@ pub fn company_name(conn: &Connection) -> String {
 /// Resolved here rather than at each `Branding` site: the fields are only ever
 /// correct together, and six hand-built literals each doing their own
 /// `get_metadata` calls is how a document ends up with an address and no phone.
+///
+/// A DTO: the public fields enforce no invariant, and anyone linking this crate
+/// may set them to any combination.
 pub struct CompanyProfile {
     pub name: String,
     pub address: String,
@@ -88,7 +91,9 @@ impl CompanyProfile {
     }
 }
 
-pub(crate) fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
+/// The Stripe client for the configured secret key, erroring by name when the
+/// key is absent so a caller reports what is missing rather than what failed.
+pub fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
     Ok(StripeClient {
         secret_key: require(cfg.stripe_secret_key.clone(), "stripe_secret_key")?,
     })
@@ -127,6 +132,9 @@ pub fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
 /// TUI puts them on its status line, the API answers them as a field. Printing
 /// them here would corrupt ratatui's alternate screen and would fire once per
 /// call rather than once per send.
+///
+/// A DTO: the public fields enforce no invariant, and anyone linking this crate
+/// may set them to any combination.
 pub struct SendClients {
     pub stripe: StripeClient,
     pub r2: R2Publisher,
@@ -218,7 +226,7 @@ pub fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients>
 
 /// The sentence a republish that could not even be attempted earns. One home,
 /// so a terminal and a browser cannot word the same failure differently.
-pub(crate) fn republish_warning(what: &str, e: NigelError) -> String {
+pub fn republish_warning(what: &str, e: NigelError) -> String {
     format!(
         "Warning: the payment is recorded, but the published page could not be republished \
          ({what}: {e})."
@@ -283,7 +291,7 @@ pub fn republish_all_with<P: crate::invoicing::gateway::AssetPublisher>(
 /// The address the published page's direct-deposit line prints. Falls back to
 /// the send address, so an installation that never sets `contact_email` renders
 /// exactly the page it rendered before the key existed.
-pub(crate) fn contact_address(cfg: &InvoicingConfig) -> Option<String> {
+pub fn contact_address(cfg: &InvoicingConfig) -> Option<String> {
     cfg.contact_email.clone().or_else(|| cfg.from_email.clone())
 }
 

@@ -230,11 +230,7 @@ fn optional(value: Option<&str>) -> Option<String> {
 /// billing row, or adds one; `None` deletes the billing row and promotes the
 /// next contact by position, so clearing the email of a client with cc rows
 /// leaves them reachable rather than orphaned.
-pub(crate) fn set_billing_email(
-    conn: &Connection,
-    client_id: i64,
-    email: Option<&str>,
-) -> Result<()> {
+pub fn set_billing_email(conn: &Connection, client_id: i64, email: Option<&str>) -> Result<()> {
     if let Some(address) = email.map(str::trim).filter(|a| !a.is_empty()) {
         validate_header_value(address, "email")?;
     }

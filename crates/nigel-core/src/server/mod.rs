@@ -11,7 +11,7 @@ pub mod routes;
 pub mod secret;
 pub mod state;
 mod static_files;
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 pub mod testutil;
 pub mod uploads;
 

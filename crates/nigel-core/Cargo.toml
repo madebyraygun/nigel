@@ -9,6 +9,13 @@ default = ["gusto", "pdf", "serve"]
 gusto = ["dep:calamine"]
 pdf = ["dep:printpdf"]
 serve = ["dep:axum", "dep:tokio", "dep:tower", "dep:rust-embed", "dep:open", "dep:subtle"]
+# Test scaffolding — seeded databases, a router with a session, and the guard
+# that redirects `~/.config/nigel` — compiled for dependents' test targets only.
+# The config-directory override is `#[cfg(test)]` inside this crate, and a
+# dependent's tests are not this crate's tests: without the feature their
+# `TempConfigDir` would compile away and they would read and rewrite the
+# developer's real settings.json.
+testutil = ["dep:tempfile"]
 
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
@@ -37,6 +44,7 @@ tower = { version = "0.5", optional = true, features = ["util"] }
 rust-embed = { version = "8.12", optional = true, features = ["debug-embed", "mime-guess"] }
 open = { version = "5.4", optional = true }
 subtle = { version = "2.6", optional = true }
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

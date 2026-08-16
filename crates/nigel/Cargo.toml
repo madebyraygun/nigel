@@ -29,6 +29,7 @@ base64 = "0.22"
 zeroize = "1.8.2"
 
 [dev-dependencies]
+nigel-core = { path = "../nigel-core", default-features = false, features = ["testutil"] }
 tempfile = "3"
 assert_cmd = "2"
 predicates = "3"

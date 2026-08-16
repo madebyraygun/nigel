@@ -2186,7 +2186,7 @@ fn template_export_writes_the_default_and_reports_where() {
 
     assert_eq!(
         std::fs::read_to_string(&expected).expect("exported template missing"),
-        nigel::invoicing::render_html::DEFAULT_TEMPLATE
+        nigel_core::invoicing::render_html::DEFAULT_TEMPLATE
     );
 }
 
@@ -2217,7 +2217,7 @@ fn template_export_refuses_to_clobber_without_force() {
         .success();
     assert_eq!(
         std::fs::read_to_string(template_file(&env)).unwrap(),
-        nigel::invoicing::render_html::DEFAULT_TEMPLATE
+        nigel_core::invoicing::render_html::DEFAULT_TEMPLATE
     );
 }
 

@@ -73,7 +73,7 @@ impl Default for Settings {
 /// in-crate override is used rather than `$HOME`: `dirs::home_dir` does not
 /// consult the environment on every platform, and mutating the environment is
 /// process-global and unsafe in newer editions.
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 static CONFIG_DIR_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 /// Point the config directory somewhere else and hand back what it was.
@@ -82,7 +82,7 @@ static CONFIG_DIR_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex
 /// clearing it: clearing exposes the real `~/.config/nigel/settings.json` to
 /// whatever is still running, and the value it writes there is a temporary
 /// directory that is about to be deleted.
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 pub fn set_config_dir_for_tests(dir: Option<PathBuf>) -> Option<PathBuf> {
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     std::mem::replace(&mut *CONFIG_DIR_OVERRIDE.lock().unwrap(), dir)
@@ -100,18 +100,18 @@ pub fn set_config_dir_for_tests(dir: Option<PathBuf>) -> Option<PathBuf> {
 /// unset. An in-crate override is used rather than unsetting the variables:
 /// mutating the process environment is global, unsafe in newer editions, and
 /// would have to be undone even on a panicking test.
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 static SUPPRESS_INVOICING_ENV: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
 /// Turn the environment layer off (or back on) and hand back what it was, so a
 /// guard restores rather than clears — the [`set_config_dir_for_tests`] rule.
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 pub fn suppress_invoicing_env_for_tests(suppress: bool) -> bool {
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     std::mem::replace(&mut *SUPPRESS_INVOICING_ENV.lock().unwrap(), suppress)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 fn invoicing_env_is_suppressed() -> bool {
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     *SUPPRESS_INVOICING_ENV.lock().unwrap()
@@ -126,14 +126,14 @@ fn invoicing_env_is_suppressed() -> bool {
 /// this module's, and tests outside the `serve` feature need it too: anything
 /// that reads [`load_settings`] otherwise answers from whatever the developer's
 /// own settings.json — or shell — happens to say.
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 pub struct TempConfigDir {
     _dir: tempfile::TempDir,
     previous: Option<PathBuf>,
     previously_suppressed: bool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 impl TempConfigDir {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -147,14 +147,14 @@ impl TempConfigDir {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 impl Default for TempConfigDir {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 impl Drop for TempConfigDir {
     /// Restores what was there rather than clearing, so a guard dropping while
     /// another is alive cannot hand the real config directory back to a test
@@ -166,7 +166,7 @@ impl Drop for TempConfigDir {
 }
 
 fn config_dir() -> PathBuf {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testutil"))]
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     if let Some(dir) = CONFIG_DIR_OVERRIDE.lock().unwrap().clone() {
         return dir;
@@ -258,7 +258,7 @@ pub fn invoicing_config_from(s: &Settings) -> InvoicingConfig {
     // Under a `TempConfigDir` the environment is not consulted at all — see
     // `SUPPRESS_INVOICING_ENV`, which exists so that a machine with the nine
     // `NIGEL_*` variables exported cannot turn an offline test into a real send.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testutil"))]
     if invoicing_env_is_suppressed() {
         return invoicing_config_with(s, |_| None);
     }

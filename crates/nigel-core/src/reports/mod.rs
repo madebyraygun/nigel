@@ -24,7 +24,7 @@ pub fn export_file_stem(name: &str) -> String {
 /// else — absent, malformed, or a month that fails to parse as a number —
 /// answers `(None, None)` rather than erroring, matching the lenient
 /// `--month` handling every report and the register browser share.
-pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
+pub fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
     if let Some(m) = month {
         let parts: Vec<&str> = m.split('-').collect();
         if parts.len() == 2 {
@@ -43,7 +43,7 @@ pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u3
 /// current-year default. Built from the parsed values `get_register` is
 /// actually asked with, so a `--month` that failed to parse (and therefore
 /// filtered nothing) is labelled "All dates", never echoed as a period.
-pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
+pub fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
     match (year, month) {
         (Some(y), Some(m)) => format!("{y}-{m:02}"),
         (Some(y), None) => format!("FY {y}"),
@@ -52,7 +52,7 @@ pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> Str
 }
 
 /// Subtitle for a register report: the period followed by any active non-date filters.
-pub(crate) fn register_subtitle(range: &str, filters: &RegisterFilters) -> String {
+pub fn register_subtitle(range: &str, filters: &RegisterFilters) -> String {
     let labels = filters.labels();
     if labels.is_empty() {
         range.to_string()
@@ -514,6 +514,9 @@ pub enum CategorySelection {
 /// so report headers can describe the selection. The category was validated at
 /// construction; the account deliberately was not — an unknown account is an
 /// empty register, matching what `--account` has always done.
+///
+/// A DTO: the public fields enforce no invariant, and anyone linking this crate
+/// may set them to any combination.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegisterFilters {
     pub account: Option<String>,

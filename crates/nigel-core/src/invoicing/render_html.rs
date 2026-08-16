@@ -293,8 +293,8 @@ impl<'a> Branding<'a> {
     /// A branding carrying a template and no letterhead, for the tests that are
     /// about something else. It takes the one field that has no honest empty
     /// value, which is why this exists instead of `Default`.
-    #[cfg(test)]
-    pub(crate) fn with_template(template: &'a str) -> Self {
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn with_template(template: &'a str) -> Self {
         Self {
             template,
             company: "",
