@@ -7,6 +7,7 @@
 
 pub mod accounts;
 pub mod browser;
+pub mod categories;
 pub mod categorizer;
 pub mod cli;
 pub mod db;

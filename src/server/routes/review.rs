@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 use axum::{extract::State, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::categories;
+use crate::categories;
 use crate::reports::{self, RegisterRow};
 use crate::reviewer::{self, FlaggedTxn};
 
