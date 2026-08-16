@@ -30,7 +30,7 @@ Features stay general-purpose: no compiled-in payroll column labels, cap tables,
 
 ## Architecture
 
-- **Crate layout:** lib + bin. `src/lib.rs` exposes every module (`db`, `models`, `reports`, `reviewer`, `importer`, `invoicing`, `categorizer`, `reconciler`, `migrations`, `settings`, `error`, `fmt`, `browser`, `tui`, `effects`, `pdf`, `cli`) as the `nigel` library; `src/main.rs` is the `nigel` binary and holds only clap parsing, the ratatui panic hook, and the dispatch pre-flight, calling into the library via `nigel::`
+- **Crate layout:** lib + bin. `src/lib.rs` exposes every module (`db`, `models`, `reports`, `reviewer`, `importer`, `invoicing`, `categorizer`, `reconciler`, `migrations`, `settings`, `error`, `fmt`, `browser`, `tui`, `effects`, `pdf`, `cli`, `server`, and the eight single-file data layers `accounts`, `categories`, `rules`, `imports`, `backup`, `password`, `updater`, `clock`) as the `nigel` library; `src/main.rs` is the `nigel` binary and holds only clap parsing, the ratatui panic hook, and the dispatch pre-flight, calling into the library via `nigel::`
 - **CLI:** Clap derive app in `src/cli/mod.rs` — subcommands are optional; running `nigel` with no arguments launches the interactive dashboard. Subcommands: init, demo, import, undo, categorize, recategorize, review, reconcile, accounts, categories, rules, report, browse, client, invoice, load, backup, restore, serve, status, password, update, completions
 - **Database:** SQLite via rusqlite (bundled-sqlcipher) in `src/db.rs` — tables: accounts, categories (with form_line for 1120-S mapping), transactions, rules, imports, reconciliations, metadata (key-value store for per-database settings like company_name, profile, and next_invoice_number), clients, invoices, invoice_line_items, invoice_payments. Two chart-of-accounts templates (`BUSINESS_CATEGORIES`, `PERSONAL_CATEGORIES`); `init_db_with_profile()` seeds the chosen one and stamps the `profile` metadata key together, only when the categories table is empty, so re-running init never reseeds or restamps; `get_profile()` reads it back with absent-means-business (every pre-profile database carried the business chart). Optional SQLCipher encryption via `PRAGMA key`; password stored in runtime global `Mutex<Option<String>>` (`set_db_password`/`get_db_password`); `get_connection()` reads it internally so zero call-site changes needed; `open_connection()` for explicit password; `is_encrypted()` probes a DB file; `validate_password()` tests a password without side effects; `prompt_password_if_needed()` prompts via rpassword with 3 retries (used by CLI subcommands)
 - **Importers:** `src/importer.rs` — `ImporterKind` enum dispatch (bofa_checking, bofa_credit_card, bofa_line_of_credit, gusto_payroll); each variant implements `detect()` and `parse()`; `GenericCsvConfig` supports user-defined column mappings stored as profiles in `csv_profiles` table (`save_csv_profile`/`load_csv_profile`/`list_csv_profiles`, the last returning `CsvProfile { name, config }` for the API); malformed CSV rows are counted and reported in import output; `built_in_formats()` lists the compiled-in importers (`ImporterFormat { key, name, account_types }`) for the API's format picker; `ImportResult` reports `format` (the resolved importer key, a profile name, or `generic` — `None` for a duplicate file, which is answered before resolution) and `import_id` (the `imports` row created, `None` for a dry run)
@@ -257,6 +257,7 @@ Do not merge or mark work complete if docs are stale.
 
 ## Key Design Constraints
 
+- `tests/layering.rs` fails the build if `src/server/`, `src/reports/`, `src/invoicing/`, or any of the eight single-file core modules (`accounts`, `categories`, `rules`, `imports`, `backup`, `password`, `updater`, `clock`) reaches into `src/cli/` — it walks each `CORE_PATHS` entry, whether that entry is a directory or a single file, collecting every `.rs` file underneath and grepping for `crate::cli::`. Every `cli/<x>.rs` is a printing wrapper over the data layer that lives at the top level, and the invoicing wiring the HTTP layer needs is `invoicing::wiring`, which keeps the "invoicing never reads settings" rule by taking config as a parameter. The reason is TASK-33.1: a desktop client links the router without linking a terminal UI, and this is the boundary that makes that possible before the crate is split at all
 - All financial modifications require user confirmation — auto-categorizes but never silently changes confirmed data
 - `recategorize` confirmation asymmetry: explicit IDs apply immediately (typing the IDs is the confirmation); filter selections print the matched rows and require `--yes`, or a y/N prompt on a TTY. Filter mode with zero filters is an error, and a malformed `--month` is a hard error — never a silently widened selection
 - Interactive review supports back navigation: Esc goes back to re-review the previous transaction (undoing its categorization and any created rule), Tab skips forward
@@ -354,18 +355,18 @@ src/
     demo.rs             # nigel demo (sample data + setup_demo for isolated demo DB)
     onboarding.rs       # First-run onboarding TUI (animated logo, name collection, action picker)
     account_manager.rs  # TUI account management screen (list, add, rename, delete)
-    accounts.rs         # nigel accounts add/list/rename/delete + data-layer functions for TUI
-    categories.rs       # nigel categories list/add/rename/delete + data-layer functions for TUI
+    accounts.rs         # nigel accounts add/list/rename/delete — a printing wrapper over top-level `accounts`
+    categories.rs       # nigel categories list/add/rename/delete — a printing wrapper over top-level `categories`
     category_manager.rs # TUI category management screen (list, add, edit, delete)
     import.rs           # nigel import
     import_manager.rs   # TUI import screen (file path + account selector + result)
-    undo.rs             # nigel undo (undo last import, data-layer + CLI)
+    undo.rs             # nigel undo (undo last import) — a printing wrapper over top-level `imports`
     undo_manager.rs     # TUI undo screen (confirm + execute from dashboard)
     categorize.rs       # nigel categorize
     recategorize.rs     # nigel recategorize (bulk category reassignment by IDs or filters)
-    rules.rs            # nigel rules add/list/update/delete/test
+    rules.rs            # nigel rules add/list/update/delete/test — a printing wrapper over top-level `rules`
     rules_manager.rs    # TUI rules screen (scrollable list + delete)
-    password.rs         # nigel password set/change/remove (encrypt/decrypt/rekey)
+    password.rs         # nigel password set/change/remove — a printing wrapper over top-level `password`
     password_manager.rs # TUI password management screen (set/change/remove via settings)
     settings_manager.rs # TUI settings screen (business name + password management)
     reconcile_manager.rs # TUI reconcile screen (account/month/balance form + result)
@@ -373,7 +374,6 @@ src/
     review.rs           # nigel review
     report/             # nigel report (unified view/export command)
       mod.rs            # Dispatch: view vs export, TTY detection, text export
-      text.rs           # comfy_table text formatters (used for stdout + text file export)
       view.rs           # Ratatui interactive report views (scrollable, colored)
     browse.rs           # nigel browse (interactive browsers)
     client.rs           # nigel client add/list/show/edit/delete/archive/unarchive (+ --contact)
@@ -390,7 +390,7 @@ src/
     restore.rs          # nigel restore (restore database from backup)
     serve.rs            # nigel serve (feature gate + pre-flight, delegates to src/server/)
     status.rs           # nigel status (show active DB + stats)
-    update.rs           # nigel update (version check + self-replace from GitHub Releases)
+    update.rs           # nigel update — a printing wrapper over top-level `updater` (version check + self-replace from GitHub Releases)
   server/               # Web server (feature-gated behind "serve")
     mod.rs              # Tokio runtime, router assembly, middleware order, graceful shutdown
     auth.rs             # Session token, Host/Origin validation, cookie parsing, /auth handler
@@ -422,6 +422,14 @@ src/
   migrations.rs          # Schema migration runner (version tracking, sequential up() functions)
   models.rs             # Structs (Account, Transaction, Rule, ParsedRow, etc.)
   importer.rs           # ImporterKind enum, format detection, CSV/XLSX parsing
+  accounts.rs           # Account data layer (add/list/rename/delete, delete_blocker)
+  categories.rs         # Category (chart of accounts) data layer (add/list/rename/delete, delete_blocker)
+  rules.rs              # Categorization rules data layer (list/add/update/deactivate/test)
+  imports.rs            # Import history data layer (list_imports, get_last_import)
+  backup.rs             # Database backup/restore (rusqlite Backup API)
+  password.rs           # Database encryption data layer (set/change/remove, rekey)
+  updater.rs            # GitHub Releases version check + self-replace
+  clock.rs              # The app's one clock read (`today()`)
   invoicing/            # Invoicing (A/R): clients, invoices, publish, email, payment sync
     mod.rs              # Module declarations
     clients.rs          # Client data layer
@@ -440,9 +448,12 @@ src/
     sync.rs             # Pull Stripe payments into invoice_payments
     void.rs             # Void + best-effort teardown (deactivate link, republish voided page)
     import_invoiceshelf.rs # One-time InvoiceShelf SQLite import
+    wiring.rs           # Assembles a send/republish from settings — the one place invoicing meets `settings`
   categorizer.rs        # Rules engine (categorize_transactions)
   reviewer.rs           # Interactive review flow
-  reports.rs            # Report data functions (pnl, expenses, tax, cashflow, balance, flagged, k1_prep) + RegisterFilters
+  reports/              # Report data functions (pnl, expenses, tax, cashflow, balance, flagged, k1_prep) + RegisterFilters
+    mod.rs              # Report data functions, ReportKind/DateGranularity, register_range_label/register_subtitle
+    text.rs             # comfy_table text formatters (used for stdout + text file export + HTTP exports)
   browser.rs            # Interactive register browser (ratatui, row selection, inline editing, flag toggle, scroll navigation)
   effects.rs            # Shared gradient/particle effects (used by splash, onboarding, snake)
   tui.rs                # Shared ratatui helpers (styles, money_span, wrap_text, ReportView trait, run_report_view)

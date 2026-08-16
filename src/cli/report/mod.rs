@@ -199,7 +199,9 @@ fn default_text_path(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reports::{CategorySelection, RegisterFilters};
+    use crate::reports::{
+        register_range_label, register_subtitle, CategorySelection, RegisterFilters,
+    };
 
     #[test]
     fn register_range_label_variants() {

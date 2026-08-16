@@ -64,9 +64,6 @@ fn cli_references() -> Vec<String> {
     hits
 }
 
-// Red until Task 11 lands. Each task in the plan removes its own module's
-// references; running this test is how a task proves it finished.
-#[ignore = "red until the boundary move completes (TASK-33.1)"]
 #[test]
 fn the_server_does_not_reach_into_the_cli_layer() {
     let hits = cli_references();
