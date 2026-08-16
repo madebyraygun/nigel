@@ -38,7 +38,7 @@ use std::process::Command;
 /// directory is absent. It never fails the build: a missing guardrail is worth
 /// a warning, not a broken `cargo build`.
 fn install_hooks() {
-    if !Path::new(".git").exists() || !Path::new(".githooks").is_dir() {
+    if !Path::new("../../.git").exists() || !Path::new("../../.githooks").is_dir() {
         return;
     }
     let current = Command::new("git")
@@ -63,13 +63,13 @@ fn install_hooks() {
 
 fn main() {
     install_hooks();
-    println!("cargo:rerun-if-changed=web/dist");
-    println!("cargo:rerun-if-changed=web/dist/index.html");
-    println!("cargo:rerun-if-changed=web/placeholder/index.html");
+    println!("cargo:rerun-if-changed=../../web/dist");
+    println!("cargo:rerun-if-changed=../../web/dist/index.html");
+    println!("cargo:rerun-if-changed=../../web/placeholder/index.html");
 
-    let dist = Path::new("web/dist");
+    let dist = Path::new("../../web/dist");
     let index = dist.join("index.html");
-    let placeholder = Path::new("web/placeholder/index.html");
+    let placeholder = Path::new("../../web/placeholder/index.html");
 
     if !placeholder.exists() {
         println!("cargo:warning=web/placeholder/index.html is missing; web/dist may be empty");

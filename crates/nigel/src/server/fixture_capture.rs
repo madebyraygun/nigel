@@ -74,7 +74,7 @@ const CAPTURES: [Capture; 8] = [
 ];
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("web/apps/app/src/__fixtures__/reports")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/apps/app/src/__fixtures__/reports")
 }
 
 /// Adds the two categories the K-1 worksheet's mapping states need.
@@ -244,7 +244,7 @@ async fn capture_web_report_fixtures() {
 const INVOICING_VIEWS: [&str; 4] = ["invoices", "invoice-1250", "aging", "clients"];
 
 fn invoicing_fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("web/apps/app/src/__fixtures__/invoicing")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/apps/app/src/__fixtures__/invoicing")
 }
 
 fn write_invoicing(name: &str, contents: &str) {

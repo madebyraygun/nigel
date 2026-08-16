@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "web/dist/"]
+#[folder = "../../web/dist/"]
 struct Assets;
 
 const INDEX: &str = "index.html";
