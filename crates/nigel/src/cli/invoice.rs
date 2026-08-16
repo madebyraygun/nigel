@@ -4,25 +4,25 @@ use std::path::{Path, PathBuf};
 use comfy_table::{Cell, Table};
 use rusqlite::Connection;
 
-use crate::db::get_connection;
-use crate::error::{NigelError, Result};
-use crate::fmt::money;
-use crate::invoicing::clients::get_client;
-use crate::invoicing::import_invoiceshelf::import as import_invoiceshelf;
-use crate::invoicing::invoices::{
+use nigel_core::db::get_connection;
+use nigel_core::error::{NigelError, Result};
+use nigel_core::fmt::money;
+use nigel_core::invoicing::clients::get_client;
+use nigel_core::invoicing::import_invoiceshelf::import as import_invoiceshelf;
+use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
     get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
     payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
-use crate::invoicing::render::{render_invoice, RenderedInvoice};
-use crate::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
-use crate::invoicing::send::send_invoice;
-use crate::invoicing::sync::sync_all_report;
-use crate::invoicing::void::void_invoice_with_teardown;
-use crate::models::{Client, Invoice, InvoiceLineItem};
-use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
+use nigel_core::invoicing::render::{render_invoice, RenderedInvoice};
+use nigel_core::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
+use nigel_core::invoicing::send::send_invoice;
+use nigel_core::invoicing::sync::sync_all_report;
+use nigel_core::invoicing::void::void_invoice_with_teardown;
+use nigel_core::models::{Client, Invoice, InvoiceLineItem};
+use nigel_core::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 
-pub(crate) use crate::invoicing::wiring::*;
+pub(crate) use nigel_core::invoicing::wiring::*;
 
 fn parse_item(s: &str) -> Result<NewLineItem> {
     let parts: Vec<&str> = s.split(':').collect();
@@ -81,7 +81,7 @@ fn find_invoice(conn: &Connection, number: i64) -> Result<Invoice> {
 
 /// What voiding a published invoice will do, before it does it — the sentence
 /// the CLI's confirmation and the TUI's dialog both show.
-pub(crate) use crate::invoicing::void::PUBLISHED_VOID_NOTICE;
+pub(crate) use nigel_core::invoicing::void::PUBLISHED_VOID_NOTICE;
 
 pub fn new(
     client_id: i64,
@@ -362,7 +362,7 @@ pub(crate) fn payment_instructions_notice(
 fn preview_dir(output_dir: Option<String>) -> (PathBuf, bool) {
     match output_dir {
         Some(dir) => (
-            PathBuf::from(crate::settings::shellexpand_path(&dir)),
+            PathBuf::from(nigel_core::settings::shellexpand_path(&dir)),
             false,
         ),
         None => (get_data_dir().join("previews"), true),
@@ -380,7 +380,7 @@ fn preview_paths(dir: &Path, number: i64) -> (PathBuf, PathBuf) {
 /// seam, so `preview`, `send`, a republish and the API's preview routes cannot
 /// disagree about the same invoice; this is the name the CLI and the server
 /// already import it by.
-pub(crate) use crate::invoicing::render::pay_button_for;
+pub(crate) use nigel_core::invoicing::render::pay_button_for;
 
 /// Republish one invoice's published page after a payment. Returns the
 /// sentences to print; never fails.
@@ -484,18 +484,18 @@ fn write_preview(
     if is_default {
         // Only the directory Nigel chose. A directory the user named may be
         // shared on purpose, and tightening it would be a surprise.
-        crate::settings::restrict_dir_permissions(&dir)?;
+        nigel_core::settings::restrict_dir_permissions(&dir)?;
     }
     let (html_path, pdf_path) = preview_paths(&dir, number);
 
     std::fs::write(&html_path, &rendered.html)?;
-    crate::settings::restrict_file_permissions(&html_path)?;
+    nigel_core::settings::restrict_file_permissions(&html_path)?;
     println!("Wrote {}", html_path.display());
 
     match &rendered.pdf {
         Some(bytes) => {
             std::fs::write(&pdf_path, bytes)?;
-            crate::settings::restrict_file_permissions(&pdf_path)?;
+            nigel_core::settings::restrict_file_permissions(&pdf_path)?;
             println!("Wrote {}", pdf_path.display());
         }
         None => eprintln!("notice: {}", crate::cli::report::PDF_DISABLED_MESSAGE),
@@ -699,7 +699,7 @@ pub fn aging(today: &str) -> Result<()> {
 
 pub fn template_export(output: Option<&str>, force: bool) -> Result<()> {
     let destination = match output {
-        Some(path) => PathBuf::from(crate::settings::shellexpand_path(path)),
+        Some(path) => PathBuf::from(nigel_core::settings::shellexpand_path(path)),
         None => template_path(&get_data_dir()),
     };
 
@@ -767,10 +767,10 @@ pub fn import(db: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
-    use crate::invoicing::clients::add_client;
-    use crate::invoicing::invoices::create_invoice;
-    use crate::migrations::run_migrations;
+    use nigel_core::db::init_db;
+    use nigel_core::invoicing::clients::add_client;
+    use nigel_core::invoicing::invoices::create_invoice;
+    use nigel_core::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
@@ -994,9 +994,16 @@ mod tests {
     /// The published invoice these three work on.
     fn seed_published(conn: &Connection) -> i64 {
         let id = seed_invoice(conn);
-        crate::invoicing::invoices::mark_published(conn, id, "2026-08-04").unwrap();
-        crate::invoicing::invoices::record_payment(conn, id, 40.0, "2026-08-05", "other", None)
-            .unwrap();
+        nigel_core::invoicing::invoices::mark_published(conn, id, "2026-08-04").unwrap();
+        nigel_core::invoicing::invoices::record_payment(
+            conn,
+            id,
+            40.0,
+            "2026-08-05",
+            "other",
+            None,
+        )
+        .unwrap();
         id
     }
 
@@ -1007,7 +1014,7 @@ mod tests {
     struct CapturePub {
         pages: std::cell::RefCell<Vec<String>>,
     }
-    impl crate::invoicing::gateway::AssetPublisher for CapturePub {
+    impl nigel_core::invoicing::gateway::AssetPublisher for CapturePub {
         fn publish(&self, token: &str, html: &[u8], _pdf: &[u8]) -> Result<String> {
             self.publish_page(token, html)
         }
@@ -1034,7 +1041,7 @@ mod tests {
     #[test]
     fn the_preview_branding_points_at_no_hosted_logo() {
         let (_d, conn) = test_conn();
-        crate::db::set_metadata(&conn, "company_logo", "data:image/png;base64,AAAA").unwrap();
+        nigel_core::db::set_metadata(&conn, "company_logo", "data:image/png;base64,AAAA").unwrap();
 
         let profile = company_profile(&conn);
         let branding = profile.branding(DEFAULT_TEMPLATE, "b@e.test");
@@ -1157,7 +1164,7 @@ mod tests {
     fn a_resend_says_the_link_is_reused_and_the_page_republished() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn);
-        crate::invoicing::invoices::mark_published(&conn, id, "2026-08-04").unwrap();
+        nigel_core::invoicing::invoices::mark_published(&conn, id, "2026-08-04").unwrap();
         let invoice = find_invoice(&conn, 1248).unwrap();
 
         let first = send_consequences(&invoice, &acme(), None);

@@ -1,10 +1,10 @@
 use std::io::{self, BufRead, Write};
 
-use crate::db::get_connection;
-use crate::error::{NigelError, Result};
-use crate::settings::get_data_dir;
+use nigel_core::db::get_connection;
+use nigel_core::error::{NigelError, Result};
+use nigel_core::settings::get_data_dir;
 
-pub use crate::imports::*;
+pub use nigel_core::imports::*;
 
 pub fn run() -> Result<()> {
     let data_dir = get_data_dir();
@@ -50,7 +50,7 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{get_connection, init_db};
+    use nigel_core::db::{get_connection, init_db};
     use rusqlite::Connection;
 
     fn test_db() -> (tempfile::TempDir, Connection) {

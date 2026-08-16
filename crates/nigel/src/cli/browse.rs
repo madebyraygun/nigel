@@ -1,10 +1,10 @@
 use super::{parse_month_opt, RegisterFilterArgs};
 use crate::browser::RegisterBrowser;
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::reports;
-use crate::reviewer::get_categories;
-use crate::settings::get_data_dir;
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::reports;
+use nigel_core::reviewer::get_categories;
+use nigel_core::settings::get_data_dir;
 
 pub fn register(
     month: Option<String>,

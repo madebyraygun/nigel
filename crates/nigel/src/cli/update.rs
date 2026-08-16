@@ -1,8 +1,8 @@
-pub use crate::updater::*;
+pub use nigel_core::updater::*;
 
 use std::io::Write;
 
-use crate::error::{NigelError, Result};
+use nigel_core::error::{NigelError, Result};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 

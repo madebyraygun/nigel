@@ -9,10 +9,10 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::password_manager::{PasswordAction, PasswordManager};
-use crate::db;
-use crate::error::Result;
-use crate::settings::{get_data_dir, load_settings, save_settings};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
+use nigel_core::db;
+use nigel_core::error::Result;
+use nigel_core::settings::{get_data_dir, load_settings, save_settings};
 
 pub enum SettingsAction {
     Continue,
@@ -488,7 +488,7 @@ impl SettingsManager {
         // was published with it, or a document written afterwards would still
         // carry a mark the operator has removed.
         let written = if row == MENU_COMPANY_LOGO {
-            crate::invoicing::logo::set_company_logo(conn, &value)
+            nigel_core::invoicing::logo::set_company_logo(conn, &value)
         } else {
             db::set_metadata(conn, key, &value)
         };
@@ -517,7 +517,7 @@ impl SettingsManager {
         if path.is_empty() {
             return Ok(String::new());
         }
-        let expanded = crate::settings::shellexpand_path(path);
+        let expanded = nigel_core::settings::shellexpand_path(path);
         let bytes = std::fs::read(&expanded).map_err(|e| format!("Could not read {path}: {e}"))?;
         // The MIME is declared from the bytes, and `parse_logo` then checks the
         // bytes against it — so a `.png` holding a JPEG is refused rather than
@@ -531,7 +531,7 @@ impl SettingsManager {
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(&bytes)
         );
-        match crate::invoicing::document::parse_logo(&uri) {
+        match nigel_core::invoicing::document::parse_logo(&uri) {
             Ok(Some(_)) => Ok(uri),
             Ok(None) => Err(format!("{path} is empty.")),
             Err(e) => Err(e.to_string()),
@@ -776,7 +776,7 @@ mod tests {
             stored.starts_with("data:image/png;base64,"),
             "got: {stored}"
         );
-        assert!(crate::invoicing::document::parse_logo(&stored)
+        assert!(nigel_core::invoicing::document::parse_logo(&stored)
             .unwrap()
             .is_some());
         assert_eq!(mgr.row_display(MENU_COMPANY_LOGO).1, "(set)");
@@ -965,7 +965,7 @@ mod tests {
 
     #[test]
     fn toggle_update_check() {
-        let _config = crate::settings::TempConfigDir::new();
+        let _config = nigel_core::settings::TempConfigDir::new();
         let (_dir, conn) = test_db();
         let mut mgr = SettingsManager::new(&conn, "Hello").unwrap();
 
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn update_check_loads_from_settings() {
-        let _config = crate::settings::TempConfigDir::new();
+        let _config = nigel_core::settings::TempConfigDir::new();
         let (_dir, conn) = test_db();
         let mgr = SettingsManager::new(&conn, "Hello").unwrap();
         // update_check defaults to true from settings

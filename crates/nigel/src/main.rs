@@ -4,20 +4,20 @@ use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
     InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
-use nigel::error;
+use nigel_core::error;
 
 /// Reconcile Stripe payments before a data-bearing command runs. Best-effort:
 /// with no Stripe key configured it does nothing, and any failure prints a
 /// notice instead of failing the command the user actually asked for.
 fn sync_invoice_payments() {
-    let cfg = nigel::settings::invoicing_config();
+    let cfg = nigel_core::settings::invoicing_config();
     let Some(secret_key) = cfg.stripe_secret_key.clone() else {
         return;
     };
-    let gateway = nigel::invoicing::stripe::StripeClient { secret_key };
-    let data_dir = nigel::settings::get_data_dir();
-    let result = nigel::db::get_connection(&data_dir.join("nigel.db")).and_then(|conn| {
-        let report = nigel::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway)?;
+    let gateway = nigel_core::invoicing::stripe::StripeClient { secret_key };
+    let data_dir = nigel_core::settings::get_data_dir();
+    let result = nigel_core::db::get_connection(&data_dir.join("nigel.db")).and_then(|conn| {
+        let report = nigel_core::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway)?;
         // A payment found at launch corrects the page it was found for, so a
         // client following their bookmark does not see a balance they settled.
         let warnings =
@@ -110,7 +110,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
             }
     );
 
-    let db_path = nigel::settings::get_data_dir().join("nigel.db");
+    let db_path = nigel_core::settings::get_data_dir().join("nigel.db");
 
     if needs_existing_db && !db_path.exists() {
         return Err(error::NigelError::NotInitialized);
@@ -131,8 +131,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
     // init_db() call, the dashboard migrates in its own pre-flight, and serve migrates
     // whatever it can reach without a password.
     if needs_existing_db && needs_password && !replaces_db {
-        let conn = nigel::db::get_connection(&db_path)?;
-        nigel::db::init_db(&conn)?;
+        let conn = nigel_core::db::get_connection(&db_path)?;
+        nigel_core::db::init_db(&conn)?;
     }
 
     // Reconcile Stripe payments for commands that read or write the books.

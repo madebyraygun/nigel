@@ -1,10 +1,10 @@
 use comfy_table::{Cell, Table};
 
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::settings::get_data_dir;
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::settings::get_data_dir;
 
-pub use crate::categories::*;
+pub use nigel_core::categories::*;
 
 pub fn add(
     name: &str,
@@ -67,8 +67,8 @@ pub fn delete(id: i64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_db;
-    use crate::error::NigelError;
+    use nigel_core::db::init_db;
+    use nigel_core::error::NigelError;
     use rusqlite::Connection;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {

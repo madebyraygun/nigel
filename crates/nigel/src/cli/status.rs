@@ -1,8 +1,8 @@
-use crate::db::{get_connection, get_metadata, is_encrypted};
-use crate::error::Result;
-use crate::fmt::format_bytes;
-use crate::migrations::{get_schema_version, LATEST_VERSION};
-use crate::settings::load_settings;
+use nigel_core::db::{get_connection, get_metadata, is_encrypted};
+use nigel_core::error::Result;
+use nigel_core::fmt::format_bytes;
+use nigel_core::migrations::{get_schema_version, LATEST_VERSION};
+use nigel_core::settings::load_settings;
 
 pub fn run() -> Result<()> {
     let settings = load_settings();
@@ -60,7 +60,7 @@ pub fn run() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::db::{get_connection, init_db, is_encrypted, open_connection, set_db_password};
+    use nigel_core::db::{get_connection, init_db, is_encrypted, open_connection, set_db_password};
 
     #[test]
     fn test_is_encrypted_shown_false_for_plain_db() {

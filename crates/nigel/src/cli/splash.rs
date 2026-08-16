@@ -12,8 +12,8 @@ use ratatui::{
 use zeroize::Zeroize;
 
 use crate::effects::{self, Particle, LOGO};
-use crate::error::Result;
 use crate::tui;
+use nigel_core::error::Result;
 
 const SPLASH_DURATION: Duration = Duration::from_millis(1500);
 const TICK_INTERVAL: Duration = Duration::from_millis(50);
@@ -203,9 +203,9 @@ impl Splash {
     /// Infrastructure errors (I/O, permissions) are propagated as `Err`.
     fn try_password(&mut self) -> Result<bool> {
         if let Some(ref db_path) = self.db_path {
-            match crate::db::validate_password(db_path, &self.password) {
+            match nigel_core::db::validate_password(db_path, &self.password) {
                 Ok(true) => {
-                    crate::db::set_db_password(Some(self.password.clone()));
+                    nigel_core::db::set_db_password(Some(self.password.clone()));
                     return Ok(true);
                 }
                 Ok(false) => {
@@ -296,7 +296,7 @@ pub fn run_with_password(db_path: &Path) -> Result<()> {
                                 Ok(true) => break Ok(()),
                                 Ok(false) => {
                                     if splash.attempts >= MAX_PASSWORD_ATTEMPTS {
-                                        break Err(crate::error::NigelError::Other(
+                                        break Err(nigel_core::error::NigelError::Other(
                                             "Failed to unlock database after 3 attempts.".into(),
                                         ));
                                     }
@@ -315,7 +315,7 @@ pub fn run_with_password(db_path: &Path) -> Result<()> {
                             }
                         }
                         KeyCode::Esc => {
-                            break Err(crate::error::NigelError::Other(
+                            break Err(nigel_core::error::NigelError::Other(
                                 "Password entry cancelled.".into(),
                             ));
                         }
@@ -398,8 +398,8 @@ mod tests {
 
     /// Create an encrypted test DB using open_connection (avoids global password state).
     fn create_encrypted_test_db(db_path: &Path, password: &str) {
-        let conn = crate::db::open_connection(db_path, Some(password)).unwrap();
-        crate::db::init_db(&conn).unwrap();
+        let conn = nigel_core::db::open_connection(db_path, Some(password)).unwrap();
+        nigel_core::db::init_db(&conn).unwrap();
         drop(conn);
     }
 
@@ -433,7 +433,7 @@ mod tests {
         assert!(splash.try_password().unwrap());
         assert_eq!(splash.attempts, 0);
         // try_password sets the global password on success; clean up immediately
-        crate::db::set_db_password(None);
+        nigel_core::db::set_db_password(None);
     }
 
     #[test]

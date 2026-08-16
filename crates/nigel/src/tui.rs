@@ -5,8 +5,8 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::error::Result;
-use crate::fmt::money;
+use nigel_core::error::Result;
+use nigel_core::fmt::money;
 
 pub const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 

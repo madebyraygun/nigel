@@ -1,13 +1,13 @@
 pub mod view;
 
-pub use crate::reports::text;
-pub use crate::reports::{export_file_stem, PDF_DISABLED_MESSAGE};
+pub use nigel_core::reports::text;
+pub use nigel_core::reports::{export_file_stem, PDF_DISABLED_MESSAGE};
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use crate::cli::ReportOutputArgs;
-use crate::error::Result;
+use nigel_core::error::Result;
 
 use super::ReportCommands;
 
@@ -17,14 +17,14 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
     // Validate --mode and --format values
     if let Some(ref mode) = args.mode {
         if mode != "view" && mode != "export" {
-            return Err(crate::error::NigelError::Other(format!(
+            return Err(nigel_core::error::NigelError::Other(format!(
                 "Unknown --mode '{mode}'. Expected 'view' or 'export'."
             )));
         }
     }
     if let Some(ref format) = args.format {
         if format != "pdf" && format != "text" {
-            return Err(crate::error::NigelError::Other(format!(
+            return Err(nigel_core::error::NigelError::Other(format!(
                 "Unknown --format '{format}'. Expected 'pdf' or 'text'."
             )));
         }
@@ -71,8 +71,9 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
             filters,
             ..
         } => {
-            let conn =
-                crate::db::get_connection(&crate::settings::get_data_dir().join("nigel.db"))?;
+            let conn = nigel_core::db::get_connection(
+                &nigel_core::settings::get_data_dir().join("nigel.db"),
+            )?;
             let resolved = filters.resolve(&conn)?;
             drop(conn);
             text::register(
@@ -87,7 +88,7 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
         ReportCommands::Balance { .. } => text::balance(),
         ReportCommands::Aging { .. } => text::aging(&crate::cli::today()),
         ReportCommands::K1 { year, .. } => text::k1(*year),
-        ReportCommands::All { .. } => Err(crate::error::NigelError::Other(
+        ReportCommands::All { .. } => Err(nigel_core::error::NigelError::Other(
             "`report all` is export-only".into(),
         )),
     }
@@ -120,13 +121,13 @@ fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&p, &s)?;
-    crate::settings::restrict_file_permissions(&p)?;
+    nigel_core::settings::restrict_file_permissions(&p)?;
     println!("Wrote {}", p.display());
     Ok(())
 }
 
 fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> {
-    let data_dir = crate::settings::get_data_dir();
+    let data_dir = nigel_core::settings::get_data_dir();
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     let is_default_dir = output_dir.is_none();
     let dir = output_dir
@@ -134,7 +135,7 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
         .unwrap_or_else(|| data_dir.join("exports"));
     std::fs::create_dir_all(&dir)?;
     if is_default_dir {
-        crate::settings::restrict_dir_permissions(&dir)?;
+        nigel_core::settings::restrict_dir_permissions(&dir)?;
     }
 
     let mut reports: Vec<(&str, Result<String>)> = vec![
@@ -152,8 +153,8 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
     ];
     // The K-1 worksheet only means something under the business chart of
     // accounts; personal books skip it in the bulk export.
-    let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
-    if crate::db::get_profile(&conn) == crate::db::Profile::Business {
+    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
+    if nigel_core::db::get_profile(&conn) == nigel_core::db::Profile::Business {
         reports.push(("k1-prep", text::k1(year)));
     }
     drop(conn);
@@ -163,7 +164,7 @@ fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> 
             Ok(content) => {
                 let path = dir.join(format!("{name}-{date}.txt"));
                 std::fs::write(&path, content)?;
-                crate::settings::restrict_file_permissions(&path)?;
+                nigel_core::settings::restrict_file_permissions(&path)?;
                 println!("Wrote {}", path.display());
             }
             Err(e) => eprintln!("Skipping {name}: {e}"),
@@ -176,7 +177,9 @@ fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()
     #[cfg(not(feature = "pdf"))]
     {
         let _ = (cmd, output);
-        return Err(crate::error::NigelError::Other(PDF_DISABLED_MESSAGE.into()));
+        return Err(nigel_core::error::NigelError::Other(
+            PDF_DISABLED_MESSAGE.into(),
+        ));
     }
 
     #[cfg(feature = "pdf")]
@@ -187,7 +190,7 @@ fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()
 }
 
 fn default_text_path(name: &str) -> String {
-    crate::settings::get_data_dir()
+    nigel_core::settings::get_data_dir()
         .join("exports")
         .join(format!("{}.txt", export_file_stem(name)))
         .to_string_lossy()
@@ -196,7 +199,7 @@ fn default_text_path(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::reports::{
+    use nigel_core::reports::{
         register_range_label, register_subtitle, CategorySelection, RegisterFilters,
     };
 

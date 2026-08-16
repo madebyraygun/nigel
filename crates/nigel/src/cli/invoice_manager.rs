@@ -12,21 +12,21 @@ use crate::cli::invoice::{
     build_clients, company_name, company_profile, contact_email_for_preview, optional_gateway,
     optional_publisher, PUBLISHED_VOID_NOTICE,
 };
-use crate::error::{NigelError, Result};
-use crate::fmt::money;
-use crate::invoicing::clients::{get_client, list_clients, ClientScope};
-use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
-use crate::invoicing::invoices::{
+use crate::tui::{FOOTER_STYLE, GREEN, HEADER_STYLE};
+use nigel_core::error::{NigelError, Result};
+use nigel_core::fmt::money;
+use nigel_core::invoicing::clients::{get_client, list_clients, ClientScope};
+use nigel_core::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
+use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
     is_void, line_items, list_invoices, paid_amount, payment_amount, payments, record_payment,
     validate_currency, validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
-use crate::invoicing::render_html::{load_template, Branding};
-use crate::invoicing::send::{send_invoice, SendOutcome};
-use crate::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
-use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
-use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
-use crate::tui::{FOOTER_STYLE, GREEN, HEADER_STYLE};
+use nigel_core::invoicing::render_html::{load_template, Branding};
+use nigel_core::invoicing::send::{send_invoice, SendOutcome};
+use nigel_core::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
+use nigel_core::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
+use nigel_core::settings::{get_data_dir, invoicing_config, InvoicingConfig};
 
 pub enum InvoiceAction {
     Continue,
@@ -881,12 +881,12 @@ impl InvoiceManager {
 
         if let Screen::ConfirmSend = &self.screen {
             lines.push(Line::from(""));
-            let cfg = crate::settings::invoicing_config();
+            let cfg = nigel_core::settings::invoicing_config();
             let base_url_warning = cfg
                 .public_base_url
                 .as_deref()
-                .filter(|url| crate::invoicing::r2::validate_public_base_url(url).is_ok())
-                .and_then(crate::invoicing::r2::public_base_url_warning);
+                .filter(|url| nigel_core::invoicing::r2::validate_public_base_url(url).is_ok())
+                .and_then(nigel_core::invoicing::r2::public_base_url_warning);
             for line in send_confirmation(detail, base_url_warning, content_area.width) {
                 lines.push(Line::from(Span::styled(
                     format!("   {line}"),
@@ -1413,8 +1413,8 @@ impl InvoiceManager {
             self.perform_void(
                 conn,
                 &crate::cli::today(),
-                None::<&crate::invoicing::stripe::StripeClient>,
-                None::<&crate::invoicing::r2::R2Publisher>,
+                None::<&nigel_core::invoicing::stripe::StripeClient>,
+                None::<&nigel_core::invoicing::r2::R2Publisher>,
             );
             return InvoiceAction::Continue;
         }
@@ -2093,12 +2093,12 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{get_connection, init_db};
-    use crate::invoicing::clients::add_client;
-    use crate::invoicing::invoices::{
+    use nigel_core::db::{get_connection, init_db};
+    use nigel_core::invoicing::clients::add_client;
+    use nigel_core::invoicing::invoices::{
         create_invoice, mark_published, record_payment, set_payment_link, void_invoice, NewLineItem,
     };
-    use crate::migrations::run_migrations;
+    use nigel_core::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
@@ -2790,8 +2790,9 @@ mod tests {
             "a configured installation says nothing extra: {quiet:?}"
         );
 
-        let warning = crate::invoicing::r2::public_base_url_warning("https://billing.example.test")
-            .expect("a base URL missing the prefix warns");
+        let warning =
+            nigel_core::invoicing::r2::public_base_url_warning("https://billing.example.test")
+                .expect("a base URL missing the prefix warns");
         let warned = send_confirmation(detail, Some(warning), 80);
         assert_eq!(
             &warned[..quiet.len()],
@@ -3384,9 +3385,9 @@ mod tests {
     /// loaded, so unlike send this runs in every build.
     mod void_teardown {
         use super::*;
-        use crate::error::NigelError;
-        use crate::invoicing::gateway::{PaidSession, PaymentLink};
-        use crate::invoicing::invoices::set_payment_link;
+        use nigel_core::error::NigelError;
+        use nigel_core::invoicing::gateway::{PaidSession, PaymentLink};
+        use nigel_core::invoicing::invoices::set_payment_link;
         use std::cell::RefCell;
 
         #[derive(Default)]
@@ -3563,9 +3564,9 @@ mod tests {
     #[cfg(feature = "pdf")]
     mod send {
         use super::*;
-        use crate::error::NigelError;
-        use crate::invoicing::gateway::{PaidSession, PaymentLink};
-        use crate::invoicing::render_html::DEFAULT_TEMPLATE;
+        use nigel_core::error::NigelError;
+        use nigel_core::invoicing::gateway::{PaidSession, PaymentLink};
+        use nigel_core::invoicing::render_html::DEFAULT_TEMPLATE;
         use std::cell::RefCell;
 
         struct FakeGw {

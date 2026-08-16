@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use crate::server::testutil::{app_for, body_string, get_response, seeded_db};
+use nigel_core::server::testutil::{app_for, body_string, get_response, seeded_db};
 
 const COMPANY: &str = "Bluepeak LLC";
 
@@ -202,8 +202,8 @@ async fn capture_web_report_fixtures() {
 
     let (_seed_dir, db_path) = seeded_db();
     {
-        let conn = crate::db::open_connection(&db_path, None).expect("open db");
-        crate::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
+        let conn = nigel_core::db::open_connection(&db_path, None).expect("open db");
+        nigel_core::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
     }
     capture_all(&db_path, "", None, &mut manifest).await;
 
@@ -211,8 +211,8 @@ async fn capture_web_report_fixtures() {
     // other test reads stays exactly as it is.
     let (_variant_dir, variant_path) = seeded_db();
     {
-        let conn = crate::db::open_connection(&variant_path, None).expect("open variant db");
-        crate::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
+        let conn = nigel_core::db::open_connection(&variant_path, None).expect("open variant db");
+        nigel_core::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
         seed_unmapped(&conn);
     }
     let mut variant: Vec<serde_json::Value> = Vec::new();
@@ -257,20 +257,20 @@ fn write_invoicing(name: &str, contents: &str) {
 #[ignore = "writes fixtures into web/; run deliberately"]
 async fn capture_web_invoicing_fixtures() {
     use crate::cli::invoice::{format_invoice_list, format_invoice_show};
-    use crate::invoicing::invoices as inv;
-    use crate::server::testutil::AS_OF;
+    use nigel_core::invoicing::invoices as inv;
+    use nigel_core::server::testutil::AS_OF;
 
     // Nothing invoicing may be read from the developer's real settings.json:
     // a configured `public_base_url` would put a live address into a committed
     // fixture, and the JSON side has to mean the same thing on every machine.
-    let _config = crate::settings::TempConfigDir::new();
+    let _config = nigel_core::settings::TempConfigDir::new();
 
     let dir = invoicing_fixtures_dir();
     std::fs::create_dir_all(&dir).expect("fixtures dir");
 
     let (_seed_dir, db_path) = seeded_db();
-    let conn = crate::db::open_connection(&db_path, None).expect("open db");
-    crate::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
+    let conn = nigel_core::db::open_connection(&db_path, None).expect("open db");
+    nigel_core::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
     let (app, token) = app_for(&db_path);
 
     let aging_query = format!("asOf={AS_OF}");
@@ -282,7 +282,8 @@ async fn capture_web_invoicing_fixtures() {
     ];
 
     let invoice = inv::get_invoice_by_number(&conn, 1250).expect("1250");
-    let client = crate::invoicing::clients::get_client(&conn, invoice.client_id).expect("client");
+    let client =
+        nigel_core::invoicing::clients::get_client(&conn, invoice.client_id).expect("client");
     let texts = [
         (
             "invoices",
@@ -306,9 +307,9 @@ async fn capture_web_invoicing_fixtures() {
         (
             "clients",
             crate::cli::client::format_client_list(
-                &crate::invoicing::clients::list_clients(
+                &nigel_core::invoicing::clients::list_clients(
                     &conn,
-                    crate::invoicing::clients::ClientScope::Active,
+                    nigel_core::invoicing::clients::ClientScope::Active,
                 )
                 .expect("clients"),
             ),

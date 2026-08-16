@@ -1,7 +1,7 @@
-use crate::categorizer::categorize_transactions;
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::settings::get_data_dir;
+use nigel_core::categorizer::categorize_transactions;
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::settings::get_data_dir;
 
 pub fn run() -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;

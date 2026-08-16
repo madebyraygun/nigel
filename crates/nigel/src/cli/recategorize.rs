@@ -3,13 +3,13 @@ use std::io::IsTerminal;
 use clap::Args;
 use comfy_table::{Cell, Table};
 
-use crate::db::get_connection;
-use crate::error::{NigelError, Result};
-use crate::reviewer::{
+use nigel_core::db::get_connection;
+use nigel_core::error::{NigelError, Result};
+use nigel_core::reviewer::{
     find_transactions_for_recategorize, get_transactions_by_ids, recategorize_transactions,
     RecategorizeFilter,
 };
-use crate::settings::get_data_dir;
+use nigel_core::settings::get_data_dir;
 
 #[derive(Args)]
 pub struct RecategorizeArgs {

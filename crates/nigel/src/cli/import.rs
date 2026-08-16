@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use crate::categorizer::categorize_transactions;
 use crate::cli::backup;
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::importer::{import_file, save_csv_profile, GenericCsvConfig};
-use crate::settings::get_data_dir;
+use nigel_core::categorizer::categorize_transactions;
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::importer::{import_file, save_csv_profile, GenericCsvConfig};
+use nigel_core::settings::get_data_dir;
 
 pub struct ImportOpts<'a> {
     pub format: Option<&'a str>,
@@ -134,13 +134,13 @@ fn build_generic_config(
 ) -> Result<GenericCsvConfig> {
     Ok(GenericCsvConfig {
         date_col: date_col.ok_or_else(|| {
-            crate::error::NigelError::Other(format!("--date-col is required with {context}"))
+            nigel_core::error::NigelError::Other(format!("--date-col is required with {context}"))
         })?,
         desc_col: desc_col.ok_or_else(|| {
-            crate::error::NigelError::Other(format!("--desc-col is required with {context}"))
+            nigel_core::error::NigelError::Other(format!("--desc-col is required with {context}"))
         })?,
         amount_col: amount_col.ok_or_else(|| {
-            crate::error::NigelError::Other(format!("--amount-col is required with {context}"))
+            nigel_core::error::NigelError::Other(format!("--amount-col is required with {context}"))
         })?,
         date_format: date_format.unwrap_or("%m/%d/%Y").to_string(),
     })

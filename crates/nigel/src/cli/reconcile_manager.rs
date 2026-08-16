@@ -9,10 +9,10 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::accounts;
-use crate::error::Result;
-use crate::fmt::money;
-use crate::reconciler;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::error::Result;
+use nigel_core::fmt::money;
+use nigel_core::reconciler;
 
 pub enum ReconcileAction {
     Continue,

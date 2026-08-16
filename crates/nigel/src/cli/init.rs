@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use crate::db::{get_connection, init_db_with_profile, Profile};
-use crate::error::Result;
-use crate::settings::{
+use nigel_core::db::{get_connection, init_db_with_profile, Profile};
+use nigel_core::error::Result;
+use nigel_core::settings::{
     load_settings, restrict_dir_permissions, save_settings, shellexpand_path, Settings,
 };
 
 pub fn run(data_dir: Option<String>, profile: &str) -> Result<()> {
     let Some(profile) = Profile::parse(profile) else {
-        return Err(crate::error::NigelError::Other(format!(
+        return Err(nigel_core::error::NigelError::Other(format!(
             "Unknown --profile '{profile}'. Expected 'business' or 'personal'."
         )));
     };
@@ -46,7 +46,7 @@ pub fn run(data_dir: Option<String>, profile: &str) -> Result<()> {
 
     // The requested profile only takes effect on a fresh database; say so
     // rather than letting a personal init silently keep the business chart.
-    let seeded = crate::db::get_profile(&conn);
+    let seeded = nigel_core::db::get_profile(&conn);
     if already_seeded && seeded != profile {
         eprintln!(
             "Note: this database already keeps {} books; --profile {} was ignored.",

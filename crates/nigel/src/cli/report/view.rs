@@ -9,15 +9,15 @@ use ratatui::{
 use crossterm::event::KeyCode;
 
 use crate::cli::{parse_month_opt, ReportCommands};
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::fmt::money;
-use crate::reports::{self, DateGranularity, ReportKind};
-use crate::settings::get_data_dir;
 use crate::tui::{
     money_span, run_report_view, ReportView, ReportViewAction, AMOUNT_NEG_STYLE, AMOUNT_POS_STYLE,
     FOOTER_STYLE, HEADER_STYLE,
 };
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::fmt::money;
+use nigel_core::reports::{self, DateGranularity, ReportKind};
+use nigel_core::settings::get_data_dir;
 
 /// Whether the view is currently showing a month or a full year.
 #[derive(Clone, Copy, PartialEq)]
@@ -52,7 +52,7 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
         return register_standalone(cmd);
     }
     if matches!(cmd, ReportCommands::All { .. }) {
-        return Err(crate::error::NigelError::Other(
+        return Err(nigel_core::error::NigelError::Other(
             "`report all` is export-only — use `--mode export`".into(),
         ));
     }
@@ -78,7 +78,7 @@ pub(crate) fn build_view(cmd: &ReportCommands) -> Result<Box<dyn ReportView>> {
         ReportCommands::Balance { .. } => build_balance(),
         ReportCommands::Aging { .. } => build_aging(),
         ReportCommands::K1 { year, .. } => build_k1(*year),
-        _ => Err(crate::error::NigelError::Other(
+        _ => Err(nigel_core::error::NigelError::Other(
             "Unsupported report for view mode".into(),
         )),
     }
@@ -884,11 +884,11 @@ pub(crate) fn build_k1(year: Option<i32>) -> Result<Box<dyn ReportView>> {
 
 pub(crate) fn build_aging() -> Result<Box<dyn ReportView>> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let data = crate::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
+    let data = nigel_core::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     Ok(Box::new(aging_view(&data)))
 }
 
-fn aging_view(data: &crate::invoicing::invoices::AgingReport) -> TableReportView {
+fn aging_view(data: &nigel_core::invoicing::invoices::AgingReport) -> TableReportView {
     let widths = vec![
         Constraint::Fill(1),
         Constraint::Length(22),
@@ -903,12 +903,12 @@ fn aging_view(data: &crate::invoicing::invoices::AgingReport) -> TableReportView
     let mut rows = vec![section_row("SUMMARY", 5)];
     for b in &data.buckets {
         let label = format!("  {} ({})", b.label, b.count);
-        let label_cell = if b.label != "current" && b.total > crate::invoicing::invoices::CENT_SLACK
-        {
-            Cell::from(Span::styled(label, Style::default().fg(Color::Yellow)))
-        } else {
-            text_cell(label)
-        };
+        let label_cell =
+            if b.label != "current" && b.total > nigel_core::invoicing::invoices::CENT_SLACK {
+                Cell::from(Span::styled(label, Style::default().fg(Color::Yellow)))
+            } else {
+                text_cell(label)
+            };
         rows.push(Row::new([
             label_cell,
             Cell::from(""),
@@ -1014,7 +1014,7 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
         return Ok(());
     }
 
-    let categories = crate::reviewer::get_categories(&conn).unwrap_or_default();
+    let categories = nigel_core::reviewer::get_categories(&conn).unwrap_or_default();
 
     let mut browser =
         crate::browser::RegisterBrowser::new(data.rows, data.total, filter_desc, categories);
@@ -1086,7 +1086,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+    use nigel_core::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
 
     fn aging_fixture(invoice_count: i64) -> AgingReport {
         let invoices: Vec<AgingInvoice> = (0..invoice_count)

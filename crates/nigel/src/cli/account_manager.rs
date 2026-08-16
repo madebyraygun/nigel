@@ -8,8 +8,8 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::accounts::{self, ACCOUNT_TYPES};
-use crate::models::Account;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::models::Account;
 
 // Field indices for AccountForm::new_add() — keep in sync with field order
 const NAME_IDX: usize = 0;

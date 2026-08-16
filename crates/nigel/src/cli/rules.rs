@@ -1,10 +1,10 @@
 use comfy_table::{Cell, Table};
 
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::settings::get_data_dir;
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::settings::get_data_dir;
 
-pub use crate::rules::*;
+pub use nigel_core::rules::*;
 
 // ---------------------------------------------------------------------------
 // CLI commands
@@ -122,8 +122,8 @@ pub fn test(pattern: &str, match_type: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{NewRule, RuleUpdate};
-    use crate::db::{get_connection, init_db};
-    use crate::error::NigelError;
+    use nigel_core::db::{get_connection, init_db};
+    use nigel_core::error::NigelError;
     use rusqlite::Connection;
 
     fn test_db() -> (tempfile::TempDir, Connection) {
@@ -451,7 +451,7 @@ mod tests {
             let result = super::test_pattern(&conn, pattern, match_type).unwrap();
             let expected = descriptions
                 .iter()
-                .filter(|d| crate::categorizer::matches(d, pattern, match_type))
+                .filter(|d| nigel_core::categorizer::matches(d, pattern, match_type))
                 .count() as i64;
             assert_eq!(
                 result.total, expected,

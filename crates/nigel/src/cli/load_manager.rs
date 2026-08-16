@@ -9,8 +9,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::settings::{get_data_dir, load_settings, save_settings, shellexpand_path};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::settings::{get_data_dir, load_settings, save_settings, shellexpand_path};
 
 pub enum LoadAction {
     Continue,

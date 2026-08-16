@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::effects::{self, Particle, LOGO};
-use crate::error::Result;
+use nigel_core::error::Result;
 
 const GOODBYE_DURATION: Duration = Duration::from_millis(1200);
 const TICK_INTERVAL: Duration = Duration::from_millis(50);

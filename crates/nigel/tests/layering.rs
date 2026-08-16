@@ -1,54 +1,23 @@
 //! What may reach into the terminal UI, and what may not.
 //!
-//! Everything under `src/` is the half a desktop client links without a
-//! terminal, except the four entries named below. `src/cli/` is clap and
-//! ratatui, so anything on the core side that names `crate::cli::` cannot be
-//! linked without them, and this test says so. The reasoning is recorded in
-//! `backlog/decisions/decision-1`.
+//! `nigel-core` is the half a desktop client links without a terminal;
+//! `nigel` is clap and ratatui. The crate boundary is the real enforcement —
+//! `nigel-core` does not depend on `nigel`, so a core module naming the CLI
+//! does not compile. This test guards the boundary in source terms as well, so
+//! a stray reference is reported as what it is rather than as a resolution
+//! error, and so the rule survives anyone tempted to add the back-edge. The
+//! reasoning is recorded in `backlog/decisions/decision-1`.
 //!
-//! The scope is stated as what is **excluded** rather than what is covered: a
-//! module added to the core side is then guarded from the moment it exists.
-//! A hand-listed set of covered paths guards only what somebody remembered,
-//! which is how `migrations.rs` reached `crate::cli::today()` on the server's
-//! own unlock path while this test read zero.
+//! The scope is every `.rs` file in the core crate: a module added there is
+//! guarded from the moment it exists, with nothing to remember to list.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The terminal UI, and the only part of `src/` allowed to name `crate::cli`.
-///
-/// `tui`, `browser` and `effects` are ratatui screens and the animation they
-/// share; `main.rs` is the binary's own entry point. Everything else under
-/// `src/` is core and is guarded.
-const CLI_PATHS: [&str; 5] = [
-    "src/cli",
-    "src/tui.rs",
-    "src/browser.rs",
-    "src/effects.rs",
-    "src/main.rs",
-];
+/// The core crate's sources, relative to this crate's manifest directory.
+const CORE_SRC: &str = "../nigel-core/src";
 
-/// Test support the server's own tests build on: seeded databases, a router
-/// with a valid session, and JSON request helpers. It stays out of a release
-/// binary, but it is not itself CLI-shaped, so it is excluded by name rather
-/// than folded into [`CLI_PATHS`].
-///
-/// Matched by its full path from the repo root, not by bare filename: a
-/// bare-filename match would also exclude any future `testutil.rs` dropped
-/// into an unrelated core directory, leaving it silently unguarded.
-const TEST_SUPPORT: [&str; 1] = ["src/server/testutil.rs"];
-
-fn rel(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-/// Collect every `.rs` file under `path` that is neither CLI nor test support.
 fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
-    let name = rel(path);
-    if CLI_PATHS.contains(&name.as_str()) || TEST_SUPPORT.contains(&name.as_str()) {
-        return;
-    }
-
     if path.is_dir() {
         for entry in fs::read_dir(path).expect("read_dir") {
             rust_files(&entry.expect("dir entry").path(), out);
@@ -61,31 +30,30 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every way a line can name the CLI module.
+/// Every way a line can name the terminal UI.
 ///
-/// The bare path is the common one. The braced forms are what a nested `use`
-/// group produces — `use crate::{cli::invoice::x, fmt::money};` contains no
-/// `crate::cli::` at all, so grepping only for that reads clean while the
-/// import is right there.
+/// `crate::cli` is what a reference looked like while the two halves shared a
+/// crate; `nigel::` is what one would look like now. Both are checked, because
+/// a file moved back from history carries the old spelling.
 fn names_the_cli(line: &str) -> bool {
     line.contains("crate::cli::")
         || line.contains("crate::cli;")
         || line.contains("crate::{cli")
         || line.contains("crate::{ cli")
+        || line.contains("nigel::")
 }
 
 fn cli_references() -> Vec<String> {
     let mut files = Vec::new();
-    let src = Path::new("src");
+    let src = Path::new(CORE_SRC);
     assert!(
         src.is_dir(),
-        "src/ is not a directory — this test must run from the crate root"
+        "{CORE_SRC} is not a directory — this test must run from the crate root"
     );
     rust_files(src, &mut files);
     assert!(
         !files.is_empty(),
-        "walked src/ and found no core files to check — the exclusion list has \
-         swallowed the whole crate"
+        "walked {CORE_SRC} and found no core files to check"
     );
     files.sort();
 
@@ -117,16 +85,20 @@ fn the_core_does_not_reach_into_the_cli_layer() {
     );
 }
 
-/// The exclusions are paths, and a path that no longer exists excludes nothing
-/// while looking like it does. A rename would otherwise quietly pull the CLI
-/// into the guarded set, and the whole suite would still pass.
+/// The core crate must not depend on the binary crate, in either direction of
+/// reading: a `nigel` entry in `nigel-core`'s manifest would make the source
+/// check above pass while the boundary was already gone.
 #[test]
-fn every_excluded_path_exists() {
-    for path in CLI_PATHS.iter().chain(TEST_SUPPORT.iter()) {
-        assert!(
-            Path::new(path).exists(),
-            "excluded path {path} does not exist — rename it here, or it stops \
-             excluding anything and the guard's scope changes silently"
+fn the_core_manifest_does_not_depend_on_the_binary_crate() {
+    let manifest =
+        fs::read_to_string("../nigel-core/Cargo.toml").expect("read nigel-core manifest");
+    for line in manifest.lines() {
+        let name = line.split(['=', ' ']).next().unwrap_or("").trim();
+        assert_ne!(
+            name,
+            "nigel",
+            "nigel-core depends on the binary crate: {}",
+            line.trim()
         );
     }
 }

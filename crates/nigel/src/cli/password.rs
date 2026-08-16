@@ -1,13 +1,13 @@
-pub use crate::password::*;
+pub use nigel_core::password::*;
 
 use std::path::Path;
 
-use crate::db::{env_password_if_set, get_connection, is_encrypted, set_db_password};
-use crate::error::Result;
-use crate::settings::get_data_dir;
+use nigel_core::db::{env_password_if_set, get_connection, is_encrypted, set_db_password};
+use nigel_core::error::Result;
+use nigel_core::settings::get_data_dir;
 
 fn prompt(msg: &str) -> Result<String> {
-    rpassword::prompt_password(msg).map_err(|e| crate::error::NigelError::Other(e.to_string()))
+    rpassword::prompt_password(msg).map_err(|e| nigel_core::error::NigelError::Other(e.to_string()))
 }
 
 /// If the database is encrypted, unlock it from `NIGEL_DB_PASSWORD`, falling
@@ -40,7 +40,7 @@ pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
             }
         }
     }
-    Err(crate::error::NigelError::Other(
+    Err(nigel_core::error::NigelError::Other(
         "Failed to unlock database after 3 attempts.".into(),
     ))
 }
@@ -49,7 +49,7 @@ fn prompt_and_confirm(msg: &str) -> Result<String> {
     let pw1 = prompt(msg)?;
     let pw2 = prompt("Confirm password: ")?;
     if pw1.trim() != pw2.trim() {
-        return Err(crate::error::NigelError::Other(
+        return Err(nigel_core::error::NigelError::Other(
             "Passwords do not match.".into(),
         ));
     }
@@ -111,7 +111,7 @@ pub fn run_remove() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_db, open_connection};
+    use nigel_core::db::{init_db, open_connection};
 
     /// The companion `backup_ignores_env_password_on_plain_database` covers the
     /// case this cannot: setting the variable requires a child process, because

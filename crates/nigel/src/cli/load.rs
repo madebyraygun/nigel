@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::error::{NigelError, Result};
-use crate::settings::{load_settings, save_settings, shellexpand_path};
+use nigel_core::error::{NigelError, Result};
+use nigel_core::settings::{load_settings, save_settings, shellexpand_path};
 
 pub fn run(path: &str) -> Result<()> {
     let resolved = PathBuf::from(shellexpand_path(path));

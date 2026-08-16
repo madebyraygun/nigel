@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use chrono::{Datelike, Local, NaiveDate};
 use rusqlite::Connection;
 
-use crate::categorizer::categorize_transactions;
-use crate::db::{get_connection, init_db};
-use crate::error::Result;
-use crate::invoicing::clients::add_client;
-use crate::invoicing::invoices::{create_invoice, mark_published, record_payment, NewLineItem};
-use crate::settings::load_settings;
+use nigel_core::categorizer::categorize_transactions;
+use nigel_core::db::{get_connection, init_db};
+use nigel_core::error::Result;
+use nigel_core::invoicing::clients::add_client;
+use nigel_core::invoicing::invoices::{
+    create_invoice, mark_published, record_payment, NewLineItem,
+};
+use nigel_core::settings::load_settings;
 
 const ACCOUNT_NAME: &str = "BofA Checking";
 
@@ -560,7 +562,7 @@ fn seed_demo(conn: &Connection) -> Result<bool> {
     if !has_invoicing {
         insert_demo_invoicing(conn)?;
     }
-    crate::db::set_metadata(conn, "company_name", "Acme Consulting LLC")?;
+    nigel_core::db::set_metadata(conn, "company_name", "Acme Consulting LLC")?;
     categorize_transactions(conn)?;
     Ok(true)
 }
@@ -580,7 +582,7 @@ pub fn run() -> Result<()> {
     // Demo data is business books: its rules name business categories, so on
     // a personal chart the inserts would fail partway through the category
     // lookups, leaving transactions with no import row for `nigel undo`.
-    if crate::db::get_profile(&conn) == crate::db::Profile::Personal {
+    if nigel_core::db::get_profile(&conn) == nigel_core::db::Profile::Personal {
         eprintln!("These books are personal, and the demo data is a business (its rules");
         eprintln!("name business categories). Try it in its own directory instead:");
         eprintln!("  nigel init --data-dir ~/nigel-demo && nigel demo");
@@ -620,16 +622,16 @@ pub fn run() -> Result<()> {
 /// to point at it. Used by the onboarding flow so the user's real books
 /// stay clean.
 pub fn setup_demo() -> Result<()> {
-    use crate::settings::save_settings;
+    use nigel_core::settings::save_settings;
 
     let mut settings = load_settings();
     let base_dir = PathBuf::from(&settings.data_dir);
     let demo_dir = base_dir.join("demo");
     std::fs::create_dir_all(&demo_dir)?;
-    crate::settings::restrict_dir_permissions(&demo_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&demo_dir)?;
     let exports_dir = demo_dir.join("exports");
     std::fs::create_dir_all(&exports_dir)?;
-    crate::settings::restrict_dir_permissions(&exports_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&exports_dir)?;
 
     let db_path = demo_dir.join("nigel.db");
     let conn = get_connection(&db_path)?;
@@ -647,7 +649,7 @@ pub fn setup_demo() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{get_connection, init_db};
+    use nigel_core::db::{get_connection, init_db};
 
     fn test_db() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
@@ -699,7 +701,7 @@ mod tests {
     fn test_demo_creates_data() {
         let (_dir, conn) = test_db();
         let txn_count = insert_demo_data(&conn).unwrap();
-        crate::db::set_metadata(&conn, "company_name", "Acme Consulting LLC").unwrap();
+        nigel_core::db::set_metadata(&conn, "company_name", "Acme Consulting LLC").unwrap();
         let result = categorize_transactions(&conn).unwrap();
 
         let acct_count: i64 = conn
@@ -721,7 +723,7 @@ mod tests {
         );
         assert!(result.still_flagged > 0, "should leave some flagged");
 
-        let company = crate::db::get_metadata(&conn, "company_name");
+        let company = nigel_core::db::get_metadata(&conn, "company_name");
         assert_eq!(company.as_deref(), Some("Acme Consulting LLC"));
     }
 
@@ -902,7 +904,7 @@ mod tests {
         assert!(summary.categorized > 0);
         assert!(summary.flagged > 0);
         assert_eq!(
-            crate::db::get_metadata(&conn, "company_name").as_deref(),
+            nigel_core::db::get_metadata(&conn, "company_name").as_deref(),
             Some("Acme Consulting LLC")
         );
 

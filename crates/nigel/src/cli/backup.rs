@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::fmt::format_bytes;
-use crate::settings::{get_data_dir, restrict_dir_permissions};
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::fmt::format_bytes;
+use nigel_core::settings::{get_data_dir, restrict_dir_permissions};
 
-pub use crate::backup::*;
+pub use nigel_core::backup::*;
 
 pub fn run(output: Option<String>) -> Result<()> {
     let data_dir = get_data_dir();
@@ -38,7 +38,7 @@ pub fn run(output: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_db, is_encrypted, open_connection};
+    use nigel_core::db::{init_db, is_encrypted, open_connection};
 
     #[test]
     fn test_snapshot_preserves_encryption() {

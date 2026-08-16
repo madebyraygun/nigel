@@ -40,11 +40,11 @@ pub mod undo;
 pub mod undo_manager;
 pub mod update;
 
-pub use crate::clock::today;
+pub use nigel_core::clock::today;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::reports::ReportKind;
+use nigel_core::reports::ReportKind;
 
 /// Ask before something irreversible, or refuse when nobody can be asked.
 ///
@@ -55,14 +55,14 @@ pub(crate) fn confirm_or_refuse(
     question: &str,
     refusal: &str,
     yes: bool,
-) -> crate::error::Result<bool> {
+) -> nigel_core::error::Result<bool> {
     use std::io::IsTerminal;
 
     if yes {
         return Ok(true);
     }
     if !std::io::stdin().is_terminal() {
-        return Err(crate::error::NigelError::Other(refusal.to_string()));
+        return Err(nigel_core::error::NigelError::Other(refusal.to_string()));
     }
     print!("{question} ");
     std::io::Write::flush(&mut std::io::stdout())?;
@@ -71,7 +71,7 @@ pub(crate) fn confirm_or_refuse(
     Ok(answer.trim().eq_ignore_ascii_case("y"))
 }
 
-pub(crate) use crate::reports::parse_month_opt;
+pub(crate) use nigel_core::reports::parse_month_opt;
 
 #[derive(Parser)]
 #[command(
@@ -615,8 +615,8 @@ impl RegisterFilterArgs {
     pub fn resolve(
         &self,
         conn: &rusqlite::Connection,
-    ) -> crate::error::Result<crate::reports::RegisterFilters> {
-        crate::reports::RegisterFilters::resolve(
+    ) -> nigel_core::error::Result<nigel_core::reports::RegisterFilters> {
+        nigel_core::reports::RegisterFilters::resolve(
             conn,
             self.account.clone(),
             self.category.clone(),
@@ -626,7 +626,7 @@ impl RegisterFilterArgs {
 
     /// Filename-safe fragments describing the selection, for default export paths.
     pub fn slug_parts(&self) -> Vec<String> {
-        crate::reports::register_slug_parts(
+        nigel_core::reports::register_slug_parts(
             self.account.as_deref(),
             self.category.as_deref(),
             self.uncategorized,

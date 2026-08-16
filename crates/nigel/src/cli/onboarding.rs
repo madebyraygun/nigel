@@ -10,10 +10,10 @@ use ratatui::{
 };
 use zeroize::Zeroize;
 
-use crate::db::Profile;
 use crate::effects::{self, Particle, LOGO};
-use crate::error::Result;
 use crate::tui::{self, FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
+use nigel_core::db::Profile;
+use nigel_core::error::Result;
 
 /// What the user chose to do after onboarding.
 #[derive(Clone, Copy)]

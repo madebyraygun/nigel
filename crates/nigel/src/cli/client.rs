@@ -1,14 +1,14 @@
 use comfy_table::{Cell, Table};
 
-use crate::db::get_connection;
-use crate::error::{NigelError, Result};
-use crate::invoicing::clients::{
+use nigel_core::db::get_connection;
+use nigel_core::error::{NigelError, Result};
+use nigel_core::invoicing::clients::{
     add_client_within, archive_client, client_summary, delete_blocker, delete_client, get_client,
     list_clients, set_billing_email, set_contacts_within, unarchive_client, update_client_within,
     ClientScope, ClientUpdate, NewContact,
 };
-use crate::models::Client;
-use crate::settings::get_data_dir;
+use nigel_core::models::Client;
+use nigel_core::settings::get_data_dir;
 
 /// `--contact "email[:name[:title]]"`, the shape `--item "desc:qty:unit"` set.
 ///

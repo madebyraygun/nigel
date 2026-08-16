@@ -8,10 +8,10 @@ use ratatui::{
 };
 use zeroize::Zeroize;
 
-use crate::db;
-use crate::error::Result;
-use crate::settings::get_data_dir;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
+use nigel_core::db;
+use nigel_core::error::Result;
+use nigel_core::settings::get_data_dir;
 
 #[derive(Clone, Copy)]
 enum Action {

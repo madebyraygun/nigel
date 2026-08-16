@@ -10,10 +10,10 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 
-use crate::fmt::money;
-use crate::reports::RegisterRow;
-use crate::reviewer::CategoryChoice;
 use crate::tui::{self, FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
+use nigel_core::fmt::money;
+use nigel_core::reports::RegisterRow;
+use nigel_core::reviewer::CategoryChoice;
 
 const PAGE_SIZE: usize = 20;
 
@@ -834,21 +834,21 @@ impl RegisterBrowser {
         }
     }
 
-    pub fn commit_edit(&mut self, conn: &rusqlite::Connection) -> crate::error::Result<()> {
+    pub fn commit_edit(&mut self, conn: &rusqlite::Connection) -> nigel_core::error::Result<()> {
         let abs_idx = self.offset + self.selected;
         let row = self
             .rows
             .get(abs_idx)
-            .ok_or_else(|| crate::error::NigelError::Other("No row selected".into()))?;
+            .ok_or_else(|| nigel_core::error::NigelError::Other("No row selected".into()))?;
         let txn_id = row.id;
 
         if let Some(cat_idx) = self.pending_category_idx {
             let cat_id = self.categories[cat_idx].id;
-            crate::reviewer::update_transaction_category(conn, txn_id, cat_id)?;
+            nigel_core::reviewer::update_transaction_category(conn, txn_id, cat_id)?;
             if let Some(ref v) = self.pending_vendor {
-                crate::reviewer::update_transaction_vendor(conn, txn_id, Some(v))?;
+                nigel_core::reviewer::update_transaction_vendor(conn, txn_id, Some(v))?;
             } else {
-                crate::reviewer::update_transaction_vendor(conn, txn_id, None)?;
+                nigel_core::reviewer::update_transaction_vendor(conn, txn_id, None)?;
             }
         }
 
@@ -866,14 +866,14 @@ impl RegisterBrowser {
     /// Toggle the flag on the selected transaction.
     /// Flags are non-destructive metadata — single-keypress toggle is intentional
     /// since it's instantly reversible (press `f` again).
-    pub fn toggle_flag(&mut self, conn: &rusqlite::Connection) -> crate::error::Result<()> {
+    pub fn toggle_flag(&mut self, conn: &rusqlite::Connection) -> nigel_core::error::Result<()> {
         let abs_idx = self.offset + self.selected;
         let row = self
             .rows
             .get(abs_idx)
-            .ok_or_else(|| crate::error::NigelError::Other("No row selected".into()))?;
+            .ok_or_else(|| nigel_core::error::NigelError::Other("No row selected".into()))?;
         let txn_id = row.id;
-        let new_state = crate::reviewer::toggle_transaction_flag(conn, txn_id)?;
+        let new_state = nigel_core::reviewer::toggle_transaction_flag(conn, txn_id)?;
         self.apply_flag_toggle_to_local_row(new_state);
         let label = if new_state { "flagged" } else { "unflagged" };
         self.status_message = Some(format!("Transaction #{txn_id} {label}"));
@@ -884,8 +884,8 @@ impl RegisterBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reports::RegisterRow;
-    use crate::reviewer::CategoryChoice;
+    use nigel_core::reports::RegisterRow;
+    use nigel_core::reviewer::CategoryChoice;
 
     fn make_rows(n: usize) -> Vec<RegisterRow> {
         (0..n)

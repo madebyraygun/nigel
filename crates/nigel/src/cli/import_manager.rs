@@ -10,12 +10,12 @@ use ratatui::{
 };
 use rusqlite::Connection;
 
-use crate::categorizer::categorize_transactions;
 use crate::cli::accounts;
-use crate::error::Result;
-use crate::importer::import_file;
-use crate::settings::{get_data_dir, shellexpand_path};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::categorizer::categorize_transactions;
+use nigel_core::error::Result;
+use nigel_core::importer::import_file;
+use nigel_core::settings::{get_data_dir, shellexpand_path};
 
 pub enum ImportAction {
     Continue,

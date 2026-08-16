@@ -7,14 +7,14 @@ use ratatui::{
     Frame,
 };
 
-use crate::db::get_connection;
-use crate::error::{NigelError, Result};
-use crate::reviewer::{
+use crate::tui::{money_span, FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::db::get_connection;
+use nigel_core::error::{NigelError, Result};
+use nigel_core::reviewer::{
     apply_review, get_categories, get_flagged_transactions, get_transaction_by_id, undo_review,
     CategoryChoice, FlaggedTxn,
 };
-use crate::settings::get_data_dir;
-use crate::tui::{money_span, FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::settings::get_data_dir;
 
 enum ReviewState {
     PickCategory,

@@ -22,13 +22,13 @@ use crate::cli::rules_manager::{RulesAction, RulesManager};
 use crate::cli::settings_manager::{SettingsAction, SettingsManager};
 use crate::cli::snake::{SnakeAction, SnakeGame};
 use crate::cli::undo_manager::{UndoAction, UndoScreen};
-use crate::db::get_connection;
-use crate::error::Result;
-use crate::fmt::number;
-use crate::reports;
-use crate::reviewer::{get_categories, get_flagged_transactions};
-use crate::settings::{get_data_dir, load_settings, save_settings, settings_file_exists};
 use crate::tui::{money_span, ReportView, ReportViewAction, FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::db::get_connection;
+use nigel_core::error::Result;
+use nigel_core::fmt::number;
+use nigel_core::reports;
+use nigel_core::reviewer::{get_categories, get_flagged_transactions};
+use nigel_core::settings::{get_data_dir, load_settings, save_settings, settings_file_exists};
 
 const GREETINGS: &[&str] = &[
     "Kettle's on.",
@@ -112,10 +112,10 @@ const REGISTER_IDX: usize = 4;
 /// The rows the report picker shows for the given profile. Personal books drop
 /// the K-1 worksheet; every dispatch index below stays keyed to the business
 /// list, with `canonical_report_idx` translating a picker selection back.
-fn report_picker_items(profile: crate::db::Profile) -> &'static [&'static str] {
+fn report_picker_items(profile: nigel_core::db::Profile) -> &'static [&'static str] {
     match profile {
-        crate::db::Profile::Business => REPORT_TYPES,
-        crate::db::Profile::Personal => PERSONAL_REPORT_TYPES,
+        nigel_core::db::Profile::Business => REPORT_TYPES,
+        nigel_core::db::Profile::Personal => PERSONAL_REPORT_TYPES,
     }
 }
 
@@ -124,9 +124,9 @@ fn report_picker_items(profile: crate::db::Profile) -> &'static [&'static str] {
 /// personal selection at or past that row — the Export All row included —
 /// sits one short of its canonical index; business selections are already
 /// canonical.
-fn canonical_report_idx(profile: crate::db::Profile, selection: usize) -> usize {
+fn canonical_report_idx(profile: nigel_core::db::Profile, selection: usize) -> usize {
     match profile {
-        crate::db::Profile::Personal if selection >= 7 => selection + 1,
+        nigel_core::db::Profile::Personal if selection >= 7 => selection + 1,
         _ => selection,
     }
 }
@@ -160,8 +160,8 @@ struct ArSummary {
 /// `None` when nothing is outstanding — the home screen then renders exactly
 /// as it did before invoicing existed. `CENT_SLACK` is the slack every other
 /// invoicing surface settles a balance with.
-fn ar_summary(report: &crate::invoicing::invoices::AgingReport) -> Option<ArSummary> {
-    if report.outstanding < crate::invoicing::invoices::CENT_SLACK {
+fn ar_summary(report: &nigel_core::invoicing::invoices::AgingReport) -> Option<ArSummary> {
+    if report.outstanding < nigel_core::invoicing::invoices::CENT_SLACK {
         return None;
     }
     // The buckets run current → 90+, so the oldest with money in it is the last.
@@ -169,7 +169,7 @@ fn ar_summary(report: &crate::invoicing::invoices::AgingReport) -> Option<ArSumm
         .buckets
         .iter()
         .rev()
-        .find(|b| b.total > crate::invoicing::invoices::CENT_SLACK)?;
+        .find(|b| b.total > nigel_core::invoicing::invoices::CENT_SLACK)?;
     Some(ArSummary {
         outstanding: report.outstanding,
         oldest_bucket: oldest.label,
@@ -206,7 +206,7 @@ struct Dashboard {
     update_notification: Option<String>,
     /// Which chart of accounts this database keeps books under; refreshed with
     /// the home data so a data-directory switch picks up the new profile.
-    profile: crate::db::Profile,
+    profile: nigel_core::db::Profile,
 }
 
 impl Dashboard {
@@ -234,7 +234,7 @@ impl Dashboard {
             needs_reload: false,
             current_report_idx: None,
             update_notification,
-            profile: crate::db::Profile::default(),
+            profile: nigel_core::db::Profile::default(),
         }
     }
 
@@ -242,7 +242,7 @@ impl Dashboard {
         let now = chrono::Local::now();
         let year = now.year();
 
-        self.profile = crate::db::get_profile(conn);
+        self.profile = nigel_core::db::get_profile(conn);
 
         let pnl = reports::get_pnl(conn, Some(year), None, None, None)?;
         let balance = reports::get_balance(conn)?;
@@ -334,7 +334,7 @@ impl Dashboard {
 
         // `.ok()`, never `?`: an invoicing failure must not blank the dashboard,
         // and the same expression is the "only when open invoices exist" gate.
-        let ar = crate::invoicing::invoices::ar_aging_detail(conn, &crate::cli::today())
+        let ar = nigel_core::invoicing::invoices::ar_aging_detail(conn, &crate::cli::today())
             .ok()
             .and_then(|report| ar_summary(&report));
 
@@ -1004,7 +1004,7 @@ fn do_export(idx: usize, year: Option<i32>, month: Option<String>) -> Result<Str
     #[cfg(not(feature = "pdf"))]
     {
         let _ = (idx, year, month);
-        return Err(crate::error::NigelError::Other(
+        return Err(nigel_core::error::NigelError::Other(
             "PDF export requires the 'pdf' feature".into(),
         ));
     }
@@ -1042,14 +1042,14 @@ fn do_text_export(
     idx: usize,
     year: Option<i32>,
     month: Option<String>,
-    profile: crate::db::Profile,
+    profile: nigel_core::db::Profile,
 ) -> Result<String> {
     let year = effective_year(idx, year);
 
     if idx == REPORT_SLUGS.len() {
         // "All Reports" text export
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let dir = crate::settings::get_data_dir().join("exports");
+        let dir = nigel_core::settings::get_data_dir().join("exports");
         std::fs::create_dir_all(&dir)?;
         let mut count = 0;
         let mut reports: Vec<(&str, Result<String>)> = vec![
@@ -1065,7 +1065,7 @@ fn do_text_export(
             ("balance", super::report::text::balance()),
             ("aging", super::report::text::aging(&crate::cli::today())),
         ];
-        if profile == crate::db::Profile::Business {
+        if profile == nigel_core::db::Profile::Business {
             reports.push(("k1-prep", super::report::text::k1(year)));
         }
         let mut failed = Vec::new();
@@ -1101,7 +1101,7 @@ fn do_text_export(
     };
 
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let dir = crate::settings::get_data_dir().join("exports");
+    let dir = nigel_core::settings::get_data_dir().join("exports");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{name}-{date}.txt"));
     std::fs::write(&path, &content)?;
@@ -1118,7 +1118,7 @@ pub fn run() -> Result<()> {
     if !is_first_run {
         let settings = load_settings();
         let db_path = std::path::PathBuf::from(&settings.data_dir).join("nigel.db");
-        let needs_password = db_path.exists() && crate::db::is_encrypted(&db_path)?;
+        let needs_password = db_path.exists() && nigel_core::db::is_encrypted(&db_path)?;
         if needs_password {
             super::splash::run_with_password(&db_path)?;
         } else {
@@ -1129,7 +1129,7 @@ pub fn run() -> Result<()> {
     // First-run: show onboarding, then ensure data dir + DB exist
     let mut post_setup_action = None;
     let mut onboarding_company = None;
-    let mut onboarding_profile = crate::db::Profile::default();
+    let mut onboarding_profile = nigel_core::db::Profile::default();
     if is_first_run {
         if let Some(result) = super::onboarding::run()? {
             let mut settings = load_settings();
@@ -1145,7 +1145,7 @@ pub fn run() -> Result<()> {
             onboarding_profile = result.profile;
 
             if let Some(ref pw) = result.password {
-                crate::db::set_db_password(Some(pw.clone()));
+                nigel_core::db::set_db_password(Some(pw.clone()));
             }
         }
     }
@@ -1154,18 +1154,18 @@ pub fn run() -> Result<()> {
     let settings = load_settings();
     let data_dir = std::path::PathBuf::from(&settings.data_dir);
     std::fs::create_dir_all(&data_dir)?;
-    crate::settings::restrict_dir_permissions(&data_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&data_dir)?;
     let exports_dir = data_dir.join("exports");
     std::fs::create_dir_all(&exports_dir)?;
-    crate::settings::restrict_dir_permissions(&exports_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&exports_dir)?;
     let snapshots_dir = data_dir.join("snapshots");
     std::fs::create_dir_all(&snapshots_dir)?;
-    crate::settings::restrict_dir_permissions(&snapshots_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&snapshots_dir)?;
     let backups_dir = data_dir.join("backups");
     std::fs::create_dir_all(&backups_dir)?;
-    crate::settings::restrict_dir_permissions(&backups_dir)?;
-    let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
-    crate::db::init_db_with_profile(&conn, onboarding_profile)?;
+    nigel_core::settings::restrict_dir_permissions(&backups_dir)?;
+    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
+    nigel_core::db::init_db_with_profile(&conn, onboarding_profile)?;
 
     // The chosen profile only takes effect on a fresh database. If onboarding
     // ran against books that already exist (settings.json was deleted, or a
@@ -1174,7 +1174,7 @@ pub fn run() -> Result<()> {
     // user believing they switched charts.
     let mut profile_notice = None;
     if post_setup_action.is_some() {
-        let seeded = crate::db::get_profile(&conn);
+        let seeded = nigel_core::db::get_profile(&conn);
         if seeded != onboarding_profile {
             profile_notice = Some(format!(
                 "These books already keep {} records; the {} choice was ignored.",
@@ -1186,13 +1186,13 @@ pub fn run() -> Result<()> {
 
     // Save company_name from onboarding to DB metadata
     if let Some(company) = onboarding_company {
-        crate::db::set_metadata(&conn, "company_name", &company)?;
+        nigel_core::db::set_metadata(&conn, "company_name", &company)?;
     }
 
     // Migrate legacy company_name from settings.json → DB metadata
-    if crate::db::get_metadata(&conn, "company_name").is_none() {
-        if let Some(company) = crate::settings::migrate_company_name() {
-            crate::db::set_metadata(&conn, "company_name", &company)?;
+    if nigel_core::db::get_metadata(&conn, "company_name").is_none() {
+        if let Some(company) = nigel_core::settings::migrate_company_name() {
+            nigel_core::db::set_metadata(&conn, "company_name", &company)?;
         }
     }
 
@@ -1243,7 +1243,7 @@ pub fn run() -> Result<()> {
 
         let mut terminal = ratatui::init();
 
-        let exit: std::result::Result<bool, crate::error::NigelError> = loop {
+        let exit: std::result::Result<bool, nigel_core::error::NigelError> = loop {
             if let Err(e) = terminal.draw(|frame| dashboard.draw(frame)) {
                 break Err(e.into());
             }
@@ -1709,7 +1709,7 @@ mod viewer_export_tests {
         // export-all index once translated.
         assert_eq!(
             canonical_report_idx(
-                crate::db::Profile::Personal,
+                nigel_core::db::Profile::Personal,
                 PERSONAL_REPORT_TYPES.len() - 1
             ),
             EXPORT_ALL_IDX
@@ -1720,8 +1720,8 @@ mod viewer_export_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Profile;
-    use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+    use nigel_core::db::Profile;
+    use nigel_core::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
 
     #[test]
     fn business_picker_shows_every_report() {
@@ -2012,9 +2012,9 @@ mod tests {
         assert_eq!(expected.len(), MENU_ITEMS.len());
 
         let dir = tempfile::tempdir().unwrap();
-        let conn = crate::db::get_connection(&dir.path().join("t.db")).unwrap();
-        crate::db::init_db(&conn).unwrap();
-        crate::migrations::run_migrations(&conn).unwrap();
+        let conn = nigel_core::db::get_connection(&dir.path().join("t.db")).unwrap();
+        nigel_core::db::init_db(&conn).unwrap();
+        nigel_core::migrations::run_migrations(&conn).unwrap();
 
         for (idx, want) in expected.iter().enumerate() {
             let mut dash = Dashboard::new(Some("Sam".into()), None);
@@ -2046,7 +2046,7 @@ mod tests {
 
     #[test]
     fn report_slugs_are_the_report_kinds_own_slugs() {
-        use crate::reports::ReportKind::*;
+        use nigel_core::reports::ReportKind::*;
         let kinds = [
             Pnl, Expenses, Tax, Cashflow, Register, Flagged, Balance, K1, Aging,
         ];
@@ -2060,18 +2060,18 @@ mod tests {
     /// open their own connections through `get_data_dir`) resolve to, instead
     /// of the developer's real books.
     fn temp_books() -> (
-        crate::settings::TempConfigDir,
+        nigel_core::settings::TempConfigDir,
         tempfile::TempDir,
         rusqlite::Connection,
     ) {
-        let guard = crate::settings::TempConfigDir::new();
+        let guard = nigel_core::settings::TempConfigDir::new();
         let data = tempfile::tempdir().unwrap();
-        let mut settings = crate::settings::load_settings();
+        let mut settings = nigel_core::settings::load_settings();
         settings.data_dir = data.path().to_string_lossy().into_owned();
-        crate::settings::save_settings(&settings).unwrap();
-        let conn = crate::db::get_connection(&data.path().join("nigel.db")).unwrap();
-        crate::db::init_db(&conn).unwrap();
-        crate::migrations::run_migrations(&conn).unwrap();
+        nigel_core::settings::save_settings(&settings).unwrap();
+        let conn = nigel_core::db::get_connection(&data.path().join("nigel.db")).unwrap();
+        nigel_core::db::init_db(&conn).unwrap();
+        nigel_core::migrations::run_migrations(&conn).unwrap();
         (guard, data, conn)
     }
 
@@ -2123,14 +2123,26 @@ mod tests {
         };
         let exports = data.path().join("exports");
 
-        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Business).unwrap();
+        do_text_export(
+            EXPORT_ALL_IDX,
+            None,
+            None,
+            nigel_core::db::Profile::Business,
+        )
+        .unwrap();
         let business = exported(&exports);
         assert_eq!(business.len(), 9, "{business:?}");
         assert!(business.iter().any(|n| n.starts_with("k1-prep")));
         assert!(business.iter().any(|n| n.starts_with("aging")));
 
         std::fs::remove_dir_all(&exports).unwrap();
-        do_text_export(EXPORT_ALL_IDX, None, None, crate::db::Profile::Personal).unwrap();
+        do_text_export(
+            EXPORT_ALL_IDX,
+            None,
+            None,
+            nigel_core::db::Profile::Personal,
+        )
+        .unwrap();
         let personal = exported(&exports);
         assert_eq!(personal.len(), 8, "{personal:?}");
         assert!(!personal.iter().any(|n| n.starts_with("k1-prep")));

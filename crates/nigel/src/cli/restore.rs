@@ -1,23 +1,23 @@
 use std::path::PathBuf;
 
-use crate::db::{get_connection, init_db};
-use crate::error::Result;
-use crate::fmt::format_bytes;
-use crate::settings::{get_data_dir, restrict_file_permissions, shellexpand_path};
+use nigel_core::db::{get_connection, init_db};
+use nigel_core::error::Result;
+use nigel_core::fmt::format_bytes;
+use nigel_core::settings::{get_data_dir, restrict_file_permissions, shellexpand_path};
 
 pub fn run(path: &str) -> Result<()> {
     let backup_path = PathBuf::from(shellexpand_path(path));
 
     // 1. Validate the backup file exists
     if !backup_path.exists() {
-        return Err(crate::error::NigelError::Other(format!(
+        return Err(nigel_core::error::NigelError::Other(format!(
             "Backup file not found: {}",
             backup_path.display()
         )));
     }
 
     if !backup_path.is_file() {
-        return Err(crate::error::NigelError::Other(format!(
+        return Err(nigel_core::error::NigelError::Other(format!(
             "Not a file: {}",
             backup_path.display()
         )));
@@ -25,7 +25,7 @@ pub fn run(path: &str) -> Result<()> {
 
     // 2. Validate the backup is a valid SQLite database
     let test_conn = get_connection(&backup_path).map_err(|e| {
-        crate::error::NigelError::Other(format!(
+        nigel_core::error::NigelError::Other(format!(
             "Cannot open backup file (is the password correct?): {e}"
         ))
     })?;
@@ -39,14 +39,14 @@ pub fn run(path: &str) -> Result<()> {
             },
         )
         .map_err(|e| {
-            crate::error::NigelError::Other(format!(
+            nigel_core::error::NigelError::Other(format!(
                 "Cannot read backup file (is the password correct?): {e}"
             ))
         })?;
     drop(test_conn);
 
     if !has_tables {
-        return Err(crate::error::NigelError::Other(
+        return Err(nigel_core::error::NigelError::Other(
             "Backup file is not a valid Nigel database (missing expected tables).".into(),
         ));
     }
@@ -69,7 +69,7 @@ pub fn run(path: &str) -> Result<()> {
     // 4. Create a safety backup of the current database
     let backups_dir = data_dir.join("backups");
     std::fs::create_dir_all(&backups_dir)?;
-    crate::settings::restrict_dir_permissions(&backups_dir)?;
+    nigel_core::settings::restrict_dir_permissions(&backups_dir)?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let safety_path = backups_dir.join(format!("nigel-pre-restore-{stamp}.db"));
 
@@ -109,7 +109,7 @@ pub fn run(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_db, set_db_password};
+    use nigel_core::db::{init_db, set_db_password};
 
     #[test]
     fn test_restore_replaces_database() {

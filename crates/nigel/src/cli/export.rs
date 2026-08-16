@@ -6,14 +6,14 @@ use crate::cli::parse_month_opt;
 #[cfg(feature = "pdf")]
 use crate::cli::ReportCommands;
 #[cfg(feature = "pdf")]
-use crate::db::get_metadata;
+use nigel_core::db::get_metadata;
 #[cfg(feature = "pdf")]
-use crate::error::Result;
+use nigel_core::error::Result;
 #[cfg(feature = "pdf")]
-use crate::settings::get_data_dir;
+use nigel_core::settings::get_data_dir;
 
 #[cfg(feature = "pdf")]
-use crate::reports::{register_range_label, register_subtitle};
+use nigel_core::reports::{register_range_label, register_subtitle};
 
 #[cfg(feature = "pdf")]
 fn default_path(name: &str) -> PathBuf {
@@ -29,7 +29,7 @@ fn write_pdf(bytes: &[u8], path: &PathBuf) -> Result<String> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, bytes)?;
-    crate::settings::restrict_file_permissions(path)?;
+    nigel_core::settings::restrict_file_permissions(path)?;
     let display = format!("{}", path.display());
     println!("Wrote {display}");
     Ok(display)
@@ -86,13 +86,14 @@ pub fn pnl(
     to_date: Option<String>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
-    let report = crate::reports::get_pnl(&conn, y, mm, from_date.as_deref(), to_date.as_deref())?;
+    let report =
+        nigel_core::reports::get_pnl(&conn, y, mm, from_date.as_deref(), to_date.as_deref())?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(month.as_deref(), year.or(my));
-    let bytes = crate::pdf::render_pnl(&report, &company, &range)?;
+    let range = nigel_core::reports::date_range_label(month.as_deref(), year.or(my));
+    let bytes = nigel_core::pdf::render_pnl(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("pnl"));
@@ -105,12 +106,12 @@ pub fn expenses(
     year: Option<i32>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
-    let report = crate::reports::get_expense_breakdown(&conn, year.or(my), mm)?;
+    let report = nigel_core::reports::get_expense_breakdown(&conn, year.or(my), mm)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(month.as_deref(), year.or(my));
-    let bytes = crate::pdf::render_expenses(&report, &company, &range)?;
+    let range = nigel_core::reports::date_range_label(month.as_deref(), year.or(my));
+    let bytes = nigel_core::pdf::render_expenses(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("expenses"));
@@ -119,11 +120,11 @@ pub fn expenses(
 
 #[cfg(feature = "pdf")]
 pub fn tax(year: Option<i32>, output: Option<String>) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
-    let report = crate::reports::get_tax_summary(&conn, year)?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let report = nigel_core::reports::get_tax_summary(&conn, year)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(None, year);
-    let bytes = crate::pdf::render_tax(&report, &company, &range)?;
+    let range = nigel_core::reports::date_range_label(None, year);
+    let bytes = nigel_core::pdf::render_tax(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("tax"));
@@ -136,12 +137,12 @@ pub fn cashflow(
     year: Option<i32>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
-    let report = crate::reports::get_cashflow(&conn, year.or(my), mm)?;
+    let report = nigel_core::reports::get_cashflow(&conn, year.or(my), mm)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(month.as_deref(), year.or(my));
-    let bytes = crate::pdf::render_cashflow(&report, &company, &range)?;
+    let range = nigel_core::reports::date_range_label(month.as_deref(), year.or(my));
+    let bytes = nigel_core::pdf::render_cashflow(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("cashflow"));
@@ -158,11 +159,11 @@ pub fn register(
     basename: &str,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
     let filters = filters.resolve(&conn)?;
-    let report = crate::reports::get_register(
+    let report = nigel_core::reports::get_register(
         &conn,
         y,
         mm,
@@ -172,7 +173,7 @@ pub fn register(
     )?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let subtitle = register_subtitle(&register_range_label(y, mm), &filters);
-    let bytes = crate::pdf::render_register(&report, &company, &subtitle)?;
+    let bytes = nigel_core::pdf::render_register(&report, &company, &subtitle)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path(basename));
@@ -181,10 +182,10 @@ pub fn register(
 
 #[cfg(feature = "pdf")]
 pub fn flagged(output: Option<String>) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
-    let rows = crate::reports::get_flagged(&conn)?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let rows = nigel_core::reports::get_flagged(&conn)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let bytes = crate::pdf::render_flagged(&rows, &company)?;
+    let bytes = nigel_core::pdf::render_flagged(&rows, &company)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("flagged"));
@@ -193,10 +194,10 @@ pub fn flagged(output: Option<String>) -> Result<String> {
 
 #[cfg(feature = "pdf")]
 pub fn balance(output: Option<String>) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
-    let report = crate::reports::get_balance(&conn)?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let report = nigel_core::reports::get_balance(&conn)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let bytes = crate::pdf::render_balance(&report, &company)?;
+    let bytes = nigel_core::pdf::render_balance(&report, &company)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("balance"));
@@ -205,10 +206,10 @@ pub fn balance(output: Option<String>) -> Result<String> {
 
 #[cfg(feature = "pdf")]
 pub fn aging(output: Option<String>) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
-    let report = crate::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let report = nigel_core::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let bytes = crate::pdf::render_aging(&report, &company)?;
+    let bytes = nigel_core::pdf::render_aging(&report, &company)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("aging"));
@@ -217,11 +218,11 @@ pub fn aging(output: Option<String>) -> Result<String> {
 
 #[cfg(feature = "pdf")]
 pub fn k1(year: Option<i32>, output: Option<String>) -> Result<String> {
-    let conn = crate::db::get_connection(&get_data_dir().join("nigel.db"))?;
-    let report = crate::reports::get_k1_prep(&conn, year)?;
+    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let report = nigel_core::reports::get_k1_prep(&conn, year)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(None, year);
-    let bytes = crate::pdf::render_k1(&report, &company, &range)?;
+    let range = nigel_core::reports::date_range_label(None, year);
+    let bytes = nigel_core::pdf::render_k1(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| default_path("k1-prep"));
@@ -231,9 +232,9 @@ pub fn k1(year: Option<i32>, output: Option<String>) -> Result<String> {
 #[cfg(feature = "pdf")]
 pub fn all(year: Option<i32>, output_dir: Option<String>) -> Result<String> {
     let data_dir = get_data_dir();
-    let conn = crate::db::get_connection(&data_dir.join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
-    let range = crate::reports::date_range_label(None, year);
+    let range = nigel_core::reports::date_range_label(None, year);
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     let is_default_dir = output_dir.is_none();
@@ -242,73 +243,73 @@ pub fn all(year: Option<i32>, output_dir: Option<String>) -> Result<String> {
         .unwrap_or_else(|| data_dir.join("exports"));
     std::fs::create_dir_all(&dir)?;
     if is_default_dir {
-        crate::settings::restrict_dir_permissions(&dir)?;
+        nigel_core::settings::restrict_dir_permissions(&dir)?;
     }
 
     let path = |name: &str| dir.join(format!("{name}-{date}.pdf"));
 
-    let report = crate::reports::get_pnl(&conn, year, None, None, None)?;
+    let report = nigel_core::reports::get_pnl(&conn, year, None, None, None)?;
     write_pdf(
-        &crate::pdf::render_pnl(&report, &company, &range)?,
+        &nigel_core::pdf::render_pnl(&report, &company, &range)?,
         &path("pnl"),
     )?;
 
-    let report = crate::reports::get_expense_breakdown(&conn, year, None)?;
+    let report = nigel_core::reports::get_expense_breakdown(&conn, year, None)?;
     write_pdf(
-        &crate::pdf::render_expenses(&report, &company, &range)?,
+        &nigel_core::pdf::render_expenses(&report, &company, &range)?,
         &path("expenses"),
     )?;
 
-    let report = crate::reports::get_tax_summary(&conn, year)?;
+    let report = nigel_core::reports::get_tax_summary(&conn, year)?;
     write_pdf(
-        &crate::pdf::render_tax(&report, &company, &range)?,
+        &nigel_core::pdf::render_tax(&report, &company, &range)?,
         &path("tax"),
     )?;
 
-    let report = crate::reports::get_cashflow(&conn, year, None)?;
+    let report = nigel_core::reports::get_cashflow(&conn, year, None)?;
     write_pdf(
-        &crate::pdf::render_cashflow(&report, &company, &range)?,
+        &nigel_core::pdf::render_cashflow(&report, &company, &range)?,
         &path("cashflow"),
     )?;
 
-    let register = crate::reports::get_register(
+    let register = nigel_core::reports::get_register(
         &conn,
         year,
         None,
         None,
         None,
-        &crate::reports::RegisterFilters::default(),
+        &nigel_core::reports::RegisterFilters::default(),
     )?;
     write_pdf(
-        &crate::pdf::render_register(&register, &company, &range)?,
+        &nigel_core::pdf::render_register(&register, &company, &range)?,
         &path("register"),
     )?;
 
-    let rows = crate::reports::get_flagged(&conn)?;
+    let rows = nigel_core::reports::get_flagged(&conn)?;
     write_pdf(
-        &crate::pdf::render_flagged(&rows, &company)?,
+        &nigel_core::pdf::render_flagged(&rows, &company)?,
         &path("flagged"),
     )?;
 
-    let report = crate::reports::get_balance(&conn)?;
+    let report = nigel_core::reports::get_balance(&conn)?;
     write_pdf(
-        &crate::pdf::render_balance(&report, &company)?,
+        &nigel_core::pdf::render_balance(&report, &company)?,
         &path("balance"),
     )?;
 
     // The K-1 worksheet only means something under the business chart of
     // accounts; personal books skip it in the bulk export.
-    if crate::db::get_profile(&conn) == crate::db::Profile::Business {
-        let report = crate::reports::get_k1_prep(&conn, year)?;
+    if nigel_core::db::get_profile(&conn) == nigel_core::db::Profile::Business {
+        let report = nigel_core::reports::get_k1_prep(&conn, year)?;
         write_pdf(
-            &crate::pdf::render_k1(&report, &company, &range)?,
+            &nigel_core::pdf::render_k1(&report, &company, &range)?,
             &path("k1-prep"),
         )?;
     }
 
-    let report = crate::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
+    let report = nigel_core::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     write_pdf(
-        &crate::pdf::render_aging(&report, &company)?,
+        &nigel_core::pdf::render_aging(&report, &company)?,
         &path("aging"),
     )?;
 

@@ -9,8 +9,8 @@ use ratatui::{
 use rusqlite::Connection;
 
 use crate::cli::undo::{delete_import, get_last_import, LastImport};
-use crate::error::Result;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::error::Result;
 
 pub enum UndoAction {
     Continue,

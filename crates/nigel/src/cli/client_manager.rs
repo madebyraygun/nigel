@@ -8,14 +8,14 @@ use ratatui::{
 };
 use rusqlite::Connection;
 
-use crate::error::NigelError;
-use crate::invoicing::clients::{
+use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::error::NigelError;
+use nigel_core::invoicing::clients::{
     add_client, archive_client, delete_blocker, delete_client, list_clients, list_contacts,
     set_contacts, unarchive_client, update_client, ClientContact, ClientScope, ClientUpdate,
     NewContact,
 };
-use crate::models::Client;
-use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::models::Client;
 
 const EMAIL_HINT: &str = "Email is the address `send` mails the invoice to.";
 
@@ -886,9 +886,9 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{get_connection, init_db};
-    use crate::invoicing::clients::{add_client, get_client};
-    use crate::migrations::run_migrations;
+    use nigel_core::db::{get_connection, init_db};
+    use nigel_core::invoicing::clients::{add_client, get_client};
+    use nigel_core::migrations::run_migrations;
 
     fn test_conn() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
@@ -989,12 +989,12 @@ mod tests {
 
     /// One draft invoice for `client_id`, which is all `delete_blocker` counts.
     fn seed_invoice(conn: &Connection, client_id: i64) {
-        let items = vec![crate::invoicing::invoices::NewLineItem {
+        let items = vec![nigel_core::invoicing::invoices::NewLineItem {
             description: "Work".into(),
             quantity: 1.0,
             unit_amount: 100.0,
         }];
-        crate::invoicing::invoices::create_invoice(
+        nigel_core::invoicing::invoices::create_invoice(
             conn,
             client_id,
             "2026-06-01",
@@ -1094,7 +1094,7 @@ mod tests {
         let (_d, conn) = test_conn();
         add_client(&conn, "Acme Co", None, None, None).unwrap();
         let globex = add_client(&conn, "Globex", None, None, None).unwrap();
-        crate::invoicing::clients::archive_client(&conn, globex, "2026-08-11").unwrap();
+        nigel_core::invoicing::clients::archive_client(&conn, globex, "2026-08-11").unwrap();
 
         let mut mgr = manager(&conn);
         assert_eq!(mgr.clients.len(), 1);
@@ -1116,7 +1116,7 @@ mod tests {
         assert!(mgr.list_footer().contains("x=archive"));
         assert!(mgr.list_footer().contains("A=show all"));
 
-        crate::invoicing::clients::archive_client(&conn, id, "2026-08-11").unwrap();
+        nigel_core::invoicing::clients::archive_client(&conn, id, "2026-08-11").unwrap();
         mgr.show_archived = true;
         mgr.reload(&conn);
         assert!(mgr.list_footer().contains("x=unarchive"));

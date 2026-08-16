@@ -1,35 +1,11 @@
-//! Nigel — cash-basis bookkeeping for small consultancies and personal finances.
+//! Nigel's terminal UI — the half of the program that needs a terminal.
 //!
-//! This library holds the whole implementation: the SQLite data layer, importers,
-//! the rules engine, reports, and the CLI/TUI modules. The `nigel` binary
-//! (`src/main.rs`) is a thin shell over it — clap parsing, the dispatch pre-flight,
-//! and the terminal-restoring panic hook.
+//! Command dispatch, the clap definitions, the ratatui screens and the
+//! animation they share. Everything it operates on lives in `nigel_core`; the
+//! `nigel` binary (`src/main.rs`) is a thin shell over this crate — clap
+//! parsing, the dispatch pre-flight, and the terminal-restoring panic hook.
 
-pub mod accounts;
-pub mod backup;
 pub mod browser;
-pub mod categories;
-pub mod categorizer;
 pub mod cli;
-pub mod clock;
-pub mod db;
 pub mod effects;
-pub mod error;
-pub mod fmt;
-pub mod importer;
-pub mod imports;
-pub mod invoicing;
-pub mod migrations;
-pub mod models;
-pub mod password;
-#[cfg(feature = "pdf")]
-pub mod pdf;
-pub mod reconciler;
-pub mod reports;
-pub mod reviewer;
-pub mod rules;
-#[cfg(feature = "serve")]
-pub mod server;
-pub mod settings;
 pub mod tui;
-pub mod updater;
