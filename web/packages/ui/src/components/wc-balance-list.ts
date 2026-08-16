@@ -27,6 +27,13 @@ export class WcBalanceList extends LitElement {
       color: var(--wa-color-text);
     }
 
+    /* Account names are user data, so no width budget survives a long one:
+       the table keeps the width it needs and the panel scrolls to it rather
+       than cutting the balance column off mid-word. */
+    .scroller {
+      overflow-x: auto;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -149,46 +156,48 @@ export class WcBalanceList extends LitElement {
     }
 
     return html`
-      <table>
-        <caption>
-          ${this.caption}
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">Account</th>
-            <th scope="col" class="amount">Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${this.items.map(
-            (item) => html`
-              <tr>
-                <th scope="row">
-                  ${item.name}
-                  ${item.accountType
-                    ? html`<span class="type">${item.accountType}</span>`
-                    : nothing}
-                </th>
-                <td class="amount">
-                  <wc-money .amount=${item.balance} align="end"></wc-money>
-                </td>
-              </tr>
-            `,
-          )}
-        </tbody>
-        ${this.total === undefined
-          ? nothing
-          : html`
-              <tfoot>
+      <div class="scroller">
+        <table>
+          <caption>
+            ${this.caption}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Account</th>
+              <th scope="col" class="amount">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${this.items.map(
+              (item) => html`
                 <tr>
-                  <th scope="row">Total</th>
+                  <th scope="row">
+                    ${item.name}
+                    ${item.accountType
+                      ? html`<span class="type">${item.accountType}</span>`
+                      : nothing}
+                  </th>
                   <td class="amount">
-                    <wc-money .amount=${this.total} align="end"></wc-money>
+                    <wc-money .amount=${item.balance} align="end"></wc-money>
                   </td>
                 </tr>
-              </tfoot>
-            `}
-      </table>
+              `,
+            )}
+          </tbody>
+          ${this.total === undefined
+            ? nothing
+            : html`
+                <tfoot>
+                  <tr>
+                    <th scope="row">Total</th>
+                    <td class="amount">
+                      <wc-money .amount=${this.total} align="end"></wc-money>
+                    </td>
+                  </tr>
+                </tfoot>
+              `}
+        </table>
+      </div>
     `;
   }
 }

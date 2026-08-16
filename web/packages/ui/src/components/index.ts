@@ -1,4 +1,4 @@
-export { WcAppShell } from './wc-app-shell.js';
+export { WcAppShell, narrowViewport } from './wc-app-shell.js';
 export { WcNavSidebar, type NavItem } from './wc-nav-sidebar.js';
 export {
   WcToast,
@@ -202,9 +202,24 @@ export {
 } from './wc-line-items.js';
 export {
   WcInvoiceForm,
+  DEFAULT_DUE_TERM,
+  DUE_TERM_LABELS,
+  DUE_TERM_VALUES,
   EMPTY_INVOICE_FORM,
+  addDays,
+  dueDateOf,
+  dueTermFor,
   invoiceFormItems,
+  isDueTerm,
+  isNetDueTerm,
+  netDueDateFor,
+  newInvoiceForm,
+  prefilledTerms,
   validateInvoiceForm,
+  withDueTerm,
+  withIssueDate,
+  type DueDateOutcome,
+  type DueTerm,
   type InvoiceClientOption,
   type InvoiceFormErrors,
   type InvoiceFormValue,

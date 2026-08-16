@@ -3,6 +3,7 @@ pub mod document;
 pub mod gateway;
 pub mod import_invoiceshelf;
 pub mod invoices;
+pub mod logo;
 pub mod mailgun;
 pub mod r2;
 pub mod render;

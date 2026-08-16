@@ -87,9 +87,14 @@ export class NigelDashboardScreen extends SignalWatcher(LitElement) {
         align-items: start;
       }
 
+      /* minmax(0, …) rather than a bare 1fr: a track's automatic minimum is
+         its content, so a panel holding something that cannot shrink — a
+         thirteen-month chart — would widen the page itself and leave the phone
+         scrolling sideways. Capped at the track, that child scrolls inside its
+         own panel instead. */
       @media (max-width: 60rem) {
         .panels {
-          grid-template-columns: 1fr;
+          grid-template-columns: minmax(0, 1fr);
         }
       }
     `,

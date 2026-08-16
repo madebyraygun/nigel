@@ -4,6 +4,7 @@ import { WcNavSidebar } from './wc-nav-sidebar.js';
 import { describePrintHiding } from '../../preview/print-suite.js';
 import { NAV_ITEMS, NAV_ITEMS_WITH_DISABLED } from './__mocks__/nav.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-nav-sidebar.preview.js';
 
 async function mount(props: Partial<WcNavSidebar> = {}): Promise<WcNavSidebar> {
@@ -100,3 +101,24 @@ describe('wc-nav-sidebar', () => {
 describePreviewA11y(preview);
 
 describePrintHiding(WcNavSidebar, ':host');
+
+describe('wc-nav-sidebar on a phone', () => {
+  // jsdom has no layout engine, so the rules are read the way the register's
+  // fill rules are.
+  const text = styleText(WcNavSidebar);
+
+  it('keeps its labels when it is the drawer rather than the rail', () => {
+    // Collapsed means "off-canvas" at this width, not "56px of icons": the
+    // shell slides the whole sidebar away, and what slides back in has room
+    // for the words.
+    expect(text).toMatch(
+      /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\) \.label[^{]*{[^}]*display:\s*revert/,
+    );
+  });
+
+  it('keeps its full width when it is the drawer', () => {
+    expect(text).toMatch(
+      /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\)[^{]*{[^}]*width:\s*var\(--nc-sidebar-width/,
+    );
+  });
+});

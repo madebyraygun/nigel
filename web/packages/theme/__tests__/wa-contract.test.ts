@@ -74,6 +74,59 @@ function tokensWebAwesomeReads(): Map<string, Set<string>> {
 }
 
 /**
+ * The leaf end of Web Awesome's variant indirection.
+ *
+ * Two classes of token come out of that indirection and they are owed opposite
+ * things. The *intermediate* names — `--wa-color-fill-loud` and its eight
+ * siblings — are deliberately not demanded above: a variant class sets them,
+ * and defining them at `:root` would pin every control to one variant. The
+ * *leaf families* they point at, `--wa-color-{variant}-{fill,on,border}-{loud,
+ * normal,quiet}`, are the theme's job, and a missing one is not a default but
+ * nothing — so the declaration is discarded and the control falls back to the
+ * neutral fill.
+ *
+ * They also hide from the scan above twice over: inside a component's styles
+ * they appear only as the fallback half of `var(--x, var(--y))`, which the
+ * bare-var rule skips, and the sheet that reads them properly —
+ * `variants.styles` — is pulled in by the component *module*, which a walk
+ * from `<name>.styles.js` never reaches. Hence the separate entry point.
+ */
+const VARIANT_FAMILY = /--wa-color-(?:brand|neutral|danger|success|warning)-(?:fill|on|border)-(?:loud|normal|quiet)/g;
+
+function variantFamiliesWebAwesomeReads(): Map<string, Set<string>> {
+  const chunkDir = join(waDist, 'chunks');
+  const chunks = new Set(readdirSync(chunkDir).filter((f) => f.endsWith('.js')));
+  const consumed = new Map<string, Set<string>>();
+  const seen = new Set<string>();
+
+  const walk = (component: string, chunk: string, depth = 0): void => {
+    const key = `${component}:${chunk}`;
+    if (depth > 4 || seen.has(key) || !chunks.has(chunk)) return;
+    seen.add(key);
+
+    const text = readFileSync(join(chunkDir, chunk), 'utf8');
+    for (const [token] of text.matchAll(VARIANT_FAMILY)) {
+      if (!consumed.has(token)) consumed.set(token, new Set());
+      consumed.get(token)!.add(component);
+    }
+    for (const [, next] of text.matchAll(/\.\/(chunk\.[A-Z0-9]+\.js)/g)) {
+      walk(component, next, depth + 1);
+    }
+  };
+
+  for (const component of COMPONENTS) {
+    const entry = join(waDist, 'components', component, `${component}.js`);
+    if (!existsSync(entry)) continue;
+    for (const [, chunk] of readFileSync(entry, 'utf8').matchAll(
+      /\.\/(?:\.\.\/)*chunks\/(chunk\.[A-Z0-9]+\.js)/g,
+    )) {
+      walk(component, chunk);
+    }
+  }
+  return consumed;
+}
+
+/**
  * What the sheet defines *on screen*. The print block redefines a handful of
  * tokens, and counting those would report a token as defined when a component
  * on screen still sees nothing — which is how three shadow tokens hid.
@@ -108,6 +161,29 @@ describe('the Web Awesome token contract', () => {
 does not define is not a default — it is nothing. Padding collapses to 0,
 border-style falls to none, and a calc() containing one voids the whole
 declaration. Define these in tokens/wa-contract.ts:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('defines every variant family those components consume', () => {
+    const consumed = variantFamiliesWebAwesomeReads();
+    const defined = definedOnScreen();
+
+    // Guards the guard: the walk starts at the component module because
+    // variants.styles hangs off the class, not the styles entry.
+    expect(consumed.size).toBeGreaterThanOrEqual(45);
+
+    const missing = [...consumed.keys()]
+      .filter((token) => !defined.has(token))
+      .sort()
+      .map((token) => `  ${token}  (read by ${[...consumed.get(token)!].sort().join(', ')})`);
+
+    expect(
+      missing,
+      `A variant's colour is two hops: variants.styles points --wa-color-fill-loud
+at --wa-color-<variant>-fill-loud, and the component reads the first. An
+undefined family is nothing, so the declaration is discarded and the control
+renders in the neutral fill — which is a danger button that looks like every
+other button. Define these in tokens/wa-contract.ts:\n${missing.join('\n')}`,
     ).toEqual([]);
   });
 
