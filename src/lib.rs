@@ -5,6 +5,7 @@
 //! (`src/main.rs`) is a thin shell over it — clap parsing, the dispatch pre-flight,
 //! and the terminal-restoring panic hook.
 
+pub mod accounts;
 pub mod browser;
 pub mod categorizer;
 pub mod cli;
