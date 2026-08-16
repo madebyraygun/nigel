@@ -3,6 +3,7 @@ pub mod document;
 pub mod gateway;
 pub mod import_invoiceshelf;
 pub mod invoices;
+pub mod logo;
 pub mod mailgun;
 pub mod r2;
 pub mod render;
@@ -12,6 +13,7 @@ pub mod send;
 pub mod stripe;
 pub mod sync;
 pub mod void;
+pub mod wiring;
 
 use std::time::Duration;
 

@@ -15,7 +15,7 @@ use rusqlite::Connection;
 
 use crate::invoicing::gateway::AssetPublisher;
 use crate::invoicing::invoices::is_void;
-use crate::invoicing::render::{pay_button_for, render_invoice};
+use crate::invoicing::render::{pay_button_for, render_with_logo, usable_logo};
 use crate::invoicing::render_html::Branding;
 use crate::models::{Client, Invoice};
 
@@ -39,6 +39,10 @@ pub enum Republished {
 pub struct RepublishOutcome {
     pub number: i64,
     pub page: Republished,
+    /// The letterhead logo's own sentence, when publishing it beside the page
+    /// did not work. Separate from `page` because it is a different fact: the
+    /// corrected page went up, it just carries the image inline.
+    pub logo: Option<String>,
 }
 
 impl RepublishOutcome {
@@ -46,7 +50,7 @@ impl RepublishOutcome {
     /// browser describe the same republish identically. Empty when nothing needs
     /// saying, which is the ordinary case.
     pub fn warnings(&self) -> Vec<String> {
-        match &self.page {
+        let page = match &self.page {
             Republished::Skipped => vec![format!(
                 "Warning: invoice #{} was paid but the R2 publisher is not configured, so its \
                  published page still shows the old balance.",
@@ -58,7 +62,8 @@ impl RepublishOutcome {
                 self.number
             )],
             Republished::NotApplicable | Republished::Done { .. } => Vec::new(),
-        }
+        };
+        page.into_iter().chain(self.logo.clone()).collect()
     }
 }
 
@@ -81,14 +86,15 @@ pub fn republish_invoice<P: AssetPublisher>(
 ) -> RepublishOutcome {
     // Dispatched before anything is rendered, so the ordinary case — a payment
     // against an invoice that was never published — costs nothing at all.
-    let page = match (invoice.published_at.as_deref(), is_void(invoice), publisher) {
-        (None, _, _) | (_, true, _) => Republished::NotApplicable,
-        (Some(_), false, None) => Republished::Skipped,
+    let (page, logo) = match (invoice.published_at.as_deref(), is_void(invoice), publisher) {
+        (None, _, _) | (_, true, _) => (Republished::NotApplicable, None),
+        (Some(_), false, None) => (Republished::Skipped, None),
         (Some(_), false, Some(publisher)) => publish(conn, invoice, client, branding, publisher),
     };
     RepublishOutcome {
         number: invoice.number,
         page,
+        logo,
     }
 }
 
@@ -98,14 +104,42 @@ fn publish<P: AssetPublisher>(
     client: &Client,
     branding: &Branding<'_>,
     publisher: &P,
-) -> Republished {
+) -> (Republished, Option<String>) {
+    // Reached once for this document, as in `send`: the address the page points
+    // at is derived from the bytes, and reaching the verdict decodes the image.
+    let logo = usable_logo(branding.logo);
+    let pending = crate::invoicing::logo::pending(logo.as_ref(), publisher);
     // Rendered through the same seam `send` publishes through, with the same
     // pay-button rule, so the corrected page is the page a re-send would make —
     // including no Pay button once the invoice is settled.
-    let rendered = match render_invoice(conn, invoice, client, pay_button_for(invoice), branding) {
-        Ok(rendered) => rendered,
-        Err(e) => return Republished::Failed(e.to_string()),
+    let render = |branding: &Branding<'_>| {
+        render_with_logo(
+            conn,
+            invoice,
+            client,
+            pay_button_for(invoice),
+            branding,
+            logo.as_ref(),
+        )
     };
+
+    let mut rendered = match render(&branding.with_logo_url(pending.url())) {
+        Ok(rendered) => rendered,
+        // Nothing has been uploaded: a republish that could not render writes
+        // nothing at all, which is what makes a broken template cost the bucket
+        // no object.
+        Err(e) => return (Republished::Failed(e.to_string()), None),
+    };
+
+    // Only now, and in the ordinary case a no-op: the send already put this
+    // image up, and the record says so.
+    let logo_warning = crate::invoicing::logo::publish(conn, &pending, publisher);
+    if logo_warning.is_some() {
+        // The corrected page may only point at an object that is there.
+        if let Ok(inline) = render(branding) {
+            rendered = inline;
+        }
+    }
 
     // With the `pdf` feature both artifacts go back, so the attachment a client
     // saved and the page they bookmarked agree. Without it the page is corrected
@@ -121,10 +155,11 @@ fn publish<P: AssetPublisher>(
             false,
         ),
     };
-    match result {
+    let page = match result {
         Ok(_) => Republished::Done { pdf },
         Err(e) => Republished::Failed(e.to_string()),
-    }
+    };
+    (page, logo_warning)
 }
 
 #[cfg(test)]
@@ -188,6 +223,7 @@ mod tests {
     struct CapturePub {
         pages: RefCell<Vec<(String, String)>>,
         pairs: RefCell<Vec<String>>,
+        logos: RefCell<Vec<Vec<u8>>>,
     }
     impl AssetPublisher for CapturePub {
         fn publish(&self, token: &str, html: &[u8], _pdf: &[u8]) -> Result<String> {
@@ -203,6 +239,13 @@ mod tests {
                 .push((token.to_string(), String::from_utf8(html.to_vec()).unwrap()));
             Ok(format!("https://billing.example.test/i/{token}/index.html"))
         }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+            self.logos.borrow_mut().push(bytes.to_vec());
+            Ok(self.logo_url(bytes, mime))
+        }
     }
 
     struct FailPub;
@@ -213,6 +256,14 @@ mod tests {
             ))
         }
         fn publish_page(&self, _t: &str, _h: &[u8]) -> Result<String> {
+            Err(NigelError::Other(
+                "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
+            ))
+        }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
             Err(NigelError::Other(
                 "r2 403: <Error><Code>SignatureDoesNotMatch</Code></Error>".into(),
             ))
@@ -378,5 +429,143 @@ mod tests {
             outcome.warnings().is_empty(),
             "the page is corrected; nothing is wrong"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // The letterhead logo
+    // ---------------------------------------------------------------------
+
+    /// A logo both documents can draw. Only such a logo is ever published.
+    #[cfg(feature = "pdf")]
+    fn logo_uri() -> String {
+        crate::pdf::logo_uri(400, 60)
+    }
+
+    /// The corrected page is the page a re-send would make, logo included — so
+    /// a client who follows their bookmark after paying sees the same document
+    /// they were emailed, not one that lost its letterhead.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_republished_page_points_at_the_hosted_logo() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        let publisher = CapturePub::default();
+        let uri = logo_uri();
+        let branding = Branding {
+            logo: &uri,
+            ..brand()
+        };
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let outcome = republish_invoice(&conn, &invoice, &client, &branding, Some(&publisher));
+
+        assert!(outcome.warnings().is_empty(), "{:?}", outcome.warnings());
+        let uploaded = publisher.logos.borrow().clone();
+        assert_eq!(uploaded.len(), 1);
+        let hosted = publisher.logo_url(&uploaded[0], "image/png");
+        let pages = publisher.pages.borrow();
+        assert!(
+            pages[0].1.contains(&format!("src=\"{hosted}\"")),
+            "got: {}",
+            pages[0].1
+        );
+    }
+
+    /// A republish that cannot put the logo up still corrects the page, and the
+    /// page still shows the mark — the payment is money already received, and
+    /// nothing about an image may read as its failure.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_failed_logo_upload_still_republishes_the_corrected_page() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        let publisher = LogoRefusingPub::default();
+        let uri = logo_uri();
+        let branding = Branding {
+            logo: &uri,
+            ..brand()
+        };
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+
+        let outcome = republish_invoice(&conn, &invoice, &client, &branding, Some(&publisher));
+
+        assert!(matches!(outcome.page, Republished::Done { .. }));
+        let warnings = outcome.warnings();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains("logo bucket is on fire"),
+            "{warnings:?}"
+        );
+        let pages = publisher.pages.borrow();
+        assert!(
+            pages[0].1.contains("data:image/png;base64"),
+            "the page carries the bytes instead: {}",
+            pages[0].1
+        );
+    }
+
+    /// **A republish that cannot render writes nothing at all.** The upload waits
+    /// for the render, so a broken custom template costs the bucket no object —
+    /// and the page a client is looking at is left exactly as it was.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_republish_that_cannot_render_uploads_nothing() {
+        let (_d, conn) = test_conn();
+        let id = seed_sent(&conn);
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        let publisher = CapturePub::default();
+        let uri = logo_uri();
+        let branding = Branding {
+            logo: &uri,
+            ..brand()
+        };
+        let invoice = get_invoice(&conn, id).unwrap();
+        let client = get_client(&conn, invoice.client_id).unwrap();
+        // Any render failure will do; this is the one a test can cause without
+        // a decoder or a filesystem. `render_with_logo` reads the line items
+        // before it draws anything.
+        conn.execute("DROP TABLE invoice_line_items", []).unwrap();
+
+        let outcome = republish_invoice(&conn, &invoice, &client, &branding, Some(&publisher));
+
+        assert!(matches!(outcome.page, Republished::Failed(_)));
+        assert!(
+            publisher.logos.borrow().is_empty(),
+            "the logo waits for a render that never succeeded"
+        );
+        assert!(
+            publisher.pages.borrow().is_empty(),
+            "and so does the page itself"
+        );
+        assert!(
+            crate::db::get_metadata(&conn, crate::invoicing::logo::PUBLISHED_LOGO_KEY).is_none(),
+            "nothing was published, so nothing is recorded"
+        );
+    }
+
+    #[derive(Default)]
+    struct LogoRefusingPub {
+        pages: RefCell<Vec<(String, String)>>,
+    }
+    impl AssetPublisher for LogoRefusingPub {
+        fn publish(&self, token: &str, html: &[u8], _pdf: &[u8]) -> Result<String> {
+            self.publish_page(token, html)
+        }
+        fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
+            self.pages
+                .borrow_mut()
+                .push((token.to_string(), String::from_utf8(html.to_vec()).unwrap()));
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, _bytes: &[u8], _mime: &str) -> Result<String> {
+            Err(NigelError::Other("r2 503: logo bucket is on fire".into()))
+        }
     }
 }

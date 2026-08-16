@@ -2,7 +2,13 @@
 export { nigelTheme } from './themes/index.js';
 
 // Token modules — re-exported for callers that want category-level access
-export { NIGEL_PALETTE, gradientCss } from './tokens/gradient.js';
+export {
+  NIGEL_PALETTE,
+  brandCycleKeyframes,
+  brandRamp,
+  gradientColor,
+  gradientCss,
+} from './tokens/gradient.js';
 export { colorCss, colorDarkCss } from './tokens/color.js';
 export { typographyCss } from './tokens/typography.js';
 export { fontFacesCss, FONT_FAMILY, BUNDLED_FONT_WEIGHTS } from './tokens/font-faces.js';

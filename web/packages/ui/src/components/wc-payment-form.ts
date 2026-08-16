@@ -97,6 +97,9 @@ export function validatePaymentForm(value: PaymentFormValue): PaymentFormErrors 
  * stripped on the way in and a tidy on blur. It defaults to the whole
  * outstanding balance, which is what `nigel invoice pay` does with no
  * `--amount`, and clearing it means the same thing.
+ *
+ * The date is the invoice form's native picker with no presets: a payment
+ * landed on the day it landed, and there is no period to count from.
  */
 @customElement('wc-payment-form')
 export class WcPaymentForm extends LitElement {
@@ -211,6 +214,7 @@ export class WcPaymentForm extends LitElement {
         <div>
           <wa-input
             data-date
+            type="date"
             label="Date"
             placeholder="YYYY-MM-DD"
             autocomplete="off"

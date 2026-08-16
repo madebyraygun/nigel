@@ -530,7 +530,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices/:number` | `DELETE` | — | `{ id, deleted }` |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
-| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings`) |
+| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings` and `warnings`) |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
 
 ### Write conventions
@@ -914,6 +914,14 @@ A completed send answers with the refreshed invoice and what each step did:
 
 `payment_link` is `reused` on a resend: the link the client was already given is
 priced in the amount they were quoted, so a second one is never created.
+
+`configWarnings` carries configuration the send went ahead with but the operator
+should look at — a From address off the Mailgun domain. `warnings` is the
+separate field for what the send went ahead *despite*: today, a letterhead logo
+that could not be published beside the page, which leaves that page carrying the
+image inline rather than fetching it. Nothing is misconfigured in that case — an
+upload did not work — and the invoice went out either way, so it is a 200 with a
+sentence, never a failure. Both are always present, empty arrays and all.
 
 A failure says where it stopped, and answers with the status that step's failure
 calls for:

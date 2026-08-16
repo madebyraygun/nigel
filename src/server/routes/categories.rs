@@ -12,7 +12,7 @@ use axum::routing::{get, patch};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::cli::categories::{self, CategoryRow};
+use crate::categories::{self, CategoryRow};
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};

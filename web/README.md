@@ -161,20 +161,47 @@ drops `é` renders half a name in a fallback face, mid-word. Anything outside
 the subset falls back per glyph, which is correct behaviour and is why the
 Latin ranges are generous.
 
-### Known gap: eight glyphs the font does not have
+### Eight glyphs the font does not have, and what draws them instead
 
 IBM Plex Mono has **no glyph** for `✗ ⟳ ◑ ● ◆ ▲ ⊘ ◻`. This is a property of the
 upstream font, verified against the complete release rather than the subset —
-subsetting is not the cause and a wider subset would not fix it.
+subsetting is not the cause and a wider subset would fix nothing.
 
-They are drawn by `wc-invoice-status` (all six status markers),
-`wc-send-dialog` (`⟳`, `✗`) and `wc-reconciliation-history` (`✗`), and they
-fall back to a system face per glyph. `✓` is present, so a reconciled row and a
-discrepancy row currently draw their marks from two different fonts.
+So none of them is typed as a character. Each is a `wc-icon-*` SVG on
+`WcIconBase`, drawn with its `inline` attribute and inheriting `currentColor`,
+which is why they track the type they sit in and keep whatever colour the state
+around them has:
 
-The fix is to replace them with `wc-icon-*` SVGs — the library already has
-`WcIconBase` and the icon set for it — rather than to chase a mono with
-dingbat coverage. Not done here: it is a component change, not a typeface one.
+| Where | Marks | Icons |
+|---|---|---|
+| `wc-invoice-status` | the six statuses | `wc-icon-status-{draft,sent,partial,paid,overdue,void}`, plus `wc-icon-dot` for a status the six do not cover |
+| `wc-send-dialog` | the step trace | `wc-icon-check`, `wc-icon-close`, `wc-icon-refresh`, `wc-icon-dot` |
+| `wc-reconciliation-history` | the result column | `wc-icon-check`, `wc-icon-close` |
+
+`inline` is `WcIconBase`'s own 1em mode rather than a `--nc-icon-size: 1em`
+line in each component, so a mark set in text asks for it the same way
+everywhere. Without the attribute an icon is `--nc-icon-size` (20px) as it
+always was, which is what an empty state's 32px mark and the icon gallery keep.
+
+Every one of them is decorative: the word beside it — the status, the step's
+state in an `sr-only` span, `Reconciled`/`Discrepancy` — is what assistive tech
+announces, and `WcIconBase` hides an unlabelled icon from it.
+
+Each is a template rather than a tag name resolved at render time, so Lit
+updates the mark in place. A send polls and an invoice row re-renders with the
+list around it; rebuilding the element each time would re-upgrade a custom
+element somebody is looking at. It also puts the lookup on a `Map`: an invoice's
+status is whatever the server wrote, and an object indexed by `constructor`
+answers with an inherited function.
+
+`packages/ui/src/__tests__/mono-glyph-coverage.test.ts` sweeps the four source
+trees — the components, the preview shell, the theme and the app — for the
+eight characters and names the icon to use instead. It reads `.ts`, `.js`,
+`.mjs`, `.cjs`, `.css`, `.html`, `.json` and `.txt`, because a character can be
+typed into a stylesheet's `content` or a fixture as easily as into a module.
+Without it a character typed back in would look plausible on the author's
+machine and fail no other test — and chasing a mono with dingbat coverage is
+not the answer to that.
 
 ## Light and dark
 
@@ -670,6 +697,78 @@ the page on success. The reload is injectable
 (`initializeAppStore(client, { reload })`) because jsdom cannot implement
 `location.reload`, and because "did it reload?" is exactly what a test needs to
 assert.
+
+## The easter egg
+
+The TUI hides Snake behind `s` on its dashboard. The browser hides the same
+game behind the same key, and nothing on screen says so.
+
+`src/snake-trigger.ts` is the whole of the risk in that, so it is a pure module
+with its own suite rather than a branch inside `nigel-app`: `s` is a letter
+before it is a shortcut, and a letter bound at the window is a bug in every
+context except the one it is for. It fires only for a bare unmodified `s` that
+is not a key repeat, not part of an IME composition, and not already handled —
+and never while a form control or a dialog is in the event's **composed path**,
+in the **focus chain**, or simply **open anywhere on the page**.
+
+Three sources, because no one of them covers the others:
+
+| Source | What it catches | What it misses |
+|---|---|---|
+| `event.composedPath()` | Where the keystroke came from | A retargeted event, and a modal nothing is focused inside |
+| the focus chain | What actually has the caret, shadow hosts and all | The same modal — focus is on the body |
+| `hasOpenModal()` | `dialog[open]`, `wa-dialog[open]`, `[aria-modal]` anywhere | Nothing; it is the backstop |
+
+`hasOpenModal` walks shadow roots rather than querying the document flat,
+because every dialog in this app is inside one — `wc-confirm` renders a
+`wa-dialog`, which renders a native `dialog`, two boundaries down — and a flat
+query would find none of them and read as protection while being dead code.
+`deepActiveElement` walks down for the same reason: `document.activeElement`
+answers `nigel-app` for a caret sitting in the register's inline editor.
+
+`snakeAllowedOnBoot` is an exhaustive switch over `BootPhase`. Only `ready`
+renders a dashboard there is any point covering; `failed` draws the shell
+around a retry banner, which is not a screen to put a snake over. Exhaustive so
+a phase added later fails the typecheck rather than defaulting the game open.
+
+`nigel-app` binds the key at the window rather than on the dashboard screen
+(the game covers the whole app and outlives what was under it), marks the shell
+`inert`, and closes through **one path** that every exit takes:
+
+- Escape, via the component's `nc-snake-exit`,
+- a route change — the back button navigates the screen out from under it,
+- the boot phase leaving `ready` — locking, a failed status.
+
+One path because the open flag and the captured focus have to fall together. A
+render branch that merely stopped *rendering* the overlay, which is what
+locking does, would leave both behind, and unlocking would put a fresh game
+back over the app with a focus capture pointing at an element that no longer
+exists. Focus returns to what had it, or to the shell when the screen it was on
+went away with the route.
+
+The game itself is `@nigel/ui`: `snake-engine.ts` is a pure port of
+`src/cli/snake.rs` — 40×20, food worth $1.00–$9.99, a 150 ms tick shedding 2 ms
+per segment down to a 50 ms floor, and the three endings — pinned to the Rust
+source by `snake-parity.test.ts` the way the palette is pinned by
+`palette-parity.test.ts`. `wc-snake` owns the clock and the pixels, drawing the
+body along `@nigel/theme`'s `gradientColor` (the browser's
+`effects::gradient_color`) on the mode-independent `--nc-color-arcade-*`
+ground, because the pastels are invisible on a light surface. The score is
+rendered by `wc-money`, which is what renders money everywhere else here.
+
+Two things the game deliberately does not take. **Browser chords**: any event
+carrying ctrl, meta or alt passes through untouched, so Cmd+R reloads the page
+rather than restarting the snake. **A background tab**: the loop stops on
+`document.hidden` and picks up on return, because browsers throttle a hidden
+tab's timers to about once a minute and a game left running there takes blind
+single steps into a wall, handing the player back a Game Over they never had a
+chance at.
+
+Reduced motion stops the drifting specks and the gradient cycling along the
+snake, and does not stop the snake, which would not leave a game. The specks
+are always rendered; whether they drift is the stylesheet's alone — the
+reflected `reduced-motion` attribute and the `prefers-reduced-motion` media
+query behind it, for a preference nothing told the component about.
 
 ## How the build reaches the binary
 

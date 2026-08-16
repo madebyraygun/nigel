@@ -10,7 +10,7 @@ use axum::routing::{get, patch};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::cli::accounts;
+use crate::accounts;
 use crate::models::Account;
 
 use super::super::error::ApiResult;

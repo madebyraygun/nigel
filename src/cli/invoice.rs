@@ -14,20 +14,15 @@ use crate::invoicing::invoices::{
     get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
     payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
-use crate::invoicing::mailgun::{
-    from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
-    MailgunClient,
-};
-use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
 use crate::invoicing::render::{render_invoice, RenderedInvoice};
-use crate::invoicing::render_html::{load_template, template_path, Branding, DEFAULT_TEMPLATE};
-use crate::invoicing::republish::republish_invoice;
+use crate::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
 use crate::invoicing::send::send_invoice;
-use crate::invoicing::stripe::StripeClient;
 use crate::invoicing::sync::sync_all_report;
 use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem};
 use crate::settings::{get_data_dir, invoicing_config, InvoicingConfig};
+
+pub(crate) use crate::invoicing::wiring::*;
 
 fn parse_item(s: &str) -> Result<NewLineItem> {
     let parts: Vec<&str> = s.split(':').collect();
@@ -87,196 +82,6 @@ fn find_invoice(conn: &Connection, number: i64) -> Result<Invoice> {
 /// What voiding a published invoice will do, before it does it — the sentence
 /// the CLI's confirmation and the TUI's dialog both show.
 pub(crate) use crate::invoicing::void::PUBLISHED_VOID_NOTICE;
-
-fn require(value: Option<String>, what: &str) -> Result<String> {
-    value.ok_or_else(|| {
-        NigelError::Other(format!(
-            "missing invoicing config: {what} (set it in settings.json or the matching NIGEL_ env var)"
-        ))
-    })
-}
-
-/// The business name the settings screen writes, as the email subject and the
-/// report headers want it: a plain string, empty when nobody has set one.
-///
-/// Kept beside `company_profile` rather than folded into it: the nine report
-/// exporters, the text reports and `/api/status` want a name, not a letterhead.
-pub(crate) fn company_name(conn: &Connection) -> String {
-    crate::db::get_metadata(conn, "company_name").unwrap_or_default()
-}
-
-/// The whole letterhead, read from the one place it lives.
-///
-/// Owned, because `Branding` borrows and the values come out of the database.
-/// Resolved here rather than at each `Branding` site: the fields are only ever
-/// correct together, and six hand-built literals each doing their own
-/// `get_metadata` calls is how a document ends up with an address and no phone.
-pub(crate) struct CompanyProfile {
-    pub name: String,
-    pub address: String,
-    pub phone: String,
-    pub logo: String,
-    pub payment_instructions: String,
-}
-
-pub(crate) fn company_profile(conn: &Connection) -> CompanyProfile {
-    let read = |key: &str| crate::db::get_metadata(conn, key).unwrap_or_default();
-    CompanyProfile {
-        name: read("company_name"),
-        address: read("company_address"),
-        phone: read("company_phone"),
-        logo: read("company_logo"),
-        payment_instructions: read("payment_instructions"),
-    }
-}
-
-impl CompanyProfile {
-    /// The branding for this profile, with the template and contact address the
-    /// caller resolved. One constructor, so no site can forget a field.
-    pub(crate) fn branding<'a>(
-        &'a self,
-        template: &'a str,
-        contact_email: &'a str,
-    ) -> Branding<'a> {
-        Branding {
-            template,
-            company: &self.name,
-            company_address: &self.address,
-            company_phone: &self.phone,
-            logo: &self.logo,
-            payment_instructions: &self.payment_instructions,
-            contact_email,
-        }
-    }
-}
-
-fn build_gateway(cfg: &InvoicingConfig) -> Result<StripeClient> {
-    Ok(StripeClient {
-        secret_key: require(cfg.stripe_secret_key.clone(), "stripe_secret_key")?,
-    })
-}
-
-/// The gateway if this installation has one, rather than a refusal.
-///
-/// Void is the one invoicing command that has to work on a machine with nothing
-/// configured — an invoice can be drafted and cancelled without Stripe ever
-/// being involved — so its teardown asks what is available instead of demanding
-/// the nine keys `send` needs.
-pub(crate) fn optional_gateway(cfg: &InvoicingConfig) -> Option<StripeClient> {
-    Some(StripeClient {
-        secret_key: cfg.stripe_secret_key.clone()?,
-    })
-}
-
-/// The publisher, when every key it takes is set. All five or none: a publisher
-/// missing its bucket is not a publisher that works for four fifths of a page.
-pub(crate) fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
-    Some(R2Publisher {
-        account_id: cfg.r2_account_id.clone()?,
-        access_key: cfg.r2_access_key.clone()?,
-        secret_key: cfg.r2_secret_key.clone()?,
-        bucket: cfg.r2_bucket.clone()?,
-        public_base_url: cfg.public_base_url.clone()?,
-    })
-}
-
-/// The three network clients a send needs, the sender identity its email
-/// carries, and anything about the configuration worth saying out loud.
-///
-/// `warnings` are configuration Nigel will send with but wants the operator to
-/// look at. They travel as data, the way `VoidOutcome::warnings()` does, so
-/// each surface renders them where it can be read: a terminal prints them, the
-/// TUI puts them on its status line, the API answers them as a field. Printing
-/// them here would corrupt ratatui's alternate screen and would fire once per
-/// call rather than once per send.
-pub(crate) struct SendClients {
-    pub stripe: StripeClient,
-    pub r2: R2Publisher,
-    pub mail: MailgunClient,
-    pub warnings: Vec<String>,
-}
-
-/// The clients a send needs, or the first refusal the configuration earns.
-///
-/// `company` is the business name from the database, which an unset `from_name`
-/// falls back to — the same value the subject line already uses. An empty
-/// company and no `from_name` means a bare address, which is what this app sent
-/// before these keys existed.
-pub(crate) fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients> {
-    let stripe = build_gateway(&cfg)?;
-    let account_id = require(cfg.r2_account_id, "r2_account_id")?;
-    let access_key = require(cfg.r2_access_key, "r2_access_key")?;
-    let secret_key = require(cfg.r2_secret_key, "r2_secret_key")?;
-    let bucket = require(cfg.r2_bucket, "r2_bucket")?;
-    let public_base_url = require(cfg.public_base_url, "public_base_url")?;
-    // The single constructor both send paths use, and the last moment before any
-    // client exists: a base URL that cannot produce a working link is refused
-    // here, so nothing is published, nothing is emailed and no Stripe link is
-    // created. `optional_publisher` stays lenient — void and republish only need
-    // the upload to happen and never print the address.
-    validate_public_base_url(&public_base_url)?;
-    let r2 = R2Publisher {
-        account_id,
-        access_key,
-        secret_key,
-        bucket,
-        public_base_url,
-    };
-
-    let api_key = require(cfg.mailgun_api_key, "mailgun_api_key")?;
-    let domain = require(cfg.mailgun_domain, "mailgun_domain")?;
-
-    // The from address is composed into a header like every other value here,
-    // so it is guarded like one — and it must be a bare address, because
-    // `format_address` is what puts the display name on.
-    let from_address = require(cfg.from_email, "from_email")?;
-    validate_header_value(&from_address, "from_email")?;
-    validate_bare_address(&from_address, "from_email")?;
-
-    // An unset `from_name` falls back to the business name, and the refusal
-    // has to name whichever of the two the bad value actually came from: an
-    // operator who never set `from_name` cannot fix `from_name`.
-    let (from_name, name_source) = match cfg.from_name {
-        Some(name) => (Some(name), "from_name"),
-        None => (
-            Some(company.trim().to_string()).filter(|c| !c.is_empty()),
-            "the business name",
-        ),
-    };
-    if let Some(name) = &from_name {
-        validate_header_value(name, name_source)?;
-    }
-    // The reply-to gets no domain check: Mailgun constrains what a message is
-    // sent from, not where a human replies to it.
-    if let Some(reply_to) = &cfg.reply_to_email {
-        validate_header_value(reply_to, "reply_to_email")?;
-    }
-
-    // Config cautions travel as data on the one channel, so a terminal, the
-    // TUI and a browser all say the same things about the same installation.
-    // The `/i` one is a caution and not a refusal, because an edge rewrite can
-    // map that prefix onto the domain root.
-    let warnings = from_address_domain_warning(&from_address, &domain)
-        .into_iter()
-        .chain(public_base_url_warning(&r2.public_base_url).map(str::to_string))
-        .collect();
-
-    let mail = MailgunClient {
-        api_key,
-        domain,
-        envelope: EmailEnvelope {
-            from_address,
-            from_name,
-            reply_to: cfg.reply_to_email,
-        },
-    };
-    Ok(SendClients {
-        stripe,
-        r2,
-        mail,
-        warnings,
-    })
-}
 
 pub fn new(
     client_id: i64,
@@ -530,11 +335,6 @@ pub fn show(number: i64) -> Result<()> {
     Ok(())
 }
 
-/// What `{{CONTACT}}` prints when neither `contact_email` nor `from_email` is
-/// configured. Preview is the one invoicing command that runs without any
-/// configuration, so it renders a visible stand-in rather than refusing.
-const PREVIEW_CONTACT_PLACEHOLDER: &str = "(contact_email not configured)";
-
 /// The placeholder a template uses to print the contact address. The stock page
 /// no longer does; a custom one may.
 const CONTACT_PLACEHOLDER_KEY: &str = "{{CONTACT}}";
@@ -589,73 +389,45 @@ pub(crate) use crate::invoicing::render::pay_button_for;
 /// the publisher and the rows are resolved here and passed down. A broken custom
 /// template, an unreadable data directory and an R2 outage are all *warnings*:
 /// the payment is committed, and nothing at this end may read as its failure.
-pub(crate) fn republish_after_payment(conn: &Connection, invoice_id: i64) -> Vec<String> {
-    let warn = |what: &str, e: NigelError| {
-        vec![format!(
-            "Warning: the payment is recorded, but the published page could not be republished \
-             ({what}: {e})."
-        )]
-    };
-
+///
+/// The config and the data directory arrive as arguments, the way `begin_send`
+/// takes them: each front end resolves its own settings at its own call site, so
+/// nothing below here can reach an ambient one — and a test that does not pass a
+/// config cannot reach a configured bucket.
+pub(crate) fn republish_after_payment(
+    conn: &Connection,
+    invoice_id: i64,
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+) -> Vec<String> {
+    let warn = |what: &str, e: NigelError| vec![republish_warning(what, e)];
     let invoice = match get_invoice(conn, invoice_id) {
         Ok(invoice) => invoice,
         Err(e) => return warn("reading the invoice", e),
     };
-    // The ordinary case, and the one that must cost nothing: most payments land
-    // on invoices that were never published.
-    if invoice.published_at.is_none() {
-        return Vec::new();
-    }
-    let client = match get_client(conn, invoice.client_id) {
-        Ok(client) => client,
-        Err(e) => return warn("reading the client", e),
-    };
-    let template = match load_template(&get_data_dir()) {
-        Ok(template) => template,
-        Err(e) => return warn("loading the invoice template", e),
-    };
-
-    let cfg = invoicing_config();
-    // The preview fallback, not `require`: a republish must not depend on an
-    // address being configured, since the page it is correcting is already up.
-    let (contact_email, _) = contact_email_for_preview(&cfg);
-    let profile = company_profile(conn);
-    let branding = profile.branding(&template, &contact_email);
-    republish_invoice(
+    republish_with(
         conn,
         &invoice,
-        &client,
-        &branding,
-        optional_publisher(&cfg).as_ref(),
+        cfg,
+        data_dir,
+        optional_publisher(cfg).as_ref(),
     )
-    .warnings()
 }
 
 /// The same, for every invoice a sync recorded a payment against.
-pub fn republish_all(conn: &Connection, numbers: &[i64]) -> Vec<String> {
-    numbers
-        .iter()
-        .flat_map(|number| match get_invoice_by_number(conn, *number) {
-            Ok(invoice) => republish_after_payment(conn, invoice.id),
-            Err(e) => vec![format!(
-                "Warning: could not republish invoice #{number}'s page ({e})."
-            )],
-        })
-        .collect()
-}
-
-/// The address the published page's direct-deposit line prints. Falls back to
-/// the send address, so an installation that never sets `contact_email` renders
-/// exactly the page it rendered before the key existed.
-pub(crate) fn contact_address(cfg: &InvoicingConfig) -> Option<String> {
-    cfg.contact_email.clone().or_else(|| cfg.from_email.clone())
-}
-
-pub(crate) fn contact_email_for_preview(cfg: &InvoicingConfig) -> (String, bool) {
-    match contact_address(cfg) {
-        Some(email) => (email, false),
-        None => (PREVIEW_CONTACT_PLACEHOLDER.to_string(), true),
-    }
+pub fn republish_all(
+    conn: &Connection,
+    numbers: &[i64],
+    cfg: &InvoicingConfig,
+    data_dir: &Path,
+) -> Vec<String> {
+    republish_all_with(
+        conn,
+        numbers,
+        cfg,
+        data_dir,
+        optional_publisher(cfg).as_ref(),
+    )
 }
 
 pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
@@ -859,7 +631,7 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     for warning in &clients.warnings {
         eprintln!("notice: {warning}");
     }
-    let url = send_invoice(
+    let outcome = send_invoice(
         &conn,
         invoice.id,
         today,
@@ -868,13 +640,21 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         &clients.r2,
         &clients.mail,
     )?;
-    println!("Sent invoice #{number}: {url}");
+    println!("Sent invoice #{number}: {}", outcome.public_url);
+    // What the send went ahead despite — a letterhead logo that could not be
+    // published beside the page. The invoice went out; this is a note about how
+    // it will look in a mail client, printed after the address it went to.
+    for warning in &outcome.warnings {
+        eprintln!("notice: {warning}");
+    }
     Ok(())
 }
 
 pub fn sync(today: &str) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let stripe = build_gateway(&invoicing_config())?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let cfg = invoicing_config();
+    let stripe = build_gateway(&cfg)?;
     let report = sync_all_report(&conn, today, &stripe)?;
     // Printing is the front end's job: the data layer hands back the per-invoice
     // failures so a browser can render the same ones a terminal prints.
@@ -885,14 +665,15 @@ pub fn sync(today: &str) -> Result<()> {
         );
     }
     println!("Recorded {} new payment(s)", report.recorded);
-    for warning in republish_all(&conn, &report.recorded_invoices) {
+    for warning in republish_all(&conn, &report.recorded_invoices, &cfg, &data_dir) {
         println!("{warning}");
     }
     Ok(())
 }
 
 pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "paid")?;
     let paid = paid_amount(&conn, invoice.id)?;
@@ -905,7 +686,7 @@ pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result
     );
     // After the payment is committed, and never able to undo it: the page a
     // client bookmarked is corrected, or a warning says why it was not.
-    for warning in republish_after_payment(&conn, invoice.id) {
+    for warning in republish_after_payment(&conn, invoice.id, &invoicing_config(), &data_dir) {
         println!("{warning}");
     }
     Ok(())
@@ -1195,21 +976,10 @@ mod tests {
         assert!(line.contains("draft"), "got: {line}");
     }
 
+    /// An installation with nothing configured — the state `InvoicingConfig`'s
+    /// `Default` is, and the one a test hands over to reach nothing.
     fn test_config() -> InvoicingConfig {
-        InvoicingConfig {
-            stripe_secret_key: None,
-            mailgun_api_key: None,
-            mailgun_domain: None,
-            from_email: None,
-            from_name: None,
-            reply_to_email: None,
-            contact_email: None,
-            r2_account_id: None,
-            r2_access_key: None,
-            r2_secret_key: None,
-            r2_bucket: None,
-            public_base_url: None,
-        }
+        InvoicingConfig::default()
     }
 
     /// Every key a send needs, with a from address on its own Mailgun domain.
@@ -1230,25 +1000,80 @@ mod tests {
         id
     }
 
-    /// A whole isolated installation: a temp config directory *and* a temp data
-    /// directory, because `republish_after_payment` resolves both. Without the
-    /// second, a test that writes a template writes it into whatever
-    /// `~/Documents/nigel` a developer has.
-    fn isolated(dir: &std::path::Path) -> crate::settings::TempConfigDir {
-        let guard = crate::settings::TempConfigDir::new();
-        let mut settings = crate::settings::load_settings();
-        settings.data_dir = dir.to_string_lossy().into_owned();
-        crate::settings::save_settings(&settings).expect("settings");
-        guard
+    /// The seam takes the publisher as well as the config, so the whole
+    /// republish runs against a fake: a fully-configured `InvoicingConfig` is
+    /// still not a bucket anything in this module can reach.
+    #[derive(Default)]
+    struct CapturePub {
+        pages: std::cell::RefCell<Vec<String>>,
+    }
+    impl crate::invoicing::gateway::AssetPublisher for CapturePub {
+        fn publish(&self, token: &str, html: &[u8], _pdf: &[u8]) -> Result<String> {
+            self.publish_page(token, html)
+        }
+        fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
+            self.pages
+                .borrow_mut()
+                .push(String::from_utf8(html.to_vec()).unwrap());
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fn public_base(&self) -> &str {
+            "https://billing.example.test/i"
+        }
+        fn publish_logo(&self, bytes: &[u8], mime: &str) -> Result<String> {
+            Ok(self.logo_url(bytes, mime))
+        }
+    }
+
+    /// TASK-105 AC-3/AC-4. Preview renders through the same seam a send
+    /// publishes through, and the one deliberate difference is where the logo
+    /// comes from: `company_profile(...).branding(...)` points at nothing, so a
+    /// preview is a self-contained file that reaches no bucket and asks for no
+    /// configuration. `send` and a republish add the address themselves through
+    /// `with_logo_url`.
+    #[test]
+    fn the_preview_branding_points_at_no_hosted_logo() {
+        let (_d, conn) = test_conn();
+        crate::db::set_metadata(&conn, "company_logo", "data:image/png;base64,AAAA").unwrap();
+
+        let profile = company_profile(&conn);
+        let branding = profile.branding(DEFAULT_TEMPLATE, "b@e.test");
+
+        assert_eq!(branding.logo, "data:image/png;base64,AAAA");
+        assert!(
+            branding.logo_url.is_none(),
+            "a preview carries the bytes; only a publish points at an object"
+        );
+        assert_eq!(
+            branding
+                .with_logo_url(Some("https://billing.example.test/i/logo.png"))
+                .logo_url,
+            Some("https://billing.example.test/i/logo.png"),
+            "and the publish path is the one that sets it"
+        );
+    }
+
+    #[test]
+    fn a_republish_uploads_through_the_publisher_it_was_handed() {
+        let (_d, conn) = test_conn();
+        let id = seed_published(&conn);
+        let publisher = CapturePub::default();
+
+        let invoice = get_invoice(&conn, id).unwrap();
+        let warnings = republish_with(&conn, &invoice, &configured(), _d.path(), Some(&publisher));
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let pages = publisher.pages.borrow();
+        assert_eq!(pages.len(), 1, "the corrected page, and nothing else");
+        assert!(pages[0].contains("Balance due"), "got: {}", pages[0]);
     }
 
     #[test]
     fn republishing_with_nothing_configured_warns_and_records_nothing() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_published(&conn);
 
-        let warnings = republish_after_payment(&conn, id);
+        let warnings = republish_after_payment(&conn, id, &test_config(), _d.path());
 
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("#1248"), "{warnings:?}");
@@ -1260,24 +1085,18 @@ mod tests {
     #[test]
     fn republishing_an_unpublished_invoice_says_nothing() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_invoice(&conn);
         record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
 
-        assert!(republish_after_payment(&conn, id).is_empty());
+        assert!(republish_after_payment(&conn, id, &test_config(), _d.path()).is_empty());
     }
 
     #[test]
     fn a_broken_custom_template_is_a_warning_not_a_failure() {
         let (_d, conn) = test_conn();
-        let _config = isolated(_d.path());
         let id = seed_published(&conn);
 
-        let path = template_path(&get_data_dir());
-        assert!(
-            path.starts_with(_d.path()),
-            "the test must not write outside its temp dir: {path:?}"
-        );
+        let path = template_path(_d.path());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
@@ -1285,7 +1104,7 @@ mod tests {
         )
         .unwrap();
 
-        let warnings = republish_after_payment(&conn, id);
+        let warnings = republish_after_payment(&conn, id, &test_config(), _d.path());
 
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("{{TOTL}}"), "{warnings:?}");

@@ -12,6 +12,7 @@ import {
   confirmDialog,
   dispatchNcToast,
   EMPTY_INVOICE_FORM,
+  newInvoiceForm,
   paymentFormFor,
   validateInvoiceForm,
   validatePaymentForm,
@@ -124,9 +125,9 @@ function isFilteredList(params: URLSearchParams): boolean {
 export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: var(--wa-space-l, 16px);
-      align-content: start;
       padding: var(--wa-space-l, 16px);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
@@ -376,7 +377,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         this.clients = clients;
         this.nextNumber = next.number;
         this.detail = null;
-        this.form = { ...EMPTY_INVOICE_FORM, issueDate: today() };
+        this.form = newInvoiceForm(today());
         this.formErrors = {};
         this.formError = null;
       } else if (number !== null) {
@@ -678,7 +679,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     try {
       const result = await this.client.sendInvoice(detail.number);
       this.sendSteps = sendStepViews({ completed: result.steps });
-      this.sendWarnings = result.configWarnings ?? [];
+      this.sendWarnings = [...(result.configWarnings ?? []), ...(result.warnings ?? [])];
       this.sentUrl = result.publicUrl;
       this.sendPhase = 'sent';
       this.detail = result.invoice;

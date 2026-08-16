@@ -7,7 +7,7 @@ const preview: Preview = {
   title: 'Password Form',
   group: 'Forms',
   description:
-    'Set, change, or remove the database password. The confirmation field never leaves the component.',
+    'One password operation per form, named by its own legend. The confirmation field never leaves the component.',
   layout: 'stack',
   states: [
     { name: 'set', render: () => html`<wc-password-form mode="set"></wc-password-form>` },
@@ -18,6 +18,20 @@ const preview: Preview = {
     {
       name: 'remove',
       render: () => html`<wc-password-form mode="remove"></wc-password-form>`,
+    },
+    {
+      // What an encrypted database shows: two operations, each collecting a
+      // field called "Current password". The state this component exists to
+      // keep readable.
+      name: 'encrypted database',
+      // The same gap the settings screen's .operations grid uses, so the
+      // preview demonstrates the spacing that actually ships.
+      render: () => html`
+        <div style="display: grid; gap: var(--wa-space-l, 16px);">
+          <wc-password-form mode="change"></wc-password-form>
+          <wc-password-form mode="remove"></wc-password-form>
+        </div>
+      `,
     },
     {
       name: 'error',

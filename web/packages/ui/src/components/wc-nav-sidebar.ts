@@ -103,6 +103,26 @@ export class WcNavSidebar extends LitElement {
       padding: 8px 0;
     }
 
+    /* At phone width the shell slides the whole sidebar off-canvas instead of
+       narrowing it, so collapsed means "away" rather than "56px of icons"
+       and the rail styling stands down: what slides back in is the full nav
+       with its words. */
+    @media (max-width: 48rem) {
+      :host([collapsed]) {
+        width: var(--nc-sidebar-width, 232px);
+      }
+
+      :host([collapsed]) .brand-name,
+      :host([collapsed]) .label {
+        display: revert;
+      }
+
+      :host([collapsed]) button {
+        justify-content: revert;
+        padding: 8px 10px;
+      }
+    }
+
     /* Screen chrome, not part of the report. This lives here rather than in
        @nigel/theme's print sheet because a rule that hides an element has to
        be in the tree that element is in, and every wc-* here sits inside

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './register.js';
 import type { NigelRegisterScreen } from './register.js';
-import type { WcRegisterTable } from '@nigel/ui';
+import { REGISTER_SHORTCUTS, type WcRegisterTable, type WcShortcutHelp } from '@nigel/ui';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
@@ -187,6 +187,42 @@ describe('register screen', () => {
     expect(table(el).selectedId).toBeNull();
   });
 
+  it('lands the keyboard on the opening row, so the shortcuts work at once', async () => {
+    const { el } = await mount();
+    const row = table(el).shadowRoot?.activeElement;
+    expect(row?.getAttribute('data-id')).toBe('4');
+  });
+
+  it('lands the keyboard on the table when the nav link that brought us here has focus', async () => {
+    // The commonest way onto this screen is a click in the sidebar, which
+    // leaves focus on the link. Waiting for focus to be on nothing at all left
+    // the shortcuts dead on exactly that path.
+    const link = document.createElement('a');
+    link.href = '#/register';
+    document.body.appendChild(link);
+    link.focus();
+
+    const { el } = await mount();
+
+    expect(table(el).shadowRoot?.activeElement?.getAttribute('data-id')).toBe('4');
+  });
+
+  it('leaves focus alone when it is already in this screen', async () => {
+    const { el, fake } = await mount();
+    const toolbar = el.shadowRoot?.querySelector('wc-register-toolbar');
+    if (!toolbar) throw new Error('no toolbar');
+    // A reload while the user is typing in the search box must not pull the
+    // caret out of the field.
+    (toolbar as HTMLElement).tabIndex = 0;
+    (toolbar as HTMLElement).focus();
+
+    fake.register = { rows: spanningToday(), total: 0 };
+    el.params = new URLSearchParams('year=2020');
+    await settle(el);
+
+    expect(el.shadowRoot?.activeElement).toBe(toolbar);
+  });
+
   it('opens on a linked transaction instead, so review and the dashboard can link in', async () => {
     const { el } = await mount(client(), 'id=2');
     expect(table(el).selectedId).toBe(2);
@@ -369,5 +405,45 @@ describe('register screen', () => {
   it('hides the account column when the register is filtered to one account', async () => {
     const { el } = await mount(client(), 'account=BofA Checking');
     expect(table(el).showAccount).toBe(false);
+  });
+
+  it('offers the legend as a popover carrying the table own list of keys', async () => {
+    const { el } = await mount();
+    // The legend used to be a `details` block in the toolbar row, so opening
+    // it pushed the register down the page.
+    expect(el.shadowRoot?.querySelector('details')).toBeNull();
+
+    const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
+    expect(help).not.toBeNull();
+    expect(help?.open).toBe(false);
+    expect(help?.shortcuts).toEqual([...REGISTER_SHORTCUTS]);
+  });
+
+  it('lets Escape reach the inline editor while the legend is open', async () => {
+    // Keyboard only: open the legend, open an editor, press Escape in it. A
+    // legend listening on the document in capture would eat the key and leave
+    // the edit open with focus yanked to its own trigger.
+    const { el } = await mount();
+    const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
+    help?.show();
+    await help?.updateComplete;
+
+    emitOnTable(el, 'nc-row-activate', { id: 3 });
+    await settle(el);
+    expect(table(el).editingId).toBe(3);
+
+    const input = table(el).shadowRoot?.querySelector('.category-input');
+    input?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
+    );
+    await settle(el);
+
+    expect(table(el).editingId).toBeNull();
+    expect(help?.open).toBe(false);
+  });
+
+  it('hands the table the height left under the toolbar', async () => {
+    const { el } = await mount();
+    expect(table(el).fill).toBe(true);
   });
 });

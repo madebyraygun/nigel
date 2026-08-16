@@ -1,7 +1,7 @@
 //! Report downloads under `/api/exports`.
 //!
 //! The renderers already had the right shape: `pdf::render_*` turn a report into
-//! bytes and `cli::report::text::format_*` turn one into a string, neither
+//! bytes and `reports::text::format_*` turn one into a string, neither
 //! knowing where the result goes. So these handlers are the report handlers of
 //! `routes::reports` with a different last step — same data functions, same
 //! parameters, same validation — and the only new question is which of the two
@@ -16,10 +16,9 @@ use axum::Router;
 use rusqlite::Connection;
 use serde::Deserialize;
 
-use crate::cli::report::export_file_stem;
-use crate::cli::report::text::{self, with_header};
 use crate::db::get_metadata;
-use crate::reports::{self, ReportKind};
+use crate::reports::text::{self, with_header};
+use crate::reports::{self, export_file_stem, ReportKind};
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::state::AppState;
@@ -180,7 +179,7 @@ fn render_pdf(payload: ReportPayload, company: &str, range: &str) -> ApiResult<V
 #[cfg(not(feature = "pdf"))]
 fn render_pdf(_payload: ReportPayload, _company: &str, _range: &str) -> ApiResult<Vec<u8>> {
     Err(ApiError::feature_disabled(
-        crate::cli::report::PDF_DISABLED_MESSAGE,
+        crate::reports::PDF_DISABLED_MESSAGE,
     ))
 }
 
@@ -391,7 +390,7 @@ mod tests {
     /// The CLI's text export is `with_header(company, format_x(report))` written
     /// to a file; the only thing this endpoint does differently is skip the file.
     ///
-    /// Calling `cli::report::text::pnl()` itself would prove the last step too,
+    /// Calling `reports::text::pnl()` itself would prove the last step too,
     /// but those wrappers open their own connection through
     /// `settings::get_data_dir()` — the developer's real data directory, which a
     /// test has no business repointing.
@@ -688,7 +687,7 @@ mod tests {
             assert_eq!(body["error"]["code"], "feature_disabled", "for {route}");
             assert_eq!(
                 body["error"]["message"],
-                crate::cli::report::PDF_DISABLED_MESSAGE,
+                crate::reports::PDF_DISABLED_MESSAGE,
                 "for {route}"
             );
 

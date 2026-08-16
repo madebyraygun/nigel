@@ -24,6 +24,19 @@ async function mount(client = new FakeApiClient()): Promise<NigelApp> {
 const shell = (el: NigelApp) => el.shadowRoot?.querySelector('wc-app-shell');
 const sidebar = (el: NigelApp) => el.shadowRoot?.querySelector('wc-nav-sidebar');
 
+/** jsdom's matchMedia answers false to everything, which is a wide viewport. */
+function matchMediaReturning(matches: boolean): void {
+  window.matchMedia = ((query: string) => ({
+    matches,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+}
+
+const phoneScreen = () => matchMediaReturning(true);
+const widescreen = () => matchMediaReturning(false);
+
 describe('nigel-app', () => {
   beforeEach(() => {
     resetAppStore();
@@ -221,6 +234,262 @@ describe('nigel-app', () => {
     it('shows no banner when everything is fine', async () => {
       const el = await mount();
       expect(el.shadowRoot?.querySelector('[slot="banner"]')).toBeNull();
+    });
+  });
+
+  /**
+   * The one shortcut in the app, and the one nothing on screen advertises.
+   * What is worth testing is mostly the refusals: a letter key bound at the
+   * window is a bug in every context except the one it is meant for.
+   */
+  describe('the Snake easter egg', () => {
+    const snake = (el: NigelApp) => el.shadowRoot?.querySelector('wc-snake');
+
+    const typeS = (target: EventTarget = document.body, init: KeyboardEventInit = {}) =>
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 's',
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+
+    it('is not on screen until it is asked for', async () => {
+      const el = await mount();
+      expect(snake(el)).toBeNull();
+    });
+
+    it('is nowhere in the visible UI', async () => {
+      const el = await mount();
+      const shellText = shell(el)?.textContent ?? '';
+      const navText = sidebar(el)?.textContent ?? '';
+      expect(`${shellText} ${navText}`.toLowerCase()).not.toContain('snake');
+    });
+
+    it('opens on s from the dashboard', async () => {
+      const el = await mount();
+      typeS();
+      await el.updateComplete;
+
+      expect(snake(el)).toBeTruthy();
+      expect(snake(el)?.hasAttribute('fullscreen')).toBe(true);
+    });
+
+    it('makes the screen underneath inert while it is up', async () => {
+      const el = await mount();
+      expect(shell(el)?.hasAttribute('inert')).toBe(false);
+
+      typeS();
+      await el.updateComplete;
+      expect(shell(el)?.hasAttribute('inert')).toBe(true);
+
+      snake(el)?.dispatchEvent(
+        new CustomEvent('nc-snake-exit', { bubbles: true, composed: true }),
+      );
+      await el.updateComplete;
+      expect(shell(el)?.hasAttribute('inert')).toBe(false);
+    });
+
+    it('stays shut on any screen but the dashboard', async () => {
+      const el = await mount();
+      window.location.hash = '#/register';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await el.updateComplete;
+
+      typeS();
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+    });
+
+    it('stays shut while the database is locked', async () => {
+      const client = new FakeApiClient();
+      client.status = LOCKED_STATUS;
+      const el = await mount(client);
+
+      typeS();
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+    });
+
+    it('stays shut over the boot-failure screen', async () => {
+      const client = new FakeApiClient();
+      client.statusError = new ApiError({
+        code: 'internal',
+        rawCode: 'internal',
+        message: 'database is on fire',
+        status: 500,
+      });
+      const el = await mount(client);
+
+      typeS();
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+    });
+
+    /**
+     * Every way out goes through the same close. A render branch that simply
+     * stops rendering the overlay would leave the open flag and the captured
+     * focus behind, and the next time that branch came back so would a game.
+     */
+    describe('closing', () => {
+      it('closes when the route changes underneath it', async () => {
+        const el = await mount();
+        typeS();
+        await el.updateComplete;
+        expect(snake(el)).toBeTruthy();
+
+        // The back button: the hash is the only writer of route state.
+        window.location.hash = '#/register';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await el.updateComplete;
+
+        expect(snake(el)).toBeNull();
+        expect(shell(el)?.hasAttribute('inert')).toBe(false);
+      });
+
+      it('closes when the database locks under it', async () => {
+        const el = await mount();
+        typeS();
+        await el.updateComplete;
+        expect(snake(el)).toBeTruthy();
+
+        appLocked.set(true);
+        await el.updateComplete;
+        expect(snake(el)).toBeNull();
+
+        // And unlocking returns the app, not a game nobody asked for twice.
+        appLocked.set(false);
+        await el.updateComplete;
+        expect(snake(el)).toBeNull();
+      });
+
+      it('falls back to the shell when the element it captured is gone', async () => {
+        const el = await mount();
+        const link = document.createElement('a');
+        link.href = '#/review';
+        document.body.appendChild(link);
+        link.focus();
+
+        typeS(link);
+        await el.updateComplete;
+
+        // Whatever the route change unmounted, it took the link with it.
+        link.remove();
+        window.location.hash = '#/register';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await el.updateComplete;
+        await el.updateComplete;
+
+        expect(el.shadowRoot?.activeElement).toBe(shell(el));
+      });
+    });
+
+    it('stays shut when the keystroke belongs to a field', async () => {
+      const el = await mount();
+      const field = document.createElement('input');
+      document.body.appendChild(field);
+      field.focus();
+
+      typeS(field);
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+      field.remove();
+    });
+
+    it('closes on the game asking to exit', async () => {
+      const el = await mount();
+      typeS();
+      await el.updateComplete;
+
+      snake(el)?.dispatchEvent(
+        new CustomEvent('nc-snake-exit', { bubbles: true, composed: true }),
+      );
+      await el.updateComplete;
+
+      expect(snake(el)).toBeNull();
+    });
+
+    it('gives the keyboard back to whatever had it', async () => {
+      const el = await mount();
+      const link = document.createElement('a');
+      link.href = '#/review';
+      document.body.appendChild(link);
+      link.focus();
+      expect(document.activeElement).toBe(link);
+
+      typeS(link);
+      await el.updateComplete;
+      expect(document.activeElement).toBe(el);
+
+      snake(el)?.dispatchEvent(
+        new CustomEvent('nc-snake-exit', { bubbles: true, composed: true }),
+      );
+      await el.updateComplete;
+      await el.updateComplete;
+
+      expect(document.activeElement).toBe(link);
+      link.remove();
+    });
+  });
+
+  describe('the sidebar it owns', () => {
+    // The sidebar is nigel-app's slotted child, so only nigel-app can pass
+    // `collapsed` down; the shell asks by event and the answer comes back as a
+    // property on both.
+    afterEach(() => {
+      widescreen();
+    });
+
+    it('shows the sidebar on a wide viewport', async () => {
+      const el = await mount();
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(false);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(false);
+    });
+
+    it('starts with the sidebar away on a phone', async () => {
+      // 232px of a 390px viewport, before a screen has drawn anything.
+      phoneScreen();
+      const el = await mount();
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+    });
+
+    it('puts the sidebar away when the shell asks', async () => {
+      const el = await mount();
+
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: true },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+    });
+
+    it('brings the sidebar back when the shell asks', async () => {
+      phoneScreen();
+      const el = await mount();
+
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: false },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(false);
     });
   });
 });

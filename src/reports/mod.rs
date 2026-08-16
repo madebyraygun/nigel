@@ -1,8 +1,65 @@
+pub mod text;
+
 use chrono::Datelike;
 use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::error::{NigelError, Result};
+
+/// What a build without the `pdf` feature says when asked for a PDF. Shared
+/// with the HTTP export endpoints so the CLI and the API explain the same
+/// missing feature the same way.
+pub const PDF_DISABLED_MESSAGE: &str =
+    "PDF export requires the 'pdf' feature — build with `cargo build --features pdf`";
+
+/// The default basename of an exported report: the report's slug and the day it
+/// was exported, with the extension left to the caller. Used for the CLI's
+/// output paths and for the filename the HTTP download suggests.
+pub fn export_file_stem(name: &str) -> String {
+    let date = chrono::Local::now().format("%Y-%m-%d");
+    format!("{name}-{date}")
+}
+
+/// Parse a `YYYY-MM` month string into its year and month parts. Anything
+/// else — absent, malformed, or a month that fails to parse as a number —
+/// answers `(None, None)` rather than erroring, matching the lenient
+/// `--month` handling every report and the register browser share.
+pub(crate) fn parse_month_opt(month: &Option<String>) -> (Option<i32>, Option<u32>) {
+    if let Some(m) = month {
+        let parts: Vec<&str> = m.split('-').collect();
+        if parts.len() == 2 {
+            let year = parts[0].parse().ok();
+            let month = parts[1].parse().ok();
+            return (year, month);
+        }
+    }
+    (None, None)
+}
+
+/// The period label for a register: "2026-03", "FY 2026", or "All dates" when
+/// no date filter was given. An unfiltered register shows every transaction,
+/// so its label must say so — `reports::date_range_label` instead labels a
+/// missing year as the current FY, matching the other report views'
+/// current-year default. Built from the parsed values `get_register` is
+/// actually asked with, so a `--month` that failed to parse (and therefore
+/// filtered nothing) is labelled "All dates", never echoed as a period.
+pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
+    match (year, month) {
+        (Some(y), Some(m)) => format!("{y}-{m:02}"),
+        (Some(y), None) => format!("FY {y}"),
+        (None, _) => "All dates".to_string(),
+    }
+}
+
+/// Subtitle for a register report: the period followed by any active non-date filters.
+pub(crate) fn register_subtitle(range: &str, filters: &RegisterFilters) -> String {
+    let labels = filters.labels();
+    if labels.is_empty() {
+        range.to_string()
+    } else {
+        format!("{range} — {}", labels.join(", "))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Report identity and date granularity

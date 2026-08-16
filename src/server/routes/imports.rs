@@ -16,11 +16,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::backup;
 use crate::categorizer::categorize_transactions;
-use crate::cli::backup;
-use crate::cli::undo::{self, ImportListItem};
 use crate::error::NigelError;
 use crate::importer::{self, CsvProfile, GenericCsvConfig, ImportResult, ImporterFormat};
+use crate::imports::{self, ImportListItem};
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
@@ -60,10 +60,10 @@ async fn undo_import(
     let deleted_transactions = with_conn(&state, move |conn| {
         // `delete_import` reports a missing import as zero rows deleted, which
         // over HTTP would read as a successful undo of nothing.
-        if !undo::import_exists(conn, id)? {
+        if !imports::import_exists(conn, id)? {
             return Err(NigelError::NotFound(format!("No import with ID {id}")));
         }
-        undo::delete_import(conn, id)
+        imports::delete_import(conn, id)
     })
     .await?;
 
@@ -74,7 +74,7 @@ async fn undo_import(
 }
 
 async fn list_imports(State(state): State<AppState>) -> ApiResult<Json<Vec<ImportListItem>>> {
-    Ok(Json(with_conn(&state, undo::list_imports).await?))
+    Ok(Json(with_conn(&state, imports::list_imports).await?))
 }
 
 async fn list_csv_profiles(State(state): State<AppState>) -> ApiResult<Json<Vec<CsvProfile>>> {
@@ -503,7 +503,7 @@ mod tests {
         let conn = crate::db::open_connection(&db_path, None).expect("open db");
 
         let body = ok_json(&app, "/api/imports", &token).await;
-        let expected = serde_json::to_value(super::undo::list_imports(&conn).unwrap()).unwrap();
+        let expected = serde_json::to_value(super::imports::list_imports(&conn).unwrap()).unwrap();
         assert_eq!(body, expected);
 
         let rows = body.as_array().expect("a bare array");

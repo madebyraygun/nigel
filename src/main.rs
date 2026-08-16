@@ -10,16 +10,18 @@ use nigel::error;
 /// with no Stripe key configured it does nothing, and any failure prints a
 /// notice instead of failing the command the user actually asked for.
 fn sync_invoice_payments() {
-    let Some(secret_key) = nigel::settings::invoicing_config().stripe_secret_key else {
+    let cfg = nigel::settings::invoicing_config();
+    let Some(secret_key) = cfg.stripe_secret_key.clone() else {
         return;
     };
     let gateway = nigel::invoicing::stripe::StripeClient { secret_key };
-    let db_path = nigel::settings::get_data_dir().join("nigel.db");
-    let result = nigel::db::get_connection(&db_path).and_then(|conn| {
+    let data_dir = nigel::settings::get_data_dir();
+    let result = nigel::db::get_connection(&data_dir.join("nigel.db")).and_then(|conn| {
         let report = nigel::invoicing::sync::sync_all_report(&conn, &cli::today(), &gateway)?;
         // A payment found at launch corrects the page it was found for, so a
         // client following their bookmark does not see a balance they settled.
-        let warnings = nigel::cli::invoice::republish_all(&conn, &report.recorded_invoices);
+        let warnings =
+            nigel::cli::invoice::republish_all(&conn, &report.recorded_invoices, &cfg, &data_dir);
         Ok((report, warnings))
     });
 

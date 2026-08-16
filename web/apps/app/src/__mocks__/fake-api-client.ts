@@ -954,6 +954,8 @@ export class FakeApiClient implements ApiClient {
   sendResult: SendResult | null = null;
   /** Configuration warnings a successful send comes back with. */
   sendConfigWarnings: string[] = [];
+  /** What a send went ahead despite — a logo that could not be published. */
+  sendWarnings: string[] = [];
   syncResult: SyncResult = { recorded: 0, invoicesChecked: 0, failures: [] };
 
   /** Names a create or rename would collide with, as `add_client` sees them. */
@@ -1360,6 +1362,7 @@ export class FakeApiClient implements ApiClient {
         { step: 'record', outcome: 'ok' },
       ],
       configWarnings: this.sendConfigWarnings,
+      warnings: this.sendWarnings,
     };
   }
 

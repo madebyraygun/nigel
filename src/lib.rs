@@ -5,23 +5,31 @@
 //! (`src/main.rs`) is a thin shell over it — clap parsing, the dispatch pre-flight,
 //! and the terminal-restoring panic hook.
 
+pub mod accounts;
+pub mod backup;
 pub mod browser;
+pub mod categories;
 pub mod categorizer;
 pub mod cli;
+pub mod clock;
 pub mod db;
 pub mod effects;
 pub mod error;
 pub mod fmt;
 pub mod importer;
+pub mod imports;
 pub mod invoicing;
 pub mod migrations;
 pub mod models;
+pub mod password;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 pub mod reconciler;
 pub mod reports;
 pub mod reviewer;
+pub mod rules;
 #[cfg(feature = "serve")]
 pub mod server;
 pub mod settings;
 pub mod tui;
+pub mod updater;

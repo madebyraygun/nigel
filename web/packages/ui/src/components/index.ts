@@ -1,4 +1,4 @@
-export { WcAppShell } from './wc-app-shell.js';
+export { WcAppShell, narrowViewport } from './wc-app-shell.js';
 export { WcNavSidebar, type NavItem } from './wc-nav-sidebar.js';
 export {
   WcToast,
@@ -48,11 +48,13 @@ export {
 export { categoryLabel, type CategoryOption } from './category-option.js';
 export {
   WcRegisterTable,
+  REGISTER_SHORTCUTS,
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
   type NcRowEventDetail,
   type RegisterTableRow,
 } from './wc-register-table.js';
+export { WcShortcutHelp, type ShortcutHint } from './wc-shortcut-help.js';
 export {
   WcCategoryPicker,
   type NcCategoryChangeDetail,
@@ -200,9 +202,24 @@ export {
 } from './wc-line-items.js';
 export {
   WcInvoiceForm,
+  DEFAULT_DUE_TERM,
+  DUE_TERM_LABELS,
+  DUE_TERM_VALUES,
   EMPTY_INVOICE_FORM,
+  addDays,
+  dueDateOf,
+  dueTermFor,
   invoiceFormItems,
+  isDueTerm,
+  isNetDueTerm,
+  netDueDateFor,
+  newInvoiceForm,
+  prefilledTerms,
   validateInvoiceForm,
+  withDueTerm,
+  withIssueDate,
+  type DueDateOutcome,
+  type DueTerm,
   type InvoiceClientOption,
   type InvoiceFormErrors,
   type InvoiceFormValue,
@@ -238,3 +255,14 @@ export {
   type SendStepView,
 } from './wc-send-dialog.js';
 export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher.js';
+export { WcSnake } from './wc-snake.js';
+export {
+  BOARD_HEIGHT,
+  BOARD_WIDTH,
+  createGame,
+  step,
+  tickInterval,
+  turn,
+  type Direction,
+  type SnakeState,
+} from './snake-engine.js';

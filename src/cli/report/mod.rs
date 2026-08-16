@@ -1,5 +1,7 @@
-pub mod text;
 pub mod view;
+
+pub use crate::reports::text;
+pub use crate::reports::{export_file_stem, PDF_DISABLED_MESSAGE};
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -8,45 +10,6 @@ use crate::cli::ReportOutputArgs;
 use crate::error::Result;
 
 use super::ReportCommands;
-
-/// The period label for a register: "2026-03", "FY 2026", or "All dates" when
-/// no date filter was given. An unfiltered register shows every transaction,
-/// so its label must say so — `reports::date_range_label` instead labels a
-/// missing year as the current FY, matching the other report views'
-/// current-year default. Built from the parsed values `get_register` is
-/// actually asked with, so a `--month` that failed to parse (and therefore
-/// filtered nothing) is labelled "All dates", never echoed as a period.
-pub(crate) fn register_range_label(year: Option<i32>, month: Option<u32>) -> String {
-    match (year, month) {
-        (Some(y), Some(m)) => format!("{y}-{m:02}"),
-        (Some(y), None) => format!("FY {y}"),
-        (None, _) => "All dates".to_string(),
-    }
-}
-
-/// Subtitle for a register report: the period followed by any active non-date filters.
-pub(crate) fn register_subtitle(range: &str, filters: &crate::reports::RegisterFilters) -> String {
-    let labels = filters.labels();
-    if labels.is_empty() {
-        range.to_string()
-    } else {
-        format!("{range} — {}", labels.join(", "))
-    }
-}
-
-/// What a build without the `pdf` feature says when asked for a PDF. Shared
-/// with the HTTP export endpoints so the CLI and the API explain the same
-/// missing feature the same way.
-pub const PDF_DISABLED_MESSAGE: &str =
-    "PDF export requires the 'pdf' feature — build with `cargo build --features pdf`";
-
-/// The default basename of an exported report: the report's slug and the day it
-/// was exported, with the extension left to the caller. Used for the CLI's
-/// output paths and for the filename the HTTP download suggests.
-pub fn export_file_stem(name: &str) -> String {
-    let date = chrono::Local::now().format("%Y-%m-%d");
-    format!("{name}-{date}")
-}
 
 pub fn dispatch(cmd: ReportCommands) -> Result<()> {
     let args = cmd.output_args();
@@ -107,13 +70,19 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
             to_date,
             filters,
             ..
-        } => text::register(
-            month.clone(),
-            *year,
-            from_date.clone(),
-            to_date.clone(),
-            filters,
-        ),
+        } => {
+            let conn =
+                crate::db::get_connection(&crate::settings::get_data_dir().join("nigel.db"))?;
+            let resolved = filters.resolve(&conn)?;
+            drop(conn);
+            text::register(
+                month.clone(),
+                *year,
+                from_date.clone(),
+                to_date.clone(),
+                &resolved,
+            )
+        }
         ReportCommands::Flagged { .. } => text::flagged(),
         ReportCommands::Balance { .. } => text::balance(),
         ReportCommands::Aging { .. } => text::aging(&crate::cli::today()),
@@ -227,8 +196,9 @@ fn default_text_path(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reports::{CategorySelection, RegisterFilters};
+    use crate::reports::{
+        register_range_label, register_subtitle, CategorySelection, RegisterFilters,
+    };
 
     #[test]
     fn register_range_label_variants() {
