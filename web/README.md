@@ -698,6 +698,78 @@ the page on success. The reload is injectable
 `location.reload`, and because "did it reload?" is exactly what a test needs to
 assert.
 
+## The easter egg
+
+The TUI hides Snake behind `s` on its dashboard. The browser hides the same
+game behind the same key, and nothing on screen says so.
+
+`src/snake-trigger.ts` is the whole of the risk in that, so it is a pure module
+with its own suite rather than a branch inside `nigel-app`: `s` is a letter
+before it is a shortcut, and a letter bound at the window is a bug in every
+context except the one it is for. It fires only for a bare unmodified `s` that
+is not a key repeat, not part of an IME composition, and not already handled —
+and never while a form control or a dialog is in the event's **composed path**,
+in the **focus chain**, or simply **open anywhere on the page**.
+
+Three sources, because no one of them covers the others:
+
+| Source | What it catches | What it misses |
+|---|---|---|
+| `event.composedPath()` | Where the keystroke came from | A retargeted event, and a modal nothing is focused inside |
+| the focus chain | What actually has the caret, shadow hosts and all | The same modal — focus is on the body |
+| `hasOpenModal()` | `dialog[open]`, `wa-dialog[open]`, `[aria-modal]` anywhere | Nothing; it is the backstop |
+
+`hasOpenModal` walks shadow roots rather than querying the document flat,
+because every dialog in this app is inside one — `wc-confirm` renders a
+`wa-dialog`, which renders a native `dialog`, two boundaries down — and a flat
+query would find none of them and read as protection while being dead code.
+`deepActiveElement` walks down for the same reason: `document.activeElement`
+answers `nigel-app` for a caret sitting in the register's inline editor.
+
+`snakeAllowedOnBoot` is an exhaustive switch over `BootPhase`. Only `ready`
+renders a dashboard there is any point covering; `failed` draws the shell
+around a retry banner, which is not a screen to put a snake over. Exhaustive so
+a phase added later fails the typecheck rather than defaulting the game open.
+
+`nigel-app` binds the key at the window rather than on the dashboard screen
+(the game covers the whole app and outlives what was under it), marks the shell
+`inert`, and closes through **one path** that every exit takes:
+
+- Escape, via the component's `nc-snake-exit`,
+- a route change — the back button navigates the screen out from under it,
+- the boot phase leaving `ready` — locking, a failed status.
+
+One path because the open flag and the captured focus have to fall together. A
+render branch that merely stopped *rendering* the overlay, which is what
+locking does, would leave both behind, and unlocking would put a fresh game
+back over the app with a focus capture pointing at an element that no longer
+exists. Focus returns to what had it, or to the shell when the screen it was on
+went away with the route.
+
+The game itself is `@nigel/ui`: `snake-engine.ts` is a pure port of
+`src/cli/snake.rs` — 40×20, food worth $1.00–$9.99, a 150 ms tick shedding 2 ms
+per segment down to a 50 ms floor, and the three endings — pinned to the Rust
+source by `snake-parity.test.ts` the way the palette is pinned by
+`palette-parity.test.ts`. `wc-snake` owns the clock and the pixels, drawing the
+body along `@nigel/theme`'s `gradientColor` (the browser's
+`effects::gradient_color`) on the mode-independent `--nc-color-arcade-*`
+ground, because the pastels are invisible on a light surface. The score is
+rendered by `wc-money`, which is what renders money everywhere else here.
+
+Two things the game deliberately does not take. **Browser chords**: any event
+carrying ctrl, meta or alt passes through untouched, so Cmd+R reloads the page
+rather than restarting the snake. **A background tab**: the loop stops on
+`document.hidden` and picks up on return, because browsers throttle a hidden
+tab's timers to about once a minute and a game left running there takes blind
+single steps into a wall, handing the player back a Game Over they never had a
+chance at.
+
+Reduced motion stops the drifting specks and the gradient cycling along the
+snake, and does not stop the snake, which would not leave a game. The specks
+are always rendered; whether they drift is the stylesheet's alone — the
+reflected `reduced-motion` attribute and the `prefers-reduced-motion` media
+query behind it, for a preference nothing told the component about.
+
 ## How the build reaches the binary
 
 `npm run build` writes to `web/dist`, which `rust-embed` bakes into the binary.

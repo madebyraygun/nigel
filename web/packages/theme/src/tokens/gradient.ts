@@ -45,6 +45,44 @@ export const NIGEL_PALETTE_INK = [
   '#ba2c7c', // magenta -> fuchsia
 ] as const;
 
+/**
+ * The ramp with its first stop repeated at the end, which is how `GRADIENT` in
+ * `src/effects.rs` is written: the interpolation runs over seven segments and
+ * closes on the colour it started from, so a phase that keeps advancing cycles
+ * smoothly instead of snapping back at the wrap.
+ */
+const CLOSED_RAMP = [...NIGEL_PALETTE, NIGEL_PALETTE[0]].map((hex) => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+]);
+
+const hex2 = (n: number) => n.toString(16).padStart(2, '0');
+
+/**
+ * The colour at position `t` along the closed ramp, as `#rrggbb`.
+ *
+ * A port of `effects::gradient_color`, down to truncating each channel rather
+ * than rounding it (Rust's `as u8`), so the browser and the terminal paint the
+ * snake and the wordmark the same colours at the same phase. `t` is a
+ * position, not a fraction of anything: it wraps, so a caller can keep adding
+ * to it frame after frame, and a negative value wraps the same way
+ * `rem_euclid` does.
+ */
+export function gradientColor(t: number): string {
+  const wrapped = ((t % 1) + 1) % 1;
+  const segments = CLOSED_RAMP.length - 1;
+  const scaled = wrapped * segments;
+  const idx = Math.min(Math.trunc(scaled), CLOSED_RAMP.length - 2);
+  const frac = scaled - idx;
+
+  const from = CLOSED_RAMP[idx];
+  const to = CLOSED_RAMP[idx + 1];
+  const channel = (i: number) => hex2(Math.trunc(from[i] + (to[i] - from[i]) * frac));
+
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
 // unsafeCSS is required to interpolate anything that is not itself a
 // CSSResult. The value is a join of the frozen hex literals above — no input
 // reaches it — so there is nothing here for a stylesheet injection to ride in on.
