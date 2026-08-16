@@ -10,6 +10,8 @@ pub mod client_manager;
 pub mod dashboard;
 pub mod demo;
 pub mod export;
+#[cfg(all(test, feature = "serve"))]
+mod fixture_capture;
 pub mod goodbye;
 pub mod import;
 pub mod import_manager;

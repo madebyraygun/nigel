@@ -28,14 +28,15 @@ const CLI_PATHS: [&str; 5] = [
     "src/main.rs",
 ];
 
-/// Test support that drives the CLI's own formatters on purpose: the figure
-/// parity fixtures compare what a browser renders against what `nigel invoice
-/// list` prints, which means naming both. Neither ships in a release binary.
+/// Test support the server's own tests build on: seeded databases, a router
+/// with a valid session, and JSON request helpers. It stays out of a release
+/// binary, but it is not itself CLI-shaped, so it is excluded by name rather
+/// than folded into [`CLI_PATHS`].
 ///
-/// Matched by their full path from the repo root, not by bare filename: a
+/// Matched by its full path from the repo root, not by bare filename: a
 /// bare-filename match would also exclude any future `testutil.rs` dropped
 /// into an unrelated core directory, leaving it silently unguarded.
-const TEST_SUPPORT: [&str; 2] = ["src/server/testutil.rs", "src/server/fixture_capture.rs"];
+const TEST_SUPPORT: [&str; 1] = ["src/server/testutil.rs"];
 
 fn rel(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
