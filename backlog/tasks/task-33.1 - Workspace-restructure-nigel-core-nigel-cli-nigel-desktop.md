@@ -4,6 +4,7 @@ title: 'Workspace restructure: nigel-core, nigel-cli, nigel-desktop'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
+updated_date: '2026-08-16 23:45'
 labels:
   - tauri
   - backend
@@ -25,3 +26,9 @@ Split the crate into a cargo workspace: nigel-core holds the data layer, importe
 - [ ] #2 The nigel binary keeps its name, features, and behavior; cargo test passes across the workspace
 - [ ] #3 Release CI still produces the existing CLI binaries for all platforms
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The workspace half landed in PR #24: nigel-core and nigel are separate crates, core builds free of clap/ratatui/crossterm, the binary keeps its name, features and behaviour, and the release workflow's build path was run to confirm it still produces target/<triple>/release/nigel. AC #1 and #2 are met. The task stays open for the nigel-desktop scaffold it also names, which lands with the app shell and the custom-scheme transport.
+<!-- SECTION:NOTES:END -->

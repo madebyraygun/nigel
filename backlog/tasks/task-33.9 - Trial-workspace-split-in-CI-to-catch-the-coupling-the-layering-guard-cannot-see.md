@@ -3,9 +3,10 @@ id: TASK-33.9
 title: >-
   Trial workspace split in CI, to catch the coupling the layering guard cannot
   see
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-16 12:58'
+updated_date: '2026-08-16 23:45'
 labels:
   - tauri
   - ci
@@ -33,3 +34,9 @@ The compiler is the only thing that sees this class of defect, so the check is a
 - [ ] #3 A deliberately reintroduced inherent-impl split — the defect this is built for — is verified to fail it
 - [ ] #4 tests/layering.rs stays as the fast local check, with its limits stated where a reader of it will find them
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-33.1. The trial split existed to make the compiler, rather than a text scan, the check on core-to-CLI coupling. The workspace split makes that permanent: nigel-core is its own crate and does not depend on nigel, so coupling that names no crate::cli:: path — an inherent impl left behind by a moved type, a trait impl from the CLI side, a stored closure — is a compile error rather than something a grep must be taught to see. CI builds nigel-core on its own via cargo test -p nigel-core. A throwaway trial manifest would now be a weaker copy of the real layout.
+<!-- SECTION:NOTES:END -->
