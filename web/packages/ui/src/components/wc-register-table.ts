@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
 import './wc-money.js';
@@ -73,6 +74,26 @@ const ACTIVATION_KEYS = new Set([' ', 'Enter']);
 const DEFAULT_PAGE_ROWS = 20;
 
 /**
+ * Rows kept in the DOM on each side of the viewport, so a scroll of a line or
+ * two costs nothing and a focus move never lands on a row that is not there.
+ */
+const OVERSCAN = 8;
+
+/**
+ * The row height assumed until one has been measured — the first paint, and
+ * every jsdom test, where every box measures zero.
+ */
+const ESTIMATED_ROW_HEIGHT = 33;
+
+/**
+ * Below this many rows the whole register goes into the DOM. Windowing costs a
+ * scroll listener, two spacer rows and a re-render per frame; a register that
+ * fits in a few screenfuls is cheaper without it, and the report screen's
+ * read-only view is usually one month.
+ */
+const VIRTUALIZE_ABOVE = 120;
+
+/**
  * The transaction register — the web counterpart of `browser.rs`.
  *
  * Two constraints shape it. Rows stay cheap: a row that is not being edited
@@ -144,10 +165,45 @@ export class WcRegisterTable extends LitElement {
         max-height: none;
       }
 
+      /* Fixed layout is what makes every row exactly one line tall, which is
+         what lets the window place rows by arithmetic instead of measuring
+         each one. It also stops the columns from resizing as rows scroll in
+         and out, which an auto-layout table would do on every frame. */
       table {
         width: 100%;
         border-collapse: collapse;
+        table-layout: fixed;
       }
+
+      .col-flag {
+        width: 2.5rem;
+      }
+
+      .col-date {
+        width: 6.5rem;
+      }
+
+      .col-category {
+        width: 11rem;
+      }
+
+      .col-vendor {
+        width: 9rem;
+      }
+
+      /* Room for a seven-figure amount with its sign and separators; the
+         clipping below is the backstop, because a figure that overflowed
+         would land in the Account column beside it. */
+      .col-amount {
+        width: 9rem;
+      }
+
+      .col-account {
+        width: 9rem;
+      }
+
+      /* Description is the only auto column, so it takes what is left — the
+         Fill(1) the TUI gives the same column. */
 
       caption {
         position: absolute;
@@ -178,6 +234,23 @@ export class WcRegisterTable extends LitElement {
         vertical-align: top;
       }
 
+      /* One line per transaction, clipped rather than wrapped. The full text
+         stays in the DOM for a screen reader and rides a title for a pointer;
+         what a wrapped row would cost is a table whose rows are all different
+         heights, which a windowed list cannot place. */
+      td.text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* The rows above and below the window, standing in for their height so
+         the scrollbar measures the whole register. */
+      tr.spacer td {
+        padding: 0;
+        border-bottom: none;
+      }
+
       :host([dense]) td {
         padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
       }
@@ -185,7 +258,9 @@ export class WcRegisterTable extends LitElement {
       th.amount,
       td.amount {
         text-align: right;
-        width: 12ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       td.date {
@@ -195,7 +270,6 @@ export class WcRegisterTable extends LitElement {
 
       th.flag,
       td.flag {
-        width: 2.5rem;
         text-align: center;
       }
 
@@ -414,6 +488,14 @@ export class WcRegisterTable extends LitElement {
   emptyMessage = 'No transactions match these filters.';
 
   /**
+   * Row count above which only the visible slice is put in the DOM. Set it to
+   * `Infinity` to render everything — what a test that wants the whole table
+   * does, and nothing else should need.
+   */
+  @property({ type: Number, attribute: 'virtualize-above' })
+  virtualizeAbove = VIRTUALIZE_ABOVE;
+
+  /**
    * Selection, held internally so the component still works uncontrolled (in
    * the preview harness, say). A host that sets `selectedId` overrides it.
    */
@@ -424,10 +506,32 @@ export class WcRegisterTable extends LitElement {
   @state() private editOptionIndex = 0;
   @state() private editListOpen = false;
 
+  /** Index of the first row in the DOM. Meaningless while not windowing. */
+  @state() private windowStart = 0;
+
+  /** Measured once rows exist; the estimate only has to be close. */
+  private rowHeight = ESTIMATED_ROW_HEIGHT;
+
   @query('.scroller') private scroller?: HTMLElement;
   @query('.vendor-input') private vendorInput?: HTMLElement & { value: string };
 
   private pendingFocusId: number | null = null;
+
+  /** A scroll position to apply once the rows it refers to have rendered. */
+  private pendingScrollTop: number | null = null;
+
+  private viewportObserver?: ResizeObserver;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.watchViewport();
+  }
+
+  disconnectedCallback(): void {
+    this.viewportObserver?.disconnect();
+    this.viewportObserver = undefined;
+    super.disconnectedCallback();
+  }
 
   constructor() {
     super();
@@ -441,21 +545,182 @@ export class WcRegisterTable extends LitElement {
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('selectedId')) this.activeId = this.selectedId;
 
-    if (changed.has('rows') && this.activeId !== null) {
-      // A row that filtering removed cannot stay selected.
-      if (!this.rows.some((row) => row.id === this.activeId)) {
+    if (changed.has('rows')) {
+      if (this.activeId !== null && !this.rows.some((row) => row.id === this.activeId)) {
+        // A row that filtering removed cannot stay selected.
         this.activeId = this.rows[0]?.id ?? null;
       }
+
+      this.resetWindowIfListChanged(changed.get('rows'));
     }
 
     if (changed.has('editingId')) this.resetEditState();
   }
 
+  /**
+   * Send the window back to the top, but only for a genuinely different list.
+   *
+   * The test is whether the row the window is anchored on is still among the
+   * rows: a search, an account change or a period change leaves nothing it was
+   * showing, while an optimistic edit that drops one row elsewhere leaves the
+   * anchor where it is. Length alone cannot tell those apart, and resetting on
+   * length costs the user their place over an edit they just made.
+   */
+  private resetWindowIfListChanged(previous: RegisterTableRow[] | undefined): void {
+    if (!this.windowing) return;
+
+    const anchorId = previous?.[this.windowStart]?.id;
+    if (anchorId !== undefined && this.rows.some((row) => row.id === anchorId)) return;
+
+    this.windowStart = 0;
+    this.pendingScrollTop = 0;
+  }
+
   updated(): void {
+    this.applyPendingScroll();
+
+    if (this.remeasureRowHeight() && this.windowing) {
+      // Spacer heights are computed from the row height, so the first real
+      // measurement redraws them once and then settles.
+      this.requestUpdate();
+    }
+
     if (this.pendingFocusId === null) return;
     const id = this.pendingFocusId;
     this.pendingFocusId = null;
     this.rowElement(id)?.focus();
+  }
+
+  // -- the window -----------------------------------------------------------
+
+  /**
+   * How many rows the last render drew, so a resize that does not change that
+   * asks for nothing — the observer fires on the layout each render causes.
+   */
+  private lastWindowLength = 0;
+
+  /**
+   * A taller window shows more rows, and nothing else says the viewport
+   * changed: no scroll event follows a browser being maximized.
+   */
+  private watchViewport(): void {
+    if (this.viewportObserver || typeof ResizeObserver === 'undefined') return;
+    this.viewportObserver = new ResizeObserver(() => {
+      if (this.windowing && this.windowLength !== this.lastWindowLength) {
+        this.requestUpdate();
+      }
+    });
+    this.viewportObserver.observe(this);
+  }
+
+  /** Whether this register is big enough to be worth windowing. */
+  private get windowing(): boolean {
+    return this.rows.length > this.virtualizeAbove;
+  }
+
+  /** Rows the viewport shows, plus the overscan on both sides. */
+  private get windowLength(): number {
+    const viewport = this.scroller?.clientHeight ?? 0;
+    const visible = viewport > 0 ? Math.ceil(viewport / this.rowHeight) : DEFAULT_PAGE_ROWS;
+    return visible + OVERSCAN * 2;
+  }
+
+  private get maxWindowStart(): number {
+    return Math.max(0, this.rows.length - this.windowLength);
+  }
+
+  /** The half-open slice of `rows` that is in the DOM. */
+  private get windowRange(): { start: number; end: number } {
+    if (!this.windowing) return { start: 0, end: this.rows.length };
+    const start = Math.min(Math.max(this.windowStart, 0), this.maxWindowStart);
+    return { start, end: Math.min(this.rows.length, start + this.windowLength) };
+  }
+
+  /** Bring an index into the DOM without moving the scroll box. */
+  private coverIndex(index: number): void {
+    if (!this.windowing || index < 0) return;
+    const { start, end } = this.windowRange;
+    if (index >= start && index < end) return;
+    this.windowStart = Math.min(Math.max(index - OVERSCAN, 0), this.maxWindowStart);
+  }
+
+  /**
+   * Scroll so an index is on screen.
+   *
+   * The arithmetic is the point: a row outside the window has no box to ask,
+   * so `scrollIntoView` cannot reach it. Every row is one line tall, so where
+   * row *n* sits is `n * rowHeight` and nothing has to be measured.
+   */
+  private scrollToRowIndex(index: number, block: 'center' | 'nearest'): void {
+    // Whatever was pending is about to be decided one way or the other. A
+    // pending scroll left over from a call that needed none is a view yanked
+    // sideways by the next unrelated render.
+    this.pendingScrollTop = null;
+
+    const scroller = this.scroller;
+    if (!scroller) return;
+
+    const viewport = scroller.clientHeight;
+    if (viewport <= 0) return;
+
+    // The header and the Net row are painted over the scroller, so the band a
+    // row is actually visible in starts below one and ends above the other.
+    const head = this.stickyHeadHeight();
+    const band = this.visibleRowsHeight();
+    const top = index * this.rowHeight;
+
+    if (block === 'center') {
+      this.pendingScrollTop = Math.max(0, top + this.rowHeight / 2 - (head + band / 2));
+    } else {
+      const current = scroller.scrollTop;
+      if (top - head < current) this.pendingScrollTop = Math.max(0, top - head);
+      else if (top + this.rowHeight > current + head + band) {
+        this.pendingScrollTop = top + this.rowHeight - head - band;
+      }
+    }
+
+    // A row already in the DOM schedules no re-render, so `updated` may never
+    // run: do it now rather than leave the scroll for whatever renders next.
+    const { start, end } = this.windowRange;
+    if (index >= start && index < end) this.applyPendingScroll();
+  }
+
+  private applyPendingScroll(): void {
+    if (this.pendingScrollTop === null) return;
+    const top = this.pendingScrollTop;
+    this.pendingScrollTop = null;
+    if (this.scroller) this.scroller.scrollTop = top;
+  }
+
+  private handleScroll = (): void => {
+    if (!this.windowing) return;
+    const scroller = this.scroller;
+    if (!scroller) return;
+    // Browsers already deliver at most one scroll event per frame, and lit
+    // batches the render into a microtask, so this needs no throttle of its
+    // own.
+    const first = Math.floor(scroller.scrollTop / this.rowHeight);
+    const start = Math.min(Math.max(first - OVERSCAN, 0), this.maxWindowStart);
+    if (start !== this.windowStart) this.windowStart = start;
+  };
+
+  /**
+   * Read a real row's height back. Answers whether it changed.
+   *
+   * The editing row carries two inputs and is taller than the rest, so it is
+   * never the one measured.
+   */
+  private remeasureRowHeight(): boolean {
+    const rows = this.shadowRoot?.querySelectorAll<HTMLElement>('tbody tr[data-id]') ?? [];
+    for (const row of rows) {
+      if (Number(row.dataset.id) === this.editingId) continue;
+      const height = row.getBoundingClientRect().height;
+      if (height <= 0) return false;
+      if (height === this.rowHeight) return false;
+      this.rowHeight = height;
+      return true;
+    }
+    return false;
   }
 
   // -- public API -----------------------------------------------------------
@@ -466,6 +731,8 @@ export class WcRegisterTable extends LitElement {
     if (!row) return false;
 
     this.setActive(row.id);
+    this.coverIndex(index);
+    this.scrollToRowIndex(index, 'center');
     void this.updateComplete.then(() => this.bringIntoView(row.id));
     return true;
   }
@@ -498,19 +765,26 @@ export class WcRegisterTable extends LitElement {
   /**
    * The one row in the tab order.
    *
-   * A roving tabindex needs a home even before anything is selected, or the
-   * table is not reachable by Tab at all and none of its keys can ever fire —
-   * which is exactly what happened on a register opened with a date filter,
-   * where nothing lands a cursor on load.
+   * A roving tabindex needs a home even before anything is selected: without
+   * one the table is not reachable by Tab at all and none of its keys can
+   * fire, which is the state a date-filtered register loads in, since nothing
+   * lands a cursor there.
    */
   private get tabStopId(): number | null {
     if (this.selectionIsRendered) return this.activeId;
-    return this.rows[0]?.id ?? null;
+    return this.rows[this.windowRange.start]?.id ?? null;
   }
 
-  /** Whether the selected row is one the table has actually drawn. */
+  /**
+   * Whether the selected row is one the table has actually drawn — which on a
+   * windowed register means inside the current slice, not merely present in
+   * `rows`. A selection scrolled out of the window cannot hold the tab stop.
+   */
   private get selectionIsRendered(): boolean {
-    return this.activeId !== null && this.rows.some((row) => row.id === this.activeId);
+    if (this.activeId === null) return false;
+    const index = this.rows.findIndex((row) => row.id === this.activeId);
+    const { start, end } = this.windowRange;
+    return index >= start && index < end;
   }
 
   /**
@@ -531,7 +805,12 @@ export class WcRegisterTable extends LitElement {
     return this.shadowRoot?.querySelector<HTMLElement>(`tr[data-id="${id}"]`) ?? null;
   }
 
+  /**
+   * The unwindowed path: every row has a box, so the browser can be asked.
+   * A windowed table has already been scrolled by arithmetic.
+   */
   private bringIntoView(id: number): void {
+    if (this.windowing) return;
     const element = this.rowElement(id);
     // jsdom has no layout and no scrollIntoView.
     if (element && typeof element.scrollIntoView === 'function') {
@@ -561,13 +840,16 @@ export class WcRegisterTable extends LitElement {
     if (!row) return;
     this.setActive(row.id);
     this.pendingFocusId = row.id;
+    // Both are needed and in this order: the row has to exist before the
+    // scroll box is moved to where it will be.
+    this.coverIndex(clamped);
+    this.scrollToRowIndex(clamped, 'nearest');
     this.requestUpdate();
   }
 
   private pageRows(): number {
-    const rowElement = this.shadowRoot?.querySelector('tbody tr');
-    const height = rowElement?.getBoundingClientRect().height ?? 0;
-    const rows = height > 0 ? Math.floor(this.visibleRowsHeight() / height) : 0;
+    this.remeasureRowHeight();
+    const rows = Math.floor(this.visibleRowsHeight() / this.rowHeight);
     // Zero means nothing could be measured, which is jsdom and a first paint.
     // One is a real answer: a window with room for one row pages by one.
     return rows > 0 ? rows : DEFAULT_PAGE_ROWS;
@@ -580,9 +862,12 @@ export class WcRegisterTable extends LitElement {
    */
   private visibleRowsHeight(): number {
     const scroller = this.scroller?.clientHeight ?? 0;
-    const head = this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
     const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
-    return Math.max(0, scroller - head - foot);
+    return Math.max(0, scroller - this.stickyHeadHeight() - foot);
+  }
+
+  private stickyHeadHeight(): number {
+    return this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
   }
 
   // -- keyboard -------------------------------------------------------------
@@ -811,15 +1096,29 @@ export class WcRegisterTable extends LitElement {
     }
 
     const columns = this.showAccount ? 7 : 6;
+    this.lastWindowLength = this.windowLength;
+    // Resolved once: the getter walks the rows, and a row must not pay for
+    // that on a register of two thousand.
+    const tabStop = this.tabStopId;
+    const hasFooter = this.total !== undefined || this.footerNote !== '';
 
     return html`
-      <div class="scroller">
-        <table role="grid">
+      <div class="scroller" @scroll=${this.handleScroll}>
+        <table role="grid" aria-rowcount=${this.rows.length + (hasFooter ? 2 : 1)}>
           <caption>
             ${this.caption}
           </caption>
+          <colgroup>
+            <col class="col-flag" />
+            <col class="col-date" />
+            <col class="col-description" />
+            <col class="col-category" />
+            <col class="col-vendor" />
+            <col class="col-amount" />
+            ${this.showAccount ? html`<col class="col-account" />` : nothing}
+          </colgroup>
           <thead>
-            <tr role="row">
+            <tr role="row" aria-rowindex="1">
               <th scope="col" class="flag"><span class="sr-only">Flag</span></th>
               <th scope="col">Date</th>
               <th scope="col">Description</th>
@@ -830,13 +1129,13 @@ export class WcRegisterTable extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.rows.map((row) => this.renderRow(row))}
+            ${this.renderBody(columns, tabStop)}
           </tbody>
           ${this.total === undefined && this.footerNote === ''
             ? nothing
             : html`
                 <tfoot>
-                  <tr role="row">
+                  <tr role="row" aria-rowindex=${this.rows.length + 2}>
                     <td role="gridcell" colspan=${columns - 1}>
                       Net
                       ${this.footerNote
@@ -854,6 +1153,81 @@ export class WcRegisterTable extends LitElement {
               `}
         </table>
       </div>
+    `;
+  }
+
+  /**
+   * The rows that go in the DOM: the window, plus the row being edited
+   * wherever it is.
+   *
+   * The editor has to survive a scroll. Slicing it out destroys the input and
+   * the half-typed vendor with it, so an editing row outside the window is
+   * drawn in its own place with spacers on both sides of it. Every gap between
+   * drawn rows becomes one spacer carrying the height of what it stands for,
+   * which is what keeps the scrollbar the length of the whole register.
+   */
+  private renderBody(columns: number, tabStop: number | null) {
+    const parts: { key: string; part: unknown }[] = [];
+    let previous = -1;
+    // Spacers are keyed by their ordinal, not by the rows they stand for:
+    // there are at most three, and a key derived from the scroll position
+    // would destroy and rebuild them on every frame.
+    let gaps = 0;
+
+    for (const index of this.renderedIndices) {
+      const gap = index - previous - 1;
+      if (gap > 0) {
+        parts.push({
+          key: `gap-${gaps++}`,
+          part: this.renderSpacer(gap * this.rowHeight, columns),
+        });
+      }
+      const row = this.rows[index];
+      if (row) parts.push({ key: `row-${row.id}`, part: this.renderRow(row, index, tabStop) });
+      previous = index;
+    }
+
+    const trailing = this.rows.length - previous - 1;
+    if (trailing > 0) {
+      parts.push({
+        key: `gap-${gaps++}`,
+        part: this.renderSpacer(trailing * this.rowHeight, columns),
+      });
+    }
+
+    // Keyed, so a row moving between segments — which is what an editing row
+    // does the moment the window scrolls past it — has its DOM moved rather
+    // than rebuilt. Rebuilding it would replace the inputs and lose whatever
+    // had been typed into them.
+    return repeat(
+      parts,
+      (item) => item.key,
+      (item) => item.part,
+    );
+  }
+
+  /** Ascending, no duplicates. */
+  private get renderedIndices(): number[] {
+    const { start, end } = this.windowRange;
+    const indices: number[] = [];
+    for (let index = start; index < end; index += 1) indices.push(index);
+    if (!this.windowing || this.editingId === null) return indices;
+
+    const editing = this.rows.findIndex((row) => row.id === this.editingId);
+    if (editing < 0 || (editing >= start && editing < end)) return indices;
+    if (editing < start) indices.unshift(editing);
+    else indices.push(editing);
+    return indices;
+  }
+
+  /** Height standing in for the rows not drawn, so the scrollbar is the
+      length of the whole register rather than of what is on screen. */
+  private renderSpacer(height: number, columns: number) {
+    if (height <= 0) return nothing;
+    return html`
+      <tr class="spacer" aria-hidden="true">
+        <td colspan=${columns} style=${`height: ${height}px`}></td>
+      </tr>
     `;
   }
 
@@ -881,10 +1255,9 @@ export class WcRegisterTable extends LitElement {
     return html`<wc-icon-flag role="img" aria-label="Flagged"></wc-icon-flag>`;
   }
 
-  private renderRow(row: RegisterTableRow) {
+  private renderRow(row: RegisterTableRow, index: number, tabStopId: number | null) {
     const selected = row.id === this.activeId;
     const editing = row.id === this.editingId;
-    const tabStop = row.id === this.tabStopId;
 
     return html`
       <tr
@@ -893,7 +1266,8 @@ export class WcRegisterTable extends LitElement {
         data-flagged=${row.isFlagged ? 'true' : 'false'}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
-        tabindex=${tabStop ? '0' : '-1'}
+        aria-rowindex=${index + 2}
+        tabindex=${row.id === tabStopId ? '0' : '-1'}
         @focusin=${() => this.handleRowFocusIn(row)}
         @click=${() => this.setActive(row.id)}
         @dblclick=${() => this.activateRow(row)}
@@ -902,20 +1276,22 @@ export class WcRegisterTable extends LitElement {
           ${this.readonly ? this.renderFlagMark(row) : this.renderFlagButton(row)}
         </td>
         <td role="gridcell" class="date">${row.date}</td>
-        <td role="gridcell">${row.description}</td>
+        <td role="gridcell" class="text" title=${row.description}>${row.description}</td>
         ${editing
           ? this.renderEditCells(row)
           : html`
-              <td role="gridcell">
+              <td role="gridcell" class="text" title=${row.category ?? ''}>
                 ${row.category ?? html`<span class="muted">—</span>`}
               </td>
-              <td role="gridcell">${row.vendor ?? ''}</td>
+              <td role="gridcell" class="text" title=${row.vendor ?? ''}>
+                ${row.vendor ?? ''}
+              </td>
             `}
         <td role="gridcell" class="amount">
           <wc-money .amount=${row.amount} align="end"></wc-money>
         </td>
         ${this.showAccount
-          ? html`<td role="gridcell">
+          ? html`<td role="gridcell" class=${editing ? '' : 'text'} title=${row.accountName}>
               ${editing ? this.renderEditActions() : row.accountName}
             </td>`
           : nothing}

@@ -731,6 +731,360 @@ describe('keys the browser owns', () => {
   });
 });
 
+describe('a register too big to put in the DOM', () => {
+  const BIG = 1872;
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function dataRows(el: WcRegisterTable): HTMLElement[] {
+    return [...(el.shadowRoot?.querySelectorAll<HTMLElement>('tbody tr[data-id]') ?? [])];
+  }
+
+  function renderedIds(el: WcRegisterTable): number[] {
+    return dataRows(el).map((tr) => Number(tr.dataset.id));
+  }
+
+  function spacerHeights(el: WcRegisterTable): number[] {
+    return [...(el.shadowRoot?.querySelectorAll<HTMLElement>('tr.spacer td') ?? [])].map(
+      (td) => Number.parseFloat(td.style.height),
+    );
+  }
+
+  /** jsdom measures nothing, so the scroller is given a viewport and rows a height. */
+  function stubLayout(
+    el: WcRegisterTable,
+    rowHeight = 33,
+    viewport = 660,
+    headHeight = 0,
+    footHeight = 0,
+  ): void {
+    const scroller = el.shadowRoot?.querySelector('.scroller');
+    if (!scroller) throw new Error('no scroller');
+    const head = el.shadowRoot?.querySelector('thead');
+    if (head) head.getBoundingClientRect = () => ({ height: headHeight }) as DOMRect;
+    const foot = el.shadowRoot?.querySelector('tfoot');
+    if (foot) foot.getBoundingClientRect = () => ({ height: footHeight }) as DOMRect;
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: viewport,
+      configurable: true,
+    });
+    let top = 0;
+    Object.defineProperty(scroller, 'scrollTop', {
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+      configurable: true,
+    });
+    for (const row of dataRows(el)) {
+      row.getBoundingClientRect = () => ({ height: rowHeight }) as DOMRect;
+    }
+  }
+
+  async function scrollTo(el: WcRegisterTable, top: number): Promise<void> {
+    const scroller = el.shadowRoot?.querySelector('.scroller');
+    if (!scroller) throw new Error('no scroller');
+    (scroller as HTMLElement).scrollTop = top;
+    scroller.dispatchEvent(new Event('scroll'));
+    await el.updateComplete;
+  }
+
+  it('puts a bounded slice in the DOM, not 1,872 rows', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    expect(el.rows.length).toBe(BIG);
+    expect(dataRows(el).length).toBeLessThan(60);
+    expect(el.shadowRoot?.querySelectorAll('*').length ?? 0).toBeLessThan(700);
+  });
+
+  it('keeps the slice the same size however many rows there are', async () => {
+    const small = await mount({ rows: fixture(400) });
+    const large = await mount({ rows: fixture(20000) });
+    expect(dataRows(large).length).toBe(dataRows(small).length);
+  });
+
+  it('renders a short register whole, because windowing is not free', async () => {
+    const el = await mount({ rows: fixture(40) });
+    expect(dataRows(el).length).toBe(40);
+    expect(el.shadowRoot?.querySelector('tr.spacer')).toBeNull();
+  });
+
+  it('stands in for the rows it left out, so the scrollbar is the whole register', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    const shown = dataRows(el).length;
+    const total = spacerHeights(el).reduce((sum, height) => sum + height, 0);
+    // Every row is one line tall, so the drawn rows plus the spacers are the
+    // height the register would have had.
+    expect(total / 33 + shown).toBe(BIG);
+  });
+
+  it('still tells assistive technology how many rows there really are', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    const table = el.shadowRoot?.querySelector('table');
+    expect(table?.getAttribute('aria-rowcount')).toBe(String(BIG + 1));
+    // The header is row 1, so the first data row is row 2 wherever it sits.
+    expect(dataRows(el)[0]?.getAttribute('aria-rowindex')).toBe('2');
+  });
+
+  it('numbers a row by its place in the register, not in the window', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    await press(el, 'End');
+    const last = dataRows(el).at(-1);
+    expect(Number(last?.dataset.id)).toBe(100 + BIG - 1);
+    expect(last?.getAttribute('aria-rowindex')).toBe(String(BIG + 1));
+  });
+
+  // -- the four behaviours that have to survive a boundary -------------------
+
+  it('walks the arrow keys past the end of the window', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    stubLayout(el);
+
+    const before = renderedIds(el);
+    for (let i = 0; i < 40; i += 1) await press(el, 'ArrowDown');
+
+    expect(selectedId(el)).toBe(140);
+    expect(renderedIds(el)).not.toEqual(before);
+    // The selected row is in the DOM and holds the tab stop, which is what
+    // makes the next keystroke work.
+    const selected = dataRows(el).find((tr) => Number(tr.dataset.id) === 140);
+    expect(selected?.tabIndex).toBe(0);
+  });
+
+  it('jumps to the last row and back to the first', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    stubLayout(el);
+
+    await press(el, 'End');
+    expect(selectedId(el)).toBe(100 + BIG - 1);
+    expect(renderedIds(el)).toContain(100 + BIG - 1);
+
+    await press(el, 'Home');
+    expect(selectedId(el)).toBe(100);
+    expect(renderedIds(el)).toContain(100);
+  });
+
+  it('pages by a screenful across the boundary', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    stubLayout(el, 33, 33 * 20);
+
+    await press(el, 'PageDown');
+    await press(el, 'PageDown');
+
+    expect(selectedId(el)).toBe(140);
+    expect(renderedIds(el)).toContain(140);
+  });
+
+  it('scrolls to today across the boundary and selects that row', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+
+    expect(el.scrollToIndex(1500)).toBe(true);
+    await el.updateComplete;
+
+    expect(selectedId(el)).toBe(1600);
+    expect(renderedIds(el)).toContain(1600);
+  });
+
+  it('opens the editors on a row the window had left out', async () => {
+    const el = await mount({ rows: fixture(BIG), categories });
+    el.editingId = 1700;
+    await el.updateComplete;
+
+    const editing = dataRows(el).find((tr) => Number(tr.dataset.id) === 1700);
+    expect(editing).toBeDefined();
+    expect(editing?.querySelector('input[role="combobox"]')).not.toBeNull();
+    expect(editing?.querySelector('wa-input')).not.toBeNull();
+  });
+
+  it('flags a row that scrolled into the window', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+
+    const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    const row = dataRows(el).find((tr) => Number(tr.dataset.id) === 1000);
+    expect(row).toBeDefined();
+    row?.querySelector('button')?.click();
+
+    expect(seen).toEqual([{ id: 1000, flag: true }]);
+  });
+
+  it('moves the window when the scroller is scrolled', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    expect(renderedIds(el)[0]).toBe(100);
+
+    await scrollTo(el, 33 * 500);
+    expect(renderedIds(el)[0]).toBe(100 + 500 - 8);
+
+    await scrollTo(el, 0);
+    expect(renderedIds(el)[0]).toBe(100);
+  });
+
+  it('takes a search back to the top of its results', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+    expect(renderedIds(el)[0]).not.toBe(100);
+
+    el.rows = fixture(BIG).slice(0, 300);
+    await el.updateComplete;
+
+    expect(renderedIds(el)[0]).toBe(100);
+  });
+
+  it('stays where it is when the host hands back the same rows', async () => {
+    // The screen rebuilds its filtered array on every render, so array
+    // identity changes constantly; only a different row set is a new list.
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+    const before = renderedIds(el);
+
+    el.rows = fixture(BIG);
+    await el.updateComplete;
+
+    expect(renderedIds(el)).toEqual(before);
+  });
+
+  it('draws more rows into a taller viewport', async () => {
+    const short = await mount({ rows: fixture(BIG) });
+    stubLayout(short, 33, 33 * 10);
+    // Far enough to move the window, which is what makes the table re-read
+    // the viewport it was given.
+    await scrollTo(short, 33 * 100);
+
+    const tall = await mount({ rows: fixture(BIG) });
+    stubLayout(tall, 33, 33 * 40);
+    await scrollTo(tall, 33 * 100);
+
+    expect(dataRows(tall).length).toBeGreaterThan(dataRows(short).length);
+    // Still bounded: what grew is the viewport, not the register.
+    expect(dataRows(tall).length).toBeLessThan(80);
+  });
+
+  it('keeps the editor in the DOM when the window scrolls past it', async () => {
+    // Losing the row loses the typed text with it: the input is destroyed
+    // mid-edit and the vendor the user was halfway through is gone.
+    const el = await mount({ rows: fixture(BIG), categories });
+    stubLayout(el);
+    el.editingId = 1000;
+    await el.updateComplete;
+
+    const input = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
+      '.vendor-input',
+    );
+    if (!input) throw new Error('no vendor input');
+    input.value = 'Northwind';
+
+    await scrollTo(el, 33 * 1500);
+
+    const after = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
+      '.vendor-input',
+    );
+    expect(after).not.toBeNull();
+    expect(after?.value).toBe('Northwind');
+    expect(dataRows(el).length).toBeLessThan(60);
+  });
+
+  it('leaves a selection that scrolled out of the window selected', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+
+    // The first row on screen takes the tab stop, so Tab has somewhere to
+    // land — but landing there must not move the cursor off row 100, or Enter
+    // would open a transaction the user never chose.
+    const stop = dataRows(el).find((tr) => tr.tabIndex === 0);
+    expect(stop).toBeDefined();
+    stop?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+
+    expect(el.selectedId).toBe(100);
+    const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    await press(el, 'Enter');
+    expect(seen).toEqual([{ id: 100 }]);
+  });
+
+  it('keeps its place when an edit drops a row from the same set', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+    const before = renderedIds(el);
+
+    // A recategorized row falls out of a filtered register: the same list,
+    // one row shorter. Yanking the scroll to the top would lose the user's
+    // place over an edit they made themselves.
+    const shorter = fixture(BIG).filter((row) => row.id !== 1500);
+    el.rows = shorter;
+    await el.updateComplete;
+
+    expect(renderedIds(el)[0]).toBe(before[0]);
+  });
+
+  it('goes to the top when the rows are a different list altogether', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el);
+    await scrollTo(el, 33 * 900);
+
+    // A search result, an account change, a period change: nothing the window
+    // was showing is in the new list.
+    el.rows = fixture(40).map((row) => ({ ...row, id: row.id + 90000 }));
+    await el.updateComplete;
+
+    expect(renderedIds(el)[0]).toBe(90100);
+  });
+
+  it('lands a scroll-to-today row below the sticky header, not under it', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    // Deliberately asymmetric: centring in the whole box and centring in the
+    // band between the header and the Net row only agree when they match.
+    stubLayout(el, 33, 660, 40, 20);
+
+    el.scrollToIndex(1000);
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    const band = 660 - 40 - 20;
+    expect(scroller.scrollTop).toBe(1000 * 33 + 33 / 2 - (40 + band / 2));
+  });
+
+  it('never leaves a scroll pending across an unrelated update', async () => {
+    const el = await mount({ rows: fixture(BIG), selectedId: 100 });
+    stubLayout(el);
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+
+    // Already selected and already on screen: nothing to scroll to.
+    el.scrollToIndex(0);
+    await el.updateComplete;
+    scroller.scrollTop = 33 * 400;
+    scroller.dispatchEvent(new Event('scroll'));
+    await el.updateComplete;
+
+    // An unrelated re-render must not yank the view back.
+    el.busyId = 100;
+    await el.updateComplete;
+    expect(scroller.scrollTop).toBe(33 * 400);
+  });
+
+  it('counts the Net row in what it tells assistive technology', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    const table = el.shadowRoot?.querySelector('table');
+    // Header, every transaction, and the total row.
+    expect(table?.getAttribute('aria-rowcount')).toBe(String(BIG + 2));
+    expect(
+      el.shadowRoot?.querySelector('tfoot tr')?.getAttribute('aria-rowindex'),
+    ).toBe(String(BIG + 2));
+  });
+
+  it('can be told to render everything anyway', async () => {
+    const el = await mount({ rows: fixture(200), virtualizeAbove: Infinity });
+    expect(dataRows(el).length).toBe(200);
+  });
+});
+
 describe('wc-register-table height', () => {
   afterEach(() => {
     document.body.innerHTML = '';
