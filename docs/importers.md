@@ -1,6 +1,6 @@
 # Adding Importers to Nigel
 
-All importer code lives in `src/importer.rs`. Nigel uses enum dispatch — each bank format is a variant of `ImporterKind`, with match arms for detection and parsing. No trait objects, no plugin registry.
+All importer code lives in `crates/nigel-core/src/importer.rs`. Nigel uses enum dispatch — each bank format is a variant of `ImporterKind`, with match arms for detection and parsing. No trait objects, no plugin registry.
 
 ## Architecture
 
@@ -182,7 +182,7 @@ fn test_chase_checking_detect() {
 
 ## Shared Helpers
 
-These are available in `src/importer.rs` for use in any parser:
+These are available in `crates/nigel-core/src/importer.rs` for use in any parser:
 
 | Function | Purpose |
 |----------|---------|

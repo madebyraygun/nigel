@@ -22,7 +22,7 @@ Here's my Chase checking statement (attached: chase_jan2025.csv). Create an impo
 ### What it does
 
 1. Analyzes the file — identifies headers, date format, amount convention, rows to skip
-2. Reads existing importer patterns in `src/importer.rs`
+2. Reads existing importer patterns in `crates/nigel-core/src/importer.rs`
 3. Generates a new `ImporterKind` variant with `detect()` and `parse()` functions
 4. Adds tests with sanitized sample data from the real file
 5. Runs `cargo test` to verify
