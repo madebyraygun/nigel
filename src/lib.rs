@@ -23,6 +23,7 @@ pub mod pdf;
 pub mod reconciler;
 pub mod reports;
 pub mod reviewer;
+pub mod rules;
 #[cfg(feature = "serve")]
 pub mod server;
 pub mod settings;
