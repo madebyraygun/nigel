@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '@nigel/ui';
-import { dispatchNcToast } from '@nigel/ui';
+import { dispatchNcToast, narrowViewport } from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { FetchApiClient, appUnauthorized, type ApiClient } from '../api/index.js';
@@ -61,6 +61,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
   @state()
   private route: Route = { screen: DEFAULT_SCREEN, params: new URLSearchParams() };
 
+  /**
+   * Whether the sidebar is put away — the rail on a wide viewport, off-canvas
+   * on a phone, where it starts that way because it would otherwise cover the
+   * screen. The shell renders the control and asks; the sidebar is this
+   * element's slotted child, so only this element can pass the answer down.
+   */
+  @state()
+  private sidebarCollapsed = narrowViewport();
+
   private store: AppStore | null = null;
   private reportedError: string | null = null;
 
@@ -92,6 +101,10 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
   private handleNavigate = (event: CustomEvent<{ id: string }>): void => {
     window.location.hash = `#/${event.detail.id}`;
+  };
+
+  private handleSidebarToggle = (event: CustomEvent<{ collapsed: boolean }>): void => {
+    this.sidebarCollapsed = event.detail.collapsed;
   };
 
   /** Navigation for screens: the same one-directional path the sidebar takes. */
@@ -151,9 +164,14 @@ export class NigelApp extends SignalWatcher(LitElement) {
     document.title = `${screen.title} · ${store.companyName.get()}`;
 
     return html`
-      <wc-app-shell screen-title=${screen.title}>
+      <wc-app-shell
+        screen-title=${screen.title}
+        ?sidebar-collapsed=${this.sidebarCollapsed}
+        @nc-sidebar-toggle=${this.handleSidebarToggle}
+      >
         <wc-nav-sidebar
           slot="sidebar"
+          ?collapsed=${this.sidebarCollapsed}
           .items=${navItems()}
           active=${screen.id}
           app-name=${store.companyName.get()}

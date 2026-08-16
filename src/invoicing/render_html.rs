@@ -262,6 +262,7 @@ pub enum PayButton<'a> {
 /// reachable by omission, and a caller who forgot the template would get an
 /// empty page rather than a compile error. Tests that are about something else
 /// use `with_template`.
+#[derive(Clone, Copy)]
 pub struct Branding<'a> {
     pub template: &'a str,
     pub company: &'a str,
@@ -270,16 +271,29 @@ pub struct Branding<'a> {
     /// The stored `company_logo` data URI. Parsed by the render seam, once, for
     /// both documents.
     pub logo: &'a str,
+    /// Where the **page** should point its `<img>` instead of inlining `logo`.
+    ///
+    /// `None` is the self-contained page: preview renders one, because preview
+    /// makes no network call and needs no configuration, and so does a published
+    /// page whose logo upload did not happen. The bytes are the same either way
+    /// — this only decides whether the page fetches them or carries them, which
+    /// is the difference between a logo Gmail renders and one it strips.
+    pub logo_url: Option<&'a str>,
     /// The operator's own payment instructions, multi-line.
     pub payment_instructions: &'a str,
     pub contact_email: &'a str,
 }
 
-#[cfg(test)]
 impl<'a> Branding<'a> {
+    /// The same letterhead with the page pointed at a hosted logo.
+    pub fn with_logo_url(&self, logo_url: Option<&'a str>) -> Branding<'a> {
+        Branding { logo_url, ..*self }
+    }
+
     /// A branding carrying a template and no letterhead, for the tests that are
     /// about something else. It takes the one field that has no honest empty
     /// value, which is why this exists instead of `Default`.
+    #[cfg(test)]
     pub(crate) fn with_template(template: &'a str) -> Self {
         Self {
             template,
@@ -287,6 +301,7 @@ impl<'a> Branding<'a> {
             company_address: "",
             company_phone: "",
             logo: "",
+            logo_url: None,
             payment_instructions: "",
             contact_email: "",
         }
@@ -298,16 +313,31 @@ impl<'a> Branding<'a> {
 /// It takes no template and no configuration: the invoice template is the
 /// operator's to edit, and a voided page that could fail to render — a broken
 /// override, a missing `from_email` — would leave a live Pay button up because
-/// the notice replacing it did not compile. The only value on it is the number,
-/// which is an `i64` and so cannot carry markup. No figures, no client name and
-/// no pay button: whoever opens this address may be anyone the link was
-/// forwarded to, and a cancelled invoice owes them one fact.
-pub fn voided_page_html(number: i64) -> String {
+/// the notice replacing it did not compile. No figures, no client name and no
+/// pay button: whoever opens this address may be anyone the link was forwarded
+/// to, and a cancelled invoice owes them one fact.
+///
+/// `logo_url` is the one thing it carries besides the number, and it is a URL
+/// this installation has **already published** rather than one derived from
+/// configuration — `invoicing::logo::published_logo_url` reads back what a send
+/// put there. The notice is still the operator's page, and a page that was
+/// wearing a letterhead a moment ago should not lose it on the way to saying the
+/// invoice is cancelled. `None` renders no image at all, so a value that was
+/// never published cannot become a broken one.
+pub fn voided_page_html(number: i64, logo_url: Option<&str>) -> String {
+    let logo = match logo_url {
+        Some(url) => format!(
+            "<p><img src=\"{}\" alt=\"\" style=\"max-width:12rem;max-height:4rem\"></p>\n",
+            esc(url)
+        ),
+        None => String::new(),
+    };
     format!(
         "<!doctype html>\n\
          <html><head><meta charset=\"utf-8\"><title>Invoice {number} — voided</title>\n\
          <style>body{{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem}}</style>\n\
          </head><body>\n\
+         {logo}\
          <h1>This invoice has been voided</h1>\n\
          <p>Invoice #{number} was cancelled and is no longer payable. Please contact the sender if you were expecting to pay it.</p>\n\
          </body></html>\n"
@@ -395,13 +425,23 @@ pub fn render_invoice_html(
     // The image the operator configured, or nothing. A stored value that cannot
     // be used renders no `<img>` at all rather than a broken one, and never an
     // error: a logo is decoration on a document about money.
+    //
+    // `logo_url` only decides where the same bytes come from. A published page
+    // points at the object beside it, because the page is an email body and
+    // Gmail strips a `data:` URI out of one; a preview, and a published page
+    // whose logo upload did not happen, carries them inline and stays a file
+    // that renders on its own.
     let logo = match parse_logo(branding.logo) {
-        Ok(Some(logo)) => format!(
-            "<img class=\"logo\" src=\"data:{};base64,{}\" alt=\"{}\">",
-            logo.mime,
-            esc(&logo.base64),
-            esc(branding.company.trim())
-        ),
+        Ok(Some(logo)) => {
+            let src = match branding.logo_url {
+                Some(url) => esc(url),
+                None => format!("data:{};base64,{}", logo.mime, esc(&logo.base64)),
+            };
+            format!(
+                "<img class=\"logo\" src=\"{src}\" alt=\"{}\">",
+                esc(branding.company.trim())
+            )
+        }
         Ok(None) | Err(_) => String::new(),
     };
 
@@ -1139,10 +1179,15 @@ mod tests {
     }
 
     fn logo_html(logo: &str) -> String {
+        logo_html_hosted(logo, None)
+    }
+
+    fn logo_html_hosted(logo: &str, logo_url: Option<&str>) -> String {
         let (inv, client, items) = sample();
         let branding = Branding {
             company: "Bluepeak <LLC>",
             logo,
+            logo_url,
             contact_email: "b@e.test",
             ..Branding::with_template("[{{LOGO}}]{{NUMBER}}{{CLIENT}}{{ROWS}}{{TOTAL}}")
         };
@@ -1154,6 +1199,53 @@ mod tests {
             &money(&inv),
             PayButton::Omitted,
         )
+    }
+
+    /// The published page's difference from a preview, and the whole reason the
+    /// object exists: Gmail strips a `data:` URI out of an email body, and the
+    /// page **is** the body.
+    #[test]
+    fn a_hosted_logo_becomes_the_img_src_and_the_data_uri_does_not_appear() {
+        let uri = png_data_uri();
+        let html = logo_html_hosted(&uri, Some("https://billing.example.test/i/logo.png"));
+
+        assert!(
+            html.contains("<img class=\"logo\" src=\"https://billing.example.test/i/logo.png\""),
+            "got: {html}"
+        );
+        assert!(
+            !html.contains("data:image/png;base64"),
+            "the bytes are fetched, not carried: {html}"
+        );
+        assert!(
+            html.contains("alt=\"Bluepeak &lt;LLC&gt;\""),
+            "the alt text is unchanged: {html}"
+        );
+    }
+
+    /// The same seam, with nowhere to point: preview renders this, and so does a
+    /// published page whose logo upload did not happen. Self-contained either
+    /// way — the fallback is a page that still shows the mark.
+    #[test]
+    fn without_a_hosted_address_the_page_still_carries_the_bytes_inline() {
+        let uri = png_data_uri();
+        let html = logo_html_hosted(&uri, None);
+
+        assert!(html.contains(&format!("src=\"{uri}\"")), "got: {html}");
+    }
+
+    /// A hosted address is only reached through a logo the documents would
+    /// draw, so an unusable stored value renders no `<img>` even when one is
+    /// offered.
+    #[test]
+    fn a_hosted_address_cannot_resurrect_an_unusable_logo() {
+        let html = logo_html_hosted(
+            "data:image/png;base64,bm90IGEgcG5n",
+            Some("https://billing.example.test/i/logo.png"),
+        );
+
+        assert!(!html.contains("<img"), "got: {html}");
+        assert!(!html.contains("logo.png"), "got: {html}");
     }
 
     #[test]
@@ -1540,6 +1632,7 @@ mod tests {
             company_address: "P.O. Box 1234",
             company_phone: "619.555.0123",
             logo: &uri,
+            logo_url: None,
             payment_instructions: "Wells Fargo, routing 121000248",
             contact_email: "b@e.test",
         };
@@ -2302,7 +2395,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;bo
 
     #[test]
     fn the_voided_page_names_the_invoice_and_offers_nothing_to_pay() {
-        let html = voided_page_html(1248);
+        let html = voided_page_html(1248, None);
         assert!(html.contains("voided"), "got: {html}");
         assert!(html.contains("#1248"), "got: {html}");
         assert!(!html.contains("class=\"pay\""), "got: {html}");
@@ -2313,7 +2406,36 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;bo
     /// operator template can stop a void from replacing the live page.
     #[test]
     fn the_voided_page_expands_no_placeholders() {
-        let html = voided_page_html(1248);
+        let html = voided_page_html(1248, None);
         assert!(!html.contains("{{"), "got: {html}");
+    }
+
+    /// The notice is still the operator's page: an invoice that was wearing a
+    /// letterhead a moment ago does not lose it on the way to saying it is
+    /// cancelled.
+    #[test]
+    fn the_voided_page_keeps_the_letterhead_logo() {
+        let html = voided_page_html(1248, Some("https://billing.example.test/i/logo.png"));
+
+        assert!(
+            html.contains("<img src=\"https://billing.example.test/i/logo.png\""),
+            "got: {html}"
+        );
+        // Still nothing to click and nothing to pay: an image is not a link.
+        assert!(!html.contains("href"), "got: {html}");
+        assert!(!html.contains("class=\"pay\""), "got: {html}");
+    }
+
+    /// A page that never had a published logo shows none, rather than a broken
+    /// one: the address comes from what a send actually put in the bucket.
+    #[test]
+    fn the_voided_page_shows_no_image_when_nothing_was_published() {
+        assert!(!voided_page_html(1248, None).contains("<img"));
+    }
+
+    #[test]
+    fn the_voided_pages_logo_address_is_escaped() {
+        let html = voided_page_html(1248, Some("https://x.test/i/\"><script>alert(1)</script>"));
+        assert!(!html.contains("<script>"), "got: {html}");
     }
 }

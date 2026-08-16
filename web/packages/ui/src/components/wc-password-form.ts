@@ -19,13 +19,35 @@ const SUBMIT_LABELS: Record<WcPasswordMode, string> = {
   remove: 'Remove password',
 };
 
+const HEADINGS: Record<WcPasswordMode, string> = {
+  set: 'Encrypt this database',
+  change: 'Change password',
+  remove: 'Remove password',
+};
+
+const DESCRIPTIONS: Record<WcPasswordMode, string> = {
+  set: 'Choose a password. Nigel asks for it every time it opens these books.',
+  change: 'Enter the password in use now, then the one that replaces it.',
+  remove:
+    'Decrypts the database. Anyone who can read the file can then read the books.',
+};
+
 /**
- * The set / change / remove password field group.
+ * One password operation — set, change, or remove — as a named group.
  *
  * "New password plus confirmation, with a mismatch message" is visual behavior,
  * so it lives here rather than being retyped into every screen that needs it.
  * The confirmation value never leaves the component — it exists to catch a typo,
  * and the server has no use for it.
+ *
+ * The operation is a `fieldset` under a `legend`, because an encrypted database
+ * puts change and remove on screen together and each collects a field called
+ * "Current password". Positional order is the only thing that tells them apart
+ * in a flat stack, and positional order is not something a screen reader
+ * conveys — the legend names the owner of every field inside it. The heading
+ * sits inside the legend rather than above it, which `legend`'s content model
+ * allows, so the operation is one thing to both heading navigation and form
+ * grouping instead of two elements that have to be kept in step.
  */
 @customElement('wc-password-form')
 export class WcPasswordForm extends LitElement {
@@ -39,9 +61,41 @@ export class WcPasswordForm extends LitElement {
       }
 
       form {
+        max-width: 24rem;
+      }
+
+      fieldset {
         display: grid;
         gap: var(--wa-space-m, 12px);
-        max-width: 24rem;
+        margin: 0;
+        padding: var(--wa-space-m, 12px);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-m, 8px);
+      }
+
+      legend {
+        padding: 0 var(--wa-space-2xs, 4px);
+      }
+
+      legend h3 {
+        margin: 0;
+        font-size: var(--wa-font-size-m, 14px);
+        font-weight: var(--wa-font-weight-semibold, 600);
+      }
+
+      .description {
+        margin: 0;
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+
+      :host([mode='remove']) fieldset {
+        border-color: var(--wa-color-danger);
+      }
+
+      :host([mode='remove']) legend h3,
+      :host([mode='remove']) .description {
+        color: var(--wa-color-danger);
       }
 
       .message {
@@ -141,45 +195,49 @@ export class WcPasswordForm extends LitElement {
     const message = this.localError || this.error;
     return html`
       <form @submit=${this.handleSubmit}>
-        ${this.needsCurrent
-          ? html`<wa-input
-              data-current
-              type="password"
-              label="Current password"
-              autocomplete="current-password"
+        <fieldset>
+          <legend><h3>${HEADINGS[this.mode]}</h3></legend>
+          <p class="description">${DESCRIPTIONS[this.mode]}</p>
+          ${this.needsCurrent
+            ? html`<wa-input
+                data-current
+                type="password"
+                label="Current password"
+                autocomplete="current-password"
+                ?disabled=${this.busy}
+              ></wa-input>`
+            : nothing}
+          ${this.needsNew
+            ? html`
+                <wa-input
+                  data-new
+                  type="password"
+                  label="New password"
+                  autocomplete="new-password"
+                  ?disabled=${this.busy}
+                ></wa-input>
+                <wa-input
+                  data-confirm
+                  type="password"
+                  label="Confirm new password"
+                  autocomplete="new-password"
+                  ?disabled=${this.busy}
+                ></wa-input>
+              `
+            : nothing}
+          <p class="message ${message ? 'error' : ''}" role="status" aria-live="polite">
+            ${message}
+          </p>
+          <div class="actions">
+            <wa-button
+              type="submit"
+              variant=${this.mode === 'remove' ? 'danger' : 'brand'}
               ?disabled=${this.busy}
-            ></wa-input>`
-          : nothing}
-        ${this.needsNew
-          ? html`
-              <wa-input
-                data-new
-                type="password"
-                label="New password"
-                autocomplete="new-password"
-                ?disabled=${this.busy}
-              ></wa-input>
-              <wa-input
-                data-confirm
-                type="password"
-                label="Confirm new password"
-                autocomplete="new-password"
-                ?disabled=${this.busy}
-              ></wa-input>
-            `
-          : nothing}
-        <p class="message ${message ? 'error' : ''}" role="status" aria-live="polite">
-          ${message}
-        </p>
-        <div class="actions">
-          <wa-button
-            type="submit"
-            variant=${this.mode === 'remove' ? 'danger' : 'brand'}
-            ?disabled=${this.busy}
-          >
-            ${this.busy ? 'Working…' : SUBMIT_LABELS[this.mode]}
-          </wa-button>
-        </div>
+            >
+              ${this.busy ? 'Working…' : SUBMIT_LABELS[this.mode]}
+            </wa-button>
+          </div>
+        </fieldset>
       </form>
     `;
   }

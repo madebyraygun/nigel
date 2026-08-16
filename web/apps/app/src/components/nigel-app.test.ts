@@ -24,6 +24,19 @@ async function mount(client = new FakeApiClient()): Promise<NigelApp> {
 const shell = (el: NigelApp) => el.shadowRoot?.querySelector('wc-app-shell');
 const sidebar = (el: NigelApp) => el.shadowRoot?.querySelector('wc-nav-sidebar');
 
+/** jsdom's matchMedia answers false to everything, which is a wide viewport. */
+function matchMediaReturning(matches: boolean): void {
+  window.matchMedia = ((query: string) => ({
+    matches,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+}
+
+const phoneScreen = () => matchMediaReturning(true);
+const widescreen = () => matchMediaReturning(false);
+
 describe('nigel-app', () => {
   beforeEach(() => {
     resetAppStore();
@@ -221,6 +234,61 @@ describe('nigel-app', () => {
     it('shows no banner when everything is fine', async () => {
       const el = await mount();
       expect(el.shadowRoot?.querySelector('[slot="banner"]')).toBeNull();
+    });
+  });
+
+  describe('the sidebar it owns', () => {
+    // The sidebar is nigel-app's slotted child, so only nigel-app can pass
+    // `collapsed` down; the shell asks by event and the answer comes back as a
+    // property on both.
+    afterEach(() => {
+      widescreen();
+    });
+
+    it('shows the sidebar on a wide viewport', async () => {
+      const el = await mount();
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(false);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(false);
+    });
+
+    it('starts with the sidebar away on a phone', async () => {
+      // 232px of a 390px viewport, before a screen has drawn anything.
+      phoneScreen();
+      const el = await mount();
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+    });
+
+    it('puts the sidebar away when the shell asks', async () => {
+      const el = await mount();
+
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: true },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
+      expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+    });
+
+    it('brings the sidebar back when the shell asks', async () => {
+      phoneScreen();
+      const el = await mount();
+
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: false },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(false);
     });
   });
 });

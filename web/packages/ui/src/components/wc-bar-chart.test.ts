@@ -2,7 +2,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import './wc-bar-chart.js';
 import { barHeights, type BarBucket, type WcBarChart } from './wc-bar-chart.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-bar-chart.preview.js';
+import { WcBarChart as WcBarChartCtor } from './wc-bar-chart.js';
 
 const buckets: BarBucket[] = [
   { label: 'Jan', income: 1000, expense: 500 },
@@ -145,3 +147,22 @@ describe('wc-bar-chart', () => {
 });
 
 describePreviewA11y(preview);
+
+describe('wc-bar-chart in a narrow panel', () => {
+  // jsdom has no layout engine, so the rules are read the way the register's
+  // fill rules are.
+  const text = styleText(WcBarChartCtor);
+
+  it('scrolls rather than widening the page it sits on', () => {
+    // Thirteen buckets and their month labels need about 376px. On a 390px
+    // phone that used to push the whole dashboard grid to 410px, because a
+    // grid item's automatic minimum is its content. A scroll container's is
+    // zero, so the chart gives the page its width back and keeps its own.
+    expect(text).toMatch(/\.chart\s*{[^}]*overflow-x:\s*auto/);
+  });
+
+  it('keeps a bucket wide enough to read instead of shrinking to a hairline', () => {
+    expect(text).toMatch(/\.bucket\s*{[^}]*min-width:/);
+    expect(text).toMatch(/\.tick\s*{[^}]*min-width:/);
+  });
+});

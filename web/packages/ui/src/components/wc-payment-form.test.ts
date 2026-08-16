@@ -118,6 +118,21 @@ describe('wc-payment-form', () => {
     expect(seen).toEqual([{ ...valid, date: '2026-04-01' }]);
   });
 
+  it('picks the paid date with a native date input, and still takes a typed one', async () => {
+    // Same control as the invoice form's issue date and no presets: a payment
+    // landed on the day it landed. Safari degrades it to a text box, so the
+    // shape check stays the thing that refuses an unreadable date.
+    const el = await mount();
+    const date = el.shadowRoot?.querySelector<HTMLInputElement>('[data-date]');
+    expect(date?.getAttribute('type')).toBe('date');
+
+    const seen = changes(el);
+    date!.value = '2026-4-1';
+    date!.dispatchEvent(new Event('input'));
+    expect(seen.at(-1)?.date).toBe('2026-4-1');
+    expect(validatePaymentForm(seen.at(-1)!).date).toBe('Date must be YYYY-MM-DD');
+  });
+
   it('tidies a readable amount on blur and leaves an unreadable one alone', async () => {
     const typed = await mount({ value: { ...valid, amount: '1200.5' } });
     const seenTyped = changes(typed);

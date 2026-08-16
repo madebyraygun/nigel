@@ -234,6 +234,11 @@ pub fn migrate_company_name() -> Option<String> {
 }
 
 /// Resolved invoicing credentials and endpoints.
+///
+/// `Default` is an installation with nothing configured, which is a real state
+/// rather than an omission: void and republish both work on one, and a test that
+/// wants to reach nothing says so by handing this over.
+#[derive(Default)]
 pub struct InvoicingConfig {
     pub stripe_secret_key: Option<String>,
     pub mailgun_api_key: Option<String>,
