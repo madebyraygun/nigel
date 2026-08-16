@@ -1,7 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-manager-layout.js';
-import type { WcManagerLayout } from './wc-manager-layout.js';
+import { WcManagerLayout } from './wc-manager-layout.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import {
+  describeColumnLayout,
+  describePrintsAsBlock,
+  resolvedBox,
+} from '../../preview/layout-suite.js';
 import preview from './wc-manager-layout.preview.js';
 
 async function mount(props: Partial<WcManagerLayout> = {}): Promise<WcManagerLayout> {
@@ -101,3 +106,19 @@ describe('wc-manager-layout', () => {
 });
 
 describePreviewA11y(preview);
+
+describeColumnLayout(WcManagerLayout);
+
+describePrintsAsBlock(WcManagerLayout);
+
+describe('the manager frame', () => {
+  it('takes the whole screen, so the empty slot has room under the header', () => {
+    expect(resolvedBox(WcManagerLayout).flexGrow).toBe('1');
+  });
+
+  it('slots the empty state as a child of the column itself', async () => {
+    const el = await mount({ empty: true });
+    const slot = el.shadowRoot?.querySelector('slot[name="empty"]');
+    expect(slot?.parentElement).toBeNull();
+  });
+});

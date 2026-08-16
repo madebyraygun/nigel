@@ -5,6 +5,12 @@ import { dispatchNcToast } from './wc-toast.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { describePrintHiding } from '../../preview/print-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
+import {
+  describeColumnLayout,
+  describePrintsAsBlock,
+  printedBox,
+  resolvedBox,
+} from '../../preview/layout-suite.js';
 import preview from './wc-app-shell.preview.js';
 
 /** Everything the shell adopts into its shadow root. */
@@ -44,6 +50,13 @@ describe('wc-app-shell', () => {
     expect(el.shadowRoot?.querySelector('main')).toBeTruthy();
   });
 
+  it('puts the screen slot inside the content area and nothing between them', async () => {
+    const el = await mount();
+    // A wrapper here would be a second box for the screen to fill, and the
+    // screen would be as tall as its content again.
+    expect(el.shadowRoot?.querySelector('main.content > slot:not([name])')).toBeTruthy();
+  });
+
   it('hosts exactly one toast region', async () => {
     const el = await mount();
     expect(el.shadowRoot?.querySelectorAll('wc-toast').length).toBe(1);
@@ -79,6 +92,19 @@ describe('wc-app-shell', () => {
 
 describePreviewA11y(preview);
 
+describeColumnLayout(WcAppShell, '.content');
+
+describePrintsAsBlock(WcAppShell, '.content');
+
+describe('the content area', () => {
+  it('gives the screen the whole of it', () => {
+    // The screen is the only thing in the default slot; whether anything on it
+    // can be centred vertically is decided by how tall the screen is allowed
+    // to be, which is here and nowhere else.
+    expect(resolvedBox(WcAppShell, '.content ::slotted(*)').flexGrow).toBe('1');
+  });
+});
+
 describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
 
 describe('wc-app-shell content area', () => {
@@ -105,6 +131,14 @@ describe('wc-app-shell on paper', () => {
     expect(text).toMatch(/@media print[\s\S]*\.content[^{]*{[^}]*overflow:\s*visible/);
     expect(text).toMatch(/@media print[\s\S]*\.content[^{]*{[^}]*padding:\s*0/);
     expect(text).toMatch(/@media print[\s\S]*:host[^{]*{[^}]*height:\s*auto/);
+  });
+
+  it('puts the screen back into block flow', () => {
+    // The column is for a viewport: it hands out the height left over in one.
+    // A sheet has none to hand out, and a flex container is not required to
+    // fragment — Safari and older Chromium slice through a row rather than
+    // break between two.
+    expect(printedBox(WcAppShell, '.content ::slotted(*)').display).toBe('block');
   });
 
   it('keeps the parts it exposes', () => {

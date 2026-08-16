@@ -66,7 +66,8 @@ function toFormValue(account: Account): AccountFormValue {
 export class NigelAccountsScreen extends LitElement {
   static styles = css`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
     }
   `;
 

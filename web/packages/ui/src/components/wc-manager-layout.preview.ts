@@ -71,6 +71,26 @@ const preview: Preview = {
       `,
     },
     {
+      // A screen is a flex column filling the content area, and the empty slot
+      // takes the height the header left. The dashed box stands in for the
+      // content area a screen is stretched to.
+      name: 'empty-filling-a-screen',
+      render: () => html`
+        <div
+          style="display:flex; flex-direction:column; block-size:22rem; border:1px dashed var(--wa-color-border);"
+        >
+          <wc-manager-layout heading="Clients" .count=${0} empty add-label="Add client">
+            <wc-empty-state
+              slot="empty"
+              icon="wc-icon-clients"
+              heading="No clients yet"
+              message="A client is who an invoice is addressed to. Add one to start billing."
+            ></wc-empty-state>
+          </wc-manager-layout>
+        </div>
+      `,
+    },
+    {
       name: 'dialog-open',
       render: () => html`
         <wc-manager-layout heading="Accounts" .count=${2} add-label="Add account">

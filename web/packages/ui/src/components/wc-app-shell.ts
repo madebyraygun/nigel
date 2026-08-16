@@ -126,6 +126,8 @@ export class WcAppShell extends LitElement {
        up. A screen that does not stays content-sized, as a block child would. */
     .content {
       flex: 1;
+      display: flex;
+      flex-direction: column;
       overflow: auto;
       padding: var(--wa-space-l, 16px);
       display: flex;
@@ -160,6 +162,15 @@ export class WcAppShell extends LitElement {
       ::slotted([slot='sidebar']) {
         transition: none;
       }
+    }
+
+    /* The screen is the only thing in the default slot, and it gets the whole
+       content area rather than as much of it as its own content fills — a
+       screen has nothing to centre anything in otherwise. Content taller than
+       the area still grows past it and scrolls, because a flex item's
+       automatic minimum size is its content. */
+    .content ::slotted(*) {
+      flex: 1 1 auto;
     }
 
     .banner:not(:empty) {
@@ -197,6 +208,16 @@ export class WcAppShell extends LitElement {
         display: block;
         padding: 0;
         overflow: visible;
+      }
+
+      /* The screen goes back to block flow for the sheets. A flex container is
+         not required to fragment and Safari and older Chromium slice through a
+         row rather than break between two, and the leftover height a column
+         hands out is a property of a viewport, which paper does not have. A
+         normal declaration in the outer tree beats the inner tree's own :host
+         rule, so this reaches every screen from here. */
+      .content ::slotted(*) {
+        display: block;
       }
     }
   `;
