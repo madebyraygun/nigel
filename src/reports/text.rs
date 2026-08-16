@@ -1,7 +1,7 @@
 use colored::Colorize;
 use comfy_table::{Cell, Table};
 
-use super::{register_range_label, register_subtitle};
+use crate::cli::report::{register_range_label, register_subtitle};
 use crate::cli::{parse_month_opt, RegisterFilterArgs};
 use crate::db::{get_connection, get_metadata};
 use crate::error::Result;

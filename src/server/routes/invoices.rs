@@ -975,7 +975,7 @@ async fn preview_pdf(
             // cannot.
             render(conn, &state.data_dir(), number)?
                 .pdf
-                .ok_or_else(|| ApiError::feature_disabled(crate::cli::report::PDF_DISABLED_MESSAGE))
+                .ok_or_else(|| ApiError::feature_disabled(crate::reports::PDF_DISABLED_MESSAGE))
         }
     })
     .await?;
@@ -2337,7 +2337,7 @@ mod tests {
         assert_eq!(body["error"]["code"], "feature_disabled");
         assert_eq!(
             body["error"]["message"],
-            crate::cli::report::PDF_DISABLED_MESSAGE
+            crate::reports::PDF_DISABLED_MESSAGE
         );
 
         let html = get_response(&app, "/api/invoices/1248/preview", &token).await;

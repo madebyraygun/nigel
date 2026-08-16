@@ -1,8 +1,24 @@
+pub mod text;
+
 use chrono::Datelike;
 use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::error::{NigelError, Result};
+
+/// What a build without the `pdf` feature says when asked for a PDF. Shared
+/// with the HTTP export endpoints so the CLI and the API explain the same
+/// missing feature the same way.
+pub const PDF_DISABLED_MESSAGE: &str =
+    "PDF export requires the 'pdf' feature — build with `cargo build --features pdf`";
+
+/// The default basename of an exported report: the report's slug and the day it
+/// was exported, with the extension left to the caller. Used for the CLI's
+/// output paths and for the filename the HTTP download suggests.
+pub fn export_file_stem(name: &str) -> String {
+    let date = chrono::Local::now().format("%Y-%m-%d");
+    format!("{name}-{date}")
+}
 
 // ---------------------------------------------------------------------------
 // Report identity and date granularity
