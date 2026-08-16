@@ -48,11 +48,13 @@ export {
 export { categoryLabel, type CategoryOption } from './category-option.js';
 export {
   WcRegisterTable,
+  REGISTER_SHORTCUTS,
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
   type NcRowEventDetail,
   type RegisterTableRow,
 } from './wc-register-table.js';
+export { WcShortcutHelp, type ShortcutHint } from './wc-shortcut-help.js';
 export {
   WcCategoryPicker,
   type NcCategoryChangeDetail,

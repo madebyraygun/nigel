@@ -5,9 +5,31 @@ import '../icons/icons.js';
 import './wc-money.js';
 import './wc-empty-state.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
+import type { ShortcutHint } from './wc-shortcut-help.js';
 import { controlsCss } from '@nigel/theme';
 
 export type { CategoryOption };
+
+/**
+ * The register's keyboard legend, beside the switch that implements it.
+ *
+ * A screen renders this through `wc-shortcut-help`; `keys` carries the real
+ * `KeyboardEvent.key` values so a test can walk the legend and prove every
+ * line of it does something, rather than the legend being prose that drifts.
+ */
+export const REGISTER_SHORTCUTS: readonly ShortcutHint[] = [
+  { keys: ['ArrowUp', 'ArrowDown'], display: '↑ ↓', description: 'Move between rows' },
+  { keys: ['PageUp', 'PageDown'], display: 'PgUp PgDn', description: 'Move a screenful' },
+  { keys: ['Home', 'End'], display: 'Home End', description: 'First or last row' },
+  { keys: ['Enter'], display: 'Enter', description: 'Edit the category and vendor' },
+  {
+    keys: ['Escape'],
+    display: 'Esc',
+    description: 'Cancel the edit, or clear the selection',
+  },
+  { keys: ['f'], display: 'f', description: 'Flag or unflag the row' },
+  { keys: ['/'], display: '/', description: 'Jump to the search box' },
+];
 
 /** One transaction, in the shape the register table draws. */
 export interface RegisterTableRow {
@@ -40,6 +62,9 @@ export interface NcFlagToggleDetail {
   /** The desired state, not a toggle — a retry must be safe. */
   flag: boolean;
 }
+
+/** The keys a focused control answers itself, rather than the grid around it. */
+const ACTIVATION_KEYS = new Set([' ', 'Enter']);
 
 /**
  * Rows to move by on PgUp/PgDn when the viewport cannot be measured — jsdom
@@ -391,6 +416,15 @@ export class WcRegisterTable extends LitElement {
 
   private pendingFocusId: number | null = null;
 
+  constructor() {
+    super();
+    // On the host, not on the scroller: the shortcuts have to fire from
+    // wherever focus is inside the table — a row, the flag button on a row,
+    // or the scroller itself — and a listener on one of those hears only its
+    // own subtree.
+    this.addEventListener('keydown', this.handleKeydown);
+  }
+
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('selectedId')) this.activeId = this.selectedId;
 
@@ -429,7 +463,56 @@ export class WcRegisterTable extends LitElement {
     return index === -1 ? false : this.scrollToIndex(index);
   }
 
+  /**
+   * Put DOM focus on the tab stop, so the shortcuts have somewhere to fire
+   * from. Answers whether there was a row to focus.
+   *
+   * It selects nothing: on a register that opened with no cursor the stop is
+   * the first row as a fallback, and landing the keyboard there is not a
+   * decision about which transaction is current.
+   */
+  focusSelectedRow(): boolean {
+    const id = this.tabStopId;
+    if (id === null) return false;
+    const row = this.rowElement(id);
+    if (!row) return false;
+    row.focus();
+    return true;
+  }
+
   // -- selection ------------------------------------------------------------
+
+  /**
+   * The one row in the tab order.
+   *
+   * A roving tabindex needs a home even before anything is selected, or the
+   * table is not reachable by Tab at all and none of its keys can ever fire —
+   * which is exactly what happened on a register opened with a date filter,
+   * where nothing lands a cursor on load.
+   */
+  private get tabStopId(): number | null {
+    if (this.selectionIsRendered) return this.activeId;
+    return this.rows[0]?.id ?? null;
+  }
+
+  /** Whether the selected row is one the table has actually drawn. */
+  private get selectionIsRendered(): boolean {
+    return this.activeId !== null && this.rows.some((row) => row.id === this.activeId);
+  }
+
+  /**
+   * Focus arriving on a row.
+   *
+   * Focusing the fallback tab stop is not choosing it: Tab returns to the
+   * table without moving the cursor off the row that has it. A row focused
+   * any other way — clicked, or tabbed to while the selection sits on it —
+   * becomes the selection as it always did.
+   */
+  private handleRowFocusIn(row: RegisterTableRow): void {
+    if (this.activeId === row.id) return;
+    if (!this.selectionIsRendered && row.id === this.tabStopId) return;
+    this.setActive(row.id);
+  }
 
   private rowElement(id: number): HTMLElement | null {
     return this.shadowRoot?.querySelector<HTMLElement>(`tr[data-id="${id}"]`) ?? null;
@@ -491,7 +574,32 @@ export class WcRegisterTable extends LitElement {
 
   // -- keyboard -------------------------------------------------------------
 
-  private handleKeydown(event: KeyboardEvent): void {
+  /**
+   * Keys this table must never look at.
+   *
+   * A chord belongs to the browser or the OS: `Ctrl`/`Cmd+F` is find-in-page,
+   * and a table that read it as the flag shortcut would answer a find with a
+   * write against the database; `Ctrl+Home`/`End` are the document's.
+   *
+   * The split at a control inside a cell is the ARIA grid pattern's. The
+   * *activation* keys are the control's, so the flag button answers `Enter`
+   * and `Space` identically instead of `Enter` cancelling its click and
+   * opening the row editor. The *navigation* keys stay the grid's, so the
+   * arrows and the paging keys move between rows from wherever focus is,
+   * including from a widget inside a cell.
+   */
+  private notOurs(event: KeyboardEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.altKey) return true;
+    if (!ACTIVATION_KEYS.has(event.key)) return false;
+    const target = event.composedPath()[0];
+    return (
+      target instanceof HTMLElement &&
+      target.closest('button, a, input, select, textarea') !== null
+    );
+  }
+
+  private handleKeydown = (event: KeyboardEvent): void => {
+    if (this.notOurs(event)) return;
     if (this.editingId !== null) return;
     if (this.rows.length === 0) return;
 
@@ -521,7 +629,11 @@ export class WcRegisterTable extends LitElement {
         this.activateRow(this.rows[from]);
         break;
       case 'Escape':
+        // The TUI's clear-the-cursor. Consumed, so it does not also close a
+        // popover or leave fullscreen; cancelling an *edit* is the two inline
+        // editors' own Escape, and this handler never runs while one is open.
         this.activeId = null;
+        event.stopPropagation();
         break;
       case 'f':
       case 'F':
@@ -537,7 +649,7 @@ export class WcRegisterTable extends LitElement {
     }
 
     event.preventDefault();
-  }
+  };
 
   private activateRow(row: RegisterTableRow | undefined): void {
     if (!row) return;
@@ -688,7 +800,7 @@ export class WcRegisterTable extends LitElement {
     const columns = this.showAccount ? 7 : 6;
 
     return html`
-      <div class="scroller" @keydown=${this.handleKeydown}>
+      <div class="scroller">
         <table role="grid">
           <caption>
             ${this.caption}
@@ -759,6 +871,7 @@ export class WcRegisterTable extends LitElement {
   private renderRow(row: RegisterTableRow) {
     const selected = row.id === this.activeId;
     const editing = row.id === this.editingId;
+    const tabStop = row.id === this.tabStopId;
 
     return html`
       <tr
@@ -767,8 +880,9 @@ export class WcRegisterTable extends LitElement {
         data-flagged=${row.isFlagged ? 'true' : 'false'}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
-        tabindex=${selected ? '0' : '-1'}
-        @focusin=${() => this.setActive(row.id)}
+        tabindex=${tabStop ? '0' : '-1'}
+        @focusin=${() => this.handleRowFocusIn(row)}
+        @click=${() => this.setActive(row.id)}
         @dblclick=${() => this.activateRow(row)}
       >
         <td role="gridcell" class="flag">

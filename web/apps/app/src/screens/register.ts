@@ -6,6 +6,7 @@ import {
   dispatchNcToast,
   paramsToPeriod,
   periodToParams,
+  REGISTER_SHORTCUTS,
   type AccountOption,
   type CategoryOption,
   type NcAccountChangeDetail,
@@ -82,29 +83,8 @@ export class NigelRegisterScreen extends LitElement {
         flex: 1 1 auto;
       }
 
-      details.help {
-        font-size: var(--wa-font-size-s, 13px);
-        color: var(--wa-color-muted);
-      }
-
-      details.help summary {
-        cursor: pointer;
-      }
-
-      details.help dl {
-        display: grid;
-        grid-template-columns: max-content 1fr;
-        gap: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-        margin: var(--wa-space-xs, 6px) 0 0;
-      }
-
-      details.help dt {
-        font-family: var(--wa-font-family-mono, monospace);
-        color: var(--wa-color-text);
-      }
-
-      details.help dd {
-        margin: 0;
+      wc-shortcut-help {
+        padding-bottom: var(--wa-space-2xs, 4px);
       }
     `,
   ];
@@ -217,6 +197,7 @@ export class NigelRegisterScreen extends LitElement {
     const wanted = Number(this.params.get('id'));
     if (Number.isInteger(wanted) && wanted > 0 && this.table?.scrollToRow(wanted)) {
       this.selectedId = wanted;
+      this.takeFocus();
       return;
     }
 
@@ -224,10 +205,28 @@ export class NigelRegisterScreen extends LitElement {
       request.year !== undefined ||
       request.month !== undefined ||
       request.from !== undefined;
-    if (dated) return;
 
-    const index = indexOfToday(this.rows, todayIso());
-    this.table?.scrollToIndex(index === -1 ? 0 : index);
+    if (!dated) {
+      const index = indexOfToday(this.rows, todayIso());
+      this.table?.scrollToIndex(index === -1 ? 0 : index);
+    }
+
+    this.takeFocus();
+  }
+
+  /**
+   * Land the keyboard on the table once the rows are there, so the register's
+   * shortcuts work the way they do in the TUI instead of after three Tabs.
+   *
+   * The guard is "focus is already somewhere in this screen", which
+   * `shadowRoot.activeElement` answers exactly: a reload while the user is
+   * typing in the search box must not pull the caret out, but arriving from a
+   * sidebar click — the commonest way here, and one that leaves focus on the
+   * link — has to land the keyboard on the table.
+   */
+  private takeFocus(): void {
+    if (this.shadowRoot?.activeElement != null) return;
+    void this.updateComplete.then(() => this.table?.focusSelectedRow());
   }
 
   // -- filters --------------------------------------------------------------
@@ -428,27 +427,13 @@ export class NigelRegisterScreen extends LitElement {
     void this.load(registerParamsFrom(this.params));
   };
 
+  /** The legend is the table's own list, so the two cannot drift apart. */
   private renderHelp(): TemplateResult {
     return html`
-      <details class="help">
-        <summary>Keyboard</summary>
-        <dl>
-          <dt>↑ ↓</dt>
-          <dd>Move between rows</dd>
-          <dt>PgUp PgDn</dt>
-          <dd>Move a screenful</dd>
-          <dt>Home End</dt>
-          <dd>First or last row</dd>
-          <dt>Enter</dt>
-          <dd>Edit the category and vendor</dd>
-          <dt>Esc</dt>
-          <dd>Cancel the edit</dd>
-          <dt>f</dt>
-          <dd>Flag or unflag the row</dd>
-          <dt>/</dt>
-          <dd>Jump to the search box</dd>
-        </dl>
-      </details>
+      <wc-shortcut-help
+        .shortcuts=${[...REGISTER_SHORTCUTS]}
+        heading="Register shortcuts"
+      ></wc-shortcut-help>
     `;
   }
 }

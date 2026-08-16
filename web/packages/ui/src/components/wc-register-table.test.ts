@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-register-table.js';
 import {
+  REGISTER_SHORTCUTS,
   WcRegisterTable,
   type CategoryOption,
   type NcEditCommitDetail,
@@ -53,10 +54,12 @@ function selectedId(el: WcRegisterTable): number | null {
   return row ? Number(row.dataset.id) : null;
 }
 
+/** `composed` because a real key event crosses the shadow boundary; the
+    table listens on its host so a key from any part of it is heard. */
 async function press(el: WcRegisterTable, key: string): Promise<void> {
   el.shadowRoot
     ?.querySelector('.scroller')
-    ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
   await el.updateComplete;
 }
 
@@ -396,6 +399,330 @@ describe('wc-register-table', () => {
       await press(el, 'ArrowDown');
       expect(selectedId(el)).toBe(101);
     });
+  });
+});
+
+/**
+ * Every key the legend prints, proved against the table.
+ *
+ * The register's shortcuts were all dead: the keydown listener sat on the
+ * scroller, and the roving tabindex had no home until something selected a
+ * row, so on a dated register no element inside the table was in the tab order
+ * at all and none of these keys could ever reach a handler. The list below is
+ * driven off `REGISTER_SHORTCUTS`, so a line added to the legend without a
+ * proof fails the suite rather than shipping as prose.
+ */
+describe('the documented shortcuts', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  /** Keydown from the focused row, which is where a real keystroke starts. */
+  async function pressOnRow(el: WcRegisterTable, key: string): Promise<void> {
+    const row = rowEls(el).find((tr) => tr.tabIndex === 0) ?? rowEls(el)[0];
+    row?.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+  }
+
+  const proofs: Record<string, () => Promise<void>> = {
+    ArrowDown: async () => {
+      const el = await mount({ selectedId: 100 });
+      await pressOnRow(el, 'ArrowDown');
+      expect(selectedId(el)).toBe(101);
+    },
+    ArrowUp: async () => {
+      const el = await mount({ selectedId: 101 });
+      await pressOnRow(el, 'ArrowUp');
+      expect(selectedId(el)).toBe(100);
+    },
+    PageDown: async () => {
+      const el = await mount({ rows: fixture(50), selectedId: 100 });
+      await pressOnRow(el, 'PageDown');
+      expect(selectedId(el)).toBe(120);
+    },
+    PageUp: async () => {
+      const el = await mount({ rows: fixture(50), selectedId: 130 });
+      await pressOnRow(el, 'PageUp');
+      expect(selectedId(el)).toBe(110);
+    },
+    Home: async () => {
+      const el = await mount({ selectedId: 103 });
+      await pressOnRow(el, 'Home');
+      expect(selectedId(el)).toBe(100);
+    },
+    End: async () => {
+      const el = await mount({ selectedId: 100 });
+      await pressOnRow(el, 'End');
+      expect(selectedId(el)).toBe(103);
+    },
+    Enter: async () => {
+      const el = await mount({ selectedId: 101 });
+      const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
+      await pressOnRow(el, 'Enter');
+      expect(seen).toEqual([{ id: 101 }]);
+    },
+    // Two jobs, as the legend says: the editors' cancel while one is open, and
+    // the TUI's clear-the-cursor when none is.
+    Escape: async () => {
+      const editing = await mount({ selectedId: 101, editingId: 101 });
+      const seen = listen<NcRowEventDetail>(editing, 'nc-edit-cancel');
+      editing.shadowRoot
+        ?.querySelector('.category-input')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await editing.updateComplete;
+      expect(seen).toEqual([{ id: 101 }]);
+
+      const browsing = await mount({ selectedId: 101 });
+      await pressOnRow(browsing, 'Escape');
+      expect(selectedId(browsing)).toBeNull();
+    },
+    f: async () => {
+      const el = await mount({ selectedId: 100 });
+      const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+      await pressOnRow(el, 'f');
+      expect(seen).toEqual([{ id: 100, flag: true }]);
+    },
+    '/': async () => {
+      const el = await mount({ selectedId: 100 });
+      let asked = 0;
+      el.addEventListener('nc-search-focus', () => (asked += 1));
+      await pressOnRow(el, '/');
+      expect(asked).toBe(1);
+    },
+  };
+
+  it('is a list every key on which has a proof below', () => {
+    const documented = REGISTER_SHORTCUTS.flatMap((hint) => hint.keys);
+    expect(documented.filter((key) => !(key in proofs))).toEqual([]);
+    expect(Object.keys(proofs).filter((key) => !documented.includes(key))).toEqual([]);
+  });
+
+  it.each(REGISTER_SHORTCUTS.flatMap((hint) => hint.keys))('%s works', async (key) => {
+    await proofs[key]?.();
+  });
+});
+
+describe('reaching the register from the keyboard', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is in the tab order before anything has selected a row', async () => {
+    // A register opened with a date filter selects nothing on load. With the
+    // tab stop tied to the selection, that table had no tabbable element and
+    // was unreachable by keyboard, which is why none of its keys worked.
+    const el = await mount();
+    const stops = rowEls(el).filter((tr) => tr.tabIndex === 0);
+    expect(stops.map((tr) => tr.dataset.id)).toEqual(['100']);
+  });
+
+  it('keeps exactly one tab stop once a row is selected', async () => {
+    const el = await mount({ selectedId: 102 });
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0).map((tr) => tr.dataset.id)).toEqual(
+      ['102'],
+    );
+  });
+
+  it('still has a tab stop after Escape', async () => {
+    const el = await mount({ selectedId: 102 });
+    rowEls(el)[2]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
+    );
+    await el.updateComplete;
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it('moves its tab stop with the selection, never leaving two', async () => {
+    const el = await mount({ selectedId: 100 });
+    await press(el, 'ArrowDown');
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0).map((tr) => tr.dataset.id)).toEqual(
+      ['101'],
+    );
+  });
+
+  it('answers a key pressed on the scroller, not only on a row', async () => {
+    // The original defect: the listener sat on the scroller, so a key only
+    // arrived when a row already had focus. It is on the host now, and the
+    // scroller is inside it.
+    const el = await mount({ selectedId: 100 });
+    await press(el, 'ArrowDown');
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it('navigates from a control inside a cell, as a grid does', async () => {
+    // The ARIA grid split: the arrows belong to the grid wherever focus is,
+    // including on the flag button in a cell.
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[0]
+      ?.querySelector('button')
+      ?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }),
+      );
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it.each(['End', 'PageDown'])('pages from a control inside a cell with %s', async (key) => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[0]
+      ?.querySelector('button')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, composed: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(103);
+  });
+
+  it.each(['Enter', ' '])('lets the flag button answer %s itself', async (key) => {
+    // The other half of the split: an activation key is the control's, so the
+    // button answers both identically rather than Enter cancelling its click
+    // and opening the row editor.
+    const el = await mount({ selectedId: 100 });
+    const activations = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[0]?.querySelector('button')?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(activations).toEqual([]);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('focuses the row the cursor is on when asked', async () => {
+    const el = await mount({ selectedId: 102 });
+    expect(el.focusSelectedRow()).toBe(true);
+    expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('102');
+    expect(selectedId(el)).toBe(102);
+  });
+
+  it('focuses the first row when nothing has been selected yet', async () => {
+    const el = await mount();
+    expect(el.focusSelectedRow()).toBe(true);
+    expect(el.shadowRoot?.activeElement?.getAttribute('data-id')).toBe('100');
+  });
+
+  it('selects nothing by landing the keyboard on the table', async () => {
+    // A register that opened with no cursor still has none afterwards: taking
+    // focus is not a decision about which transaction is current.
+    const el = await mount();
+    const seen = listen<NcRowEventDetail>(el, 'nc-row-select');
+    el.focusSelectedRow();
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it('does not select the fallback tab stop when Tab lands on it', async () => {
+    // Nothing is selected, so the first row holds the stop as a fallback.
+    // Tab arriving there is not a decision about which transaction is current.
+    const el = await mount();
+    rowEls(el)[0]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBeNull();
+  });
+
+  it('selects a row Tab reaches that is not the fallback stop', async () => {
+    const el = await mount({ selectedId: 100 });
+    rowEls(el)[2]?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
+  it('selects a row a pointer actually clicks', async () => {
+    const el = await mount();
+    rowEls(el)[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await el.updateComplete;
+    expect(selectedId(el)).toBe(102);
+  });
+
+  it('reports that an empty register had nothing to focus', async () => {
+    const el = await mount({ rows: [] });
+    expect(el.focusSelectedRow()).toBe(false);
+  });
+
+  it('clears the selection on Escape and consumes the key', async () => {
+    // TUI parity. Consuming it matters: an Escape that also reached the
+    // document would close the shortcut legend or leave fullscreen.
+    const el = await mount({ selectedId: 102 });
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+
+    rowEls(el)[2]?.dispatchEvent(event);
+    await el.updateComplete;
+
+    expect(selectedId(el)).toBeNull();
+    expect(event.defaultPrevented).toBe(true);
+    expect(rowEls(el).filter((tr) => tr.tabIndex === 0)).toHaveLength(1);
+  });
+});
+
+describe('keys the browser owns', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function chord(
+    el: WcRegisterTable,
+    key: string,
+    modifier: 'ctrlKey' | 'metaKey' | 'altKey',
+  ): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent('keydown', {
+      key,
+      [modifier]: true,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    el.shadowRoot?.querySelector('.scroller')?.dispatchEvent(event);
+    await el.updateComplete;
+    return event;
+  }
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'does not read %s+f as the flag shortcut',
+    async (modifier) => {
+      // Find-in-page must not write to the database.
+      const el = await mount({ selectedId: 100 });
+      const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+      const event = await chord(el, 'f', modifier);
+      expect(seen).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+    },
+  );
+
+  it.each(['ctrlKey', 'metaKey'] as const)(
+    'leaves %s+Home and +End to the browser',
+    async (modifier) => {
+      const el = await mount({ selectedId: 101 });
+      const home = await chord(el, 'Home', modifier);
+      const end = await chord(el, 'End', modifier);
+      expect(selectedId(el)).toBe(101);
+      expect(home.defaultPrevented).toBe(false);
+      expect(end.defaultPrevented).toBe(false);
+    },
+  );
+
+  it('leaves Alt+ArrowDown alone', async () => {
+    const el = await mount({ selectedId: 100 });
+    const event = await chord(el, 'ArrowDown', 'altKey');
+    expect(selectedId(el)).toBe(100);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('still answers the unmodified key', async () => {
+    const el = await mount({ selectedId: 100 });
+    const seen = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    await press(el, 'f');
+    expect(seen).toEqual([{ id: 100, flag: true }]);
   });
 });
 
