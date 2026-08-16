@@ -1,7 +1,7 @@
 /**
  * The account types the data layer accepts, in the order the TUI offers them.
  *
- * Mirrors `ACCOUNT_TYPES` in `cli/accounts.rs`, which is the only place the
+ * Mirrors `ACCOUNT_TYPES` in `crates/nigel-core/src/accounts.rs`, which is the only place the
  * list is validated. Kept here rather than derived from the API because no
  * endpoint publishes it — a select has to name its options.
  */

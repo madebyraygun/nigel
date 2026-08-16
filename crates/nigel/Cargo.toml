@@ -1,0 +1,39 @@
+[package]
+name = "nigel"
+version = "1.0.1"
+edition = "2021"
+description = "Cash-basis bookkeeping CLI for small consultancies and personal finances"
+
+[features]
+default = ["gusto", "pdf", "serve"]
+gusto = ["nigel-core/gusto"]
+pdf = ["nigel-core/pdf"]
+serve = ["nigel-core/serve"]
+
+[dependencies]
+nigel-core = { path = "../nigel-core", default-features = false }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+crossterm = "0.28"
+ratatui = "0.29"
+textwrap = "0.16"
+rpassword = "7"
+self-replace = "1"
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
+regex = "1"
+comfy-table = "7"
+chrono = "0.4"
+rand = "0.8"
+serde_json = "1"
+base64 = "0.22"
+zeroize = "1.8.2"
+
+[dev-dependencies]
+nigel-core = { path = "../nigel-core", default-features = false, features = ["testutil"] }
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+chrono = "0.4"
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
+toml = "0.8"

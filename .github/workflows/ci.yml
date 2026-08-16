@@ -74,3 +74,6 @@ jobs:
 
       - name: Run tests (serve only)
         run: cargo test --no-default-features --features serve -- --test-threads=1
+
+      - name: Run tests (nigel-core alone)
+        run: cargo test -p nigel-core -- --test-threads=1

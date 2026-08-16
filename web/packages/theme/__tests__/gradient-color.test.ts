@@ -12,13 +12,13 @@ import { NIGEL_PALETTE, gradientColor } from '../src/tokens/gradient.js';
  * here rather than as a browser that cycles slightly differently.
  */
 const here = dirname(fileURLToPath(import.meta.url));
-const effectsRs = resolve(here, '../../../../src/effects.rs');
+const effectsRs = resolve(here, '../../../../crates/nigel/src/effects.rs');
 
 /** The literal `gradient_color` body, for the assertions that read it. */
 function rustGradientFn(): string {
   const source = readFileSync(effectsRs, 'utf8');
   const start = source.indexOf('pub fn gradient_color');
-  expect(start, 'gradient_color not found in src/effects.rs').toBeGreaterThan(-1);
+  expect(start, 'gradient_color not found in crates/nigel/src/effects.rs').toBeGreaterThan(-1);
   return source.slice(start, source.indexOf('\n}', start));
 }
 

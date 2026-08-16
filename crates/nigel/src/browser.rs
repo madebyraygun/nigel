@@ -1,0 +1,1628 @@
+use std::io;
+
+use chrono::Local;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::{
+    layout::{Constraint, Layout},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Cell, Paragraph, Row, Table, TableState},
+    DefaultTerminal, Frame,
+};
+
+use crate::tui::{self, FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
+use nigel_core::fmt::money;
+use nigel_core::reports::RegisterRow;
+use nigel_core::reviewer::CategoryChoice;
+
+const PAGE_SIZE: usize = 20;
+
+enum BrowseMode {
+    Normal,
+    GotoPage(String),
+    GotoDate(String),
+    FindId(String),
+    Search(String),
+    EditCategory { query: String, selection: usize },
+    EditVendor(String),
+}
+
+pub enum BrowseAction {
+    Continue,
+    Close,
+    CommitEdit,
+    ToggleFlag,
+}
+
+pub struct RegisterBrowser {
+    rows: Vec<RegisterRow>,
+    total: f64,
+    filters_desc: String,
+    offset: usize,
+    visible_count: usize,
+    selected: usize,
+    mode: BrowseMode,
+    status_message: Option<String>,
+    categories: Vec<CategoryChoice>,
+    cat_labels: Vec<String>,
+    pending_category_idx: Option<usize>,
+    pending_vendor: Option<String>,
+    table_state: TableState,
+    search_matches: Vec<usize>,
+    search_index: usize,
+    search_query: String,
+    export_hints: bool,
+}
+
+impl RegisterBrowser {
+    pub fn new(
+        rows: Vec<RegisterRow>,
+        total: f64,
+        filters_desc: String,
+        categories: Vec<CategoryChoice>,
+    ) -> Self {
+        let cat_labels: Vec<String> = categories
+            .iter()
+            .map(|c| {
+                let tag = if c.category_type == "income" {
+                    "inc"
+                } else {
+                    "exp"
+                };
+                format!("{} ({})", c.name, tag)
+            })
+            .collect();
+        Self {
+            rows,
+            total,
+            filters_desc,
+            offset: 0,
+            visible_count: PAGE_SIZE,
+            selected: 0,
+            mode: BrowseMode::Normal,
+            status_message: None,
+            categories,
+            cat_labels,
+            pending_category_idx: None,
+            pending_vendor: None,
+            table_state: TableState::default(),
+            search_matches: Vec::new(),
+            search_index: 0,
+            search_query: String::new(),
+            export_hints: false,
+        }
+    }
+
+    /// Show the export key hints in the footer. Only the dashboard binds the
+    /// export keys, so standalone browsing (`nigel browse register`) leaves
+    /// this off.
+    pub fn set_export_hints(&mut self, enabled: bool) {
+        self.export_hints = enabled;
+    }
+
+    /// Whether the host may claim the export keys before this browser sees them.
+    pub fn export_hints_enabled(&self) -> bool {
+        self.export_hints
+    }
+
+    /// Whether the browser is currently reading typed text (search, jump-to,
+    /// or an inline edit). A host must pass every key straight through while
+    /// this is true, or typed characters get eaten as commands.
+    pub fn is_capturing_input(&self) -> bool {
+        !matches!(self.mode, BrowseMode::Normal)
+    }
+
+    /// Scroll so that the last transaction on or before today is visible.
+    /// Relies on rows being sorted by date ASC (as returned by get_register).
+    pub fn scroll_to_today(&mut self) {
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let idx = self.rows.iter().rposition(|r| r.date <= today);
+        if let Some(i) = idx {
+            // Position that row on screen (offset so it's visible, near middle)
+            self.offset = i.saturating_sub(PAGE_SIZE / 2);
+            let max_sel = self.visible_count.saturating_sub(1);
+            self.selected = (i - self.offset).min(max_sel);
+        } else if !self.rows.is_empty() {
+            // All transactions are in the future — start at the beginning
+            self.offset = 0;
+            self.selected = 0;
+        }
+    }
+
+    pub fn run(&mut self, conn: &rusqlite::Connection) -> io::Result<()> {
+        if self.rows.is_empty() {
+            println!("No transactions found.");
+            return Ok(());
+        }
+
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            ratatui::restore();
+            hook(info);
+        }));
+
+        let mut terminal = ratatui::init();
+        let result = self.event_loop(&mut terminal, conn);
+        ratatui::restore();
+        result
+    }
+
+    /// Draw the browser into the given frame. Callable from an external event loop.
+    pub fn draw_frame(&mut self, frame: &mut Frame) {
+        let area = frame.area();
+        let narrow = area.width < 120;
+
+        let edit_height: u16 = match &self.mode {
+            BrowseMode::EditCategory { .. } => {
+                let matches = self.filtered_categories().len();
+                1 + matches.min(9) as u16
+            }
+            BrowseMode::EditVendor(_) => 1,
+            _ => 0,
+        };
+
+        let areas = Layout::vertical([
+            Constraint::Length(1),           // title
+            Constraint::Length(1),           // separator
+            Constraint::Fill(1),             // table
+            Constraint::Length(edit_height), // edit panel
+            Constraint::Length(1),           // status
+            Constraint::Length(1),           // keys
+        ])
+        .split(area);
+        let title_area = areas[0];
+        let sep_area = areas[1];
+        let table_area = areas[2];
+        let edit_area = areas[3];
+        let status_area = areas[4];
+        let keys_area = areas[5];
+
+        // Title
+        frame.render_widget(
+            Paragraph::new(" Transaction Register").style(HEADER_STYLE),
+            title_area,
+        );
+
+        // Separator
+        frame.render_widget(
+            Paragraph::new("━".repeat(area.width as usize)).style(FOOTER_STYLE),
+            sep_area,
+        );
+
+        // Compute description column width from fixed columns + spacing
+        let (fixed_cols, num_cols): (u16, u16) = if narrow {
+            (2 + 6 + 10 + 12 + 28, 6)
+        } else {
+            (2 + 6 + 10 + 12 + 28 + 20 + 20, 8)
+        };
+        let spacing = num_cols - 1;
+        let desc_width = table_area.width.saturating_sub(fixed_cols + spacing) as usize;
+        let desc_width = desc_width.max(10);
+
+        // Build only the visible rows (with text wrapping)
+        let header_overhead = 2u16; // header row + bottom_margin
+        let available_height = table_area.height.saturating_sub(header_overhead) as usize;
+        let mut rendered_rows = Vec::new();
+        let mut total_height = 0usize;
+        let mut vis = 0usize;
+
+        for row_data in self.rows.iter().skip(self.offset) {
+            let (wrapped_desc, line_count) = tui::wrap_text(&row_data.description, desc_width);
+            let h = line_count as usize;
+
+            if total_height + h > available_height && vis > 0 {
+                break;
+            }
+
+            let cat = row_data
+                .category
+                .as_deref()
+                .unwrap_or("\u{2014}")
+                .to_string();
+            let amt = tui::money_span(row_data.amount);
+            let flag_cell = Cell::from(if row_data.is_flagged { "!" } else { "" });
+
+            let cells: Vec<Cell> = if narrow {
+                vec![
+                    flag_cell,
+                    Cell::from(row_data.id.to_string()),
+                    Cell::from(row_data.date.clone()),
+                    Cell::from(wrapped_desc),
+                    Cell::from(amt),
+                    Cell::from(cat),
+                ]
+            } else {
+                let vendor = row_data.vendor.as_deref().unwrap_or("").to_string();
+                vec![
+                    flag_cell,
+                    Cell::from(row_data.id.to_string()),
+                    Cell::from(row_data.date.clone()),
+                    Cell::from(wrapped_desc),
+                    Cell::from(amt),
+                    Cell::from(cat),
+                    Cell::from(vendor),
+                    Cell::from(row_data.account_name.clone()),
+                ]
+            };
+
+            rendered_rows.push(Row::new(cells).height(line_count));
+            total_height += h;
+            vis += 1;
+        }
+
+        self.visible_count = vis.max(1);
+        self.selected = self.selected.min(self.visible_count.saturating_sub(1));
+
+        // Table column constraints
+        let widths: Vec<Constraint> = if narrow {
+            vec![
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(10),
+                Constraint::Fill(1),
+                Constraint::Length(12),
+                Constraint::Length(28),
+            ]
+        } else {
+            vec![
+                Constraint::Length(2),
+                Constraint::Length(6),
+                Constraint::Length(10),
+                Constraint::Fill(1),
+                Constraint::Length(12),
+                Constraint::Length(28),
+                Constraint::Length(20),
+                Constraint::Length(20),
+            ]
+        };
+
+        let header_cells: Vec<&str> = if narrow {
+            vec!["", "ID", "Date", "Description", "Amount", "Category"]
+        } else {
+            vec![
+                "",
+                "ID",
+                "Date",
+                "Description",
+                "Amount",
+                "Category",
+                "Vendor",
+                "Account",
+            ]
+        };
+
+        self.table_state.select(Some(self.selected));
+        let table = Table::new(rendered_rows, widths)
+            .header(Row::new(header_cells).style(HEADER_STYLE).bottom_margin(1))
+            .column_spacing(1)
+            .row_highlight_style(SELECTED_STYLE);
+
+        frame.render_stateful_widget(table, table_area, &mut self.table_state);
+
+        // Edit panel
+        if edit_height > 0 {
+            let edit_lines: Vec<Line> = match &self.mode {
+                BrowseMode::EditCategory { query, selection } => {
+                    let matches = self.filtered_categories();
+                    let mut lines = vec![Line::from(format!("  Category: {query}\u{2588}"))];
+                    if !query.is_empty() && matches.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "    (no matches)",
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    } else {
+                        for (i, (_, label)) in matches.iter().enumerate() {
+                            let marker = if i == *selection { ">" } else { " " };
+                            lines.push(Line::from(format!("  {marker} {label}")));
+                        }
+                    }
+                    lines
+                }
+                BrowseMode::EditVendor(input) => {
+                    vec![Line::from(format!(
+                        "  Vendor (Enter to skip): {input}\u{2588}"
+                    ))]
+                }
+                _ => vec![],
+            };
+            frame.render_widget(Paragraph::new(edit_lines), edit_area);
+        }
+
+        // Status line
+        let end_row = (self.offset + self.visible_count).min(self.rows.len());
+        let filters = if self.filters_desc.is_empty() {
+            String::new()
+        } else {
+            format!(" | {}", self.filters_desc)
+        };
+        let search_info = if !self.search_matches.is_empty() {
+            format!(
+                " | {} of {} matches",
+                self.search_index + 1,
+                self.search_matches.len()
+            )
+        } else if !self.search_query.is_empty() && !matches!(self.mode, BrowseMode::Search(_)) {
+            " | no matches".to_string()
+        } else {
+            String::new()
+        };
+        let status = if let Some(ref msg) = self.status_message {
+            format!(
+                "Rows {}-{} of {} | Net: {}{}{} | {}",
+                self.offset + 1,
+                end_row,
+                self.rows.len(),
+                money(self.total),
+                filters,
+                search_info,
+                msg,
+            )
+        } else {
+            format!(
+                "Rows {}-{} of {} | Net: {}{}{}",
+                self.offset + 1,
+                end_row,
+                self.rows.len(),
+                money(self.total),
+                filters,
+                search_info,
+            )
+        };
+        frame.render_widget(Paragraph::new(status).style(FOOTER_STYLE), status_area);
+
+        // Keys / input prompt
+        let keys_widget = match &self.mode {
+            BrowseMode::Normal => {
+                let search_keys = if self.search_matches.is_empty() {
+                    ""
+                } else {
+                    "  n:next match  N:prev match"
+                };
+                // "(all)" because the export covers the whole register, not
+                // the visible page or an active search selection.
+                let export_keys = match (self.export_hints, cfg!(feature = "pdf")) {
+                    (false, _) => "",
+                    (true, true) => "  x:pdf(all)  t:text(all)",
+                    (true, false) => "  t:text(all)",
+                };
+                Paragraph::new(format!(
+                    "\u{2191}/\u{2193}:select  e:edit  f:flag  \u{2192}:next  \u{2190}:prev  g:page  d:date  i:id  /:search{search_keys}{export_keys}  q:quit"
+                ))
+                .style(FOOTER_STYLE)
+            }
+            BrowseMode::GotoPage(input) => Paragraph::new(format!("Go to page: {input}\u{2588}")),
+            BrowseMode::GotoDate(input) => {
+                Paragraph::new(format!("Jump to date (YYYY-MM-DD): {input}\u{2588}"))
+            }
+            BrowseMode::FindId(input) => {
+                Paragraph::new(format!("Find transaction ID: {input}\u{2588}"))
+            }
+            BrowseMode::Search(input) => Paragraph::new(format!("Search: {input}\u{2588}")),
+            BrowseMode::EditCategory { .. } => {
+                Paragraph::new("Type to filter, Enter=select, Esc=cancel").style(FOOTER_STYLE)
+            }
+            BrowseMode::EditVendor(_) => {
+                Paragraph::new("Enter=confirm (empty to skip), Esc=cancel").style(FOOTER_STYLE)
+            }
+        };
+        frame.render_widget(keys_widget, keys_area);
+    }
+
+    /// Handle a key event. Returns a BrowseAction indicating what the caller should do.
+    pub fn handle_key_event(&mut self, code: KeyCode) -> BrowseAction {
+        self.status_message = None;
+
+        match &self.mode {
+            BrowseMode::Normal => match code {
+                KeyCode::Char('q') | KeyCode::Esc => return BrowseAction::Close,
+                KeyCode::Down => {
+                    if self.selected + 1 < self.visible_count.min(self.rows.len() - self.offset) {
+                        self.selected += 1;
+                    } else if self.offset + self.visible_count < self.rows.len() {
+                        self.offset += 1;
+                    }
+                }
+                KeyCode::Up => {
+                    if self.selected > 0 {
+                        self.selected -= 1;
+                    } else if self.offset > 0 {
+                        self.offset -= 1;
+                    }
+                }
+                KeyCode::Right | KeyCode::PageDown => {
+                    self.scroll_down();
+                    self.selected = 0;
+                }
+                KeyCode::Left | KeyCode::PageUp => {
+                    self.scroll_up();
+                    self.selected = 0;
+                }
+                KeyCode::Home => {
+                    self.offset = 0;
+                    self.selected = 0;
+                }
+                KeyCode::End => {
+                    self.scroll_to_end();
+                    self.selected = 0;
+                }
+                KeyCode::Char('g') => {
+                    self.mode = BrowseMode::GotoPage(String::new());
+                }
+                KeyCode::Char('d') => {
+                    self.mode = BrowseMode::GotoDate(String::new());
+                }
+                KeyCode::Char('i') => {
+                    self.mode = BrowseMode::FindId(String::new());
+                }
+                KeyCode::Char('/') => {
+                    self.mode = BrowseMode::Search(String::new());
+                }
+                KeyCode::Char('n') => {
+                    self.jump_to_next_match();
+                }
+                KeyCode::Char('N') => {
+                    self.jump_to_prev_match();
+                }
+                KeyCode::Char('e') | KeyCode::Enter => {
+                    if !self.categories.is_empty() {
+                        self.mode = BrowseMode::EditCategory {
+                            query: String::new(),
+                            selection: 0,
+                        };
+                    }
+                }
+                KeyCode::Char('f') => {
+                    return BrowseAction::ToggleFlag;
+                }
+                _ => {}
+            },
+            BrowseMode::GotoPage(_) | BrowseMode::GotoDate(_) | BrowseMode::FindId(_) => match code
+            {
+                KeyCode::Esc => self.mode = BrowseMode::Normal,
+                KeyCode::Enter => self.submit_input(),
+                KeyCode::Backspace => self.input_backspace(),
+                KeyCode::Char(c) => self.input_push(c),
+                _ => {}
+            },
+            BrowseMode::Search(_) => match code {
+                KeyCode::Esc => {
+                    self.search_matches.clear();
+                    self.search_query.clear();
+                    self.search_index = 0;
+                    self.mode = BrowseMode::Normal;
+                }
+                KeyCode::Enter => {
+                    self.mode = BrowseMode::Normal;
+                }
+                KeyCode::Backspace => {
+                    if let BrowseMode::Search(s) = &mut self.mode {
+                        s.pop();
+                    }
+                    self.recompute_search_matches();
+                }
+                KeyCode::Char(c) => {
+                    if let BrowseMode::Search(s) = &mut self.mode {
+                        s.push(c);
+                    }
+                    self.recompute_search_matches();
+                }
+                _ => {}
+            },
+            BrowseMode::EditCategory { .. } => {
+                return self.handle_edit_category_key(code);
+            }
+            BrowseMode::EditVendor(_) => {
+                return self.handle_edit_vendor_key(code);
+            }
+        }
+        BrowseAction::Continue
+    }
+
+    fn event_loop(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        conn: &rusqlite::Connection,
+    ) -> io::Result<()> {
+        loop {
+            terminal.draw(|frame| self.draw_frame(frame))?;
+
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                ..
+            }) = event::read()?
+            {
+                if kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
+                    break;
+                }
+
+                match self.handle_key_event(code) {
+                    BrowseAction::Close => break,
+                    BrowseAction::Continue => {}
+                    BrowseAction::CommitEdit => {
+                        if let Err(e) = self.commit_edit(conn) {
+                            self.status_message = Some(format!("Edit failed: {e}"));
+                        }
+                    }
+                    BrowseAction::ToggleFlag => {
+                        if let Err(e) = self.toggle_flag(conn) {
+                            self.status_message = Some(format!("Flag toggle failed: {e}"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn scroll_down(&mut self) {
+        let new_offset = self.offset + self.visible_count;
+        if new_offset < self.rows.len() {
+            self.offset = new_offset;
+        }
+    }
+
+    fn scroll_up(&mut self) {
+        self.offset = self.offset.saturating_sub(self.visible_count);
+    }
+
+    fn scroll_to_end(&mut self) {
+        self.offset = self.rows.len().saturating_sub(PAGE_SIZE);
+    }
+
+    fn recompute_search_matches(&mut self) {
+        let query = match &self.mode {
+            BrowseMode::Search(s) => s.clone(),
+            _ => return,
+        };
+        self.search_query = query.clone();
+        self.search_matches.clear();
+        self.search_index = 0;
+
+        if query.is_empty() {
+            return;
+        }
+
+        let q = query.to_lowercase();
+        for (i, row) in self.rows.iter().enumerate() {
+            if row.description.to_lowercase().contains(&q)
+                || row
+                    .vendor
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&q)
+                || row
+                    .category
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&q)
+            {
+                self.search_matches.push(i);
+            }
+        }
+
+        // Jump to first match
+        if let Some(&idx) = self.search_matches.first() {
+            self.scroll_to_row(idx);
+        }
+    }
+
+    fn jump_to_next_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_index = (self.search_index + 1) % self.search_matches.len();
+        let idx = self.search_matches[self.search_index];
+        self.scroll_to_row(idx);
+    }
+
+    fn jump_to_prev_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if self.search_index == 0 {
+            self.search_index = self.search_matches.len() - 1;
+        } else {
+            self.search_index -= 1;
+        }
+        let idx = self.search_matches[self.search_index];
+        self.scroll_to_row(idx);
+    }
+
+    fn scroll_to_row(&mut self, row_idx: usize) {
+        if row_idx >= self.offset && row_idx < self.offset + self.visible_count {
+            // Row is already visible, just move selection
+            self.selected = row_idx - self.offset;
+        } else {
+            // Center the row on screen
+            self.offset = row_idx.saturating_sub(self.visible_count / 2);
+            let max_offset = self.rows.len().saturating_sub(self.visible_count);
+            self.offset = self.offset.min(max_offset);
+            self.selected = row_idx.saturating_sub(self.offset);
+        }
+    }
+
+    fn input_push(&mut self, c: char) {
+        match &mut self.mode {
+            BrowseMode::GotoPage(s) | BrowseMode::GotoDate(s) | BrowseMode::FindId(s) => {
+                s.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn input_backspace(&mut self) {
+        match &mut self.mode {
+            BrowseMode::GotoPage(s) | BrowseMode::GotoDate(s) | BrowseMode::FindId(s) => {
+                s.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn submit_input(&mut self) {
+        let mode = std::mem::replace(&mut self.mode, BrowseMode::Normal);
+        match &mode {
+            BrowseMode::GotoPage(input) => {
+                if let Ok(page) = input.trim().parse::<usize>() {
+                    if page >= 1 {
+                        let target = (page - 1) * PAGE_SIZE;
+                        self.offset = target.min(self.rows.len().saturating_sub(1));
+                        self.selected = 0;
+                    }
+                }
+            }
+            BrowseMode::GotoDate(input) => {
+                let target = input.trim();
+                if !target.is_empty() {
+                    if let Some(idx) = self.rows.iter().position(|r| r.date.as_str() >= target) {
+                        self.offset = idx;
+                        self.selected = 0;
+                    } else {
+                        self.status_message = Some(format!("No transactions on or after {target}"));
+                    }
+                }
+            }
+            BrowseMode::FindId(input) => {
+                if let Ok(id) = input.trim().parse::<i64>() {
+                    if let Some(idx) = self.rows.iter().position(|r| r.id == id) {
+                        self.offset = idx;
+                        self.selected = 0;
+                    } else {
+                        self.status_message = Some(format!("Transaction #{id} not found"));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn filtered_categories(&self) -> Vec<(usize, &str)> {
+        let query = match &self.mode {
+            BrowseMode::EditCategory { query, .. } => query,
+            _ => return vec![],
+        };
+        if query.is_empty() {
+            return vec![];
+        }
+        let q = query.to_lowercase();
+        self.cat_labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| label.to_lowercase().contains(&q))
+            .map(|(i, s)| (i, s.as_str()))
+            .take(9)
+            .collect()
+    }
+
+    fn handle_edit_category_key(&mut self, code: KeyCode) -> BrowseAction {
+        match code {
+            KeyCode::Char(c) => {
+                if let BrowseMode::EditCategory { query, selection } = &mut self.mode {
+                    query.push(c);
+                    *selection = 0;
+                }
+            }
+            KeyCode::Backspace => {
+                if let BrowseMode::EditCategory { query, selection } = &mut self.mode {
+                    query.pop();
+                    *selection = 0;
+                }
+            }
+            KeyCode::Up => {
+                if let BrowseMode::EditCategory { selection, .. } = &mut self.mode {
+                    *selection = selection.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                // Compute count before mutably borrowing self.mode (borrow checker constraint)
+                let count = self.filtered_categories().len();
+                if let BrowseMode::EditCategory { selection, .. } = &mut self.mode {
+                    if count > 0 && *selection + 1 < count {
+                        *selection += 1;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let matches = self.filtered_categories();
+                if !matches.is_empty() {
+                    let sel_idx = match &self.mode {
+                        BrowseMode::EditCategory { selection, .. } => {
+                            (*selection).min(matches.len() - 1)
+                        }
+                        _ => 0,
+                    };
+                    self.pending_category_idx = Some(matches[sel_idx].0);
+                    self.mode = BrowseMode::EditVendor(String::new());
+                }
+            }
+            KeyCode::Esc => {
+                self.mode = BrowseMode::Normal;
+                self.pending_category_idx = None;
+            }
+            _ => {}
+        }
+        BrowseAction::Continue
+    }
+
+    fn handle_edit_vendor_key(&mut self, code: KeyCode) -> BrowseAction {
+        match code {
+            KeyCode::Char(c) => {
+                if let BrowseMode::EditVendor(input) = &mut self.mode {
+                    input.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let BrowseMode::EditVendor(input) = &mut self.mode {
+                    input.pop();
+                }
+            }
+            KeyCode::Enter => {
+                let vendor = match &self.mode {
+                    BrowseMode::EditVendor(input) => {
+                        if input.is_empty() {
+                            None
+                        } else {
+                            Some(input.clone())
+                        }
+                    }
+                    _ => None,
+                };
+                self.pending_vendor = vendor;
+                self.mode = BrowseMode::Normal;
+                return BrowseAction::CommitEdit;
+            }
+            KeyCode::Esc => {
+                self.mode = BrowseMode::Normal;
+                self.pending_category_idx = None;
+                self.pending_vendor = None;
+            }
+            _ => {}
+        }
+        BrowseAction::Continue
+    }
+
+    fn apply_edit_to_local_row(&mut self) {
+        let abs_idx = self.offset + self.selected;
+        if let Some(cat_idx) = self.pending_category_idx {
+            if let Some(row) = self.rows.get_mut(abs_idx) {
+                let cat = &self.categories[cat_idx];
+                row.category = Some(cat.name.clone());
+                row.category_id = Some(cat.id);
+                if let Some(ref v) = self.pending_vendor {
+                    row.vendor = Some(v.clone());
+                } else {
+                    row.vendor = None;
+                }
+            }
+        }
+        self.pending_category_idx = None;
+        self.pending_vendor = None;
+    }
+
+    fn apply_flag_toggle_to_local_row(&mut self, new_state: bool) {
+        let abs_idx = self.offset + self.selected;
+        if let Some(row) = self.rows.get_mut(abs_idx) {
+            row.is_flagged = new_state;
+        }
+    }
+
+    pub fn commit_edit(&mut self, conn: &rusqlite::Connection) -> nigel_core::error::Result<()> {
+        let abs_idx = self.offset + self.selected;
+        let row = self
+            .rows
+            .get(abs_idx)
+            .ok_or_else(|| nigel_core::error::NigelError::Other("No row selected".into()))?;
+        let txn_id = row.id;
+
+        if let Some(cat_idx) = self.pending_category_idx {
+            let cat_id = self.categories[cat_idx].id;
+            nigel_core::reviewer::update_transaction_category(conn, txn_id, cat_id)?;
+            if let Some(ref v) = self.pending_vendor {
+                nigel_core::reviewer::update_transaction_vendor(conn, txn_id, Some(v))?;
+            } else {
+                nigel_core::reviewer::update_transaction_vendor(conn, txn_id, None)?;
+            }
+        }
+
+        self.apply_edit_to_local_row();
+        self.status_message = Some(format!("Updated transaction #{txn_id}"));
+        Ok(())
+    }
+
+    /// Put a message on the browser's own status line — the dashboard's is
+    /// never drawn while the browser is up.
+    pub fn set_status(&mut self, msg: String) {
+        self.status_message = Some(msg);
+    }
+
+    /// Toggle the flag on the selected transaction.
+    /// Flags are non-destructive metadata — single-keypress toggle is intentional
+    /// since it's instantly reversible (press `f` again).
+    pub fn toggle_flag(&mut self, conn: &rusqlite::Connection) -> nigel_core::error::Result<()> {
+        let abs_idx = self.offset + self.selected;
+        let row = self
+            .rows
+            .get(abs_idx)
+            .ok_or_else(|| nigel_core::error::NigelError::Other("No row selected".into()))?;
+        let txn_id = row.id;
+        let new_state = nigel_core::reviewer::toggle_transaction_flag(conn, txn_id)?;
+        self.apply_flag_toggle_to_local_row(new_state);
+        let label = if new_state { "flagged" } else { "unflagged" };
+        self.status_message = Some(format!("Transaction #{txn_id} {label}"));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nigel_core::reports::RegisterRow;
+    use nigel_core::reviewer::CategoryChoice;
+
+    fn make_rows(n: usize) -> Vec<RegisterRow> {
+        (0..n)
+            .map(|i| RegisterRow {
+                id: (i + 1) as i64,
+                date: format!("2025-01-{:02}", (i % 28) + 1),
+                description: format!("Transaction {}", i + 1),
+                amount: if i % 2 == 0 { 100.0 } else { -50.0 },
+                category: Some("Test Category".to_string()),
+                category_id: Some(1),
+                vendor: None,
+                account_name: "Test Account".to_string(),
+                is_flagged: false,
+            })
+            .collect()
+    }
+
+    fn make_categories() -> Vec<CategoryChoice> {
+        vec![
+            CategoryChoice {
+                id: 1,
+                name: "Advertising".to_string(),
+                category_type: "expense".to_string(),
+            },
+            CategoryChoice {
+                id: 2,
+                name: "Software & Subscriptions".to_string(),
+                category_type: "expense".to_string(),
+            },
+            CategoryChoice {
+                id: 3,
+                name: "Revenue".to_string(),
+                category_type: "income".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_scroll_down() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        assert_eq!(browser.offset, 0);
+
+        browser.scroll_down();
+        assert_eq!(browser.offset, PAGE_SIZE);
+
+        browser.scroll_down();
+        assert_eq!(browser.offset, PAGE_SIZE * 2);
+    }
+
+    #[test]
+    fn test_scroll_down_stops_at_end() {
+        let rows = make_rows(10);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.scroll_down(); // 10 < PAGE_SIZE, so offset stays
+        assert_eq!(browser.offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_up() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.offset = PAGE_SIZE * 2;
+
+        browser.scroll_up();
+        assert_eq!(browser.offset, PAGE_SIZE);
+
+        browser.scroll_up();
+        assert_eq!(browser.offset, 0);
+
+        browser.scroll_up(); // doesn't go negative
+        assert_eq!(browser.offset, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_end() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.scroll_to_end();
+        assert_eq!(browser.offset, 50 - PAGE_SIZE);
+    }
+
+    #[test]
+    fn test_scroll_to_end_small_dataset() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.scroll_to_end();
+        assert_eq!(browser.offset, 0); // 5 < PAGE_SIZE, stays at 0
+    }
+
+    #[test]
+    fn test_goto_page() {
+        let rows = make_rows(100);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.mode = BrowseMode::GotoPage("3".to_string());
+        browser.submit_input();
+        assert_eq!(browser.offset, 2 * PAGE_SIZE);
+    }
+
+    #[test]
+    fn test_goto_date_found() {
+        let rows = make_rows(30);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.mode = BrowseMode::GotoDate("2025-01-15".to_string());
+        browser.submit_input();
+        assert_eq!(browser.offset, 14); // 0-indexed, date "2025-01-15" is at index 14
+    }
+
+    #[test]
+    fn test_goto_date_not_found() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.mode = BrowseMode::GotoDate("2026-01-01".to_string());
+        browser.submit_input();
+        assert_eq!(browser.offset, 0); // unchanged
+        assert!(browser.status_message.is_some());
+        assert!(browser
+            .status_message
+            .as_ref()
+            .unwrap()
+            .contains("2026-01-01"));
+    }
+
+    #[test]
+    fn test_find_id_found() {
+        let rows = make_rows(30);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.mode = BrowseMode::FindId("25".to_string());
+        browser.submit_input();
+        assert_eq!(browser.offset, 24); // id 25 is at index 24
+    }
+
+    #[test]
+    fn test_find_id_not_found() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.mode = BrowseMode::FindId("999".to_string());
+        browser.submit_input();
+        assert_eq!(browser.offset, 0); // unchanged
+        assert!(browser.status_message.is_some());
+        assert!(browser.status_message.as_ref().unwrap().contains("999"));
+    }
+
+    #[test]
+    fn test_export_hints_are_opt_in() {
+        let mut browser = RegisterBrowser::new(make_rows(5), 0.0, String::new(), vec![]);
+        assert!(!browser.export_hints_enabled());
+        browser.set_export_hints(true);
+        assert!(browser.export_hints_enabled());
+    }
+
+    #[test]
+    fn test_is_capturing_input_tracks_mode() {
+        let mut browser = RegisterBrowser::new(make_rows(5), 0.0, String::new(), make_categories());
+        assert!(!browser.is_capturing_input());
+
+        for key in ['/', 'g', 'd', 'i', 'e'] {
+            browser.handle_key_event(KeyCode::Char(key));
+            assert!(
+                browser.is_capturing_input(),
+                "'{key}' should start capturing input"
+            );
+            browser.handle_key_event(KeyCode::Esc);
+            assert!(!browser.is_capturing_input(), "Esc should end '{key}' mode");
+        }
+    }
+
+    #[test]
+    fn test_export_key_chars_are_typed_into_search() {
+        let mut browser = RegisterBrowser::new(make_rows(5), 0.0, String::new(), vec![]);
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('t'));
+        browser.handle_key_event(KeyCode::Char('x'));
+        match &browser.mode {
+            BrowseMode::Search(q) => assert_eq!(q, "tx"),
+            _ => panic!("expected search mode"),
+        }
+    }
+
+    /// The browser's half of the export-key treaty: `x` and `t` stay unbound
+    /// in Normal mode. The dashboard intercepts them before this handler, so
+    /// a binding added here would be silently shadowed wherever the browser is
+    /// dashboard-hosted.
+    #[test]
+    fn test_export_keys_stay_unbound_in_normal_mode() {
+        let mut browser = RegisterBrowser::new(make_rows(5), 0.0, String::new(), vec![]);
+        let (selected, offset) = (browser.selected, browser.offset);
+        for code in [KeyCode::Char('x'), KeyCode::Char('t')] {
+            assert!(matches!(
+                browser.handle_key_event(code),
+                BrowseAction::Continue
+            ));
+            assert!(matches!(browser.mode, BrowseMode::Normal));
+            assert_eq!((browser.selected, browser.offset), (selected, offset));
+        }
+    }
+
+    #[test]
+    fn test_handle_key_returns_close_on_q() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        let action = browser.handle_key_event(KeyCode::Char('q'));
+        assert!(matches!(action, BrowseAction::Close));
+    }
+
+    #[test]
+    fn test_handle_key_returns_continue_on_nav() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        let action = browser.handle_key_event(KeyCode::Right);
+        assert!(matches!(action, BrowseAction::Continue));
+    }
+
+    #[test]
+    fn test_selected_row_up_down() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        assert_eq!(browser.selected, 0);
+
+        browser.handle_key_event(KeyCode::Down);
+        assert_eq!(browser.selected, 1);
+
+        browser.handle_key_event(KeyCode::Down);
+        assert_eq!(browser.selected, 2);
+
+        browser.handle_key_event(KeyCode::Up);
+        assert_eq!(browser.selected, 1);
+
+        browser.handle_key_event(KeyCode::Up);
+        assert_eq!(browser.selected, 0);
+
+        // Can't go below 0
+        browser.handle_key_event(KeyCode::Up);
+        assert_eq!(browser.selected, 0);
+    }
+
+    #[test]
+    fn test_page_navigation_resets_selected() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.selected = 5;
+
+        browser.handle_key_event(KeyCode::Right);
+        assert_eq!(browser.selected, 0);
+    }
+
+    #[test]
+    fn test_enter_edit_mode() {
+        let rows = make_rows(5);
+        let cats = make_categories();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), cats);
+
+        browser.handle_key_event(KeyCode::Char('e'));
+        assert!(matches!(browser.mode, BrowseMode::EditCategory { .. }));
+    }
+
+    #[test]
+    fn test_edit_category_filter_and_select() {
+        let rows = make_rows(5);
+        let cats = make_categories();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), cats);
+
+        browser.handle_key_event(KeyCode::Char('e'));
+        // Type "adv" to filter
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('v'));
+
+        // Filter should match "Advertising"
+        let matches = browser.filtered_categories();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].1.contains("Advertising"));
+
+        // Select it
+        browser.handle_key_event(KeyCode::Enter);
+        assert!(matches!(browser.mode, BrowseMode::EditVendor(_)));
+        assert_eq!(browser.pending_category_idx, Some(0));
+    }
+
+    #[test]
+    fn test_edit_vendor_and_commit() {
+        let rows = make_rows(5);
+        let cats = make_categories();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), cats);
+
+        // Enter edit, select first category
+        browser.mode = BrowseMode::EditCategory {
+            query: String::new(),
+            selection: 0,
+        };
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Enter);
+
+        // Now in vendor mode, type vendor name
+        browser.handle_key_event(KeyCode::Char('F'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        let action = browser.handle_key_event(KeyCode::Enter);
+        assert!(matches!(action, BrowseAction::CommitEdit));
+        assert_eq!(browser.pending_vendor.as_deref(), Some("Foo"));
+    }
+
+    #[test]
+    fn test_esc_cancels_edit() {
+        let rows = make_rows(5);
+        let cats = make_categories();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), cats);
+
+        browser.handle_key_event(KeyCode::Char('e'));
+        browser.handle_key_event(KeyCode::Esc);
+        assert!(matches!(browser.mode, BrowseMode::Normal));
+    }
+
+    #[test]
+    fn test_commit_edit_updates_row() {
+        let rows = make_rows(5);
+        let cats = make_categories();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), cats);
+
+        browser.pending_category_idx = Some(0); // "Advertising"
+        browser.pending_vendor = Some("TestVendor".to_string());
+        browser.selected = 0;
+
+        browser.apply_edit_to_local_row();
+        assert_eq!(browser.rows[0].category.as_deref(), Some("Advertising"));
+        assert_eq!(browser.rows[0].vendor.as_deref(), Some("TestVendor"));
+        assert_eq!(browser.rows[0].category_id, Some(1));
+    }
+
+    #[test]
+    fn test_toggle_flag_updates_row() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        assert!(!browser.rows[0].is_flagged);
+
+        browser.apply_flag_toggle_to_local_row(true);
+        assert!(browser.rows[0].is_flagged);
+    }
+
+    #[test]
+    fn test_scroll_to_today_clamps_selected() {
+        // Build rows with future dates so scroll_to_today picks the last row
+        // with date <= today, which will be far into the list.
+        let mut rows: Vec<RegisterRow> = (0..50)
+            .map(|i| RegisterRow {
+                id: (i + 1) as i64,
+                date: format!("2025-06-{:02}", (i % 28) + 1),
+                description: format!("Txn {}", i + 1),
+                amount: 100.0,
+                category: None,
+                category_id: None,
+                vendor: None,
+                account_name: "Test".to_string(),
+                is_flagged: false,
+            })
+            .collect();
+        // Ensure there's a row matching "today" far into the list
+        rows[45].date = Local::now().format("%Y-%m-%d").to_string();
+
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        // Simulate a short terminal by reducing visible_count
+        browser.visible_count = 5;
+
+        browser.scroll_to_today();
+
+        // selected must not exceed visible_count - 1
+        assert!(
+            browser.selected < browser.visible_count,
+            "selected {} should be < visible_count {}",
+            browser.selected,
+            browser.visible_count,
+        );
+    }
+
+    fn make_search_rows() -> Vec<RegisterRow> {
+        vec![
+            RegisterRow {
+                id: 1,
+                date: "2025-01-01".to_string(),
+                description: "ADOBE CREATIVE CLOUD".to_string(),
+                amount: -54.99,
+                category: Some("Software & Subscriptions".to_string()),
+                category_id: Some(1),
+                vendor: Some("Adobe".to_string()),
+                account_name: "BofA Checking".to_string(),
+                is_flagged: false,
+            },
+            RegisterRow {
+                id: 2,
+                date: "2025-01-05".to_string(),
+                description: "CLIENT PAYMENT ACME CORP".to_string(),
+                amount: 5000.0,
+                category: Some("Client Services".to_string()),
+                category_id: Some(2),
+                vendor: Some("Acme Corp".to_string()),
+                account_name: "BofA Checking".to_string(),
+                is_flagged: false,
+            },
+            RegisterRow {
+                id: 3,
+                date: "2025-01-10".to_string(),
+                description: "GITHUB PRO SUBSCRIPTION".to_string(),
+                amount: -4.0,
+                category: Some("Software & Subscriptions".to_string()),
+                category_id: Some(1),
+                vendor: Some("GitHub".to_string()),
+                account_name: "BofA Checking".to_string(),
+                is_flagged: false,
+            },
+            RegisterRow {
+                id: 4,
+                date: "2025-01-15".to_string(),
+                description: "OFFICE SUPPLIES STAPLES".to_string(),
+                amount: -89.50,
+                category: Some("Office Supplies".to_string()),
+                category_id: Some(3),
+                vendor: None,
+                account_name: "BofA Credit Card".to_string(),
+                is_flagged: false,
+            },
+            RegisterRow {
+                id: 5,
+                date: "2025-01-20".to_string(),
+                description: "ADOBE ACROBAT PRO".to_string(),
+                amount: -19.99,
+                category: Some("Software & Subscriptions".to_string()),
+                category_id: Some(1),
+                vendor: Some("Adobe".to_string()),
+                account_name: "BofA Checking".to_string(),
+                is_flagged: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_enter_search_mode() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        assert!(matches!(browser.mode, BrowseMode::Search(_)));
+    }
+
+    #[test]
+    fn test_search_matches_description() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        // "adobe" should match rows 0 and 4 (description contains "ADOBE")
+        assert_eq!(browser.search_matches.len(), 2);
+        assert_eq!(browser.search_matches[0], 0);
+        assert_eq!(browser.search_matches[1], 4);
+    }
+
+    #[test]
+    fn test_search_matches_vendor() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        // Search for "acme" which is in the vendor field of row 1
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('c'));
+        browser.handle_key_event(KeyCode::Char('m'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        assert_eq!(browser.search_matches.len(), 1);
+        assert_eq!(browser.search_matches[0], 1);
+    }
+
+    #[test]
+    fn test_search_matches_category() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        // Search for "office" which is in the category of row 3
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('f'));
+        browser.handle_key_event(KeyCode::Char('f'));
+        browser.handle_key_event(KeyCode::Char('i'));
+        browser.handle_key_event(KeyCode::Char('c'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        assert_eq!(browser.search_matches.len(), 1);
+        assert_eq!(browser.search_matches[0], 3);
+    }
+
+    #[test]
+    fn test_search_is_case_insensitive() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        // Search for "GITHUB" in uppercase — should still match
+        browser.handle_key_event(KeyCode::Char('G'));
+        browser.handle_key_event(KeyCode::Char('I'));
+        browser.handle_key_event(KeyCode::Char('T'));
+        browser.handle_key_event(KeyCode::Char('H'));
+        browser.handle_key_event(KeyCode::Char('U'));
+        browser.handle_key_event(KeyCode::Char('B'));
+
+        assert_eq!(browser.search_matches.len(), 1);
+        assert_eq!(browser.search_matches[0], 2);
+    }
+
+    #[test]
+    fn test_search_jumps_to_first_match() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        // Scroll away from the top
+        browser.offset = 3;
+        browser.selected = 0;
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        // Should jump to first match (row 0)
+        assert_eq!(browser.search_index, 0);
+        assert_eq!(browser.search_matches[0], 0);
+    }
+
+    #[test]
+    fn test_search_n_cycles_next() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        // Confirm on first match
+        browser.handle_key_event(KeyCode::Enter);
+        assert!(matches!(browser.mode, BrowseMode::Normal));
+        assert_eq!(browser.search_index, 0);
+
+        // Press n to go to next match
+        browser.handle_key_event(KeyCode::Char('n'));
+        assert_eq!(browser.search_index, 1);
+
+        // Press n again to wrap around
+        browser.handle_key_event(KeyCode::Char('n'));
+        assert_eq!(browser.search_index, 0);
+    }
+
+    #[test]
+    fn test_search_shift_n_cycles_prev() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+        browser.handle_key_event(KeyCode::Enter);
+
+        // At index 0, press N to go to last match
+        browser.handle_key_event(KeyCode::Char('N'));
+        assert_eq!(browser.search_index, 1);
+
+        // Press N again to wrap back to 0
+        browser.handle_key_event(KeyCode::Char('N'));
+        assert_eq!(browser.search_index, 0);
+    }
+
+    #[test]
+    fn test_search_esc_clears() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+
+        assert!(!browser.search_matches.is_empty());
+
+        browser.handle_key_event(KeyCode::Esc);
+        assert!(matches!(browser.mode, BrowseMode::Normal));
+        assert!(browser.search_matches.is_empty());
+        assert!(browser.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_search_no_matches() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('z'));
+        browser.handle_key_event(KeyCode::Char('z'));
+        browser.handle_key_event(KeyCode::Char('z'));
+
+        assert!(browser.search_matches.is_empty());
+    }
+
+    #[test]
+    fn test_search_empty_query() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        // Enter without typing anything
+        browser.handle_key_event(KeyCode::Enter);
+
+        assert!(browser.search_matches.is_empty());
+        assert!(matches!(browser.mode, BrowseMode::Normal));
+    }
+
+    #[test]
+    fn test_search_backspace_recomputes() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        // "adobe" matches 2 rows
+        browser.handle_key_event(KeyCode::Char('a'));
+        browser.handle_key_event(KeyCode::Char('d'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('b'));
+        browser.handle_key_event(KeyCode::Char('e'));
+        assert_eq!(browser.search_matches.len(), 2);
+
+        // Add more chars to narrow — "adobe c" matches only row 0
+        browser.handle_key_event(KeyCode::Char(' '));
+        browser.handle_key_event(KeyCode::Char('c'));
+        assert_eq!(browser.search_matches.len(), 1);
+        assert_eq!(browser.search_matches[0], 0);
+
+        // Backspace to widen back to "adobe "
+        browser.handle_key_event(KeyCode::Backspace);
+        // "adobe " still matches 2
+        assert_eq!(browser.search_matches.len(), 2);
+    }
+
+    #[test]
+    fn test_search_enter_keeps_matches_for_n_cycling() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('/'));
+        browser.handle_key_event(KeyCode::Char('s'));
+        browser.handle_key_event(KeyCode::Char('o'));
+        browser.handle_key_event(KeyCode::Char('f'));
+        browser.handle_key_event(KeyCode::Char('t'));
+
+        let match_count = browser.search_matches.len();
+        assert!(match_count > 0);
+
+        // Enter to confirm and return to Normal mode
+        browser.handle_key_event(KeyCode::Enter);
+        assert!(matches!(browser.mode, BrowseMode::Normal));
+
+        // Matches should be preserved for n/N cycling
+        assert_eq!(browser.search_matches.len(), match_count);
+    }
+
+    #[test]
+    fn test_n_without_search_is_noop() {
+        let rows = make_search_rows();
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        let original_offset = browser.offset;
+        let original_selected = browser.selected;
+
+        browser.handle_key_event(KeyCode::Char('n'));
+
+        // No search matches, so n should be a no-op
+        assert_eq!(browser.offset, original_offset);
+        assert_eq!(browser.selected, original_selected);
+    }
+
+    #[test]
+    fn test_find_id_uses_i_key() {
+        let rows = make_rows(5);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+
+        browser.handle_key_event(KeyCode::Char('i'));
+        assert!(matches!(browser.mode, BrowseMode::FindId(_)));
+    }
+
+    #[test]
+    fn test_scroll_to_row_centers_offscreen_match() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.visible_count = 20;
+
+        browser.scroll_to_row(40);
+        assert_eq!(browser.offset, 30); // 40 - 20/2 = 30
+        assert_eq!(browser.selected, 10); // 40 - 30 = 10
+    }
+
+    #[test]
+    fn test_scroll_to_row_visible_row_moves_selection() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.visible_count = 20;
+        browser.offset = 0;
+
+        browser.scroll_to_row(5);
+        assert_eq!(browser.offset, 0);
+        assert_eq!(browser.selected, 5);
+    }
+
+    #[test]
+    fn test_scroll_to_row_clamps_near_end() {
+        let rows = make_rows(50);
+        let mut browser = RegisterBrowser::new(rows, 0.0, String::new(), vec![]);
+        browser.visible_count = 20;
+
+        // Row 48: centering would want offset=38 but max is 30
+        browser.scroll_to_row(48);
+        assert_eq!(browser.offset, 30); // clamped to 50-20
+        assert_eq!(browser.selected, 18); // 48-30
+    }
+}

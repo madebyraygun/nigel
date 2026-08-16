@@ -19,7 +19,7 @@ import type { AppSettings, Company } from '../api/types.js';
 
 /**
  * The cap `document::parse_logo` enforces, in the one place the browser needs
- * it: `MAX_LOGO_BYTES` in `src/invoicing/document.rs`.
+ * it: `MAX_LOGO_BYTES` in `crates/nigel-core/src/invoicing/document.rs`.
  */
 const MAX_LOGO_BYTES = 128 * 1024;
 import type { ScreenContext } from './context.js';

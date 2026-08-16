@@ -33,7 +33,7 @@ export const colorCss = css`
     --wa-color-warning: #855508;
     --wa-color-info: #1a5c8c;
 
-    /* Signed money, mirroring src/tui.rs money_span: income reads green,
+    /* Signed money, mirroring crates/nigel/src/tui.rs money_span: income reads green,
      * expense reads red. The TUI can lean on color alone; wc-money also
      * renders the sign. */
     --nc-color-income: #17683a;
@@ -65,7 +65,7 @@ export const colorCss = css`
        flip with the colour mode. The pastels the snake is drawn in only read
        on a dark ground — on a light one the whole snake is seven near-white
        smudges — so the board keeps the dark canvas whichever mode is on. The
-       food green is src/tui.rs GREEN and the ink is the dark-mode text, which
+       food green is crates/nigel/src/tui.rs GREEN and the ink is the dark-mode text, which
        is what the TUI draws the head in. */
     --nc-color-arcade-bg: #17171d;
     --nc-color-arcade-ink: #ece9f5;

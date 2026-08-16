@@ -54,7 +54,7 @@ const rows: RegisterTableRow[] = [
 /**
  * The widest row the register can realistically be asked to draw: a 60-column
  * bank description, a long vendor, the longest name in the stock chart of
- * accounts (`src/db.rs`), and a six-figure amount, all on one line with the
+ * accounts (`crates/nigel-core/src/db.rs`), and a six-figure amount, all on one line with the
  * account column showing.
  *
  * IBM Plex Mono advances every glyph at 0.6em — 8.4px at the 14px base — so

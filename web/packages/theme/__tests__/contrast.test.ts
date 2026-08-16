@@ -163,7 +163,7 @@ describe('the wordmark ramp is legible on the surface it is drawn on', () => {
   });
 
   it('leaves the shared palette alone, so effects.rs parity is untouched', () => {
-    // palette-parity.test.ts pins NIGEL_PALETTE to GRADIENT in src/effects.rs.
+    // palette-parity.test.ts pins NIGEL_PALETTE to GRADIENT in crates/nigel/src/effects.rs.
     // The light ramp is additive precisely so that stays true.
     for (const stop of NIGEL_PALETTE_INK) {
       expect(NIGEL_PALETTE).not.toContain(stop);

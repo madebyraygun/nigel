@@ -8,7 +8,7 @@ import type { CategoryOption } from './category-option.js';
 import type { NcCategoryChangeDetail } from './wc-category-picker.js';
 import { controlsCss } from '@nigel/theme';
 
-/** The match types the categorizer understands, in `cli/rules.rs` order. */
+/** The match types the categorizer understands, in `crates/nigel-core/src/rules.rs` order. */
 export const MATCH_TYPES = ['contains', 'starts_with', 'regex'] as const;
 
 export type MatchTypeValue = (typeof MATCH_TYPES)[number];

@@ -1,5 +1,5 @@
 /**
- * The rules of Snake, ported from `src/cli/snake.rs`.
+ * The rules of Snake, ported from `crates/nigel/src/cli/snake.rs`.
  *
  * The terminal and the browser are meant to be playing the same game, not two
  * games that look alike, so every rule the TUI has — the board size, the tick
@@ -28,7 +28,7 @@ export const FOOD_MIN_CENTS = 100;
 export const FOOD_MAX_CENTS = 999;
 
 /**
- * The drifting specks behind the board, from `src/effects.rs` — the same
+ * The drifting specks behind the board, from `crates/nigel/src/effects.rs` — the same
  * effect the splash, goodbye and onboarding screens share with the TUI's
  * Snake. Decorative in both front ends, and the first thing a reduced-motion
  * preference switches off.

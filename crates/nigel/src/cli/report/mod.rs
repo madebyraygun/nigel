@@ -1,0 +1,246 @@
+pub mod view;
+
+pub use nigel_core::reports::text;
+pub use nigel_core::reports::{export_file_stem, PDF_DISABLED_MESSAGE};
+
+use std::io::IsTerminal;
+use std::path::PathBuf;
+
+use crate::cli::ReportOutputArgs;
+use nigel_core::error::Result;
+
+use super::ReportCommands;
+
+pub fn dispatch(cmd: ReportCommands) -> Result<()> {
+    let args = cmd.output_args();
+
+    // Validate --mode and --format values
+    if let Some(ref mode) = args.mode {
+        if mode != "view" && mode != "export" {
+            return Err(nigel_core::error::NigelError::Other(format!(
+                "Unknown --mode '{mode}'. Expected 'view' or 'export'."
+            )));
+        }
+    }
+    if let Some(ref format) = args.format {
+        if format != "pdf" && format != "text" {
+            return Err(nigel_core::error::NigelError::Other(format!(
+                "Unknown --format '{format}'. Expected 'pdf' or 'text'."
+            )));
+        }
+    }
+
+    // `report all` is always an export
+    if matches!(cmd, ReportCommands::All { .. }) {
+        return dispatch_export(cmd, args);
+    }
+
+    if args.output.is_some() || args.mode.as_deref() == Some("export") {
+        dispatch_export(cmd, args)
+    } else if args.mode.as_deref() == Some("view") || std::io::stdout().is_terminal() {
+        dispatch_view(cmd)
+    } else {
+        // Non-TTY: plain text to stdout
+        let s = dispatch_text(&cmd)?;
+        println!("{s}");
+        Ok(())
+    }
+}
+
+fn dispatch_view(cmd: ReportCommands) -> Result<()> {
+    view::dispatch(cmd)
+}
+
+pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
+    match cmd {
+        ReportCommands::Pnl {
+            month,
+            year,
+            from_date,
+            to_date,
+            ..
+        } => text::pnl(month.clone(), *year, from_date.clone(), to_date.clone()),
+        ReportCommands::Expenses { month, year, .. } => text::expenses(month.clone(), *year),
+        ReportCommands::Tax { year, .. } => text::tax(*year),
+        ReportCommands::Cashflow { month, year, .. } => text::cashflow(month.clone(), *year),
+        ReportCommands::Register {
+            month,
+            year,
+            from_date,
+            to_date,
+            filters,
+            ..
+        } => {
+            let conn = nigel_core::db::get_connection(
+                &nigel_core::settings::get_data_dir().join("nigel.db"),
+            )?;
+            let resolved = filters.resolve(&conn)?;
+            drop(conn);
+            text::register(
+                month.clone(),
+                *year,
+                from_date.clone(),
+                to_date.clone(),
+                &resolved,
+            )
+        }
+        ReportCommands::Flagged { .. } => text::flagged(),
+        ReportCommands::Balance { .. } => text::balance(),
+        ReportCommands::Aging { .. } => text::aging(&crate::cli::today()),
+        ReportCommands::K1 { year, .. } => text::k1(*year),
+        ReportCommands::All { .. } => Err(nigel_core::error::NigelError::Other(
+            "`report all` is export-only".into(),
+        )),
+    }
+}
+
+fn dispatch_export(cmd: ReportCommands, args: ReportOutputArgs) -> Result<()> {
+    let is_text = args.format.as_deref() == Some("text");
+
+    if is_text {
+        return export_text(cmd, args.output);
+    }
+
+    // PDF export
+    dispatch_pdf_export(cmd, args.output)
+}
+
+fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
+    if let ReportCommands::All {
+        year, output_dir, ..
+    } = cmd
+    {
+        return export_all_text(year, output_dir);
+    }
+
+    let name = cmd.export_basename();
+    let s = dispatch_text(&cmd)?;
+    let path = output.unwrap_or_else(|| default_text_path(&name));
+    let p = PathBuf::from(&path);
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&p, &s)?;
+    nigel_core::settings::restrict_file_permissions(&p)?;
+    println!("Wrote {}", p.display());
+    Ok(())
+}
+
+fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> {
+    let data_dir = nigel_core::settings::get_data_dir();
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let is_default_dir = output_dir.is_none();
+    let dir = output_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("exports"));
+    std::fs::create_dir_all(&dir)?;
+    if is_default_dir {
+        nigel_core::settings::restrict_dir_permissions(&dir)?;
+    }
+
+    let mut reports: Vec<(&str, Result<String>)> = vec![
+        ("pnl", text::pnl(None, year, None, None)),
+        ("expenses", text::expenses(None, year)),
+        ("tax", text::tax(year)),
+        ("cashflow", text::cashflow(None, year)),
+        (
+            "register",
+            text::register(None, year, None, None, &Default::default()),
+        ),
+        ("flagged", text::flagged()),
+        ("balance", text::balance()),
+        ("aging", text::aging(&crate::cli::today())),
+    ];
+    // The K-1 worksheet only means something under the business chart of
+    // accounts; personal books skip it in the bulk export.
+    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
+    if nigel_core::db::get_profile(&conn) == nigel_core::db::Profile::Business {
+        reports.push(("k1-prep", text::k1(year)));
+    }
+    drop(conn);
+
+    for (name, result) in reports {
+        match result {
+            Ok(content) => {
+                let path = dir.join(format!("{name}-{date}.txt"));
+                std::fs::write(&path, content)?;
+                nigel_core::settings::restrict_file_permissions(&path)?;
+                println!("Wrote {}", path.display());
+            }
+            Err(e) => eprintln!("Skipping {name}: {e}"),
+        }
+    }
+    Ok(())
+}
+
+fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()> {
+    #[cfg(not(feature = "pdf"))]
+    {
+        let _ = (cmd, output);
+        return Err(nigel_core::error::NigelError::Other(
+            PDF_DISABLED_MESSAGE.into(),
+        ));
+    }
+
+    #[cfg(feature = "pdf")]
+    {
+        crate::cli::export::dispatch_pdf(cmd, output)?;
+        Ok(())
+    }
+}
+
+fn default_text_path(name: &str) -> String {
+    nigel_core::settings::get_data_dir()
+        .join("exports")
+        .join(format!("{}.txt", export_file_stem(name)))
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use nigel_core::reports::{
+        register_range_label, register_subtitle, CategorySelection, RegisterFilters,
+    };
+
+    #[test]
+    fn register_range_label_variants() {
+        assert_eq!(register_range_label(Some(2025), Some(3)), "2025-03");
+        assert_eq!(register_range_label(Some(2025), None), "FY 2025");
+        // No date filter — including a `--month` that failed to parse and so
+        // filtered nothing — labels the selection the query actually ran.
+        assert_eq!(register_range_label(None, None), "All dates");
+        assert_eq!(register_range_label(None, Some(3)), "All dates");
+    }
+
+    #[test]
+    fn register_subtitle_appends_active_filters() {
+        assert_eq!(
+            register_subtitle("FY 2025", &RegisterFilters::default()),
+            "FY 2025"
+        );
+        assert_eq!(
+            register_subtitle(
+                "FY 2025",
+                &RegisterFilters {
+                    account: Some("BofA Checking".into()),
+                    category: Some(CategorySelection::Named {
+                        id: 1,
+                        name: "Taxes & Licenses".into(),
+                    }),
+                }
+            ),
+            "FY 2025 — account: BofA Checking, category: Taxes & Licenses"
+        );
+        assert_eq!(
+            register_subtitle(
+                "All dates",
+                &RegisterFilters {
+                    account: None,
+                    category: Some(CategorySelection::Uncategorized),
+                }
+            ),
+            "All dates — uncategorized"
+        );
+    }
+}

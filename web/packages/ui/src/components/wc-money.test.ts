@@ -25,7 +25,7 @@ describe('wc-money', () => {
     document.body.innerHTML = '';
   });
 
-  // The exact vectors src/fmt.rs asserts for `money()`. The web UI and the TUI
+  // The exact vectors crates/nigel-core/src/fmt.rs asserts for `money()`. The web UI and the TUI
   // print the same strings or the two front ends disagree about the books.
   it.each([
     [1234.56, '$1,234.56'],
