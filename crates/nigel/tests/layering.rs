@@ -33,14 +33,17 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
 /// Every way a line can name the terminal UI.
 ///
 /// `crate::cli` is what a reference looked like while the two halves shared a
-/// crate; `nigel::` is what one would look like now. Both are checked, because
-/// a file moved back from history carries the old spelling.
+/// crate; `nigel::` and `extern crate nigel` are what one would look like
+/// now. All are checked, because a file moved back from history carries the
+/// old spelling, and a bare `extern crate nigel;` names the CLI without ever
+/// spelling `nigel::`.
 fn names_the_cli(line: &str) -> bool {
     line.contains("crate::cli::")
         || line.contains("crate::cli;")
         || line.contains("crate::{cli")
         || line.contains("crate::{ cli")
         || line.contains("nigel::")
+        || line.contains("extern crate nigel")
 }
 
 fn cli_references() -> Vec<String> {
@@ -88,17 +91,49 @@ fn the_core_does_not_reach_into_the_cli_layer() {
 /// The core crate must not depend on the binary crate, in either direction of
 /// reading: a `nigel` entry in `nigel-core`'s manifest would make the source
 /// check above pass while the boundary was already gone.
+///
+/// This is not redundant with the compiler. `cargo build -p nigel-core`
+/// does not need dev- or build-dependencies to succeed, and Cargo allows a
+/// dev-dependency cycle between workspace members outright — that is how two
+/// crates' test suites are permitted to depend on each other. A `nigel`
+/// dev-dependency here would let `nigel-core`'s `#[cfg(test)]` code reach
+/// into the CLI crate while `cargo build -p nigel-core` and even
+/// `cargo test -p nigel-core` both stayed green. So every dependency table
+/// Cargo recognizes is checked, not just `[dependencies]`, and both the
+/// inline (`nigel = "1"`) and section (`[dependencies.nigel]`) spellings are
+/// caught by parsing the manifest as TOML rather than scanning lines by hand.
 #[test]
 fn the_core_manifest_does_not_depend_on_the_binary_crate() {
     let manifest =
         fs::read_to_string("../nigel-core/Cargo.toml").expect("read nigel-core manifest");
-    for line in manifest.lines() {
-        let name = line.split(['=', ' ']).next().unwrap_or("").trim();
-        assert_ne!(
-            name,
-            "nigel",
-            "nigel-core depends on the binary crate: {}",
-            line.trim()
-        );
+    let manifest: toml::Table = manifest.parse().expect("parse nigel-core manifest as TOML");
+
+    let mut hits = Vec::new();
+    check_dependency_tables(&manifest, "", &mut hits);
+
+    assert!(
+        hits.is_empty(),
+        "nigel-core depends on the binary crate in: {}",
+        hits.join(", ")
+    );
+}
+
+/// Checks `dependencies`, `dev-dependencies` and `build-dependencies` directly
+/// under `table` for a `nigel` key, then recurses into `table.target.*`,
+/// where Cargo allows the same three tables to reappear per build target.
+fn check_dependency_tables(table: &toml::Table, path: &str, hits: &mut Vec<String>) {
+    for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(toml::Value::Table(deps)) = table.get(kind) {
+            if deps.contains_key("nigel") {
+                hits.push(format!("[{path}{kind}]"));
+            }
+        }
+    }
+    if let Some(toml::Value::Table(targets)) = table.get("target") {
+        for (spec, target_table) in targets {
+            if let toml::Value::Table(target_table) = target_table {
+                check_dependency_tables(target_table, &format!("target.{spec}."), hits);
+            }
+        }
     }
 }

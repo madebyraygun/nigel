@@ -36,3 +36,4 @@ predicates = "3"
 chrono = "0.4"
 rusqlite = { version = "0.31", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
+toml = "0.8"
