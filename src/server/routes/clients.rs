@@ -81,7 +81,7 @@ async fn archive(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<i64>,
 ) -> ApiResult<Json<Client>> {
-    let today = crate::cli::today();
+    let today = crate::clock::today();
     let client = with_conn_api(&state, move |conn| {
         clients::archive_client(conn, id, &today)
             .map_err(|e| not_found_because(e, "client_not_found"))?;

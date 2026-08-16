@@ -377,7 +377,7 @@ async fn update(
         ));
     }
 
-    let today = crate::cli::today();
+    let today = crate::clock::today();
     let detail = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
         let paid = inv::paid_amount(conn, invoice.id)?;
@@ -426,7 +426,7 @@ async fn void(
     State(state): State<AppState>,
     ApiPath(number): ApiPath<i64>,
 ) -> ApiResult<Json<VoidResult>> {
-    let today = crate::cli::today();
+    let today = crate::clock::today();
     // Whatever this installation configured. Unlike send, nothing here is
     // required: `optional_gateway`/`optional_publisher` answer `None` and the
     // teardown reports what it could not reach.
@@ -718,7 +718,7 @@ async fn send(
     // than reimplemented so the two front ends build the same clients.
     let company = with_conn(&state, |conn| Ok(crate::cli::invoice::company_name(conn))).await?;
     let clients = crate::cli::invoice::build_clients(config, &company).map_err(misconfigured)?;
-    let today = crate::cli::today();
+    let today = crate::clock::today();
     let warnings = clients.warnings.clone();
 
     let mut result = with_conn_api(&state, {
@@ -840,7 +840,7 @@ async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
         return Err(not_configured("Payment sync", &["stripe_secret_key"]));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
-    let today = crate::cli::today();
+    let today = crate::clock::today();
 
     let result = with_conn_api(&state, {
         let state = state.clone();

@@ -38,15 +38,11 @@ pub mod undo;
 pub mod undo_manager;
 pub mod update;
 
+pub use crate::clock::today;
+
 use clap::{Args, Parser, Subcommand};
 
 use crate::reports::ReportKind;
-
-/// Today's local date as `YYYY-MM-DD` — the reference day every date-less
-/// command ages, derives and reports against.
-pub fn today() -> String {
-    chrono::Local::now().format("%Y-%m-%d").to_string()
-}
 
 /// Ask before something irreversible, or refuse when nobody can be asked.
 ///

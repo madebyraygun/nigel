@@ -11,6 +11,7 @@ pub mod browser;
 pub mod categories;
 pub mod categorizer;
 pub mod cli;
+pub mod clock;
 pub mod db;
 pub mod effects;
 pub mod error;
