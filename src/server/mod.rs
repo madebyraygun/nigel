@@ -98,7 +98,7 @@ fn spawn_update_check(state: AppState) {
     tokio::spawn(async move {
         // The check is blocking (`reqwest::blocking`) and reads settings.json.
         if let Ok(found) =
-            tokio::task::spawn_blocking(crate::cli::update::check_with_cooldown).await
+            tokio::task::spawn_blocking(crate::updater::check_with_cooldown).await
         {
             state.set_update_available(found.map(|info| info.version));
         }

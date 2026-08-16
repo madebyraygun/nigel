@@ -31,3 +31,4 @@ pub mod rules;
 pub mod server;
 pub mod settings;
 pub mod tui;
+pub mod updater;
