@@ -108,6 +108,42 @@ describe('the brand gradient carries readable text', () => {
 });
 
 /**
+ * The Snake board is the one surface that keeps a dark ground in light mode,
+ * so its three colours are checked against that ground rather than against a
+ * mode's tokens. Every palette stop is a foreground there — the snake is drawn
+ * in the ramp — and the chrome text and the food have to hold up beside them.
+ */
+describe('the arcade board is legible on its own dark ground', () => {
+  const board = light('--nc-color-arcade-bg');
+
+  it.each(['--nc-color-arcade-bg', '--nc-color-arcade-ink', '--nc-color-arcade-food'])(
+    '%s is declared once, with no dark override',
+    (name) => {
+      const declarations = [
+        ...nigelTheme.cssText.matchAll(new RegExp(`${name}:\\s*#[0-9a-fA-F]{6}`, 'g')),
+      ];
+      expect(declarations).toHaveLength(1);
+    },
+  );
+
+  it('prints its chrome in text that clears AA', () => {
+    expect(contrast(light('--nc-color-arcade-ink'), board)).toBeGreaterThanOrEqual(
+      AA_NORMAL,
+    );
+  });
+
+  it('draws food that clears the graphic threshold', () => {
+    expect(contrast(light('--nc-color-arcade-food'), board)).toBeGreaterThanOrEqual(
+      AA_GRAPHIC,
+    );
+  });
+
+  it.each(NIGEL_PALETTE)('draws the %s segment above the graphic threshold', (stop) => {
+    expect(contrast(stop, board)).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+});
+
+/**
  * The wordmark is gradient-filled text, so every stop of the ramp is a
  * foreground colour and each one has to clear AA on its own. The pastels do
  * that on a dark surface and nowhere near it on a light one, which is why

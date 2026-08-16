@@ -60,6 +60,16 @@ export const colorCss = css`
        never carried by hue alone anyway: wc-money always renders the sign. */
     --nc-color-income-fill: #5a9473;
     --nc-color-expense-fill: #cb6b7b;
+
+    /* The Snake board is a terminal, not a document, and these three do not
+       flip with the colour mode. The pastels the snake is drawn in only read
+       on a dark ground — on a light one the whole snake is seven near-white
+       smudges — so the board keeps the dark canvas whichever mode is on. The
+       food green is src/tui.rs GREEN and the ink is the dark-mode text, which
+       is what the TUI draws the head in. */
+    --nc-color-arcade-bg: #17171d;
+    --nc-color-arcade-ink: #ece9f5;
+    --nc-color-arcade-food: #50dc64;
   }
 `;
 
