@@ -162,10 +162,10 @@ async fn security_headers(req: Request, next: Next) -> Response {
 }
 
 /// The `/api` nest, `/auth`, the static assets, Host/Origin, and the blanket
-/// headers — everything [`build_router`] and [`build_desktop_router`] share.
-/// Layers run outermost-first: the blanket headers, Host/Origin, then the
-/// route. `/auth` and the static assets sit outside the `/api` nest and need
-/// no session either way.
+/// headers — everything [`build_router`] and (behind the `desktop` feature)
+/// `build_desktop_router` share. Layers run outermost-first: the blanket
+/// headers, Host/Origin, then the route. `/auth` and the static assets sit
+/// outside the `/api` nest and need no session either way.
 fn finish_router(state: AppState, api: Router<AppState>, trusted: auth::TrustedOrigins) -> Router {
     Router::new()
         .nest("/api", api)
@@ -197,6 +197,13 @@ pub fn build_router(state: AppState) -> Router {
 /// the app issues to itself. The absence is structural: this router is never
 /// built with the layer, rather than built with one that is asked to stand
 /// down.
+///
+/// Behind the `desktop` feature, which is not in `default`: bound to a TCP
+/// port instead of a desktop shell's custom scheme, `host_guard` alone does
+/// not stop another host on the same LAN from reaching the whole API with no
+/// session — Host and Origin are request headers a curl invocation sets
+/// freely.
+#[cfg(feature = "desktop")]
 pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> Router {
     let api = routes::api_router(&state);
     finish_router(state, api, trusted)
@@ -918,6 +925,7 @@ mod tests {
 
     // -- desktop router ------------------------------------------------------
 
+    #[cfg(feature = "desktop")]
     #[tokio::test]
     async fn the_desktop_router_answers_an_api_route_without_a_session() {
         let (_dir, db_path) = temp_db();
@@ -939,6 +947,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// The desktop router trusts exactly the hosts it was constructed with —
+    /// it is not loopback's trust plus whatever it was given. A request
+    /// addressed to the interface `build_router` answers must still be
+    /// refused here.
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_refuses_a_host_it_was_not_given() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "127.0.0.1:5731")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
