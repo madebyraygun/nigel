@@ -412,7 +412,6 @@ export class WcLineItems extends LitElement {
             data-description
             type="text"
             autocomplete="off"
-            spellcheck="false"
             aria-label=${`Description, line ${index + 1}`}
             .value=${item.description}
             ?disabled=${this.disabled}
