@@ -16,7 +16,7 @@ This plan covers TASK-33.2 acceptance criteria **#1, #4, #8** and the `nigel-des
 
 - `nigel_core::server::build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> Router`, behind the crate's `desktop` feature (not in `default`). It carries no session guard by construction.
 - `nigel_core::server::auth::TrustedOrigins::exactly(hosts: Vec<String>)`, which does **not** implicitly trust loopback.
-- `AppState::new(db_path: PathBuf, session_token: String)`.
+- `nigel_core::server::state::AppState::new(db_path: PathBuf, session_token: String)`. Note the path: `AppState` lives in `server::state` and is **not** re-exported at `server::`, so `nigel_core::server::AppState` does not resolve.
 - The router already serves the SPA: `finish_router` sets `static_files::static_handler` as its fallback, nests `/api`, and layers the host guard and security headers. **The shell serves no files itself.**
 - `POST /api/unlock` takes `{ password }` and is answerable before the database is open — it rides the shared api router, so unlock works over this transport with no new route.
 - The api seam's `ExportTarget` union: `{ kind: 'href'; href: string } | { kind: 'action'; run: () => Promise<void> }`. `FetchApiClient` answers `href`; a desktop client answers `action`. `wc-export-links` and `wc-send-dialog` already render both.
@@ -431,7 +431,7 @@ Expected: FAIL — `database_path` does not exist.
 Build the state in `setup`, before the router:
 
 ```rust
-let state = nigel_core::server::AppState::new(
+let state = nigel_core::server::state::AppState::new(
     db::database_path(),
     nigel_core::server::auth::generate_token(),
 );
