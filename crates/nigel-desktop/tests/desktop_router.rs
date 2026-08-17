@@ -92,3 +92,48 @@ async fn a_request_with_the_wrong_host_is_refused() {
 
     assert_eq!(response.status(), 403);
 }
+
+/// The shape the webview actually sends: a custom scheme is not HTTP, so there
+/// is no `Host` header on the request at all.
+fn scheme_request_without_host(path: &str) -> tauri::http::Request<Vec<u8>> {
+    tauri::http::Request::builder()
+        .method("GET")
+        .uri(format!(
+            "{}{}",
+            nigel_desktop::scheme_url(),
+            path.trim_start_matches('/')
+        ))
+        .body(Vec::new())
+        .expect("build scheme request")
+}
+
+#[tokio::test]
+async fn a_request_carrying_no_host_header_is_answered() {
+    // WebKitGTK and WKWebView send no `Host` for a custom scheme, and the
+    // router's guard refuses a request without one. Every screen 403s if the
+    // transport does not carry the URI's authority into the header.
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let response = nigel_desktop::transport::answer(router, scheme_request_without_host("/")).await;
+
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn a_request_for_another_authority_is_still_refused() {
+    // Carrying the authority into the header must not blunt the guard: an
+    // authority we do not trust arrives as an untrusted `Host` and is refused.
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let request = tauri::http::Request::builder()
+        .method("GET")
+        .uri("nigel://evil.example/")
+        .body(Vec::new())
+        .expect("build scheme request");
+
+    let response = nigel_desktop::transport::answer(router, request).await;
+
+    assert_eq!(response.status(), 403);
+}
