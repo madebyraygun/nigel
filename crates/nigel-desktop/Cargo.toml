@@ -1,3 +1,9 @@
+# Its own workspace. A member of the root workspace would unify features
+# with it, switching nigel-core's `desktop` feature on for every build in
+# the tree — including the one that produces the `nigel` binary, which must
+# never contain a router built without a session guard.
+[workspace]
+
 [package]
 name = "nigel-desktop"
 version = "0.0.0"
