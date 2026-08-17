@@ -78,6 +78,18 @@ jobs:
       - name: Run tests (nigel-core alone)
         run: cargo test -p nigel-core -- --test-threads=1
 
+      - name: Install the desktop shell's Linux system libraries
+        # Only Linux needs them: the shell renders through WebKitGTK there,
+        # while macOS uses the system WKWebView with nothing to install.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
       - name: Build and test the desktop shell
         # Its own workspace, so the root build never unifies nigel-core's
         # desktop feature into the nigel binary. That keeps it out of every
