@@ -82,7 +82,10 @@ export class DesktopApiClient extends FetchApiClient {
     const platform = await this.platform();
     const url = this.invoicePreviewUrl(number, 'pdf');
     if (platform !== 'linux') {
-      globalThis.open(url, '_blank');
+      // WKWebView and WebView2 render a PDF in place, which is what the plain
+      // anchor this replaces would have done. The screen has already called
+      // preventDefault, so the navigation has to be reissued here.
+      globalThis.location.assign(url);
       return;
     }
 

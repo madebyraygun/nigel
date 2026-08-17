@@ -82,7 +82,8 @@ describe('DesktopApiClient', () => {
 
   it('leaves non-linux desktops to the webview, which already frames a PDF fine', async () => {
     const calls: string[] = [];
-    const openSpy = vi.spyOn(globalThis, 'open').mockReturnValue(null);
+    const assign = vi.fn();
+    vi.spyOn(globalThis, 'location', 'get').mockReturnValue({ assign } as unknown as Location);
     const mac = new DesktopApiClient({
       fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
       invoke: async (cmd) => {
@@ -95,7 +96,7 @@ describe('DesktopApiClient', () => {
     await mac.openInvoicePreview(1251);
 
     expect(calls).toEqual([]);
-    expect(openSpy).toHaveBeenCalledWith(mac.invoicePreviewUrl(1251, 'pdf'), '_blank');
+    expect(assign).toHaveBeenCalledWith(mac.invoicePreviewUrl(1251, 'pdf'));
   });
 
   it('asks the native side for the platform at most once, when none is injected', async () => {
