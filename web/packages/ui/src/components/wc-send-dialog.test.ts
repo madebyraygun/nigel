@@ -364,6 +364,28 @@ describe('wc-send-dialog', () => {
       );
     });
 
+    it('renders the PDF target as a button when the target is an action', async () => {
+      const run = async () => {};
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfTarget: { kind: 'action', run, filename: 'invoice-1251.pdf' },
+      });
+      const link = el.shadowRoot?.querySelector('[data-pdf-link]');
+      expect(link?.tagName).toBe('BUTTON');
+      expect(link?.textContent?.trim()).toBe('Download the PDF');
+    });
+
+    it('prefers pdfTarget over pdfHref when both are set', async () => {
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfHref: '/api/invoices/1251/preview.pdf',
+        pdfTarget: { kind: 'href', href: '/api/invoices/1251/preview.pdf?desktop' },
+      });
+      expect(el.shadowRoot?.querySelector('[data-pdf-link]')?.getAttribute('href')).toBe(
+        '/api/invoices/1251/preview.pdf?desktop',
+      );
+    });
+
     it('blocks the send when this build cannot attach a PDF, and still frames the page', async () => {
       const el = await mount({
         previewHtml: PAGE,

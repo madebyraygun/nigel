@@ -8,6 +8,7 @@ import { controlsCss } from '@nigel/theme';
 import './wc-notice-bar.js';
 import './wc-document-frame.js';
 import '../icons/icons.js';
+import type { ExportTarget } from './wc-export-links.js';
 
 /** Where a send is in its life. */
 export type SendPhase = 'confirm' | 'sending' | 'sent' | 'failed';
@@ -311,6 +312,10 @@ export class WcSendDialog extends LitElement {
   @property({ type: String, attribute: false })
   pdfHref = '';
 
+  /** Wins over `pdfHref` when set. */
+  @property({ attribute: false })
+  pdfTarget: ExportTarget | null = null;
+
   /**
    * Whether this build of the server can render a PDF. A download link cannot
    * inspect what comes back, so without this the link would save a 501.
@@ -336,6 +341,25 @@ export class WcSendDialog extends LitElement {
   };
 
   private handleClose = () => this.emit('nc-send-close');
+
+  /** The same treatment `wc-export-links` gives its links, for the one here. */
+  private renderPdfLink() {
+    const target = this.pdfTarget;
+    if (target?.kind === 'action') {
+      return html`<button
+        class="caveat"
+        type="button"
+        data-pdf-link
+        @click=${() => void target.run()}
+      >
+        Download the PDF
+      </button>`;
+    }
+    const href = target?.kind === 'href' ? target.href : this.pdfHref;
+    return html`<a class="caveat" href=${href} data-pdf-link download
+      >Download the PDF</a
+    >`;
+  }
 
   private handleHide = (event: Event) => {
     if (event.target !== event.currentTarget) return;
@@ -445,9 +469,7 @@ export class WcSendDialog extends LitElement {
         .srcdoc=${this.previewHtml}
       ></wc-document-frame>
       ${this.pdfAvailable
-        ? html`<a class="caveat" href=${this.pdfHref} data-pdf-link download
-            >Download the PDF</a
-          >`
+        ? this.renderPdfLink()
         : html`<p class="caveat" data-pdf-unavailable>
             PDF export is not available in this build.
           </p>`}
