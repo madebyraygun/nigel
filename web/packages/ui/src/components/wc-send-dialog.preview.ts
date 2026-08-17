@@ -83,7 +83,7 @@ const preview: Preview = {
           .recipient=${'ap@acme.test'}
           .publishHost=${'billing.example.com'}
           .subject=${'Invoice #1251 from Bluepeak LLC'}
-          .pdfTarget=${{ kind: 'action', filename: 'invoice-41.pdf', run: async () => {} }}
+          .pdfTarget=${{ kind: 'action', run: async () => {} }}
           .previewHtml=${PREVIEW_PAGE}
         ></wc-send-dialog>
       `,

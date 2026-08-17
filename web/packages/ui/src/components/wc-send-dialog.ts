@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-money.js';
@@ -342,6 +342,10 @@ export class WcSendDialog extends LitElement {
 
   private handleClose = () => this.emit('nc-send-close');
 
+  /** Guards a second click while the first save is still running. */
+  @state()
+  private downloadingPdf = false;
+
   /** The same treatment `wc-export-links` gives its links, for the one here. */
   private renderPdfLink() {
     const target = this.pdfTarget;
@@ -350,7 +354,8 @@ export class WcSendDialog extends LitElement {
         class="caveat"
         type="button"
         data-pdf-link
-        @click=${() => void target.run()}
+        ?disabled=${this.downloadingPdf}
+        @click=${(event: Event) => this.runPdfDownload(event, target)}
       >
         Download the PDF
       </button>`;
@@ -360,6 +365,26 @@ export class WcSendDialog extends LitElement {
       >Download the PDF</a
     >`;
   }
+
+  /**
+   * `run` is the app's own save action and owns reporting its own failure;
+   * catching here only keeps a rejection from surfacing as an unhandled one.
+   */
+  private runPdfDownload = async (
+    event: Event,
+    target: Extract<ExportTarget, { kind: 'action' }>,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (this.downloadingPdf) return;
+    this.downloadingPdf = true;
+    try {
+      await target.run();
+    } catch {
+      // Intentionally empty — see the doc comment above.
+    } finally {
+      this.downloadingPdf = false;
+    }
+  };
 
   private handleHide = (event: Event) => {
     if (event.target !== event.currentTarget) return;
