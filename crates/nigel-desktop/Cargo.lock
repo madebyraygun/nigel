@@ -2319,9 +2319,12 @@ dependencies = [
 name = "nigel-desktop"
 version = "0.0.0"
 dependencies = [
+ "axum",
  "nigel-core",
  "tauri",
  "tauri-build",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
