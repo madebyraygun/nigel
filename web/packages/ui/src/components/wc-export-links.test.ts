@@ -105,7 +105,7 @@ describe('export targets', () => {
   it('renders a button for an action target and runs it on click', async () => {
     let ran = 0;
     const el = await mount({
-      textTarget: { kind: 'action', filename: 'pnl.txt', run: async () => { ran += 1; } },
+      textTarget: { kind: 'action', run: async () => { ran += 1; } },
     });
 
     const button = query<HTMLButtonElement>(el, 'button[data-export="text"]')!;
@@ -120,7 +120,7 @@ describe('export targets', () => {
     let ran = 0;
     const el = await mount({
       busy: true,
-      textTarget: { kind: 'action', filename: 'pnl.txt', run: async () => { ran += 1; } },
+      textTarget: { kind: 'action', run: async () => { ran += 1; } },
     });
 
     query<HTMLButtonElement>(el, 'button[data-export="text"]')!.click();

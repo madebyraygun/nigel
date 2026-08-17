@@ -218,13 +218,11 @@ export interface AgingParams {
  * client answers where a plain link works, and the component renders a real
  * anchor. A webview serving the app from a custom URI scheme cannot download
  * from a navigation at all, so a desktop client answers `action` instead and
- * carries the saving itself. `filename` is what the file should be called,
- * which only the `action` form has to say — an `href` download takes its name
- * from `Content-Disposition`.
+ * carries the saving itself — `run` closes over whatever name the save needs.
  */
 export type ExportTarget =
   | { kind: 'href'; href: string }
-  | { kind: 'action'; run: () => Promise<void>; filename: string };
+  | { kind: 'action'; run: () => Promise<void> };
 
 export interface ApiClient {
   ping(): Promise<PingResponse>;

@@ -3,6 +3,16 @@ import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
 
 /**
+ * How this component reaches an export.
+ *
+ * Declared here rather than imported: `@nigel/ui` does not depend on the app.
+ * The api client produces the same shape.
+ */
+export type ExportTarget =
+  | { kind: 'href'; href: string }
+  | { kind: 'action'; run: () => Promise<void> };
+
+/**
  * The Text and PDF export controls for one report.
  *
  * Plain download links, not buttons that fetch: the browser streams the file,
@@ -17,16 +27,6 @@ import '../icons/icons.js';
  * `/api/status` and turns this off, and off means a disabled control with the
  * reason in text beside it rather than a link that lies.
  */
-/**
- * How this component reaches an export.
- *
- * Declared here rather than imported: `@nigel/ui` does not depend on the app.
- * The api client produces the same shape.
- */
-export type ExportTarget =
-  | { kind: 'href'; href: string }
-  | { kind: 'action'; run: () => Promise<void>; filename: string };
-
 @customElement('wc-export-links')
 export class WcExportLinks extends LitElement {
   static styles = css`
@@ -136,9 +136,12 @@ export class WcExportLinks extends LitElement {
     if (this.busy) event.preventDefault();
   };
 
-  private runAction = async (event: Event, target: ExportTarget): Promise<void> => {
+  private runAction = async (
+    event: Event,
+    target: Extract<ExportTarget, { kind: 'action' }>,
+  ): Promise<void> => {
     event.preventDefault();
-    if (this.busy || target.kind !== 'action') return;
+    if (this.busy) return;
     await target.run();
   };
 

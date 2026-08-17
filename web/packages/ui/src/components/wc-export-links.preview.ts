@@ -31,8 +31,8 @@ const preview: Preview = {
       name: 'action targets',
       render: () => html`
         <wc-export-links
-          .textTarget=${{ kind: 'action', filename: 'pnl.txt', run: async () => {} }}
-          .pdfTarget=${{ kind: 'action', filename: 'pnl.pdf', run: async () => {} }}
+          .textTarget=${{ kind: 'action', run: async () => {} }}
+          .pdfTarget=${{ kind: 'action', run: async () => {} }}
         ></wc-export-links>
       `,
     },
@@ -41,8 +41,8 @@ const preview: Preview = {
       render: () => html`
         <wc-export-links
           busy
-          .textTarget=${{ kind: 'action', filename: 'pnl.txt', run: async () => {} }}
-          .pdfTarget=${{ kind: 'action', filename: 'pnl.pdf', run: async () => {} }}
+          .textTarget=${{ kind: 'action', run: async () => {} }}
+          .pdfTarget=${{ kind: 'action', run: async () => {} }}
         ></wc-export-links>
       `,
     },
