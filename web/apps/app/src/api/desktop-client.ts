@@ -109,7 +109,7 @@ export class DesktopApiClient extends FetchApiClient {
     await this.invoke('open_external', { path });
   }
 
-  private save(url: string, fallbackName: string): ExportTarget {
+  private save(url: string, fallbackName: string): Extract<ExportTarget, { kind: 'action' }> {
     return {
       kind: 'action',
       run: async () => {
