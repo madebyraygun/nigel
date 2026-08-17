@@ -46,7 +46,7 @@ Add to `web/apps/app/src/api/client.test.ts`:
 ```ts
 describe('exportTarget', () => {
   it('answers an href target pointing at the same address exportUrl builds', () => {
-    const client = new HttpApiClient('/api');
+    const client = new FetchApiClient({ fetchImpl: vi.fn() });
     const target = client.exportTarget('pnl', 'pdf', { year: 2026 });
 
     expect(target).toEqual({
@@ -56,7 +56,7 @@ describe('exportTarget', () => {
   });
 
   it('answers an href target for an invoice preview pdf', () => {
-    const client = new HttpApiClient('/api');
+    const client = new FetchApiClient({ fetchImpl: vi.fn() });
     const target = client.invoicePreviewTarget(41);
 
     expect(target).toEqual({
@@ -116,7 +116,7 @@ And below `invoicePreviewUrl`'s declaration:
   invoicePreviewTarget(number: number): ExportTarget;
 ```
 
-In `class HttpApiClient`, directly below the `exportUrl` implementation:
+In `class FetchApiClient` (the concrete client, at `client.ts:434`), directly below the `exportUrl` implementation:
 
 ```ts
   exportTarget(
@@ -386,7 +386,7 @@ Add to `web/apps/app/src/screens/reports.test.ts`:
 ```ts
 it('hands the export links a target rather than a bare href', async () => {
   const client = new FakeApiClient();
-  const screen = await renderReportsScreen(client);   // the helper this file already uses
+  const screen = await mount(client);   // `mount` at reports.test.ts:51
 
   const links = screen.shadowRoot!.querySelector('wc-export-links') as HTMLElement & {
     textTarget: { kind: string; href?: string } | null;
@@ -398,7 +398,7 @@ it('hands the export links a target rather than a bare href', async () => {
 });
 ```
 
-If `renderReportsScreen` is not the helper name in that file, use whichever helper the neighbouring tests use to mount the screen — do not invent a new one.
+`mount` at `reports.test.ts:51` and `seeded()` at line 26 are the helpers this file uses; match how the neighbouring tests call them rather than introducing a new one.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -613,7 +613,26 @@ impl TrustedOrigins {
 
 These bodies are the existing `host_is_local` and `origin_is_local` moved across with one line changed — `LOCAL_HOSTS.iter()` becomes `self.hosts.iter()`. The free functions `is_port` and `strip_scheme` stay where they are. Do not rewrite the parsing: it is what the existing tests cover, and it is the part that refuses `127.0.0.1.evil.com`.
 
-Delete `host_is_local` and `origin_is_local` once nothing calls them; `cargo clippy -- -D warnings` will name any caller you missed.
+**Keep `host_is_local` and `origin_is_local`**, rewritten as one-line delegations:
+
+```rust
+/// True when a `Host` header names the loopback interface, with any port.
+pub fn host_is_local(host: &str) -> bool {
+    TrustedOrigins::loopback().host_is_trusted(host)
+}
+
+/// True when an `Origin` header names an http(s) loopback origin. A literal
+/// `null` origin (sandboxed iframes, `file://` documents) is never local.
+pub fn origin_is_local(origin: &str) -> bool {
+    TrustedOrigins::loopback().origin_is_trusted(origin)
+}
+```
+
+They have four existing test callers in this module's `mod tests` — the table-driven
+cases at roughly lines 197-246 that assert `127.0.0.1.evil.com` and
+`localhost.evil.com` are refused. Those tests are the regression net for the
+parsing this task moves, so they must keep compiling and passing **unchanged**. A
+green run of them after the move is the proof the move was faithful.
 
 Change `host_guard` to take `State<TrustedOrigins>` and call the methods, and in `crates/nigel-core/src/server/mod.rs:180` change `.layer(middleware::from_fn(auth::host_guard))` to `.layer(middleware::from_fn_with_state(auth::TrustedOrigins::loopback(), auth::host_guard))`.
 
