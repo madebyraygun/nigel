@@ -683,7 +683,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       );
     if (!link) return;
     event.preventDefault();
-    void client.openInvoicePreview(number);
+    client.openInvoicePreview(number).catch((error: unknown) => {
+      dispatchNcToast(this, {
+        message: error instanceof Error ? error.message : String(error),
+        variant: 'danger',
+      });
+    });
   }
 
   private closeSend = (): void => {
