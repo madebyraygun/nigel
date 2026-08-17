@@ -177,7 +177,10 @@ fn build_router(state: AppState) -> Router {
         .nest("/api", api)
         .route("/auth", get(auth::auth_redirect))
         .fallback(static_files::static_handler)
-        .layer(middleware::from_fn(auth::host_guard))
+        .layer(middleware::from_fn_with_state(
+            auth::TrustedOrigins::loopback(),
+            auth::host_guard,
+        ))
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
 }

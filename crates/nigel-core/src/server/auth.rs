@@ -22,9 +22,75 @@ pub const SESSION_COOKIE: &str = "nigel_session";
 
 const TOKEN_BYTES: usize = 32;
 
-/// Hosts that may address this server. Exact matches only — `127.0.0.1.evil.com`
-/// and `localhost.evil.com` resolve wherever their owner points them.
-const LOCAL_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
+/// The hosts that may address a router.
+///
+/// A parameter rather than a constant because the desktop client is served from
+/// a custom URI scheme whose origin is neither loopback nor the same string on
+/// every platform. Matching stays exact — `127.0.0.1.evil.com` and
+/// `localhost.evil.com` resolve wherever their owner points them.
+#[derive(Clone, Debug)]
+pub struct TrustedOrigins {
+    hosts: Vec<String>,
+}
+
+impl TrustedOrigins {
+    /// What `nigel serve` allows: the loopback interface, by any of its names.
+    pub fn loopback() -> Self {
+        Self {
+            hosts: ["localhost", "127.0.0.1", "::1"]
+                .iter()
+                .map(|h| (*h).to_string())
+                .collect(),
+        }
+    }
+
+    /// Exactly these hosts and nothing else — not loopback unless it is listed.
+    pub fn exactly(hosts: Vec<String>) -> Self {
+        Self { hosts }
+    }
+
+    /// True when a `Host` header names a trusted host, with any port.
+    pub fn host_is_trusted(&self, host: &str) -> bool {
+        let host = host.trim();
+        if host.is_empty() {
+            return false;
+        }
+
+        let bare = if let Some(rest) = host.strip_prefix('[') {
+            let Some((inner, after)) = rest.split_once(']') else {
+                return false;
+            };
+            match after.strip_prefix(':') {
+                Some(port) if is_port(port) => {}
+                None if after.is_empty() => {}
+                _ => return false,
+            }
+            inner
+        } else {
+            match host.split_once(':') {
+                Some((h, port)) if is_port(port) => h,
+                Some(_) => return false,
+                None => host,
+            }
+        };
+
+        self.hosts.iter().any(|h| bare.eq_ignore_ascii_case(h))
+    }
+
+    /// True when an `Origin` header names an http(s) trusted origin. A literal
+    /// `null` origin (sandboxed iframes, `file://` documents) is never trusted.
+    pub fn origin_is_trusted(&self, origin: &str) -> bool {
+        let Some(rest) = strip_scheme(origin.trim()) else {
+            return false;
+        };
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        let authority = match authority.rsplit_once('@') {
+            Some((_, host)) => host,
+            None => authority,
+        };
+        self.host_is_trusted(authority)
+    }
+}
 
 /// A fresh session token for this server run. `ThreadRng` is a CSPRNG.
 pub fn generate_token() -> String {
@@ -52,30 +118,7 @@ fn is_port(s: &str) -> bool {
 
 /// True when a `Host` header names the loopback interface, with any port.
 pub fn host_is_local(host: &str) -> bool {
-    let host = host.trim();
-    if host.is_empty() {
-        return false;
-    }
-
-    let bare = if let Some(rest) = host.strip_prefix('[') {
-        let Some((inner, after)) = rest.split_once(']') else {
-            return false;
-        };
-        match after.strip_prefix(':') {
-            Some(port) if is_port(port) => {}
-            None if after.is_empty() => {}
-            _ => return false,
-        }
-        inner
-    } else {
-        match host.split_once(':') {
-            Some((h, port)) if is_port(port) => h,
-            Some(_) => return false,
-            None => host,
-        }
-    };
-
-    LOCAL_HOSTS.iter().any(|h| bare.eq_ignore_ascii_case(h))
+    TrustedOrigins::loopback().host_is_trusted(host)
 }
 
 fn strip_scheme(origin: &str) -> Option<&str> {
@@ -89,15 +132,7 @@ fn strip_scheme(origin: &str) -> Option<&str> {
 /// True when an `Origin` header names an http(s) loopback origin. A literal
 /// `null` origin (sandboxed iframes, `file://` documents) is never local.
 pub fn origin_is_local(origin: &str) -> bool {
-    let Some(rest) = strip_scheme(origin.trim()) else {
-        return false;
-    };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let authority = match authority.rsplit_once('@') {
-        Some((_, host)) => host,
-        None => authority,
-    };
-    host_is_local(authority)
+    TrustedOrigins::loopback().origin_is_trusted(origin)
 }
 
 /// Look up one cookie in a `Cookie` header value.
@@ -112,20 +147,26 @@ pub fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-/// Outermost layer: reject anything not addressed to the loopback interface.
-pub async fn host_guard(req: Request, next: Next) -> Response {
+/// Outermost layer: reject anything not addressed to a trusted host.
+pub async fn host_guard(
+    State(trusted): State<TrustedOrigins>,
+    req: Request,
+    next: Next,
+) -> Response {
     let headers = req.headers();
 
     let host_ok = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(host_is_local);
+        .is_some_and(|host| trusted.host_is_trusted(host));
     if !host_ok {
         return ApiError::forbidden().into_response();
     }
 
     if let Some(origin) = headers.get(header::ORIGIN) {
-        let origin_ok = origin.to_str().is_ok_and(origin_is_local);
+        let origin_ok = origin
+            .to_str()
+            .is_ok_and(|origin| trusted.origin_is_trusted(origin));
         if !origin_ok {
             return ApiError::forbidden().into_response();
         }
@@ -279,5 +320,28 @@ mod tests {
         assert_eq!(a.len(), TOKEN_BYTES * 2);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn loopback_trust_is_what_serve_has_always_allowed() {
+        let trusted = TrustedOrigins::loopback();
+        assert!(trusted.host_is_trusted("localhost"));
+        assert!(trusted.host_is_trusted("127.0.0.1:5731"));
+        assert!(trusted.host_is_trusted("[::1]:5731"));
+        assert!(!trusted.host_is_trusted("127.0.0.1.evil.com"));
+        assert!(!trusted.host_is_trusted("localhost.evil.com"));
+        assert!(!trusted.host_is_trusted("nigel.localhost"));
+    }
+
+    #[test]
+    fn a_configured_origin_is_trusted_and_loopback_then_is_not() {
+        let trusted = TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]);
+        assert!(trusted.host_is_trusted("nigel.localhost"));
+        assert!(trusted.origin_is_trusted("http://nigel.localhost"));
+        // A desktop router has no reason to answer the loopback interface, and
+        // trusting it anyway would hand the guard back the hole it exists to close.
+        assert!(!trusted.host_is_trusted("127.0.0.1:5731"));
+        assert!(!trusted.host_is_trusted("localhost"));
+        assert!(!trusted.host_is_trusted("evil.nigel.localhost"));
     }
 }
