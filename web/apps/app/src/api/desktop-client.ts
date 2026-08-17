@@ -46,10 +46,20 @@ export class DesktopApiClient extends FetchApiClient {
     this.injectedPlatform = options.platform;
   }
 
-  /** Memoized so the native side is asked at most once per client. */
+  /**
+   * Memoized so the native side is asked at most once per client — but the
+   * memo is cleared on a rejection, so an IPC bridge that is not ready yet
+   * gets a retry on the next call rather than poisoning every later call
+   * with the same failure forever.
+   */
   private platform(): Promise<string> {
     if (this.injectedPlatform !== undefined) return Promise.resolve(this.injectedPlatform);
-    this.platformPromise ??= this.invoke('platform', {}).then(String);
+    this.platformPromise ??= this.invoke('platform', {})
+      .then(String)
+      .catch((error: unknown) => {
+        this.platformPromise = null;
+        throw error;
+      });
     return this.platformPromise;
   }
 

@@ -114,4 +114,22 @@ describe('DesktopApiClient', () => {
 
     expect(calls.filter((cmd) => cmd === 'platform')).toHaveLength(1);
   });
+
+  it('retries the platform lookup after a rejection instead of poisoning the client', async () => {
+    let platformCalls = 0;
+    const client = new DesktopApiClient({
+      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
+      invoke: async (cmd) => {
+        if (cmd !== 'platform') return null;
+        platformCalls += 1;
+        if (platformCalls === 1) throw new Error('ipc not ready yet');
+        return 'linux';
+      },
+    });
+
+    await expect(client.openInvoicePreview(1251)).rejects.toThrow('ipc not ready yet');
+    await expect(client.openInvoicePreview(1251)).resolves.toBeUndefined();
+
+    expect(platformCalls).toBe(2);
+  });
 });
