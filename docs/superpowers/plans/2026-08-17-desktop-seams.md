@@ -69,7 +69,7 @@ describe('exportTarget', () => {
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `cd web && npx vitest run apps/app/src/api/client.test.ts -t exportTarget`
+Run: `cd web && npm run test --workspace=@nigel/app -- client -t exportTarget`
 Expected: FAIL — `client.exportTarget is not a function`.
 
 - [ ] **Step 3: Add the type and the two methods**
@@ -158,7 +158,7 @@ Import `ExportTarget` from `../api/client` alongside the types it already import
 
 - [ ] **Step 5: Run the test and the typechecker**
 
-Run: `cd web && npx vitest run apps/app/src/api/client.test.ts -t exportTarget && npm run typecheck`
+Run: `cd web && npm run test --workspace=@nigel/app -- client -t exportTarget && npm run typecheck`
 Expected: both PASS. The typecheck matters most — it proves `FakeApiClient` still satisfies `ApiClient`.
 
 - [ ] **Step 6: Commit**
@@ -191,7 +191,7 @@ Add to `web/packages/ui/src/components/wc-export-links.test.ts`:
 ```ts
 describe('export targets', () => {
   it('renders an anchor for an href target, exactly as a plain href does', async () => {
-    const el = await fixture<WcExportLinks>(html`<wc-export-links></wc-export-links>`);
+    const el = mount();   // the helper this test file already uses
     el.textTarget = { kind: 'href', href: '/api/exports/pnl?format=text' };
     await el.updateComplete;
 
@@ -203,7 +203,7 @@ describe('export targets', () => {
 
   it('renders a button for an action target and runs it on click', async () => {
     let ran = 0;
-    const el = await fixture<WcExportLinks>(html`<wc-export-links></wc-export-links>`);
+    const el = mount();   // the helper this test file already uses
     el.textTarget = {
       kind: 'action',
       filename: 'pnl.txt',
@@ -221,7 +221,7 @@ describe('export targets', () => {
 
   it('does not run an action while busy', async () => {
     let ran = 0;
-    const el = await fixture<WcExportLinks>(html`<wc-export-links busy></wc-export-links>`);
+    const el = mount({ busy: true });   // match how neighbouring tests set busy
     el.textTarget = {
       kind: 'action',
       filename: 'pnl.txt',
@@ -239,7 +239,7 @@ describe('export targets', () => {
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `cd web && npx vitest run packages/ui/src/components/wc-export-links.test.ts -t "export targets"`
+Run: `cd web && npm run test --workspace=@nigel/ui -- wc-export-links -t "export targets"`
 Expected: FAIL — the first on `textTarget` not being a property that renders, the second on the button not existing.
 
 - [ ] **Step 3: Implement**
@@ -322,7 +322,7 @@ Replace the anchor inside `renderPdf`'s success branch with `return this.renderT
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd web && npx vitest run packages/ui/src/components/wc-export-links.test.ts`
+Run: `cd web && npm run test --workspace=@nigel/ui -- wc-export-links`
 Expected: PASS, including every test that existed before — those are what prove the href path is unchanged.
 
 - [ ] **Step 5: Add the action states to the preview**
@@ -355,7 +355,7 @@ In `web/packages/ui/src/components/wc-export-links.preview.ts`, add two states b
 
 - [ ] **Step 6: Run the package's tests and lint**
 
-Run: `cd web && npx vitest run packages/ui && npm run lint && npm run typecheck`
+Run: `cd web && npm run test --workspace=@nigel/ui && npm run lint && npm run typecheck`
 Expected: all PASS, a11y included, zero violations.
 
 - [ ] **Step 7: Commit**
@@ -402,7 +402,7 @@ it('hands the export links a target rather than a bare href', async () => {
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `cd web && npx vitest run apps/app/src/screens/reports.test.ts -t "target rather than a bare href"`
+Run: `cd web && npm run test --workspace=@nigel/app -- reports -t "target rather than a bare href"`
 Expected: FAIL — `textTarget` is `null`.
 
 - [ ] **Step 3: Switch the reports screen**
@@ -819,3 +819,21 @@ git commit -m "Document the export target and the two routers"
 **Type consistency.** `ExportTarget` is declared twice on purpose — once in `web/apps/app/src/api/client.ts` and once in `web/packages/ui/src/components/wc-export-links.ts` — because `@nigel/ui` must not depend on the app. The two declarations are character-identical and Task 3 is where a drift between them would surface as a type error. `textTarget` / `pdfTarget` are the property names in Tasks 2 and 3 alike; `exportTarget` / `invoicePreviewTarget` are the method names in Tasks 1 and 3 alike.
 
 **Known soft spots, for the executor rather than the reviewer.** Three places name a line number or a helper that may have moved: `reports.ts:633-634`, `wc-send-dialog.ts:312,448`, and the test helpers in `reports.test.ts` and the server test modules. Each step says to follow the surrounding code rather than invent a name. If a helper does not exist under the name given, that is the plan being stale, not a licence to add one.
+
+
+## Addendum: running the web tests
+
+`npx vitest run <path>` from `web/` does **not** work. There is no root vitest
+config, so the jsdom environment is never applied and the run fails wholesale
+with `document is not defined` — over a thousand failures on a clean tree. Use
+the workspace scripts, which are also what CI runs:
+
+```bash
+cd web && npm run test --workspace=@nigel/ui      # one package
+cd web && npm run test --workspace=@nigel/app
+cd web && npm test                                # all three, as CI does
+```
+
+`@open-wc/testing` is not a dependency of this repo. Its `fixture`/`html`
+helpers are unavailable; each test file has its own `mount()` DOM helper, and a
+new test uses the one beside it.
