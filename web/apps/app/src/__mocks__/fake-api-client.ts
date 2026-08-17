@@ -3,6 +3,7 @@ import type {
   ApiClient,
   CashflowParams,
   ExpenseParams,
+  ExportTarget,
   ReconciliationParams,
   RegisterParams,
   ReportDateParams,
@@ -357,6 +358,14 @@ export class FakeApiClient implements ApiClient {
       if (value !== undefined) search.set(key, String(value));
     }
     return `fake-export:/${report}?${search.toString()}`;
+  }
+
+  exportTarget(
+    report: ReportSlug,
+    format: ExportFormat,
+    params: ExportParams = {},
+  ): ExportTarget {
+    return { kind: 'href', href: this.exportUrl(report, format, params) };
   }
 
   // -- register -------------------------------------------------------------
@@ -1374,6 +1383,10 @@ export class FakeApiClient implements ApiClient {
 
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string {
     return `/preview/${number}.${format}`;
+  }
+
+  invoicePreviewTarget(number: number): ExportTarget {
+    return { kind: 'href', href: this.invoicePreviewUrl(number, 'pdf') };
   }
 
   async invoicePreviewHtml(number: number): Promise<string> {
