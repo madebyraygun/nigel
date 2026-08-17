@@ -1,9 +1,10 @@
 ---
 id: TASK-33.11
 title: Kill the web tells in the desktop shell
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-17 13:35'
+updated_date: '2026-08-17 20:25'
 labels:
   - tauri
   - ui
