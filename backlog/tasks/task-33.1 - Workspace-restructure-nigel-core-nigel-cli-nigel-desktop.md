@@ -4,7 +4,7 @@ title: 'Workspace restructure: nigel-core, nigel-cli, nigel-desktop'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-16 23:45'
+updated_date: '2026-08-17 19:26'
 labels:
   - tauri
   - backend
@@ -22,10 +22,12 @@ Split the crate into a cargo workspace: nigel-core holds the data layer, importe
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Workspace builds with core free of TUI and CLI dependencies
-- [ ] #2 The nigel binary keeps its name, features, and behavior; cargo test passes across the workspace
+- [x] #1 Workspace builds with core free of TUI and CLI dependencies
+- [x] #2 The nigel binary keeps its name, features, and behavior; cargo test passes across the workspace
 - [ ] #3 Release CI still produces the existing CLI binaries for all platforms
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 
