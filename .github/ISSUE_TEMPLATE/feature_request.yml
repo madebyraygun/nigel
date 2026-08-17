@@ -1,0 +1,30 @@
+name: Feature request
+description: Something Nigel should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Worth knowing before filing: Nigel keeps features general-purpose — no
+        compiled-in bank quirks, payroll layouts or single-state tax rules; those belong
+        in configuration or editable defaults. Requests framed as the underlying need
+        travel further than requests framed as a specific control.
+  - type: textarea
+    id: need
+    attributes:
+      label: The need
+      description: What are you trying to accomplish, and where does Nigel stop short today?
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: How it might look
+      description: Optional — a command, a screen, a report. Use invented data in any example.
+  - type: checkboxes
+    id: no-real-data
+    attributes:
+      label: Real-data check
+      options:
+        - label: Any examples above use invented data only
+          required: true

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/madebyraygun/nigel/tree/main/docs
+    about: Commands, importer formats, invoicing setup, API reference — check here first
