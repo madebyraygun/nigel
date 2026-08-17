@@ -630,8 +630,8 @@ export class NigelReportsScreen extends SignalWatcher(LitElement) {
         ${exportable
           ? html`<wc-export-links
               .pdfAvailable=${this.pdfExport}
-              .textHref=${this.client.exportUrl(slug, 'text', request)}
-              .pdfHref=${this.client.exportUrl(slug, 'pdf', request)}
+              .textTarget=${this.client.exportTarget(slug, 'text', request)}
+              .pdfTarget=${this.client.exportTarget(slug, 'pdf', request)}
               ?busy=${this.loading}
             ></wc-export-links>`
           : nothing}

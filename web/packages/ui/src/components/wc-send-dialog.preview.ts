@@ -73,6 +73,22 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'pdf as an action',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .publishHost=${'billing.example.com'}
+          .subject=${'Invoice #1251 from Bluepeak LLC'}
+          .pdfTarget=${{ kind: 'action', run: async () => {} }}
+          .previewHtml=${PREVIEW_PAGE}
+        ></wc-send-dialog>
+      `,
+    },
+    {
       name: 'preview-loading',
       render: () => html`
         <wc-send-dialog

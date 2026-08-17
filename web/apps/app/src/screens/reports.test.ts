@@ -385,18 +385,25 @@ describe('the reports screen', () => {
   });
 
   describe('export links', () => {
-    it('builds both hrefs through the client', async () => {
+    it('hands the export links a target rather than a bare href', async () => {
       const { el } = await mount('report=pnl&year=2025');
       const links = query<WcExportLinks>(el, 'wc-export-links');
-      expect(links?.textHref).toBe('fake-export:/pnl?format=text&year=2025');
-      expect(links?.pdfHref).toBe('fake-export:/pnl?format=pdf&year=2025');
+      expect(links?.textTarget).toEqual({
+        kind: 'href',
+        href: 'fake-export:/pnl?format=text&year=2025',
+      });
+      expect(links?.pdfTarget).toEqual({
+        kind: 'href',
+        href: 'fake-export:/pnl?format=pdf&year=2025',
+      });
     });
 
     it('carries the current period into the export', async () => {
       const { el } = await mount('report=expenses&month=2025-03');
-      expect(query<WcExportLinks>(el, 'wc-export-links')?.textHref).toBe(
-        'fake-export:/expenses?format=text&month=2025-03',
-      );
+      expect(query<WcExportLinks>(el, 'wc-export-links')?.textTarget).toEqual({
+        kind: 'href',
+        href: 'fake-export:/expenses?format=text&month=2025-03',
+      });
     });
 
     it('offers pdf when the server can render it', async () => {

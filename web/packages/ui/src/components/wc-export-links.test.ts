@@ -89,6 +89,47 @@ describe('wc-export-links', () => {
   });
 });
 
+describe('export targets', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders an anchor for an href target, exactly as a plain href does', async () => {
+    const el = await mount({ textHref: '', textTarget: { kind: 'href', href: TEXT } });
+    const anchor = query<HTMLAnchorElement>(el, 'a')!;
+    expect(anchor.getAttribute('href')).toBe(TEXT);
+    expect(anchor.hasAttribute('download')).toBe(true);
+    expect(query(el, 'button[data-export="text"]')).toBeNull();
+  });
+
+  it('renders a button for an action target and runs it on click', async () => {
+    let ran = 0;
+    const el = await mount({
+      textTarget: { kind: 'action', run: async () => { ran += 1; } },
+    });
+
+    const button = query<HTMLButtonElement>(el, 'button[data-export="text"]')!;
+    expect(button).not.toBeNull();
+    button.click();
+    await el.updateComplete;
+
+    expect(ran).toBe(1);
+  });
+
+  it('does not run an action while busy', async () => {
+    let ran = 0;
+    const el = await mount({
+      busy: true,
+      textTarget: { kind: 'action', run: async () => { ran += 1; } },
+    });
+
+    query<HTMLButtonElement>(el, 'button[data-export="text"]')!.click();
+    await el.updateComplete;
+
+    expect(ran).toBe(0);
+  });
+});
+
 describePreviewA11y(preview);
 
 describePrintHiding(WcExportLinks, ':host');

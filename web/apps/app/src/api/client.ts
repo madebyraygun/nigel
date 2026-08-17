@@ -210,6 +210,20 @@ export interface AgingParams {
   asOf?: string;
 }
 
+/**
+ * How a screen reaches an export: an address it can put in an anchor, or an
+ * action it must run.
+ *
+ * The browser downloads better than the app can, so `href` is what every
+ * client answers where a plain link works, and the component renders a real
+ * anchor. A webview serving the app from a custom URI scheme cannot download
+ * from a navigation at all, so a desktop client answers `action` instead and
+ * carries the saving itself — `run` closes over whatever name the save needs.
+ */
+export type ExportTarget =
+  | { kind: 'href'; href: string }
+  | { kind: 'action'; run: () => Promise<void> };
+
 export interface ApiClient {
   ping(): Promise<PingResponse>;
   getStatus(): Promise<StatusResponse>;
@@ -235,6 +249,17 @@ export interface ApiClient {
    * whole reason this interface exists.
    */
   exportUrl(report: ReportSlug, format: ExportFormat, params?: ExportParams): string;
+
+  /**
+   * The same export as `exportUrl`, in the form the running client can use.
+   * Screens bind this rather than the URL, so a client that cannot download
+   * from a link is a different answer here rather than a different screen.
+   */
+  exportTarget(
+    report: ReportSlug,
+    format: ExportFormat,
+    params?: ExportParams,
+  ): ExportTarget;
 
   getAccounts(): Promise<Account[]>;
   getCategories(): Promise<CategoryRow[]>;
@@ -379,6 +404,9 @@ export interface ApiClient {
    * seam's to spell.
    */
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string;
+
+  /** The invoice's PDF, in the form the running client can use. */
+  invoicePreviewTarget(number: number): ExportTarget;
 
   /**
    * The rendered invoice page as HTML, for framing before a send.
@@ -539,6 +567,14 @@ export class FetchApiClient implements ApiClient {
     params: ExportParams = {},
   ): string {
     return `${this.baseUrl}/exports/${report}${query({ format, ...params })}`;
+  }
+
+  exportTarget(
+    report: ReportSlug,
+    format: ExportFormat,
+    params: ExportParams = {},
+  ): ExportTarget {
+    return { kind: 'href', href: this.exportUrl(report, format, params) };
   }
 
   getAccounts(): Promise<Account[]> {
@@ -758,6 +794,10 @@ export class FetchApiClient implements ApiClient {
   invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string {
     const suffix = format === 'pdf' ? 'preview.pdf' : 'preview';
     return `${this.baseUrl}/invoices/${number}/${suffix}`;
+  }
+
+  invoicePreviewTarget(number: number): ExportTarget {
+    return { kind: 'href', href: this.invoicePreviewUrl(number, 'pdf') };
   }
 
   async invoicePreviewHtml(number: number): Promise<string> {

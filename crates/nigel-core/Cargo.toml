@@ -9,6 +9,10 @@ default = ["gusto", "pdf", "serve"]
 gusto = ["dep:calamine"]
 pdf = ["dep:printpdf"]
 serve = ["dep:axum", "dep:tokio", "dep:tower", "dep:rust-embed", "dep:open", "dep:subtle"]
+# The router a desktop shell serves over its custom URI scheme, with no
+# session guard. Not in `default`: it must never reach the `nigel serve`
+# binary, which is the only thing `default` builds.
+desktop = ["serve"]
 # Test scaffolding — seeded databases, a router with a session, and the guard
 # that redirects `~/.config/nigel` — compiled for dependents' test targets only.
 # The config-directory override is `#[cfg(test)]` inside this crate, and a

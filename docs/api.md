@@ -37,6 +37,15 @@ Localhost is not a trust boundary on its own, so three checks apply in order:
 The token is never written to disk and never appears in a response body. The
 database password is likewise runtime-only.
 
+Two routers are built from the same routes. `build_router` is what `nigel serve`
+runs: it trusts the loopback interface by its three names and puts every `/api`
+route behind a session cookie, because anything on the machine can reach a
+loopback port. `build_desktop_router` takes its trusted origin as a parameter and
+carries no session layer at all — a desktop shell serves it over a custom URI
+scheme registered inside its own process, which nothing else on the machine can
+address. The absence is structural rather than conditional: the layer is not
+attached, so there is no flag that could be set wrongly.
+
 ## Locked state
 
 An encrypted database starts **locked**: the server has the file but not the

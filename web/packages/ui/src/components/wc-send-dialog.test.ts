@@ -364,6 +364,103 @@ describe('wc-send-dialog', () => {
       );
     });
 
+    it('renders the PDF target as a button when the target is an action', async () => {
+      const run = async () => {};
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfTarget: { kind: 'action', run },
+      });
+      const link = el.shadowRoot?.querySelector('[data-pdf-link]');
+      expect(link?.tagName).toBe('BUTTON');
+      expect(link?.textContent?.trim()).toBe('Download the PDF');
+    });
+
+    it('runs the action when the PDF button is clicked', async () => {
+      let ran = 0;
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfTarget: {
+          kind: 'action',
+          run: async () => {
+            ran += 1;
+          },
+        },
+      });
+
+      el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+      await el.updateComplete;
+
+      expect(ran).toBe(1);
+    });
+
+    it('does not leave a rejected save as an unhandled rejection', async () => {
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown) => rejections.push(reason);
+      process.on('unhandledRejection', onRejection);
+
+      try {
+        const el = await mount({
+          previewHtml: PAGE,
+          pdfTarget: { kind: 'action', run: () => Promise.reject(new Error('save failed')) },
+        });
+
+        el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+        await el.updateComplete;
+
+        // Node reports an unhandled rejection on a later tick, once the
+        // microtask queue that could still attach a handler has drained.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      } finally {
+        process.off('unhandledRejection', onRejection);
+      }
+
+      expect(rejections).toEqual([]);
+    });
+
+    it('blocks a second click while a save is still running', async () => {
+      let started = 0;
+      let resolveRun: (() => void) | undefined;
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfTarget: {
+          kind: 'action',
+          run: () =>
+            new Promise<void>((resolve) => {
+              started += 1;
+              resolveRun = resolve;
+            }),
+        },
+      });
+
+      const button = el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]');
+      button?.click();
+      await el.updateComplete;
+      button?.click();
+      await el.updateComplete;
+
+      expect(started).toBe(1);
+      expect(button?.disabled).toBe(true);
+
+      resolveRun?.();
+      // Two ticks: one for the `await target.run()` to settle, one for the
+      // `finally` block's state change to schedule an update.
+      await Promise.resolve();
+      await el.updateComplete;
+      expect(button?.disabled).toBe(false);
+    });
+
+    it('prefers pdfTarget over pdfHref when both are set', async () => {
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfHref: '/api/invoices/1251/preview.pdf',
+        pdfTarget: { kind: 'href', href: '/api/invoices/1251/preview.pdf?desktop' },
+      });
+      expect(el.shadowRoot?.querySelector('[data-pdf-link]')?.getAttribute('href')).toBe(
+        '/api/invoices/1251/preview.pdf?desktop',
+      );
+    });
+
     it('blocks the send when this build cannot attach a PDF, and still frames the page', async () => {
       const el = await mount({
         previewHtml: PAGE,

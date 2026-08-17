@@ -373,6 +373,28 @@ describe('FetchApiClient', () => {
     });
   });
 
+  describe('exportTarget', () => {
+    it('answers an href target pointing at the same address exportUrl builds', () => {
+      const client = new FetchApiClient({ fetchImpl: vi.fn() });
+      const target = client.exportTarget('pnl', 'pdf', { year: 2026 });
+
+      expect(target).toEqual({
+        kind: 'href',
+        href: client.exportUrl('pnl', 'pdf', { year: 2026 }),
+      });
+    });
+
+    it('answers an href target for an invoice preview pdf', () => {
+      const client = new FetchApiClient({ fetchImpl: vi.fn() });
+      const target = client.invoicePreviewTarget(41);
+
+      expect(target).toEqual({
+        kind: 'href',
+        href: client.invoicePreviewUrl(41, 'pdf'),
+      });
+    });
+  });
+
   describe('imports', () => {
     it('uploads the file as multipart, letting the browser set the boundary', async () => {
       const fetchImpl = vi

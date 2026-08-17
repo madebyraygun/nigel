@@ -3,6 +3,16 @@ import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
 
 /**
+ * How this component reaches an export.
+ *
+ * Declared here rather than imported: `@nigel/ui` does not depend on the app.
+ * The api client produces the same shape.
+ */
+export type ExportTarget =
+  | { kind: 'href'; href: string }
+  | { kind: 'action'; run: () => Promise<void> };
+
+/**
  * The Text and PDF export controls for one report.
  *
  * Plain download links, not buttons that fetch: the browser streams the file,
@@ -87,6 +97,14 @@ export class WcExportLinks extends LitElement {
   @property({ type: String, attribute: 'pdf-href' })
   pdfHref = '';
 
+  /** Wins over `textHref` when set. */
+  @property({ attribute: false })
+  textTarget: ExportTarget | null = null;
+
+  /** Wins over `pdfHref` when set. */
+  @property({ attribute: false })
+  pdfTarget: ExportTarget | null = null;
+
   /** False when the server reports a build without the pdf feature. */
   @property({ type: Boolean, attribute: 'pdf-available' })
   pdfAvailable = true;
@@ -110,17 +128,7 @@ export class WcExportLinks extends LitElement {
       `;
     }
 
-    return html`
-      <a
-        href=${this.pdfHref}
-        download
-        aria-disabled=${this.busy ? 'true' : nothing}
-        @click=${this.blockWhileBusy}
-      >
-        <wc-icon-download></wc-icon-download>
-        PDF
-      </a>
-    `;
+    return this.renderTarget('pdf', 'PDF', this.pdfTarget, this.pdfHref);
   }
 
   /** A busy link stays in the tab order but does not fire a half-built request. */
@@ -128,17 +136,56 @@ export class WcExportLinks extends LitElement {
     if (this.busy) event.preventDefault();
   };
 
-  render() {
+  private runAction = async (
+    event: Event,
+    target: Extract<ExportTarget, { kind: 'action' }>,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (this.busy) return;
+    await target.run();
+  };
+
+  /**
+   * An anchor where the platform can download from a link, a button where it
+   * cannot. Both carry the same label, so the accessible name does not depend
+   * on which platform is running.
+   */
+  private renderTarget(
+    slot: 'text' | 'pdf',
+    label: string,
+    target: ExportTarget | null,
+    href: string,
+  ) {
+    if (target?.kind === 'action') {
+      return html`
+        <button
+          type="button"
+          data-export=${slot}
+          ?disabled=${this.busy}
+          @click=${(event: Event) => this.runAction(event, target)}
+        >
+          <wc-icon-download></wc-icon-download>
+          ${label}
+        </button>
+      `;
+    }
+
     return html`
       <a
-        href=${this.textHref}
+        href=${target?.kind === 'href' ? target.href : href}
         download
         aria-disabled=${this.busy ? 'true' : nothing}
         @click=${this.blockWhileBusy}
       >
         <wc-icon-download></wc-icon-download>
-        Text
+        ${label}
       </a>
+    `;
+  }
+
+  render() {
+    return html`
+      ${this.renderTarget('text', 'Text', this.textTarget, this.textHref)}
       ${this.renderPdf()}
     `;
   }

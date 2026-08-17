@@ -161,25 +161,52 @@ async fn security_headers(req: Request, next: Next) -> Response {
     response
 }
 
-/// Layers run outermost-first: the blanket headers, Host/Origin, then the
-/// session cookie, then the route. The session layer wraps the `/api` router
-/// itself rather than using `route_layer`, so it also covers that router's 404
-/// fallback — otherwise an unauthenticated request to an unknown `/api` path
-/// would skip the check. `/auth` and the static assets sit outside the nest and
-/// need no session.
-fn build_router(state: AppState) -> Router {
-    let api = routes::api_router(&state).layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::session_guard,
-    ));
-
+/// The `/api` nest, `/auth`, the static assets, Host/Origin, and the blanket
+/// headers — everything [`build_router`] and (behind the `desktop` feature)
+/// `build_desktop_router` share. Layers run outermost-first: the blanket
+/// headers, Host/Origin, then the route. `/auth` and the static assets sit
+/// outside the `/api` nest and need no session either way.
+fn finish_router(state: AppState, api: Router<AppState>, trusted: auth::TrustedOrigins) -> Router {
     Router::new()
         .nest("/api", api)
         .route("/auth", get(auth::auth_redirect))
         .fallback(static_files::static_handler)
-        .layer(middleware::from_fn(auth::host_guard))
+        .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// The router `nigel serve` runs: loopback-only, and every api route behind a
+/// session cookie.
+///
+/// The session layer wraps the `/api` router itself rather than using
+/// `route_layer`, so it also covers that router's 404 fallback — otherwise an
+/// unauthenticated request to an unknown `/api` path would skip the check.
+pub fn build_router(state: AppState) -> Router {
+    let api = routes::api_router(&state).layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::session_guard,
+    ));
+    finish_router(state, api, auth::TrustedOrigins::loopback())
+}
+
+/// The router a desktop shell serves over its custom URI scheme.
+///
+/// No session guard, because the scheme is registered inside this process and
+/// nothing else on the machine can address it — a cookie here would be a token
+/// the app issues to itself. The absence is structural: this router is never
+/// built with the layer, rather than built with one that is asked to stand
+/// down.
+///
+/// Behind the `desktop` feature, which is not in `default`: bound to a TCP
+/// port instead of a desktop shell's custom scheme, `host_guard` alone does
+/// not stop another host on the same LAN from reaching the whole API with no
+/// session — Host and Origin are request headers a curl invocation sets
+/// freely.
+#[cfg(feature = "desktop")]
+pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> Router {
+    let api = routes::api_router(&state);
+    finish_router(state, api, trusted)
 }
 
 #[cfg(test)]
@@ -894,6 +921,80 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert!(!content_type(&response).starts_with("text/html"));
+    }
+
+    // -- desktop router ------------------------------------------------------
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_answers_an_api_route_without_a_session() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "nigel.localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// The desktop router trusts exactly the hosts it was constructed with —
+    /// it is not loopback's trust plus whatever it was given. A request
+    /// addressed to the interface `build_router` answers must still be
+    /// refused here.
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_refuses_a_host_it_was_not_given() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "127.0.0.1:5731")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn the_served_router_still_refuses_the_same_request() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_router(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "127.0.0.1:5731")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
