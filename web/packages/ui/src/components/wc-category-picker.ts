@@ -307,6 +307,7 @@ export class WcCategoryPicker extends LitElement {
         type="text"
         role="combobox"
         autocomplete="off"
+        spellcheck="false"
         placeholder=${this.placeholder}
         ?disabled=${this.disabled}
         aria-expanded=${expanded ? 'true' : 'false'}

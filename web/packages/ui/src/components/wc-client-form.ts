@@ -279,6 +279,7 @@ export class WcClientForm extends LitElement {
           label="Email"
           type="email"
           autocomplete="off"
+          spellcheck="false"
           value=${contact.email}
           ?disabled=${this.disabled}
           @input=${this.handleContactField(index, 'email')}
@@ -287,6 +288,7 @@ export class WcClientForm extends LitElement {
           data-contact-name
           label="Name"
           autocomplete="off"
+          spellcheck="false"
           value=${contact.name}
           ?disabled=${this.disabled}
           @input=${this.handleContactField(index, 'name')}
@@ -295,6 +297,7 @@ export class WcClientForm extends LitElement {
           data-contact-title
           label="Title"
           autocomplete="off"
+          spellcheck="false"
           value=${contact.title}
           ?disabled=${this.disabled}
           @input=${this.handleContactField(index, 'title')}
@@ -344,6 +347,7 @@ export class WcClientForm extends LitElement {
             data-name
             label="Name"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.name}
             ?disabled=${this.disabled}
             @input=${this.handleField('name')}

@@ -150,6 +150,7 @@ export class WcAccountForm extends LitElement {
             data-name
             label="Name"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.name}
             ?disabled=${this.disabled}
             @input=${this.handleField('name')}
@@ -182,6 +183,7 @@ export class WcAccountForm extends LitElement {
           data-institution
           label="Institution"
           autocomplete="off"
+          spellcheck="false"
           value=${this.value.institution}
           ?disabled=${this.disabled}
           @input=${this.handleField('institution')}
@@ -193,6 +195,7 @@ export class WcAccountForm extends LitElement {
             inputmode="numeric"
             maxlength="4"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.lastFour}
             ?disabled=${this.disabled}
             @input=${this.handleField('lastFour')}

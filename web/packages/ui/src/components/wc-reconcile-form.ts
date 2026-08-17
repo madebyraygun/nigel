@@ -303,6 +303,7 @@ export class WcReconcileForm extends LitElement {
           type="month"
           label="Month"
           size="s"
+          spellcheck="false"
           placeholder="YYYY-MM"
           value=${this.value.month}
           ?disabled=${this.disabled}
@@ -329,6 +330,7 @@ export class WcReconcileForm extends LitElement {
           size="s"
           inputmode="decimal"
           autocomplete="off"
+          spellcheck="false"
           value=${this.value.balance}
           ?disabled=${this.disabled}
           @input=${this.handleBalance}

@@ -168,6 +168,7 @@ export class WcRuleForm extends LitElement {
             data-pattern
             label="Pattern"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.pattern}
             ?disabled=${this.disabled}
             @input=${this.handlePattern}
@@ -220,6 +221,7 @@ export class WcRuleForm extends LitElement {
             data-vendor
             label="Vendor"
             autocomplete="off"
+            spellcheck="false"
             hint="Optional."
             value=${this.value.vendor}
             ?disabled=${this.disabled}
@@ -231,6 +233,7 @@ export class WcRuleForm extends LitElement {
               label="Priority"
               type="number"
               step="1"
+              spellcheck="false"
               value=${String(this.value.priority)}
               ?disabled=${this.disabled}
               @input=${this.handlePriority}
