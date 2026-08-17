@@ -28,6 +28,25 @@ const preview: Preview = {
         html`<wc-export-links busy text-href=${text} pdf-href=${pdf}></wc-export-links>`,
     },
     {
+      name: 'action targets',
+      render: () => html`
+        <wc-export-links
+          .textTarget=${{ kind: 'action', filename: 'pnl.txt', run: async () => {} }}
+          .pdfTarget=${{ kind: 'action', filename: 'pnl.pdf', run: async () => {} }}
+        ></wc-export-links>
+      `,
+    },
+    {
+      name: 'action targets, busy',
+      render: () => html`
+        <wc-export-links
+          busy
+          .textTarget=${{ kind: 'action', filename: 'pnl.txt', run: async () => {} }}
+          .pdfTarget=${{ kind: 'action', filename: 'pnl.pdf', run: async () => {} }}
+        ></wc-export-links>
+      `,
+    },
+    {
       name: 'in a toolbar row',
       render: () => html`
         <div
