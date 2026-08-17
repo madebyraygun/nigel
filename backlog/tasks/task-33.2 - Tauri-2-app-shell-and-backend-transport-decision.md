@@ -4,7 +4,7 @@ title: Tauri 2 app shell and backend transport decision
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-16 23:59'
+updated_date: '2026-08-17 00:20'
 labels:
   - tauri
 dependencies:
@@ -34,5 +34,5 @@ Scaffold the Tauri 2 app hosting the SPA over the transport settled in decision-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-AC #5, Linux leg (2026-08-16, WebKitGTK 2.52.3, headless): navigation to a custom-scheme URL does not download. DownloadEvent::Requested never fires for an anchor — with or without the download attribute, with or without Content-Disposition — nor for window.open; Finished reports success=false with no path and no file appears. Because Requested is a webview-level decision taken before any save dialog, the headless environment does not explain it. Fetch-then-blob is the only route that wrote a correct file. A plain fetch reads both the bytes and the Content-Disposition header, so a filename can be recovered rather than guessed. Note that the blob case reports success=false while writing a correct file: trust the file, not the flag. macOS (WKWebView) and Windows (WebView2) still to run — the probe is on branch probe/33.2-download-scheme under probes/download-scheme, with a README carrying the case table and what to record. If the pattern holds, exportUrl stops returning an address under the desktop transport and the repair lands in web/apps/app/src/api/client.ts, leaving screens binding one thing to one attribute as AC #5 requires.
+AC #5, macOS leg (2026-08-16, WKWebView): matches Linux on every deciding case. Every navigation route fails with 'Download failed with error: unsupported URL' — WKWebView's download machinery rejecting the nigel:// scheme itself, before any save dialog, which is why Requested never fires for the anchor cases or window.open. Blob-with-download works and reports success=true; fetch works and exposes Content-Disposition; the native write via a Rust command works. Note the success flag is not portable: macOS reports true where Linux reports false for a byte-identical file, so the file is the evidence and the flag is not. Two platforms therefore settle the shape: exportUrl cannot keep returning an address in the desktop build, and the repair belongs in web/apps/app/src/api/client.ts with screens unchanged. Of the two working save routes, the Rust command is the better seam — its success is a Result rather than a flag the platforms disagree about, and it is the only one that can put the file where the user chose, so a save dialog belongs there. Windows (WebView2, http://nigel.localhost — a real HTTP origin) is outstanding and is the platform most likely to download normally; that would not change the seam, only make uniformity a choice rather than a necessity. Case 5 (inline PDF) is unobserved on both platforms: auto mode never reaches it because case 2 navigates the page away first, so it needs a manual click.
 <!-- SECTION:NOTES:END -->
