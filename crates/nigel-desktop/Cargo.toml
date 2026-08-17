@@ -16,10 +16,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
 nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
-tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1.53", features = ["rt-multi-thread"] }
 

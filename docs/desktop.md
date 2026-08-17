@@ -107,13 +107,10 @@ client, which has no native side to hand bytes to, keeps answering an
 address the browser downloads directly; screens bind whichever kind of
 target they are given and never branch on which one it is.
 
-Invoice previews follow the same probe. WebKitGTK has no PDF viewer of its
-own, so on Linux the bytes go to a private temp file
-(`preview.rs::write_temp_pdf`) and `open_external` hands the path to the
-system's own viewer. Navigation download only works on Windows and the blob
-route only covers Linux and macOS, so everywhere else `openInvoicePreview`
-runs the same save action `invoicePreviewTarget` offers: it fetches the bytes
-and hands them to `save_export` through a native save dialog.
+An invoice's PDF is never rendered inline — WebKitGTK has no built-in PDF
+viewer, and nothing in this app tries to frame a PDF — so it follows the same
+route as an export: `openInvoicePreview` fetches the bytes and hands them to
+`save_export` through a native save dialog, on all three platforms.
 
 ## Not a deep link
 

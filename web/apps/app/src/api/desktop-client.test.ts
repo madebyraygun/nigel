@@ -64,27 +64,11 @@ describe('DesktopApiClient', () => {
     ).rejects.toThrow();
   });
 
-  it('opens an inline PDF externally on linux and frames it elsewhere', async () => {
-    const calls: string[] = [];
-    const linux = new DesktopApiClient({
-      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
-      invoke: async (cmd) => {
-        calls.push(cmd);
-        return cmd === 'platform' ? 'linux' : null;
-      },
-      platform: 'linux',
-    });
-
-    await linux.openInvoicePreview(1251);
-
-    expect(calls).toContain('open_external');
-  });
-
-  it('saves a non-linux preview through the native dialog rather than navigating', async () => {
+  it('saves an invoice preview through the native dialog rather than navigating', async () => {
     const assign = vi.fn();
     vi.spyOn(globalThis, 'location', 'get').mockReturnValue({ assign } as unknown as Location);
     const saved: Array<{ name: string; bytes: number[] }> = [];
-    const mac = new DesktopApiClient({
+    const client = new DesktopApiClient({
       fetchImpl: async () =>
         new Response('%PDF-1.4', {
           status: 200,
@@ -94,10 +78,9 @@ describe('DesktopApiClient', () => {
         if (cmd === 'save_export') saved.push(args as { name: string; bytes: number[] });
         return null;
       },
-      platform: 'darwin',
     });
 
-    await mac.openInvoicePreview(1251);
+    await client.openInvoicePreview(1251);
 
     expect(assign).not.toHaveBeenCalled();
     expect(saved).toHaveLength(1);
@@ -105,47 +88,12 @@ describe('DesktopApiClient', () => {
     expect(saved[0].bytes.length).toBeGreaterThan(0);
   });
 
-  it('raises a failed non-linux preview save rather than swallowing it', async () => {
-    const mac = new DesktopApiClient({
+  it('raises a failed preview save rather than swallowing it', async () => {
+    const client = new DesktopApiClient({
       fetchImpl: async () => new Response('nope', { status: 500 }),
       invoke: async () => null,
-      platform: 'darwin',
     });
 
-    await expect(mac.openInvoicePreview(1251)).rejects.toThrow();
-  });
-
-  it('asks the native side for the platform at most once, when none is injected', async () => {
-    const calls: string[] = [];
-    const noPlatform = new DesktopApiClient({
-      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
-      invoke: async (cmd) => {
-        calls.push(cmd);
-        return cmd === 'platform' ? 'linux' : null;
-      },
-    });
-
-    await noPlatform.openInvoicePreview(1251);
-    await noPlatform.openInvoicePreview(1251);
-
-    expect(calls.filter((cmd) => cmd === 'platform')).toHaveLength(1);
-  });
-
-  it('retries the platform lookup after a rejection instead of poisoning the client', async () => {
-    let platformCalls = 0;
-    const client = new DesktopApiClient({
-      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
-      invoke: async (cmd) => {
-        if (cmd !== 'platform') return null;
-        platformCalls += 1;
-        if (platformCalls === 1) throw new Error('ipc not ready yet');
-        return 'linux';
-      },
-    });
-
-    await expect(client.openInvoicePreview(1251)).rejects.toThrow('ipc not ready yet');
-    await expect(client.openInvoicePreview(1251)).resolves.toBeUndefined();
-
-    expect(platformCalls).toBe(2);
+    await expect(client.openInvoicePreview(1251)).rejects.toThrow();
   });
 });
