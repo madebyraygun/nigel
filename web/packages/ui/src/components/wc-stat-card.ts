@@ -60,7 +60,7 @@ export class WcStatCard extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-sm, 6px);
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      cursor: pointer;
+      cursor: default;
     }
 
     .retry:focus-visible {

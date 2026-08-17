@@ -97,7 +97,7 @@ export class WcCategoryPicker extends LitElement {
 
     [role='option'] {
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      cursor: pointer;
+      cursor: default;
     }
 
     [role='option'][aria-selected='true'] {

@@ -49,7 +49,7 @@ export class WcInvoicePreview extends LitElement {
 
     summary {
       padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-      cursor: pointer;
+      cursor: default;
       font-weight: var(--wa-font-weight-medium, 500);
     }
 
@@ -85,7 +85,7 @@ export class WcInvoicePreview extends LitElement {
       background: none;
       border: none;
       padding: 0;
-      cursor: pointer;
+      cursor: default;
     }
 
     button[data-pdf-link]:disabled {

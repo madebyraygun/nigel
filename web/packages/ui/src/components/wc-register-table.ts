@@ -301,7 +301,7 @@ export class WcRegisterTable extends LitElement {
         border: none;
         border-radius: var(--wa-radius-sm, 6px);
         padding: 2px;
-        cursor: pointer;
+        cursor: default;
         line-height: 0;
       }
 
@@ -368,7 +368,7 @@ export class WcRegisterTable extends LitElement {
 
       .options li {
         padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-        cursor: pointer;
+        cursor: default;
         white-space: nowrap;
       }
 
@@ -411,7 +411,7 @@ export class WcRegisterTable extends LitElement {
         border: 1px solid var(--wa-color-border);
         border-radius: var(--wa-radius-sm, 6px);
         padding: 2px var(--wa-space-xs, 6px);
-        cursor: pointer;
+        cursor: default;
       }
 
       .edit-actions button:focus-visible {

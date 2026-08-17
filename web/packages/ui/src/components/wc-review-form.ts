@@ -136,7 +136,7 @@ export class WcReviewForm extends LitElement {
       border: 1px solid var(--wa-color-border);
       background: var(--wa-color-surface);
       color: inherit;
-      cursor: pointer;
+      cursor: default;
     }
 
     button[type='submit'] {

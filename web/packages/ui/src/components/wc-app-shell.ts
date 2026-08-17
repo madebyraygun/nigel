@@ -95,7 +95,7 @@ export class WcAppShell extends LitElement {
       border-radius: var(--wa-radius-sm, 6px);
       background: transparent;
       color: var(--wa-color-text);
-      cursor: pointer;
+      cursor: default;
       transition: background var(--nc-transition-fast, 120ms ease);
     }
 

@@ -176,7 +176,7 @@ export class WcToast extends LitElement {
       font-weight: var(--wa-font-weight-bold, 600);
       text-decoration: underline;
       text-underline-offset: 3px;
-      cursor: pointer;
+      cursor: default;
       padding: 4px 8px;
       border-radius: var(--wa-radius-sm, 6px);
       white-space: nowrap;
@@ -194,7 +194,7 @@ export class WcToast extends LitElement {
       color: inherit;
       font: inherit;
       line-height: 1;
-      cursor: pointer;
+      cursor: default;
       padding: 2px 4px;
       margin-inline-start: calc(-1 * var(--wa-space-s, 8px));
       border-radius: var(--wa-radius-sm, 6px);
