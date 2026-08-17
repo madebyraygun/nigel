@@ -140,6 +140,29 @@ describe('export targets', () => {
     expect(rejections).toEqual([]);
   });
 
+  it('toasts a rejected export rather than leaving the operator guessing', async () => {
+    const toasts: string[] = [];
+    const onToast = (event: Event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener('nc-toast', onToast);
+
+    try {
+      const el = await mount({
+        textTarget: { kind: 'action', run: () => Promise.reject(new Error('disk full')) },
+      });
+
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button[data-export="text"]')!.click();
+      await el.updateComplete;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      window.removeEventListener('nc-toast', onToast);
+    }
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toContain("Couldn't save the export.");
+    expect(toasts[0]).toContain('disk full');
+  });
+
   it('does not run an action while busy', async () => {
     let ran = 0;
     const el = await mount({

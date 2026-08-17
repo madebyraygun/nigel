@@ -1,6 +1,18 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
+import { dispatchNcToast } from './wc-toast.js';
+
+/**
+ * A word on why a save failed, short enough to read as a reason rather than
+ * a stack trace. Empty when the error has no message or the message is long.
+ */
+const MAX_DETAIL_LENGTH = 120;
+
+function failureDetail(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return detail.length > 0 && detail.length <= MAX_DETAIL_LENGTH ? detail : '';
+}
 
 /**
  * How this component reaches an export.
@@ -137,8 +149,9 @@ export class WcExportLinks extends LitElement {
   };
 
   /**
-   * `run` is the app's own save action and owns reporting its own failure;
-   * catching here only keeps a rejection from surfacing as an unhandled one.
+   * `run` throws on failure rather than reporting it itself, so a full disk
+   * or a read-only destination has to be surfaced here — otherwise the
+   * button un-busies and the operator believes the export saved.
    */
   private runAction = async (
     event: Event,
@@ -148,8 +161,12 @@ export class WcExportLinks extends LitElement {
     if (this.busy) return;
     try {
       await target.run();
-    } catch {
-      // Intentionally empty — see the doc comment above.
+    } catch (error) {
+      const detail = failureDetail(error);
+      dispatchNcToast(this, {
+        message: detail ? `Couldn't save the export. ${detail}` : "Couldn't save the export.",
+        variant: 'danger',
+      });
     }
   };
 
