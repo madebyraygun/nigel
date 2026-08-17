@@ -43,4 +43,29 @@ mod tests {
         }
         assert!(url.starts_with(SCHEME) || url.contains(SCHEME));
     }
+
+    #[test]
+    fn the_trusted_host_matches_the_host_tauri_actually_sends() {
+        // Pinned to a literal rather than derived, because the integration
+        // tests hand this same value to both the request and the guard: a wrong
+        // value would move both sides together and leave them green while every
+        // real launch answers 403.
+        if cfg!(windows) {
+            assert_eq!(trusted_host(), "nigel.localhost");
+        } else {
+            assert_eq!(trusted_host(), "localhost");
+        }
+    }
+
+    #[test]
+    fn the_trusted_host_is_the_authority_of_the_scheme_url() {
+        // The two are one fact spelled twice; this is what keeps them in step.
+        let url = scheme_url();
+        let authority = url
+            .split("://")
+            .nth(1)
+            .expect("scheme url has an authority")
+            .trim_end_matches('/');
+        assert_eq!(authority, trusted_host());
+    }
 }
