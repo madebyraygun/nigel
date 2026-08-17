@@ -375,6 +375,25 @@ describe('wc-send-dialog', () => {
       expect(link?.textContent?.trim()).toBe('Download the PDF');
     });
 
+    it('runs the action when the PDF button is clicked', async () => {
+      let ran = 0;
+      const el = await mount({
+        previewHtml: PAGE,
+        pdfTarget: {
+          kind: 'action',
+          run: async () => {
+            ran += 1;
+          },
+          filename: 'invoice-1251.pdf',
+        },
+      });
+
+      el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+      await el.updateComplete;
+
+      expect(ran).toBe(1);
+    });
+
     it('prefers pdfTarget over pdfHref when both are set', async () => {
       const el = await mount({
         previewHtml: PAGE,
