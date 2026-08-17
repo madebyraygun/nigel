@@ -136,13 +136,21 @@ export class WcExportLinks extends LitElement {
     if (this.busy) event.preventDefault();
   };
 
+  /**
+   * `run` is the app's own save action and owns reporting its own failure;
+   * catching here only keeps a rejection from surfacing as an unhandled one.
+   */
   private runAction = async (
     event: Event,
     target: Extract<ExportTarget, { kind: 'action' }>,
   ): Promise<void> => {
     event.preventDefault();
     if (this.busy) return;
-    await target.run();
+    try {
+      await target.run();
+    } catch {
+      // Intentionally empty — see the doc comment above.
+    }
   };
 
   /**
