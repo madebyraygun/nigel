@@ -174,3 +174,48 @@ async fn a_subresource_carrying_a_foreign_origin_is_refused() {
 
     assert_eq!(response.status(), 403);
 }
+
+#[tokio::test]
+async fn a_text_export_carries_no_terminal_escape_sequences() {
+    // The report formatters are shared with the terminal, where colour is the
+    // point. A downloaded file is not a terminal: an escape sequence there
+    // renders as gibberish in the middle of a table.
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let response = nigel_desktop::transport::answer(
+        router,
+        scheme_request(
+            "GET",
+            "/api/exports/pnl?format=text",
+            &nigel_desktop::trusted_host(),
+        ),
+    )
+    .await;
+
+    assert_eq!(response.status(), 200);
+    assert!(
+        !response.body().contains(&0x1b),
+        "an ESC byte reached a text export"
+    );
+}
+
+#[tokio::test]
+async fn the_build_can_render_a_pdf() {
+    // The shell ships the same export formats the CLI does; without the `pdf`
+    // feature the UI reports that this build cannot render one.
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let response = nigel_desktop::transport::answer(
+        router,
+        scheme_request("GET", "/api/status", &nigel_desktop::trusted_host()),
+    )
+    .await;
+
+    let body = String::from_utf8_lossy(response.body());
+    assert!(
+        body.contains("\"pdfExport\":true"),
+        "this build reports it cannot render a PDF: {body}"
+    );
+}
