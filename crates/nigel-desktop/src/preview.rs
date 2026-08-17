@@ -2,26 +2,32 @@
 //! hand to the system's own viewer where the webview has no PDF renderer of
 //! its own.
 
-use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tempfile::Builder;
 
-/// Every path `write_temp_pdf` has produced — the only paths `open_external`
-/// is allowed to hand to the system opener.
+/// The one preview temp file that exists at a time.
+///
+/// Recording a new path deletes whichever one it replaces, so at most one
+/// preview sits in the world-readable temp directory at once. The current
+/// path is also the only one `open_external` is allowed to hand to the
+/// system opener.
 #[derive(Default)]
-pub struct PreviewPaths(Mutex<HashSet<PathBuf>>);
+pub struct PreviewPaths(Mutex<Option<PathBuf>>);
 
 impl PreviewPaths {
-    /// Whether `path` is one `write_temp_pdf` actually produced.
+    /// Whether `path` is the file `write_temp_pdf` most recently produced.
     pub fn contains(&self, path: &Path) -> bool {
-        self.0.lock().expect("preview paths lock").contains(path)
+        self.0.lock().expect("preview path lock").as_deref() == Some(path)
     }
 
     pub(crate) fn record(&self, path: PathBuf) {
-        self.0.lock().expect("preview paths lock").insert(path);
+        let previous = self.0.lock().expect("preview path lock").replace(path);
+        if let Some(previous) = previous {
+            let _ = std::fs::remove_file(previous);
+        }
     }
 }
 
@@ -39,9 +45,10 @@ fn write_to(paths: &PreviewPaths, name: &str, bytes: &[u8]) -> Result<String, St
 
 /// Write `bytes` to a temp file named after `name`, and answer its path.
 ///
-/// The system temp directory is where the OS expects to reclaim files like
-/// this one — nothing here deletes it, because the external viewer the file
-/// is opened in is still reading it after this command returns.
+/// The file this call replaces is deleted; the one it writes is not, because
+/// the external viewer it was opened in is still reading it after this
+/// command returns. The system temp directory is where the OS expects to
+/// reclaim whatever is left.
 #[tauri::command]
 pub async fn write_temp_pdf(
     paths: tauri::State<'_, PreviewPaths>,
@@ -103,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn it_records_every_path_it_writes_and_nothing_else() {
+    fn it_records_the_path_it_writes_and_nothing_else() {
         let paths = PreviewPaths::default();
         let path = write_to(&paths, "invoice-1251", b"%PDF-1.4").expect("write the temp pdf");
 
@@ -111,5 +118,22 @@ mod tests {
         assert!(!paths.contains(Path::new("/etc/passwd")));
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn it_deletes_the_previous_preview_when_writing_a_new_one() {
+        let paths = PreviewPaths::default();
+        let first = write_to(&paths, "invoice-1251", b"%PDF-1.4").expect("write the first pdf");
+        assert!(Path::new(&first).exists());
+
+        let second = write_to(&paths, "invoice-1300", b"%PDF-1.5").expect("write the second pdf");
+
+        assert!(
+            !Path::new(&first).exists(),
+            "expected the previous preview at {first} to be gone"
+        );
+        assert!(Path::new(&second).exists());
+
+        std::fs::remove_file(&second).ok();
     }
 }
