@@ -4,7 +4,7 @@ title: Tauri 2 app shell and backend transport decision
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-17 19:26'
+updated_date: '2026-08-17 19:28'
 labels:
   - tauri
 dependencies:
@@ -34,9 +34,7 @@ Scaffold the Tauri 2 app hosting the SPA over the transport settled in decision-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-ACs #1, #4 and #8 landed in the desktop shell branch (PR #29). #1 is confirmed by the operator running the app on a real display: it launches, browses, and both text and PDF exports download through the native save dialog. #4 is docs/desktop.md plus a pointer row in CLAUDE.md's table. #8 is guarded by crates/nigel-desktop/tests/no_deep_link.rs, proven by registering a deep link and watching the test fail.
+Manual verification, macOS, by the operator: launches and browses; an encrypted database unlocks; report text and PDF exports and the invoice PDF all download through the native save dialog; the text export carries no escape codes.
 
-Four defects only a real webview could surface, each now with a regression test proven by making it fail. The router's guard refuses a request carrying no Host header, and a custom scheme is not HTTP so the webview sends none — every screen answered 403; the transport now carries the URI's authority into the header. The guard's origin check understood only http(s), so the page's own nigel://localhost origin was refused on every script and stylesheet — the shell loaded and hydrated into nothing; TrustedOrigins gained a list of whole origins matched verbatim. The report formatters are shared with the terminal, so a text export carried colour escapes into the downloaded file; build_desktop_router now disables them the way serve's entry point does. And the crate took nigel-core with default features off, so the UI reported that this build could not render a PDF; it now requests the same set the binary ships.
-
-Worth recording for the next shell task: the integration tests all set a Host header explicitly and built their own TrustedOrigins, so none of them exercised the shape the webview actually sends. The shell and its tests now share one trusted_origins() function for that reason.
+Not exercised anywhere, by anything: imports — including gusto, whose feature the shell only began requesting when the missing-PDF defect was fixed — and the shell on Windows or on a Linux desktop. The Linux path has automated coverage of the request path but no run in front of a person, and Windows has neither. Its transport differs from the other two: http://nigel.localhost is a real HTTP origin, so it carries a Host header where the custom scheme sends none, which is the defect that made every screen answer 403 on macOS.
 <!-- SECTION:NOTES:END -->
