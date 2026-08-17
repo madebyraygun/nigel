@@ -3,6 +3,9 @@
 //! path with no window at all.
 
 pub mod db;
+pub mod open;
+pub mod platform;
+pub mod preview;
 pub mod save;
 pub mod transport;
 

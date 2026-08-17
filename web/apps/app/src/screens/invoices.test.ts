@@ -789,6 +789,43 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeNull();
   });
 
+  it("routes the preview's PDF link through the client when it offers to open one", async () => {
+    class DesktopishClient extends FakeApiClient {
+      opened: number[] = [];
+      async openInvoicePreview(number: number): Promise<void> {
+        this.opened.push(number);
+      }
+    }
+    const fake = new DesktopishClient();
+    fake.status = CONFIGURED;
+    fake.clients = [ACME, GLOBEX, ARCHIVED];
+    fake.invoices = ROWS;
+    fake.aging = AGING;
+    fake.invoiceDetails[1250] = detail();
+
+    const { el } = await mount('number=1250', fake);
+
+    const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
+    const link = preview?.shadowRoot?.querySelector<HTMLAnchorElement>('[data-pdf-link]');
+    expect(link).toBeTruthy();
+    link?.click();
+    await settle(el);
+
+    expect(fake.opened).toEqual([1250]);
+  });
+
+  it("leaves the preview's PDF link to navigate normally when the client offers no override", async () => {
+    const { el } = await mount('number=1250');
+
+    const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
+    const link = preview?.shadowRoot?.querySelector<HTMLAnchorElement>('[data-pdf-link]');
+    const defaultPrevented = !link?.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, composed: true, cancelable: true }),
+    );
+
+    expect(defaultPrevented).toBe(false);
+  });
+
   it('hands the send dialog a pdf target rather than a bare href', async () => {
     const { el, fake } = await mount('number=1250');
 

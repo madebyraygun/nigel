@@ -11,6 +11,16 @@ export type InvokeFn = (cmd: string, args: Record<string, unknown>) => Promise<u
 
 export interface DesktopApiClientOptions extends FetchApiClientOptions {
   invoke: InvokeFn;
+  /**
+   * `std::env::consts::OS`, for tests to inject directly.
+   *
+   * Left unset in production, where the client asks the native side for it,
+   * once, via the `platform` command — `navigator.userAgent` is not a
+   * reliable platform signal inside a webview. Left lazy rather than fetched
+   * eagerly in the constructor: most `DesktopApiClient`s never call
+   * `openInvoicePreview`, the one method that needs it.
+   */
+  platform?: string;
 }
 
 /**
@@ -26,11 +36,21 @@ export class DesktopApiClient extends FetchApiClient {
   // `FetchApiClient` keeps its own `fetchImpl` private, so this class holds the
   // reference it was given rather than reaching into the parent.
   private readonly fetchBytes: typeof fetch;
+  private readonly injectedPlatform?: string;
+  private platformPromise: Promise<string> | null = null;
 
   constructor(options: DesktopApiClientOptions) {
     super(options);
     this.invoke = options.invoke;
     this.fetchBytes = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.injectedPlatform = options.platform;
+  }
+
+  /** Memoized so the native side is asked at most once per client. */
+  private platform(): Promise<string> {
+    if (this.injectedPlatform !== undefined) return Promise.resolve(this.injectedPlatform);
+    this.platformPromise ??= this.invoke('platform', {}).then(String);
+    return this.platformPromise;
   }
 
   override exportTarget(
@@ -46,6 +66,36 @@ export class DesktopApiClient extends FetchApiClient {
 
   override invoicePreviewTarget(number: number): ExportTarget {
     return this.save(this.invoicePreviewUrl(number, 'pdf'), `invoice-${number}.pdf`);
+  }
+
+  /**
+   * Show an invoice's PDF the way the running webview can actually show it.
+   *
+   * WebKitGTK has no built-in PDF viewer, so a Linux desktop writes the bytes
+   * to a private temp file and hands the path to the system's own viewer.
+   * Everywhere else the webview already renders a PDF fine, so this just
+   * opens the address in a fresh browsing context — the same outcome the
+   * plain preview link gives a browser, without navigating this window away
+   * from the app.
+   */
+  async openInvoicePreview(number: number): Promise<void> {
+    const platform = await this.platform();
+    const url = this.invoicePreviewUrl(number, 'pdf');
+    if (platform !== 'linux') {
+      globalThis.open(url, '_blank');
+      return;
+    }
+
+    const response = await this.fetchBytes(url);
+    if (!response.ok) {
+      throw new Error(`Preview failed: ${response.status}`);
+    }
+    const bytes = [...new Uint8Array(await response.arrayBuffer())];
+    const path = await this.invoke('write_temp_pdf', {
+      name: filenameFrom(response.headers.get('content-disposition'), `invoice-${number}.pdf`),
+      bytes,
+    });
+    await this.invoke('open_external', { path });
   }
 
   private save(url: string, fallbackName: string): ExportTarget {

@@ -63,4 +63,54 @@ describe('DesktopApiClient', () => {
       (client.exportTarget('pnl', 'pdf') as { run: () => Promise<void> }).run(),
     ).rejects.toThrow();
   });
+
+  it('opens an inline PDF externally on linux and frames it elsewhere', async () => {
+    const calls: string[] = [];
+    const linux = new DesktopApiClient({
+      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
+      invoke: async (cmd) => {
+        calls.push(cmd);
+        return cmd === 'platform' ? 'linux' : null;
+      },
+      platform: 'linux',
+    });
+
+    await linux.openInvoicePreview(1251);
+
+    expect(calls).toContain('open_external');
+  });
+
+  it('leaves non-linux desktops to the webview, which already frames a PDF fine', async () => {
+    const calls: string[] = [];
+    const openSpy = vi.spyOn(globalThis, 'open').mockReturnValue(null);
+    const mac = new DesktopApiClient({
+      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
+      invoke: async (cmd) => {
+        calls.push(cmd);
+        return null;
+      },
+      platform: 'darwin',
+    });
+
+    await mac.openInvoicePreview(1251);
+
+    expect(calls).toEqual([]);
+    expect(openSpy).toHaveBeenCalledWith(mac.invoicePreviewUrl(1251, 'pdf'), '_blank');
+  });
+
+  it('asks the native side for the platform at most once, when none is injected', async () => {
+    const calls: string[] = [];
+    const noPlatform = new DesktopApiClient({
+      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
+      invoke: async (cmd) => {
+        calls.push(cmd);
+        return cmd === 'platform' ? 'linux' : null;
+      },
+    });
+
+    await noPlatform.openInvoicePreview(1251);
+    await noPlatform.openInvoicePreview(1251);
+
+    expect(calls.filter((cmd) => cmd === 'platform')).toHaveLength(1);
+  });
 });
