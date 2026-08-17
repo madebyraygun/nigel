@@ -2541,6 +2541,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "nigel-core",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

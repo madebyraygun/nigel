@@ -23,6 +23,7 @@ with no tax mapping) — chosen at `nigel init --profile` or in onboarding and s
 | `docs/api.md` | HTTP endpoint inventory, error envelope, security model |
 | `docs/invoicing.md` | Invoicing setup (Stripe, Mailgun, R2) and commands |
 | `docs/importers.md` | Importer formats and how to add one |
+| `docs/desktop.md` | The Tauri desktop shell: transport, origins, exports, dev loop |
 | `docs/backlog-cli.md` | The `backlog` CLI manual |
 | `backlog/decisions/` | Decisions with their reasoning, newest first |
 

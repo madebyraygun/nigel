@@ -26,3 +26,4 @@ tokio = { version = "1.53", features = ["rt-multi-thread"] }
 [dev-dependencies]
 nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "testutil"] }
 tokio = { version = "1.53", features = ["macros"] }
+serde_json = "1"
