@@ -4,9 +4,11 @@ title: 'Packaging, signing, and release CI for desktop'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
+updated_date: '2026-08-17 15:28'
 labels:
   - tauri
   - ci
+milestone: m-0
 dependencies:
   - TASK-33.5
 parent_task_id: TASK-33

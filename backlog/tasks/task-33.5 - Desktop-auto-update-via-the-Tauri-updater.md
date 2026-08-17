@@ -4,9 +4,11 @@ title: Desktop auto-update via the Tauri updater
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
+updated_date: '2026-08-17 15:28'
 labels:
   - tauri
   - backend
+milestone: m-0
 dependencies:
   - TASK-33.2
 references:
