@@ -79,23 +79,21 @@ export class DesktopApiClient extends FetchApiClient {
   }
 
   /**
-   * Show an invoice's PDF the way the running webview can actually show it.
+   * Show an invoice's PDF the way the running platform can actually show it.
    *
    * WebKitGTK has no built-in PDF viewer, so a Linux desktop writes the bytes
    * to a private temp file and hands the path to the system's own viewer.
-   * Everywhere else the webview already renders a PDF fine, so this just
-   * opens the address in a fresh browsing context — the same outcome the
-   * plain preview link gives a browser, without navigating this window away
-   * from the app.
+   * Navigation download only works on Windows and the blob route only covers
+   * Linux and macOS, so everywhere else this runs the same save action
+   * `invoicePreviewTarget` offers: fetch the bytes and hand them to
+   * `save_export` through a native save dialog, matching the link's own
+   * label, "Download the PDF".
    */
   async openInvoicePreview(number: number): Promise<void> {
     const platform = await this.platform();
     const url = this.invoicePreviewUrl(number, 'pdf');
     if (platform !== 'linux') {
-      // WKWebView and WebView2 render a PDF in place, which is what the plain
-      // anchor this replaces would have done. The screen has already called
-      // preventDefault, so the navigation has to be reissued here.
-      globalThis.location.assign(url);
+      await this.save(url, `invoice-${number}.pdf`).run();
       return;
     }
 

@@ -80,14 +80,18 @@ describe('DesktopApiClient', () => {
     expect(calls).toContain('open_external');
   });
 
-  it('leaves non-linux desktops to the webview, which already frames a PDF fine', async () => {
-    const calls: string[] = [];
+  it('saves a non-linux preview through the native dialog rather than navigating', async () => {
     const assign = vi.fn();
     vi.spyOn(globalThis, 'location', 'get').mockReturnValue({ assign } as unknown as Location);
+    const saved: Array<{ name: string; bytes: number[] }> = [];
     const mac = new DesktopApiClient({
-      fetchImpl: async () => new Response('%PDF-1.4', { status: 200 }),
-      invoke: async (cmd) => {
-        calls.push(cmd);
+      fetchImpl: async () =>
+        new Response('%PDF-1.4', {
+          status: 200,
+          headers: { 'content-disposition': 'attachment; filename="invoice-1251.pdf"' },
+        }),
+      invoke: async (cmd, args) => {
+        if (cmd === 'save_export') saved.push(args as { name: string; bytes: number[] });
         return null;
       },
       platform: 'darwin',
@@ -95,8 +99,20 @@ describe('DesktopApiClient', () => {
 
     await mac.openInvoicePreview(1251);
 
-    expect(calls).toEqual([]);
-    expect(assign).toHaveBeenCalledWith(mac.invoicePreviewUrl(1251, 'pdf'));
+    expect(assign).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(1);
+    expect(saved[0].name).toBe('invoice-1251.pdf');
+    expect(saved[0].bytes.length).toBeGreaterThan(0);
+  });
+
+  it('raises a failed non-linux preview save rather than swallowing it', async () => {
+    const mac = new DesktopApiClient({
+      fetchImpl: async () => new Response('nope', { status: 500 }),
+      invoke: async () => null,
+      platform: 'darwin',
+    });
+
+    await expect(mac.openInvoicePreview(1251)).rejects.toThrow();
   });
 
   it('asks the native side for the platform at most once, when none is injected', async () => {
