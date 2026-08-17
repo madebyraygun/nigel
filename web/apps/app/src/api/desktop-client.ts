@@ -48,15 +48,6 @@ export class DesktopApiClient extends FetchApiClient {
     return this.save(this.invoicePreviewUrl(number, 'pdf'), `invoice-${number}.pdf`);
   }
 
-  /**
-   * Show an invoice's PDF the way `invoicePreviewTarget` does: fetch the
-   * bytes and hand them to `save_export` through a native save dialog,
-   * matching the link's own label, "Download the PDF".
-   */
-  async openInvoicePreview(number: number): Promise<void> {
-    await this.save(this.invoicePreviewUrl(number, 'pdf'), `invoice-${number}.pdf`).run();
-  }
-
   private save(url: string, fallbackName: string): Extract<ExportTarget, { kind: 'action' }> {
     return {
       kind: 'action',

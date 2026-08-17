@@ -63,37 +63,4 @@ describe('DesktopApiClient', () => {
       (client.exportTarget('pnl', 'pdf') as { run: () => Promise<void> }).run(),
     ).rejects.toThrow();
   });
-
-  it('saves an invoice preview through the native dialog rather than navigating', async () => {
-    const assign = vi.fn();
-    vi.spyOn(globalThis, 'location', 'get').mockReturnValue({ assign } as unknown as Location);
-    const saved: Array<{ name: string; bytes: number[] }> = [];
-    const client = new DesktopApiClient({
-      fetchImpl: async () =>
-        new Response('%PDF-1.4', {
-          status: 200,
-          headers: { 'content-disposition': 'attachment; filename="invoice-1251.pdf"' },
-        }),
-      invoke: async (cmd, args) => {
-        if (cmd === 'save_export') saved.push(args as { name: string; bytes: number[] });
-        return null;
-      },
-    });
-
-    await client.openInvoicePreview(1251);
-
-    expect(assign).not.toHaveBeenCalled();
-    expect(saved).toHaveLength(1);
-    expect(saved[0].name).toBe('invoice-1251.pdf');
-    expect(saved[0].bytes.length).toBeGreaterThan(0);
-  });
-
-  it('raises a failed preview save rather than swallowing it', async () => {
-    const client = new DesktopApiClient({
-      fetchImpl: async () => new Response('nope', { status: 500 }),
-      invoke: async () => null,
-    });
-
-    await expect(client.openInvoicePreview(1251)).rejects.toThrow();
-  });
 });

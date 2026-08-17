@@ -789,83 +789,14 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeNull();
   });
 
-  it("routes the preview's PDF link through the client when it offers to open one", async () => {
-    class DesktopishClient extends FakeApiClient {
-      opened: number[] = [];
-      async openInvoicePreview(number: number): Promise<void> {
-        this.opened.push(number);
-      }
-    }
-    const fake = new DesktopishClient();
-    fake.status = CONFIGURED;
-    fake.clients = [ACME, GLOBEX, ARCHIVED];
-    fake.invoices = ROWS;
-    fake.aging = AGING;
-    fake.invoiceDetails[1250] = detail();
-
-    const { el } = await mount('number=1250', fake);
+  it('hands the preview a pdf target rather than a bare href', async () => {
+    const { el, fake } = await mount('number=1250');
 
     const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
-    const link = preview?.shadowRoot?.querySelector<HTMLAnchorElement>('[data-pdf-link]');
-    expect(link).toBeTruthy();
-    link?.click();
-    await settle(el);
 
-    expect(fake.opened).toEqual([1250]);
-  });
-
-  it("does not leave a rejected preview as an unhandled rejection, and toasts it", async () => {
-    class FailingClient extends FakeApiClient {
-      async openInvoicePreview(): Promise<void> {
-        throw new Error('Preview failed: 500');
-      }
-    }
-    const fake = new FailingClient();
-    fake.status = CONFIGURED;
-    fake.clients = [ACME, GLOBEX, ARCHIVED];
-    fake.invoices = ROWS;
-    fake.aging = AGING;
-    fake.invoiceDetails[1250] = detail();
-
-    const rejections: unknown[] = [];
-    const onRejection = (reason: unknown) => rejections.push(reason);
-    process.on('unhandledRejection', onRejection);
-
-    const toasts: string[] = [];
-    const onToast = (event: Event) =>
-      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
-    window.addEventListener('nc-toast', onToast);
-
-    try {
-      const { el } = await mount('number=1250', fake);
-      const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
-      const link = preview?.shadowRoot?.querySelector<HTMLAnchorElement>('[data-pdf-link]');
-      link?.click();
-      await settle(el);
-
-      // Node reports an unhandled rejection on a later tick, once the
-      // microtask queue that could still attach a handler has drained.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    } finally {
-      process.off('unhandledRejection', onRejection);
-      window.removeEventListener('nc-toast', onToast);
-    }
-
-    expect(rejections).toEqual([]);
-    expect(toasts).toEqual(['Preview failed: 500']);
-  });
-
-  it("leaves the preview's PDF link to navigate normally when the client offers no override", async () => {
-    const { el } = await mount('number=1250');
-
-    const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
-    const link = preview?.shadowRoot?.querySelector<HTMLAnchorElement>('[data-pdf-link]');
-    const defaultPrevented = !link?.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, composed: true, cancelable: true }),
+    expect((preview as { pdfTarget?: unknown } | null)?.pdfTarget).toEqual(
+      fake.invoicePreviewTarget(1250),
     );
-
-    expect(defaultPrevented).toBe(false);
   });
 
   it('hands the send dialog a pdf target rather than a bare href', async () => {

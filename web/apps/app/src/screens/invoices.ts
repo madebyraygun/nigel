@@ -661,36 +661,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     }
   }
 
-  /**
-   * The PDF link inside `wc-invoice-preview` is a plain anchor, which is fine
-   * for a browser but not for a webview serving this app from a custom URI
-   * scheme: a plain navigation is the only route a desktop client may need to
-   * replace with something the webview can actually show. `openInvoicePreview`
-   * is a capability the desktop client offers and the browser client does
-   * not, so this checks for it structurally rather than asking which client
-   * it has.
-   */
-  private handlePreviewClick(event: Event, number: number): void {
-    const client = this.client as Partial<{
-      openInvoicePreview(invoiceNumber: number): Promise<void>;
-    }>;
-    if (typeof client.openInvoicePreview !== 'function') return;
-    const link = event
-      .composedPath()
-      .find(
-        (node): node is HTMLAnchorElement =>
-          node instanceof HTMLAnchorElement && node.dataset.pdfLink !== undefined,
-      );
-    if (!link) return;
-    event.preventDefault();
-    client.openInvoicePreview(number).catch((error: unknown) => {
-      dispatchNcToast(this, {
-        message: error instanceof Error ? error.message : String(error),
-        variant: 'danger',
-      });
-    });
-  }
-
   private closeSend = (): void => {
     this.sendOpen = false;
     // The status, the balance and the aging strip all moved if it went out.
@@ -973,9 +943,9 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       <wc-invoice-preview
         .src=${this.client.invoicePreviewUrl(detail.number, 'html')}
         .pdfSrc=${this.client.invoicePreviewUrl(detail.number, 'pdf')}
+        .pdfTarget=${this.client.invoicePreviewTarget(detail.number)}
         .pdfAvailable=${this.pdfExport}
         .missing=${this.invoicing?.missing ?? []}
-        @click=${(event: Event) => this.handlePreviewClick(event, detail.number)}
       ></wc-invoice-preview>
 
       ${this.renderPaymentDialog(detail)} ${this.renderSendDialog(detail, sendBlock)}
