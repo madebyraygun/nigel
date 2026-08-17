@@ -1060,7 +1060,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .previewHtml=${this.previewHtml}
         .previewError=${this.previewError}
         .previewLoading=${this.previewLoading}
-        .pdfHref=${this.client.invoicePreviewUrl(detail.number, 'pdf')}
         .pdfTarget=${this.client.invoicePreviewTarget(detail.number)}
         .pdfAvailable=${this.pdfExport}
         .configCautions=${this.sendCautions()}
