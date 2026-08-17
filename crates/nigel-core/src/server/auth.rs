@@ -334,6 +334,19 @@ mod tests {
     }
 
     #[test]
+    fn origin_userinfo_does_not_smuggle_in_a_trusted_host() {
+        // `rsplit_once('@')` takes the half after the last `@`, which is the
+        // host; taking the half before would trust whatever the attacker put
+        // in the userinfo slot.
+        assert!(!origin_is_local("http://localhost@evil.com"));
+    }
+
+    #[test]
+    fn a_non_numeric_bracketed_port_is_rejected() {
+        assert!(!host_is_local("[::1]:abc"));
+    }
+
+    #[test]
     fn a_configured_origin_is_trusted_and_loopback_then_is_not() {
         let trusted = TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]);
         assert!(trusted.host_is_trusted("nigel.localhost"));
