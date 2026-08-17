@@ -4,17 +4,14 @@ use std::sync::Arc;
 
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{db, save, scheme_url, transport, trusted_host, SCHEME};
+use nigel_desktop::{db, save, scheme_url, transport, SCHEME};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
         db::database_path(),
         nigel_core::server::auth::generate_token(),
     );
-    let router = nigel_core::server::build_desktop_router(
-        state,
-        nigel_core::server::auth::TrustedOrigins::exactly(vec![trusted_host()]),
-    );
+    let router = nigel_core::server::build_desktop_router(state, nigel_desktop::trusted_origins());
     let runtime = Arc::new(
         tokio::runtime::Runtime::new().expect("build tokio runtime for the scheme handler"),
     );

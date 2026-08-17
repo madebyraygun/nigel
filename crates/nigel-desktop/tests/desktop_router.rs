@@ -6,7 +6,6 @@
 //! transport, but nothing here renders a webview or exercises the real Tauri
 //! IPC plumbing.
 
-use nigel_core::server::auth::TrustedOrigins;
 use nigel_core::server::state::AppState;
 use nigel_core::server::{build_desktop_router, testutil};
 
@@ -26,10 +25,7 @@ fn scheme_request(method: &str, path: &str, host: &str) -> tauri::http::Request<
 fn router_over(db_path: &std::path::Path) -> axum::Router {
     let token = nigel_core::server::auth::generate_token();
     let state = AppState::new(db_path.to_path_buf(), token);
-    build_desktop_router(
-        state,
-        TrustedOrigins::exactly(vec![nigel_desktop::trusted_host()]),
-    )
+    build_desktop_router(state, nigel_desktop::trusted_origins())
 }
 
 #[tokio::test]
@@ -130,6 +126,47 @@ async fn a_request_for_another_authority_is_still_refused() {
     let request = tauri::http::Request::builder()
         .method("GET")
         .uri("nigel://evil.example/")
+        .body(Vec::new())
+        .expect("build scheme request");
+
+    let response = nigel_desktop::transport::answer(router, request).await;
+
+    assert_eq!(response.status(), 403);
+}
+
+#[tokio::test]
+async fn a_subresource_carrying_the_pages_own_origin_is_answered() {
+    // The page's scripts and stylesheets arrive stamped with the scheme's own
+    // origin. A guard that only understands http(s) refuses them, and the app
+    // loads its shell and then hydrates into nothing.
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let request = tauri::http::Request::builder()
+        .method("GET")
+        .uri(format!("{}assets/app.js", nigel_desktop::scheme_url()))
+        .header(tauri::http::header::ORIGIN, nigel_desktop::scheme_origin())
+        .body(Vec::new())
+        .expect("build scheme request");
+
+    let response = nigel_desktop::transport::answer(router, request).await;
+
+    assert_ne!(
+        response.status(),
+        403,
+        "the page's own origin must be trusted"
+    );
+}
+
+#[tokio::test]
+async fn a_subresource_carrying_a_foreign_origin_is_refused() {
+    let (_dir, db_path) = testutil::temp_db();
+    let router = router_over(&db_path);
+
+    let request = tauri::http::Request::builder()
+        .method("GET")
+        .uri(format!("{}assets/app.js", nigel_desktop::scheme_url()))
+        .header(tauri::http::header::ORIGIN, "https://evil.example")
         .body(Vec::new())
         .expect("build scheme request");
 

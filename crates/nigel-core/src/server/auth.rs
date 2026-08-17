@@ -31,6 +31,12 @@ const TOKEN_BYTES: usize = 32;
 #[derive(Clone, Debug)]
 pub struct TrustedOrigins {
     hosts: Vec<String>,
+    /// Whole origins trusted verbatim, for schemes that are not http(s).
+    ///
+    /// A desktop shell serves the app from its own URI scheme, whose origin
+    /// (`nigel://localhost`) has no host-and-port shape to compare — so it is
+    /// matched as a complete string or not at all.
+    origins: Vec<String>,
 }
 
 impl TrustedOrigins {
@@ -41,12 +47,26 @@ impl TrustedOrigins {
                 .iter()
                 .map(|h| (*h).to_string())
                 .collect(),
+            origins: Vec::new(),
         }
     }
 
     /// Exactly these hosts and nothing else — not loopback unless it is listed.
     pub fn exactly(hosts: Vec<String>) -> Self {
-        Self { hosts }
+        Self {
+            hosts,
+            origins: Vec::new(),
+        }
+    }
+
+    /// Also trust these whole origins, for a scheme that is not http(s).
+    ///
+    /// Each is compared in full, so listing `nigel://localhost` trusts that and
+    /// nothing else — not `nigel://elsewhere`, and not a host of `localhost`
+    /// under any other scheme.
+    pub fn and_origins(mut self, origins: Vec<String>) -> Self {
+        self.origins = origins;
+        self
     }
 
     /// True when a `Host` header names a trusted host, with any port.
@@ -80,7 +100,19 @@ impl TrustedOrigins {
     /// True when an `Origin` header names an http(s) trusted origin. A literal
     /// `null` origin (sandboxed iframes, `file://` documents) is never trusted.
     pub fn origin_is_trusted(&self, origin: &str) -> bool {
-        let Some(rest) = strip_scheme(origin.trim()) else {
+        let origin = origin.trim();
+
+        // A whole-origin match comes first: a custom scheme has no
+        // host-and-port shape for the http(s) path below to read.
+        if self
+            .origins
+            .iter()
+            .any(|trusted| trusted.eq_ignore_ascii_case(origin))
+        {
+            return true;
+        }
+
+        let Some(rest) = strip_scheme(origin) else {
             return false;
         };
         let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
@@ -344,6 +376,36 @@ mod tests {
     #[test]
     fn a_non_numeric_bracketed_port_is_rejected() {
         assert!(!host_is_local("[::1]:abc"));
+    }
+
+    #[test]
+    fn a_whole_origin_is_trusted_only_when_it_is_listed() {
+        // A desktop shell serves the app from its own scheme, whose origin has
+        // no host-and-port shape — so it is matched whole or not at all.
+        let trusted = TrustedOrigins::exactly(vec!["localhost".to_string()])
+            .and_origins(vec!["nigel://localhost".to_string()]);
+
+        assert!(trusted.origin_is_trusted("nigel://localhost"));
+        assert!(trusted.origin_is_trusted("NIGEL://LOCALHOST"));
+
+        // Neither another authority under the same scheme...
+        assert!(!trusted.origin_is_trusted("nigel://elsewhere"));
+        // ...nor the same authority under another scheme.
+        assert!(!trusted.origin_is_trusted("evil://localhost"));
+        // A literal `null` origin stays refused, listed origins or not.
+        assert!(!trusted.origin_is_trusted("null"));
+    }
+
+    #[test]
+    fn listing_a_whole_origin_does_not_widen_the_http_path() {
+        // Trusting nigel://localhost must not make http://localhost trusted by
+        // accident, nor the reverse.
+        let trusted =
+            TrustedOrigins::exactly(vec![]).and_origins(vec!["nigel://localhost".to_string()]);
+
+        assert!(trusted.origin_is_trusted("nigel://localhost"));
+        assert!(!trusted.origin_is_trusted("http://localhost"));
+        assert!(!trusted.host_is_trusted("localhost"));
     }
 
     #[test]

@@ -20,6 +20,24 @@ pub fn scheme_url() -> String {
 
 /// The `Host` header Tauri sends for this scheme, which the router's host
 /// guard must be given and nothing else.
+/// What the router's guard trusts: this platform's host, and the scheme's own
+/// origin.
+///
+/// One function so the shell and its tests cannot drift — a test that built its
+/// own would pass while the running app refused every request.
+pub fn trusted_origins() -> nigel_core::server::auth::TrustedOrigins {
+    nigel_core::server::auth::TrustedOrigins::exactly(vec![trusted_host()])
+        .and_origins(vec![scheme_origin()])
+}
+
+/// The origin the webview stamps on requests the page makes.
+///
+/// A custom scheme's origin is the whole string, not a host and port, so the
+/// guard is given it verbatim.
+pub fn scheme_origin() -> String {
+    scheme_url().trim_end_matches('/').to_string()
+}
+
 pub fn trusted_host() -> String {
     if cfg!(windows) {
         format!("{SCHEME}.localhost")
