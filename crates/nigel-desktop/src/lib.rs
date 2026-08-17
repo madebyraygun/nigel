@@ -3,6 +3,7 @@
 //! path with no window at all.
 
 pub mod db;
+pub mod save;
 pub mod transport;
 
 /// The scheme the SPA and the API are both served from.

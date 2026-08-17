@@ -4,7 +4,8 @@ import '@nigel/ui';
 import { dispatchNcToast, narrowViewport } from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
-import { FetchApiClient, appUnauthorized, type ApiClient } from '../api/index.js';
+import { appUnauthorized, type ApiClient } from '../api/index.js';
+import { createApiClient } from '../api/desktop-client.js';
 import {
   getAppStore,
   initializeAppStore,
@@ -61,7 +62,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
   `;
 
   /** Overridable so tests can drive the app with a fake transport. */
-  client: ApiClient = new FetchApiClient();
+  client: ApiClient = createApiClient();
 
   @state()
   private route: Route = { screen: DEFAULT_SCREEN, params: new URLSearchParams() };

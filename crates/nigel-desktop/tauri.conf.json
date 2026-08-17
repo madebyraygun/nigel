@@ -5,6 +5,7 @@
   "identifier": "books.nigel.desktop",
   "build": { "frontendDist": "../../web/dist" },
   "app": {
+    "withGlobalTauri": true,
     "windows": [],
     "security": { "csp": null }
   },
