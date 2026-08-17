@@ -1,0 +1,27 @@
+# Its own workspace. A member of the root workspace would unify features
+# with it, switching nigel-core's `desktop` feature on for every build in
+# the tree — including the one that produces the `nigel` binary, which must
+# never contain a router built without a session guard.
+[workspace]
+
+[package]
+name = "nigel-desktop"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "pdf", "gusto"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1.53", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "pdf", "gusto", "testutil"] }
+tokio = { version = "1.53", features = ["macros"] }
+serde_json = "1"

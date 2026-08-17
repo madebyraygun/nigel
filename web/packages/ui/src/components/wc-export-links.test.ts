@@ -116,6 +116,53 @@ describe('export targets', () => {
     expect(ran).toBe(1);
   });
 
+  it('does not leave a rejected export as an unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+
+    try {
+      const el = await mount({
+        textTarget: { kind: 'action', run: () => Promise.reject(new Error('export failed')) },
+      });
+
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button[data-export="text"]')!.click();
+      await el.updateComplete;
+
+      // Node reports an unhandled rejection on a later tick, once the
+      // microtask queue that could still attach a handler has drained.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+
+    expect(rejections).toEqual([]);
+  });
+
+  it('toasts a rejected export rather than leaving the operator guessing', async () => {
+    const toasts: string[] = [];
+    const onToast = (event: Event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener('nc-toast', onToast);
+
+    try {
+      const el = await mount({
+        textTarget: { kind: 'action', run: () => Promise.reject(new Error('disk full')) },
+      });
+
+      el.shadowRoot!.querySelector<HTMLButtonElement>('button[data-export="text"]')!.click();
+      await el.updateComplete;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      window.removeEventListener('nc-toast', onToast);
+    }
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toContain("Couldn't save the export.");
+    expect(toasts[0]).toContain('disk full');
+  });
+
   it('does not run an action while busy', async () => {
     let ran = 0;
     const el = await mount({

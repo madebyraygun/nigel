@@ -81,6 +81,92 @@ describe('wc-invoice-preview', () => {
       'about:blank#pdf',
     );
   });
+
+  it('renders the PDF target as a button when the target is an action', async () => {
+    const run = async () => {};
+    const el = await mount({ open: true, pdfTarget: { kind: 'action', run } });
+    const link = el.shadowRoot?.querySelector('[data-pdf-link]');
+    expect(link?.tagName).toBe('BUTTON');
+    expect(link?.textContent?.trim()).toBe('Download the PDF');
+  });
+
+  it('runs the action when the PDF button is clicked', async () => {
+    let ran = 0;
+    const el = await mount({
+      open: true,
+      pdfTarget: {
+        kind: 'action',
+        run: async () => {
+          ran += 1;
+        },
+      },
+    });
+
+    el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+    await el.updateComplete;
+
+    expect(ran).toBe(1);
+  });
+
+  it('does not leave a rejected save as an unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+
+    try {
+      const el = await mount({
+        open: true,
+        pdfTarget: { kind: 'action', run: () => Promise.reject(new Error('save failed')) },
+      });
+
+      el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+      await el.updateComplete;
+
+      // Node reports an unhandled rejection on a later tick, once the
+      // microtask queue that could still attach a handler has drained.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+
+    expect(rejections).toEqual([]);
+  });
+
+  it('toasts a rejected PDF save rather than leaving the operator guessing', async () => {
+    const toasts: string[] = [];
+    const onToast = (event: Event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener('nc-toast', onToast);
+
+    try {
+      const el = await mount({
+        open: true,
+        pdfTarget: { kind: 'action', run: () => Promise.reject(new Error('disk full')) },
+      });
+
+      el.shadowRoot?.querySelector<HTMLButtonElement>('[data-pdf-link]')?.click();
+      await el.updateComplete;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      window.removeEventListener('nc-toast', onToast);
+    }
+
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0]).toContain("Couldn't save the PDF.");
+    expect(toasts[0]).toContain('disk full');
+  });
+
+  it('prefers pdfTarget over pdfSrc when both are set', async () => {
+    const el = await mount({
+      open: true,
+      pdfSrc: '/api/invoices/1251/preview.pdf',
+      pdfTarget: { kind: 'href', href: '/api/invoices/1251/preview.pdf?desktop' },
+    });
+    expect(el.shadowRoot?.querySelector('[data-pdf-link]')?.getAttribute('href')).toBe(
+      '/api/invoices/1251/preview.pdf?desktop',
+    );
+  });
 });
 
 describePreviewA11y(preview);

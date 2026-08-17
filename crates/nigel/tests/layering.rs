@@ -144,3 +144,56 @@ fn check_dependency_tables(table: &toml::Table, path: &str, hits: &mut Vec<Strin
         }
     }
 }
+
+/// No workspace member may switch on `nigel-core`'s `desktop` feature.
+///
+/// That feature carries `build_desktop_router`, which has no session guard.
+/// Cargo unifies features across workspace members, so a single member asking
+/// for it compiles that router into the `nigel-core` the `nigel` binary links —
+/// and the binary stays clean only because nothing references it and the linker
+/// drops it. The gate is meant to be structural, not a bet on dead-code
+/// elimination, so the desktop crate lives outside this workspace entirely and
+/// this test is what notices if it is ever pulled back in.
+#[test]
+fn no_workspace_member_enables_the_desktop_feature() {
+    let root: toml::Table = fs::read_to_string("../../Cargo.toml")
+        .expect("read workspace manifest")
+        .parse()
+        .expect("parse workspace manifest");
+
+    let members = root["workspace"]["members"]
+        .as_array()
+        .expect("workspace members");
+
+    let mut hits = Vec::new();
+    for member in members {
+        let dir = member.as_str().expect("member path");
+        let manifest: toml::Table = fs::read_to_string(format!("../../{dir}/Cargo.toml"))
+            .expect("read member manifest")
+            .parse()
+            .expect("parse member manifest");
+
+        for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let Some(toml::Value::Table(deps)) = manifest.get(kind) else {
+                continue;
+            };
+            for (name, spec) in deps {
+                let is_core = name == "nigel-core"
+                    || spec.get("package").and_then(toml::Value::as_str) == Some("nigel-core");
+                let asks_for_desktop = spec
+                    .get("features")
+                    .and_then(toml::Value::as_array)
+                    .is_some_and(|f| f.iter().any(|v| v.as_str() == Some("desktop")));
+                if is_core && asks_for_desktop {
+                    hits.push(format!("{dir} [{kind}] {name}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "these workspace members enable nigel-core's desktop feature: {}",
+        hits.join(", ")
+    );
+}
