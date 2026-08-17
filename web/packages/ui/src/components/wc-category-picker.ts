@@ -56,6 +56,7 @@ export class WcCategoryPicker extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-m, 8px);
       padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      user-select: text;
     }
 
     input:focus-visible {

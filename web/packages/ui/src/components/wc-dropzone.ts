@@ -103,6 +103,7 @@ export class WcDropzone extends LitElement {
       .filename {
         font-weight: var(--wa-font-weight-medium, 500);
         overflow-wrap: anywhere;
+        user-select: text;
       }
 
       .size {

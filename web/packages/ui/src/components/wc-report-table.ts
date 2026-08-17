@@ -108,6 +108,13 @@ export class WcReportTable extends LitElement {
       vertical-align: baseline;
     }
 
+    /* A figure or a label is exactly the kind of thing a person copies out of
+       a report; the document-level user-select: none would otherwise reach
+       through the shadow boundary and block it. */
+    td {
+      user-select: text;
+    }
+
     th {
       font-size: var(--wa-font-size-s, 13px);
       font-weight: var(--wa-font-weight-medium, 500);

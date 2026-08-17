@@ -30,10 +30,12 @@ export class WcInvoiceSummary extends LitElement {
     h2 {
       margin: 0;
       font-size: var(--wa-font-size-l, 18px);
+      user-select: text;
     }
 
     .client {
       color: var(--wa-color-muted);
+      user-select: text;
     }
 
     .facts {
@@ -62,6 +64,7 @@ export class WcInvoiceSummary extends LitElement {
     dd {
       margin: 0;
       color: var(--wa-color-text);
+      user-select: text;
     }
 
     .pair {

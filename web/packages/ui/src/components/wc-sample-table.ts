@@ -46,6 +46,10 @@ export class WcSampleTable extends LitElement {
       border-bottom: 1px solid var(--wa-color-border);
     }
 
+    td {
+      user-select: text;
+    }
+
     :host([dense]) th,
     :host([dense]) td {
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);

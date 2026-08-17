@@ -62,6 +62,10 @@ export class WcReconciliationHistory extends LitElement {
       vertical-align: top;
     }
 
+    td {
+      user-select: text;
+    }
+
     th {
       font-weight: var(--wa-font-weight-medium, 500);
       color: var(--wa-color-muted);
