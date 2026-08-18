@@ -42,11 +42,13 @@ enforced in the type system, not asserted in a doc comment:
   hand-built set skips all of it and mails from whatever it was handed.
 - `CategorySelection::Named` is `#[non_exhaustive]`, so only `RegisterFilters::resolve` — which
   reads the id and the display name out of one row — can produce one. `RegisterFilters` has
-  private fields and three safe constructors. `with_category` is public and safe because
-  `Uncategorized` is the only selection an outside caller can build, and it carries no pair to
-  disagree.
-- Test-only constructors for these live behind `#[cfg(any(test, feature = "testutil"))]`,
-  which is how a dependent's tests build one without the door being open in a normal build.
+  private fields, and the two constructors a production build offers both carry a category the
+  database agreed to: `resolve` reads one out, `for_account` sets none.
+- Test-only constructors live behind `#[cfg(any(test, feature = "testutil"))]`, which is how a
+  dependent's tests build one without the door being open in a normal build. `with_category`
+  and `CategorySelection::named_for_test` are both there, because no production caller wants
+  either: the CLI resolves its filters from user input, and the HTTP routes refuse category
+  filters by name.
 
 **A helper reaches the public surface when a cross-crate caller needs it, and not before.**
 `updater::http_client` had gone straight from private to `pub` for one caller that wanted a

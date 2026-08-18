@@ -48,11 +48,8 @@ pub fn company_name(conn: &Connection) -> String {
 /// Resolved here rather than at each `Branding` site: the fields are only ever
 /// correct together, and six hand-built literals each doing their own
 /// `get_metadata` calls is how a document ends up with an address and no phone.
-///
-/// The fields are private and `company_profile` is the only constructor, so a
-/// profile always holds five values read from one database in one pass. A
-/// hand-built one is how a document ends up carrying this year's address beside
-/// last year's phone number.
+/// The fields are private and `company_profile` is the only constructor, so that
+/// stays true of every profile that exists.
 ///
 /// The address, the phone and the logo reach a document only through `branding`,
 /// which is why they have no accessor: a caller wanting the letterhead wants all

@@ -534,10 +534,8 @@ impl CategorySelection {
 /// empty register, matching what `--account` has always done.
 ///
 /// The fields are private so the validated category cannot be swapped for an
-/// unvalidated one after the fact. Every way to build one is safe: `resolve`
-/// reads the category out of the database, `for_account` and `default` set no
-/// category at all, and `with_category` can only be handed a selection that was
-/// already resolved — `Named` is not constructible outside this crate.
+/// unvalidated one after the fact. Both ways to build one carry a category the
+/// database agreed to: `resolve` reads it out, and `for_account` sets none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegisterFilters {
     account: Option<String>,
@@ -559,8 +557,11 @@ impl RegisterFilters {
 
     /// Add an already-resolved category selection.
     ///
-    /// Safe to expose because the only selection an outside caller can build is
-    /// `Uncategorized`, which carries no id and no name to disagree.
+    /// Test-only, like `CategorySelection::named_for_test`: no production caller
+    /// wants one. The CLI resolves its filters from user input, and the HTTP
+    /// routes refuse category filters by name, so `resolve` and `for_account`
+    /// cover every real path.
+    #[cfg(any(test, feature = "testutil"))]
     pub fn with_category(mut self, category: CategorySelection) -> Self {
         self.category = Some(category);
         self
