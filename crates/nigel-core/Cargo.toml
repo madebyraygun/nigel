@@ -3,6 +3,10 @@ name = "nigel-core"
 version = "1.0.1"
 edition = "2021"
 description = "Cash-basis bookkeeping core: data layer, importers, rules, reports, invoicing and the web server"
+# This crate is consumed only by `nigel` and `nigel-desktop`, both in this
+# workspace. `pub` here means "reachable across the workspace's crate line" and
+# carries no promise to anyone outside it — see backlog/decisions/decision-4.
+publish = false
 
 [features]
 default = ["gusto", "pdf", "serve"]

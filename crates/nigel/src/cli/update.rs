@@ -6,29 +6,10 @@ use nigel_core::error::{NigelError, Result};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Minimum acceptable binary size (1 MB) to guard against truncated downloads.
-const MIN_BINARY_SIZE: usize = 1_000_000;
-
 /// Download the binary from `url` and replace the current executable.
 fn download_and_install(url: &str) -> Result<()> {
     println!("Downloading...");
-    let client = http_client(120)?;
-
-    let bytes = client
-        .get(url)
-        .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| NigelError::Other(format!("Download failed: {e}")))?
-        .bytes()
-        .map_err(|e| NigelError::Other(format!("Download failed: {e}")))?;
-
-    if bytes.len() < MIN_BINARY_SIZE {
-        return Err(NigelError::Other(format!(
-            "Downloaded file too small ({} bytes, minimum {}). Aborting.",
-            bytes.len(),
-            MIN_BINARY_SIZE
-        )));
-    }
+    let bytes = download_release(url)?;
 
     // Write to a temp file with a unique name, then atomically replace
     let tmp_dir = std::env::temp_dir();

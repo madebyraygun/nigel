@@ -770,7 +770,7 @@ async fn send(
     let clients =
         crate::invoicing::wiring::build_clients(config, &company).map_err(misconfigured)?;
     let today = crate::clock::today();
-    let warnings = clients.warnings.clone();
+    let warnings = clients.warnings().to_vec();
 
     let mut result = with_conn_api(&state, {
         let state = state.clone();
@@ -781,9 +781,9 @@ async fn send(
                 number,
                 &today,
                 &contact_email,
-                &clients.stripe,
-                &clients.r2,
-                &clients.mail,
+                clients.stripe(),
+                clients.r2(),
+                clients.mail(),
             )
         }
     })

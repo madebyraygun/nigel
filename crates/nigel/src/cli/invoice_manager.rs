@@ -1186,7 +1186,7 @@ impl InvoiceManager {
         let profile = company_profile(conn);
         let contact_email = contact_email_for_preview(&cfg).0;
         let prepared = load_template(data_dir).and_then(|template| {
-            let clients = build_clients(cfg, &profile.name)?;
+            let clients = build_clients(cfg, profile.name())?;
             Ok((template, clients))
         });
         match prepared {
@@ -1195,7 +1195,7 @@ impl InvoiceManager {
                 // screen: `begin_send` builds clients too, and printing there
                 // as well would say it twice. Never `eprintln!` — ratatui owns
                 // the alternate screen this is drawn into.
-                for warning in &clients.warnings {
+                for warning in clients.warnings() {
                     self.set_status(warning.clone());
                 }
                 let branding = profile.branding(&template, &contact_email);
@@ -1203,9 +1203,9 @@ impl InvoiceManager {
                     conn,
                     today,
                     &branding,
-                    &clients.stripe,
-                    &clients.r2,
-                    &clients.mail,
+                    clients.stripe(),
+                    clients.r2(),
+                    clients.mail(),
                 );
             }
             Err(e) => self.finish_send(conn, Err(e)),

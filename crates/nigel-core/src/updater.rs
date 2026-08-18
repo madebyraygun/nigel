@@ -13,13 +13,56 @@ pub struct UpdateInfo {
     pub download_url: String,
 }
 
+/// How long a release download may take. A release binary is tens of megabytes
+/// over whatever connection the operator has, so it gets far longer than the
+/// version check's five seconds.
+const DOWNLOAD_TIMEOUT_SECS: u64 = 120;
+
+/// The smallest download this module will hand back. A release binary is
+/// comfortably above this; anything under it is a truncated transfer, and
+/// installing one replaces a working `nigel` with a file that cannot run.
+const MIN_BINARY_SIZE: usize = 1_000_000;
+
 /// Build an HTTP client with the given timeout.
-pub fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client> {
+fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .user_agent(format!("nigel/{CURRENT_VERSION}"))
         .build()
         .map_err(|e| NigelError::Other(format!("HTTP client error: {e}")))
+}
+
+/// Refuse a transfer too short to be a release binary.
+///
+/// Split from the download so it can be tested without a network: the whole
+/// point of the guard is the case that is awkward to produce on purpose.
+fn refuse_if_truncated(len: usize) -> Result<()> {
+    if len < MIN_BINARY_SIZE {
+        return Err(NigelError::Other(format!(
+            "Downloaded file too small ({len} bytes, minimum {MIN_BINARY_SIZE}). Aborting."
+        )));
+    }
+    Ok(())
+}
+
+/// Fetch a release binary, refusing a transfer that arrived truncated.
+///
+/// The timeout and the size floor live here rather than at the call site: they
+/// are properties of downloading a release, and a second caller that picked its
+/// own would be the bug this function exists to prevent. Installing the bytes is
+/// the caller's job — replacing the running executable is a decision only the
+/// surface that owns the process can make.
+pub fn download_release(url: &str) -> Result<Vec<u8>> {
+    let client = http_client(DOWNLOAD_TIMEOUT_SECS)?;
+    let bytes = client
+        .get(url)
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| NigelError::Other(format!("Download failed: {e}")))?
+        .bytes()
+        .map_err(|e| NigelError::Other(format!("Download failed: {e}")))?;
+    refuse_if_truncated(bytes.len())?;
+    Ok(bytes.to_vec())
 }
 
 /// Returns the expected release asset name for the current platform.
@@ -134,6 +177,22 @@ pub fn is_newer(remote: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_transfer_under_the_floor_is_refused_by_size() {
+        let err = refuse_if_truncated(MIN_BINARY_SIZE - 1).expect_err("should refuse");
+        let message = err.to_string();
+        assert!(message.contains("too small"), "got {message}");
+        assert!(
+            message.contains(&MIN_BINARY_SIZE.to_string()),
+            "the refusal must name the floor it applied: {message}"
+        );
+    }
+
+    #[test]
+    fn a_transfer_at_the_floor_is_accepted() {
+        assert!(refuse_if_truncated(MIN_BINARY_SIZE).is_ok());
+    }
 
     #[test]
     fn test_asset_name_returns_some() {
