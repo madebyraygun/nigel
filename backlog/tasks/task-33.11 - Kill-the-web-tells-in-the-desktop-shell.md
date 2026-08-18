@@ -1,10 +1,10 @@
 ---
 id: TASK-33.11
 title: Kill the web tells in the desktop shell
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-17 13:35'
-updated_date: '2026-08-17 20:25'
+updated_date: '2026-08-18 02:16'
 labels:
   - tauri
   - ui
@@ -29,11 +29,11 @@ Safari and WebKit are the baseline engine to test against: WebKitGTK renders the
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 overscroll-behavior: none at the app root, so the document does not rubber-band and scrolling stays inside panels and lists
-- [ ] #2 user-select: none on chrome — toolbars, buttons, labels, panel headers — with selectable text kept in content and inputs
-- [ ] #3 Buttons and controls show the arrow cursor; cursor: pointer is reserved for true links, and the 21 existing declarations in @nigel/ui are triaged against that rule
-- [ ] #4 spellcheck=false on amount, account, category and invoice-number fields
-- [ ] #5 draggable=false on icons and decorative images, so they produce no drag ghost
-- [ ] #6 No platform conditional lives in @nigel/ui: no OS branch, no user-agent sniffing, no check for whether Tauri is present
-- [ ] #7 The conventions are written down in docs/, credited to boxcraft's version, so a later component follows them without rediscovering them
+- [x] #1 overscroll-behavior: none at the app root, so the document does not rubber-band and scrolling stays inside panels and lists
+- [x] #2 user-select: none on chrome — toolbars, buttons, labels, panel headers — with selectable text kept in content and inputs
+- [x] #3 Buttons and controls show the arrow cursor; cursor: pointer is reserved for true links, and the 21 existing declarations in @nigel/ui are triaged against that rule
+- [x] #4 spellcheck=false on amount, account, category and invoice-number fields
+- [x] #5 draggable=false on icons and decorative images, so they produce no drag ghost
+- [x] #6 No platform conditional lives in @nigel/ui: no OS branch, no user-agent sniffing, no check for whether Tauri is present
+- [x] #7 The conventions are written down in docs/, credited to boxcraft's version, so a later component follows them without rediscovering them
 <!-- AC:END -->
