@@ -122,3 +122,14 @@ section above depends on: that nothing outside this process can address the
 scheme. `crates/nigel-desktop/tauri.conf.json` carries no `plugins.deep-link`
 block and the manifest carries no `tauri-plugin-deep-link` dependency;
 `tests/no_deep_link.rs` fails the build if either reappears.
+
+## Where builds come from
+
+This repository's CI compiles and tests the desktop crate on Linux and macOS, and publishes
+no installer and no update manifest. The signed, notarized, auto-updating build is sold, and
+`backlog/decisions/decision-3` records why producing it here would put the packaging, the
+signing identities and the update feed in a public repository.
+
+The source is MIT, so building it yourself is supported rather than tolerated: a checkout,
+`npm run build` in `web/`, and `cargo run` from `crates/nigel-desktop` gives the same
+application without the packaging.
