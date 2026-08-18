@@ -427,6 +427,7 @@ export class WcLineItems extends LitElement {
             type="text"
             inputmode="decimal"
             autocomplete="off"
+            spellcheck="false"
             aria-label=${`Quantity, line ${index + 1}`}
             .value=${item.quantity}
             ?disabled=${this.disabled}
@@ -444,6 +445,7 @@ export class WcLineItems extends LitElement {
               type="text"
               inputmode="decimal"
               autocomplete="off"
+              spellcheck="false"
               aria-label=${`Unit amount, line ${index + 1}`}
               .value=${item.unitAmount}
               ?disabled=${this.disabled}

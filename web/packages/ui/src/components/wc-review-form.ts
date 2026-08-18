@@ -76,6 +76,7 @@ export class WcReviewForm extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-m, 8px);
       padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      user-select: text;
     }
 
     input[type='text']:focus-visible {
@@ -136,7 +137,7 @@ export class WcReviewForm extends LitElement {
       border: 1px solid var(--wa-color-border);
       background: var(--wa-color-surface);
       color: inherit;
-      cursor: pointer;
+      cursor: default;
     }
 
     button[type='submit'] {

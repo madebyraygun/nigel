@@ -64,7 +64,7 @@ export class WcExportLinks extends LitElement {
       background: var(--wa-color-surface);
       color: inherit;
       text-decoration: none;
-      cursor: pointer;
+      cursor: default;
     }
 
     a:hover,

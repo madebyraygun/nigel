@@ -309,6 +309,7 @@ export class WcImportForm extends LitElement {
             min="0"
             label="Date column"
             size="s"
+            spellcheck="false"
             value=${String(mapping.dateCol)}
             ?disabled=${this.disabled}
             @input=${this.handleColumn('dateCol')}
@@ -319,6 +320,7 @@ export class WcImportForm extends LitElement {
             min="0"
             label="Description column"
             size="s"
+            spellcheck="false"
             value=${String(mapping.descCol)}
             ?disabled=${this.disabled}
             @input=${this.handleColumn('descCol')}
@@ -329,6 +331,7 @@ export class WcImportForm extends LitElement {
             min="0"
             label="Amount column"
             size="s"
+            spellcheck="false"
             value=${String(mapping.amountCol)}
             ?disabled=${this.disabled}
             @input=${this.handleColumn('amountCol')}
@@ -337,6 +340,7 @@ export class WcImportForm extends LitElement {
             class="date-format"
             label="Date format"
             size="s"
+            spellcheck="false"
             value=${mapping.dateFormat}
             ?disabled=${this.disabled}
             @input=${this.handleDateFormat}
@@ -346,6 +350,7 @@ export class WcImportForm extends LitElement {
           class="save-profile"
           label="Save as profile (optional)"
           size="s"
+          spellcheck="false"
           placeholder="chase"
           value=${saveProfile}
           ?disabled=${this.disabled}

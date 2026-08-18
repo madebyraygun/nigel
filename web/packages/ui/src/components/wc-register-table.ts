@@ -234,6 +234,15 @@ export class WcRegisterTable extends LitElement {
         vertical-align: top;
       }
 
+      /* The transaction data itself — date, description, category, vendor,
+         account — is what a person copies out of the register; the flag
+         toggle and the inline editors it sits beside are not. */
+      td.date,
+      td.text,
+      td.amount {
+        user-select: text;
+      }
+
       /* One line per transaction, clipped rather than wrapped. The full text
          stays in the DOM for a screen reader and rides a title for a pointer;
          what a wrapped row would cost is a table whose rows are all different
@@ -301,7 +310,7 @@ export class WcRegisterTable extends LitElement {
         border: none;
         border-radius: var(--wa-radius-sm, 6px);
         padding: 2px;
-        cursor: pointer;
+        cursor: default;
         line-height: 0;
       }
 
@@ -368,7 +377,7 @@ export class WcRegisterTable extends LitElement {
 
       .options li {
         padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-        cursor: pointer;
+        cursor: default;
         white-space: nowrap;
       }
 
@@ -411,7 +420,7 @@ export class WcRegisterTable extends LitElement {
         border: 1px solid var(--wa-color-border);
         border-radius: var(--wa-radius-sm, 6px);
         padding: 2px var(--wa-space-xs, 6px);
-        cursor: pointer;
+        cursor: default;
       }
 
       .edit-actions button:focus-visible {

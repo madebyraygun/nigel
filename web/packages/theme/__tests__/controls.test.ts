@@ -42,6 +42,26 @@ describe('controlsCss', () => {
   });
 });
 
+/**
+ * The document turns off user-select so the desktop shell does not paint a
+ * selection while dragging its chrome, and that choice inherits through
+ * every shadow boundary underneath it — including into a field someone is
+ * typing in. This is the one place that reaches every wa-input in the app
+ * without every component restating it.
+ */
+describe('field selection', () => {
+  const rules = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
+  const selectors =
+    rules.match(/([^{}]+)\{user-select:text;?\}/)?.[1] ?? '';
+
+  it.each(['input', 'textarea', '[contenteditable]', 'wa-input'])(
+    'restores user-select: text on %s',
+    (selector) => {
+      expect(selectors.split(',')).toContain(selector);
+    },
+  );
+});
+
 /** The rules behind AC #1: an edge on hover and on focus-visible. */
 describe('the button hover edge', () => {
   /** Rules with their comments stripped and their whitespace collapsed. */

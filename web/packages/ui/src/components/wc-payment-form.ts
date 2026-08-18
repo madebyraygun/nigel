@@ -197,6 +197,7 @@ export class WcPaymentForm extends LitElement {
               label="Amount"
               inputmode="decimal"
               autocomplete="off"
+              spellcheck="false"
               value=${this.value.amount}
               ?disabled=${this.disabled}
               @input=${this.handleField('amount')}
@@ -218,6 +219,7 @@ export class WcPaymentForm extends LitElement {
             label="Date"
             placeholder="YYYY-MM-DD"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.date}
             ?disabled=${this.disabled}
             @input=${this.handleField('date')}

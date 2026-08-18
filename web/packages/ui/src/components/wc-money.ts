@@ -26,6 +26,10 @@ export class WcMoney extends LitElement {
       /* Digits share a width so columns of amounts line up. */
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
+      /* A figure is copied out far more than chrome is; without this the
+         document-level user-select: none reaches through the shadow
+         boundary and blocks it everywhere this component is used. */
+      user-select: text;
     }
 
     :host([align='end']) {

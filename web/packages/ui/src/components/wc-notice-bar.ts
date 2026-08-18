@@ -65,7 +65,7 @@ export class WcNoticeBar extends LitElement {
       border-radius: var(--wa-radius-sm, 6px);
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
       color: var(--wa-color-text);
-      cursor: pointer;
+      cursor: default;
       flex: 0 0 auto;
     }
 

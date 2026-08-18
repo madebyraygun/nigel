@@ -76,7 +76,7 @@ export class WcNavSidebar extends LitElement {
       font: inherit;
       font-size: var(--wa-font-size-base, 14px);
       text-align: left;
-      cursor: pointer;
+      cursor: default;
       transition: background var(--nc-transition-fast, 120ms ease);
     }
 

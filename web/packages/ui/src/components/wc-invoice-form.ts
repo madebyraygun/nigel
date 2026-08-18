@@ -536,6 +536,7 @@ export class WcInvoiceForm extends LitElement {
               label="Date"
               placeholder="YYYY-MM-DD"
               autocomplete="off"
+              spellcheck="false"
               value=${this.value.dueDate}
               ?disabled=${this.disabled}
               @input=${this.handleField('dueDate')}
@@ -617,6 +618,7 @@ export class WcInvoiceForm extends LitElement {
               label="Issue date"
               placeholder="YYYY-MM-DD"
               autocomplete="off"
+              spellcheck="false"
               value=${this.value.issueDate}
               ?disabled=${this.disabled}
               @input=${this.handleIssueDate}
@@ -631,6 +633,7 @@ export class WcInvoiceForm extends LitElement {
               data-currency
               label="Currency"
               autocomplete="off"
+              spellcheck="false"
               maxlength="3"
               value=${this.value.currency}
               ?disabled=${this.disabled}

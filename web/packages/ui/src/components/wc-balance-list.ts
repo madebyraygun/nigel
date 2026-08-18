@@ -60,6 +60,12 @@ export class WcBalanceList extends LitElement {
       text-align: right;
     }
 
+    /* The row header names the account, which is real user data rather than
+       chrome — the same test that keeps the amount column selectable. */
+    th[scope='row'] {
+      user-select: text;
+    }
+
     td {
       padding: var(--wa-space-xs, 6px) 0;
       border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
@@ -102,7 +108,7 @@ export class WcBalanceList extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-sm, 6px);
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      cursor: pointer;
+      cursor: default;
     }
 
     .retry:focus-visible {

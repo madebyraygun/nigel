@@ -52,7 +52,7 @@ export class WcDropzone extends LitElement {
         background: var(--wa-color-surface);
         border: 2px dashed var(--wa-color-border);
         border-radius: var(--wa-radius-l, 12px);
-        cursor: pointer;
+        cursor: default;
       }
 
       .well:hover:not(:disabled) {
@@ -103,6 +103,7 @@ export class WcDropzone extends LitElement {
       .filename {
         font-weight: var(--wa-font-weight-medium, 500);
         overflow-wrap: anywhere;
+        user-select: text;
       }
 
       .size {
@@ -122,7 +123,7 @@ export class WcDropzone extends LitElement {
         border-radius: var(--wa-radius-sm, 6px);
         background: none;
         color: inherit;
-        cursor: pointer;
+        cursor: default;
       }
 
       .replace:hover:not(:disabled) {

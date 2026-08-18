@@ -51,6 +51,7 @@ export class WcCountGrid extends LitElement {
       font-size: var(--wa-font-size-xl, 20px);
       font-weight: var(--wa-font-weight-semibold, 600);
       font-variant-numeric: tabular-nums;
+      user-select: text;
     }
 
     :host([dense]) dd {

@@ -56,6 +56,7 @@ export class WcCategoryPicker extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-m, 8px);
       padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      user-select: text;
     }
 
     input:focus-visible {
@@ -97,7 +98,7 @@ export class WcCategoryPicker extends LitElement {
 
     [role='option'] {
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
-      cursor: pointer;
+      cursor: default;
     }
 
     [role='option'][aria-selected='true'] {
@@ -307,6 +308,7 @@ export class WcCategoryPicker extends LitElement {
         type="text"
         role="combobox"
         autocomplete="off"
+        spellcheck="false"
         placeholder=${this.placeholder}
         ?disabled=${this.disabled}
         aria-expanded=${expanded ? 'true' : 'false'}

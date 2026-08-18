@@ -152,6 +152,21 @@ export const controlsCss = css`
     outline-offset: 2px;
   }
 
+  /* The document turns off user-select so dragging the desktop shell's chrome
+     does not paint a selection, and that choice inherits through every shadow
+     boundary underneath it — including into a field someone is typing in. A
+     plain selector reaches a native input written directly in the adopting
+     component's own shadow root; wa-input needs the host element named here,
+     because the selection actually happens one boundary further in, inside
+     its own shadow root, and an inherited property is read from the host's
+     computed value rather than needing a part of its own. */
+  input,
+  textarea,
+  [contenteditable],
+  wa-input {
+    user-select: text;
+  }
+
   /* Print, for content that lives inside a shadow root.
      @nigel/theme's print sheet carries the same rules for content in the
      document; these are the copy that reaches the other side of the boundary,
