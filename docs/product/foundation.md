@@ -68,6 +68,12 @@ free), and `nigel` (our infrastructure, authenticated by your license).
   overridden in config. The public repository carries no licensing server, signing key
   or store credential; that machinery lives in a private repository, which depends on
   this one and not the reverse (the lib+bin precedent).
+- **The public repository does not build the artifacts it sells.** Its CI compiles and
+  tests the desktop crate so the shell cannot rot, and publishes no installer and no
+  update manifest. Producing them there would put the packaging and the update feed in
+  public and make every fork a distributor of something indistinguishable from the paid
+  build. `backlog/decisions/decision-3` records this and rewrites tasks 33.5 and 33.6,
+  which were written before it and asked the public CI to publish installers.
 
 ## Nigel Cloud: scope by milestone
 
