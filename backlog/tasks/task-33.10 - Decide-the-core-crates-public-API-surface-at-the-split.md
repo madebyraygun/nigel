@@ -1,9 +1,10 @@
 ---
 id: TASK-33.10
 title: Decide the core crate's public API surface at the split
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-16 12:58'
+updated_date: '2026-08-18 03:27'
 labels:
   - tauri
   - backend
@@ -29,8 +30,8 @@ Decide these as one question — what the core crate promises — rather than pi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every pub item on the core side is either required by a cross-crate caller or narrowed back
-- [ ] #2 CompanyProfile and SendClients either enforce their invariant or document that they do not
-- [ ] #3 RegisterFilters cannot be constructed in a state resolve() would have rejected, or the docs say why that is acceptable
-- [ ] #4 updater::http_client and invoicing::http_client agree on visibility
+- [x] #1 Every pub item on the core side is either required by a cross-crate caller or narrowed back
+- [x] #2 CompanyProfile and SendClients either enforce their invariant or document that they do not
+- [x] #3 RegisterFilters cannot be constructed in a state resolve() would have rejected, or the docs say why that is acceptable
+- [x] #4 updater::http_client and invoicing::http_client agree on visibility
 <!-- AC:END -->
