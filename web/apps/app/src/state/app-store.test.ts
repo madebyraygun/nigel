@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getAppStore, initializeAppStore, resetAppStore } from './app-store.js';
 import { ApiError, appLocked } from '../api/index.js';
-import { FakeApiClient, LOCKED_STATUS } from '../__mocks__/fake-api-client.js';
+import {
+  FakeApiClient,
+  LOCKED_STATUS,
+  UNINITIALIZED_STATUS,
+} from '../__mocks__/fake-api-client.js';
 
 describe('app store', () => {
   beforeEach(() => {
@@ -195,6 +199,42 @@ describe('app store boot phase', () => {
     const outcome = await store.unlock('hunter2');
 
     expect(outcome).toEqual({ ok: true });
+    expect(store.boot.get()).toBe('ready');
+  });
+
+  it('needs setup when the database has never been created', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('needs-setup');
+  });
+
+  it('is locked rather than needing setup when both could be claimed', async () => {
+    // An encrypted file exists, so the key is the question — not setup.
+    // Offering setup here would be offering to overwrite somebody's books.
+    const client = new FakeApiClient();
+    client.status = { ...LOCKED_STATUS, initialized: false };
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('locked');
+  });
+
+  it('is ready once setup has answered with initialized books', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('needs-setup');
+
+    await client.setup({
+      userName: 'Marta',
+      companyName: 'Cedar Systems',
+      profile: 'business',
+      action: 'fresh',
+    });
+    await store.refreshStatus();
+
     expect(store.boot.get()).toBe('ready');
   });
 });

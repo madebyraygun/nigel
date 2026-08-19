@@ -21,10 +21,12 @@ export type UnlockOutcome =
  * `starting` — the first `/api/status` has not answered yet.
  * `locked` — the database is encrypted and this process has no key, so the
  * unlock gate is the only thing rendered and no screen exists to fetch data.
+ * `needs-setup` — there is no database yet, so the setup gate collects the
+ * four answers a set of books is created from.
  * `failed` — status could not be read at all.
  * `ready` — the app proper.
  */
-export type BootPhase = 'starting' | 'locked' | 'failed' | 'ready';
+export type BootPhase = 'starting' | 'locked' | 'needs-setup' | 'failed' | 'ready';
 
 /** What a data-directory switch reported. */
 export type SwitchOutcome = { ok: true } | { ok: false; message: string };
@@ -136,9 +138,13 @@ export function initializeAppStore(
     // app back to the gate without a bespoke code path.
     boot: computed((): BootPhase => {
       const locked = (_status.get()?.locked ?? false) || appLocked.get();
+      // Locked wins: an encrypted file is somebody's books, and offering to
+      // set up over it would be offering to replace them.
       if (locked) return 'locked';
+      const status = _status.get();
+      if (status && !status.initialized) return 'needs-setup';
       if (_statusError.get()) return 'failed';
-      if (!_status.get()) return 'starting';
+      if (!status) return 'starting';
       return 'ready';
     }),
     initialized: computed(() => _status.get()?.initialized ?? false),
