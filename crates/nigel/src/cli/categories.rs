@@ -9,11 +9,13 @@ pub use nigel_core::categories::*;
 pub fn add(
     name: &str,
     category_type: &str,
+    class: Option<&str>,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<()> {
+    let class = class.map(crate::cli::accounts::parse_class).transpose()?;
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    add_category(&conn, name, category_type, None, tax_line, form_line)?;
+    add_category(&conn, name, category_type, class, tax_line, form_line)?;
     println!("Added category: {name}");
     Ok(())
 }
@@ -23,12 +25,13 @@ pub fn list() -> Result<()> {
     let categories = list_categories(&conn)?;
 
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Name", "Type", "Tax Line", "Form Line"]);
+    table.set_header(vec!["ID", "Name", "Type", "Class", "Tax Line", "Form Line"]);
     for cat in categories {
         table.add_row(vec![
             Cell::new(cat.id),
             Cell::new(cat.name),
             Cell::new(cat.category_type),
+            Cell::new(cat.class.as_str()),
             Cell::new(cat.tax_line.unwrap_or_default()),
             Cell::new(cat.form_line.unwrap_or_default()),
         ]);
@@ -48,11 +51,15 @@ pub fn update(
     id: i64,
     name: &str,
     category_type: &str,
+    class: Option<&str>,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let class = get_category(&conn, id)?.class;
+    let class = match class {
+        Some(value) => crate::cli::accounts::parse_class(value)?,
+        None => get_category(&conn, id)?.class,
+    };
     update_category(&conn, id, name, category_type, class, tax_line, form_line)?;
     println!("Updated category {id}: {name}");
     Ok(())
@@ -77,6 +84,36 @@ mod tests {
         let conn = get_connection(&dir.path().join("test.db")).unwrap();
         init_db(&conn).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn a_category_takes_its_class_from_its_type_or_from_the_flag() {
+        let (_dir, conn) = test_conn();
+        add_category(&conn, "Workshop Fees", "income", None, None, None).unwrap();
+        let draws = add_category(
+            &conn,
+            "Partner Draw",
+            "expense",
+            Some(AccountClass::Equity),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let by_name = |name: &str| {
+            list_categories(&conn)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .class
+        };
+        assert_eq!(by_name("Workshop Fees"), AccountClass::Revenue);
+        assert_eq!(by_name("Partner Draw"), AccountClass::Equity);
+
+        // A rename keeps the class the operator chose.
+        rename_category(&conn, draws, "Member Draw").unwrap();
+        assert_eq!(by_name("Member Draw"), AccountClass::Equity);
     }
 
     #[test]

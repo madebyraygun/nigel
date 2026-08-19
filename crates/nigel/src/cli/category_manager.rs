@@ -10,14 +10,39 @@ use rusqlite::Connection;
 
 use crate::cli::categories::{self, CategoryRow};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::db::AccountClass;
 
 const CATEGORY_TYPES: &[&str] = &["expense", "income"];
+
+fn class_options() -> Vec<String> {
+    AccountClass::ALL
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect()
+}
+
+fn class_field(selected: AccountClass) -> FormField {
+    let options = class_options();
+    let index = options
+        .iter()
+        .position(|o| o == selected.as_str())
+        .unwrap_or(0);
+    FormField {
+        label: "Class",
+        value: selected.as_str().to_string(),
+        kind: FieldKind::Selector {
+            options,
+            selected: index,
+        },
+    }
+}
 
 // Field indices for CategoryForm — keep in sync with field order
 const NAME_IDX: usize = 0;
 const TYPE_IDX: usize = 1;
-const TAX_LINE_IDX: usize = 2;
-const FORM_LINE_IDX: usize = 3;
+const CLASS_IDX: usize = 2;
+const TAX_LINE_IDX: usize = 3;
+const FORM_LINE_IDX: usize = 4;
 
 pub enum CategoryAction {
     Continue,
@@ -67,6 +92,7 @@ impl CategoryForm {
                         selected: 0,
                     },
                 },
+                class_field(AccountClass::Expense),
                 FormField {
                     label: "Tax Line",
                     value: String::new(),
@@ -102,6 +128,7 @@ impl CategoryForm {
                         selected: type_idx,
                     },
                 },
+                class_field(cat.class),
                 FormField {
                     label: "Tax Line",
                     value: cat.tax_line.clone().unwrap_or_default(),
@@ -207,8 +234,8 @@ impl CategoryManager {
                 Span::styled("   ", Style::default()),
                 Span::styled(
                     format!(
-                        "{:<28} {:<10} {:<20} {}",
-                        "Name", "Type", "Tax Line", "Form Line"
+                        "{:<28} {:<10} {:<10} {:<16} {}",
+                        "Name", "Type", "Class", "Tax Line", "Form Line"
                     ),
                     Style::default()
                         .fg(Color::DarkGray)
@@ -229,10 +256,11 @@ impl CategoryManager {
                 let form = cat.form_line.as_deref().unwrap_or("");
                 lines.push(Line::from(Span::styled(
                     format!(
-                        "{marker}{:<28} {:<10} {:<20} {}",
+                        "{marker}{:<28} {:<10} {:<10} {:<16} {}",
                         truncate(&cat.name, 26),
                         cat.category_type,
-                        truncate(tax, 18),
+                        cat.class.as_str(),
+                        truncate(tax, 14),
                         form
                     ),
                     style,
@@ -491,6 +519,13 @@ impl CategoryManager {
                     return CategoryAction::Continue;
                 }
                 let cat_type = form.fields[TYPE_IDX].value.clone();
+                let class = match AccountClass::parse(&form.fields[CLASS_IDX].value) {
+                    Some(class) => class,
+                    None => {
+                        self.set_status("Pick a class".into());
+                        return CategoryAction::Continue;
+                    }
+                };
                 let tax_line = {
                     let v = form.fields[TAX_LINE_IDX].value.trim().to_string();
                     if v.is_empty() {
@@ -514,7 +549,7 @@ impl CategoryManager {
                             conn,
                             &name,
                             &cat_type,
-                            None,
+                            Some(class),
                             tax_line.as_deref(),
                             form_line.as_deref(),
                         ) {
@@ -535,7 +570,7 @@ impl CategoryManager {
                                 cat.id,
                                 &name,
                                 &cat_type,
-                                cat.class,
+                                class,
                                 tax_line.as_deref(),
                                 form_line.as_deref(),
                             ) {
@@ -595,5 +630,86 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max - 1).collect();
         format!("{truncated}\u{2026}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nigel_core::db::{get_connection, init_db, AccountClass};
+
+    fn test_conn() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        init_db(&conn).unwrap();
+        (dir, conn)
+    }
+
+    fn form_of(mgr: &CategoryManager) -> &CategoryForm {
+        match &mgr.screen {
+            Screen::Add(form) | Screen::Edit(form) => form,
+            _ => panic!("not on a form"),
+        }
+    }
+
+    #[test]
+    fn the_add_form_offers_every_class_and_defaults_to_the_type() {
+        let (_d, conn) = test_conn();
+        let mut mgr = CategoryManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+
+        let field = &form_of(&mgr).fields[CLASS_IDX];
+        assert_eq!(field.label, "Class");
+        assert_eq!(field.value, "expense");
+        match &field.kind {
+            FieldKind::Selector { options, .. } => {
+                assert_eq!(options.len(), AccountClass::ALL.len());
+                assert!(options.iter().all(|o| AccountClass::parse(o).is_some()));
+                // AC #6: the five words, and nothing borrowed from a ledger.
+                assert!(!options.iter().any(|o| o == "debit" || o == "credit"));
+            }
+            FieldKind::Text => panic!("not a selector"),
+        }
+    }
+
+    #[test]
+    fn an_edit_form_opens_on_the_categorys_own_class() {
+        let (_d, conn) = test_conn();
+        let mut mgr = CategoryManager::new(&conn, "Hello.");
+        let draw = mgr
+            .categories
+            .iter()
+            .position(|c| c.name == "Owner Draw / Distribution")
+            .expect("the seeded distribution category");
+        mgr.selection = draw;
+        mgr.handle_key(KeyCode::Char('e'), &conn);
+
+        assert_eq!(form_of(&mgr).fields[CLASS_IDX].value, "equity");
+    }
+
+    #[test]
+    fn the_class_selector_cycles_and_saves_what_it_shows() {
+        let (_d, conn) = test_conn();
+        let mut mgr = CategoryManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        // Name, then walk to the class field and pick the next class.
+        for ch in "Member Draw".chars() {
+            mgr.handle_key(KeyCode::Char(ch), &conn);
+        }
+        for _ in 0..CLASS_IDX {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        let before = form_of(&mgr).fields[CLASS_IDX].value.clone();
+        mgr.handle_key(KeyCode::Right, &conn);
+        let after = form_of(&mgr).fields[CLASS_IDX].value.clone();
+        assert_ne!(before, after);
+
+        mgr.handle_key(KeyCode::Enter, &conn);
+        let saved = mgr
+            .categories
+            .iter()
+            .find(|c| c.name == "Member Draw")
+            .expect("saved");
+        assert_eq!(saved.class.as_str(), after);
     }
 }

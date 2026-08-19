@@ -1,29 +1,59 @@
 use comfy_table::{Cell, Table};
 
-use nigel_core::db::get_connection;
+use nigel_core::db::{get_connection, AccountClass};
 use nigel_core::error::Result;
 use nigel_core::settings::get_data_dir;
 
 pub use nigel_core::accounts::*;
 
+/// A `--class` flag as a class. The five words are the vocabulary; the error
+/// names all of them rather than only rejecting the one that was typed.
+pub fn parse_class(value: &str) -> Result<AccountClass> {
+    AccountClass::parse(value).ok_or_else(|| {
+        nigel_core::error::NigelError::Invalid(format!(
+            "Invalid class: {value} (must be one of: {})",
+            AccountClass::ALL
+                .iter()
+                .map(|c| c.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })
+}
+
 pub fn add(
     name: &str,
     account_type: &str,
+    class: Option<&str>,
     institution: Option<&str>,
     last_four: Option<&str>,
 ) -> Result<()> {
+    let class = class.map(parse_class).transpose()?;
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    add_account(&conn, name, account_type, None, institution, last_four)?;
+    add_account(&conn, name, account_type, class, institution, last_four)?;
     println!("Added account: {name}");
+    Ok(())
+}
+
+pub fn edit(id: i64, name: Option<&str>, class: Option<&str>) -> Result<()> {
+    if name.is_none() && class.is_none() {
+        return Err(nigel_core::error::NigelError::Invalid(
+            "Nothing to change — pass --name, --class, or both".into(),
+        ));
+    }
+    let class = class.map(parse_class).transpose()?;
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    update_account(&conn, id, name, class)?;
+    println!("Updated account {id}");
     Ok(())
 }
 
 pub fn list() -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let mut stmt =
-        conn.prepare("SELECT id, name, account_type, institution, last_four FROM accounts")?;
+        conn.prepare("SELECT id, name, account_type, class, institution, last_four FROM accounts")?;
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(i64, String, String, Option<String>, Option<String>)> = stmt
+    let rows: Vec<(i64, String, String, String, Option<String>, Option<String>)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -31,17 +61,26 @@ pub fn list() -> Result<()> {
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Name", "Type", "Institution", "Last Four"]);
-    for (id, name, acct_type, inst, last) in rows {
+    table.set_header(vec![
+        "ID",
+        "Name",
+        "Type",
+        "Class",
+        "Institution",
+        "Last Four",
+    ]);
+    for (id, name, acct_type, class, inst, last) in rows {
         table.add_row(vec![
             Cell::new(id),
             Cell::new(name),
             Cell::new(acct_type),
+            Cell::new(class),
             Cell::new(inst.unwrap_or_default()),
             Cell::new(last.unwrap_or_default()),
         ]);
@@ -76,6 +115,57 @@ mod tests {
         let conn = get_connection(&dir.path().join("test.db")).unwrap();
         init_db(&conn).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn a_class_flag_is_parsed_or_names_the_five_words() {
+        assert_eq!(parse_class("equity").unwrap(), AccountClass::Equity);
+        let err = parse_class("contra-asset").unwrap_err();
+        for word in ["asset", "liability", "equity", "revenue", "expense"] {
+            assert!(err.to_string().contains(word), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn an_account_takes_its_class_from_its_type_or_from_the_flag() {
+        let (_dir, conn) = test_conn();
+        add_account(&conn, "Globex Card", "credit_card", None, None, None).unwrap();
+        add_account(
+            &conn,
+            "Globex Payroll",
+            "payroll",
+            Some(AccountClass::Liability),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let by_name = |name: &str| {
+            list_accounts(&conn)
+                .unwrap()
+                .into_iter()
+                .find(|a| a.name == name)
+                .unwrap()
+                .class
+        };
+        assert_eq!(by_name("Globex Card"), AccountClass::Liability);
+        assert_eq!(by_name("Globex Payroll"), AccountClass::Liability);
+    }
+
+    #[test]
+    fn editing_an_account_changes_only_what_it_names() {
+        let (_dir, conn) = test_conn();
+        let id = add_account(&conn, "Globex Checking", "checking", None, None, None).unwrap();
+
+        update_account(&conn, id, None, Some(AccountClass::Liability)).unwrap();
+        let account = get_account(&conn, id).unwrap();
+        assert_eq!(account.name, "Globex Checking");
+        assert_eq!(account.class, AccountClass::Liability);
+
+        update_account(&conn, id, Some("Globex Operating"), None).unwrap();
+        let account = get_account(&conn, id).unwrap();
+        assert_eq!(account.name, "Globex Operating");
+        assert_eq!(account.class, AccountClass::Liability);
     }
 
     #[test]

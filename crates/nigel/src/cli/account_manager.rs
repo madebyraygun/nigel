@@ -9,13 +9,39 @@ use rusqlite::Connection;
 
 use crate::cli::accounts::{self, ACCOUNT_TYPES};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
+use nigel_core::db::AccountClass;
 use nigel_core::models::Account;
 
-// Field indices for AccountForm::new_add() — keep in sync with field order
+fn class_options() -> Vec<String> {
+    AccountClass::ALL
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect()
+}
+
+fn class_field(selected: AccountClass) -> FormField {
+    let options = class_options();
+    let index = options
+        .iter()
+        .position(|o| o == selected.as_str())
+        .unwrap_or(0);
+    FormField {
+        label: "Class",
+        value: selected.as_str().to_string(),
+        kind: FieldKind::Selector {
+            options,
+            selected: index,
+        },
+    }
+}
+
+// Field indices — keep in sync with field order. Class sits second in both
+// forms so the one index reads either of them; the edit form stops there.
 const NAME_IDX: usize = 0;
-const TYPE_IDX: usize = 1;
-const INST_IDX: usize = 2;
-const LAST_IDX: usize = 3;
+const CLASS_IDX: usize = 1;
+const TYPE_IDX: usize = 2;
+const INST_IDX: usize = 3;
+const LAST_IDX: usize = 4;
 
 pub enum AccountAction {
     Continue,
@@ -25,7 +51,7 @@ pub enum AccountAction {
 enum Screen {
     List,
     Add(AccountForm),
-    Rename(AccountForm),
+    Edit(AccountForm),
     ConfirmDelete,
 }
 
@@ -57,6 +83,7 @@ impl AccountForm {
                     value: String::new(),
                     kind: FieldKind::Text,
                 },
+                class_field(AccountClass::Asset),
                 FormField {
                     label: "Type",
                     value: ACCOUNT_TYPES[0].to_string(),
@@ -80,13 +107,16 @@ impl AccountForm {
         }
     }
 
-    fn new_rename(current_name: &str) -> Self {
+    fn new_edit(account: &Account) -> Self {
         Self {
-            fields: vec![FormField {
-                label: "Name",
-                value: current_name.to_string(),
-                kind: FieldKind::Text,
-            }],
+            fields: vec![
+                FormField {
+                    label: "Name",
+                    value: account.name.clone(),
+                    kind: FieldKind::Text,
+                },
+                class_field(account.class),
+            ],
             focused: 0,
         }
     }
@@ -128,7 +158,7 @@ impl AccountManager {
         match &self.screen {
             Screen::List | Screen::ConfirmDelete => self.draw_list(frame),
             Screen::Add(form) => self.draw_form(frame, "Add Account", form),
-            Screen::Rename(form) => self.draw_form(frame, "Rename Account", form),
+            Screen::Edit(form) => self.draw_form(frame, "Edit Account", form),
         }
     }
 
@@ -171,8 +201,8 @@ impl AccountManager {
                 Span::styled("   ", Style::default()),
                 Span::styled(
                     format!(
-                        "{:<24} {:<18} {:<20} {}",
-                        "Name", "Type", "Institution", "Last Four"
+                        "{:<24} {:<18} {:<10} {:<20} {}",
+                        "Name", "Type", "Class", "Institution", "Last Four"
                     ),
                     Style::default()
                         .fg(Color::DarkGray)
@@ -191,8 +221,12 @@ impl AccountManager {
                 let last = account.last_four.as_deref().unwrap_or("");
                 lines.push(Line::from(Span::styled(
                     format!(
-                        "{marker}{:<24} {:<18} {:<20} {}",
-                        account.name, account.account_type, inst, last
+                        "{marker}{:<24} {:<18} {:<10} {:<20} {}",
+                        account.name,
+                        account.account_type,
+                        account.class.as_str(),
+                        inst,
+                        last
                     ),
                     style,
                 )));
@@ -225,7 +259,7 @@ impl AccountManager {
             );
         } else {
             frame.render_widget(
-                Paragraph::new(" a=add  r=rename  d=delete  Esc=back  q=quit").style(FOOTER_STYLE),
+                Paragraph::new(" a=add  e=edit  d=delete  Esc=back  q=quit").style(FOOTER_STYLE),
                 hints_area,
             );
         }
@@ -341,7 +375,7 @@ impl AccountManager {
         match &mut self.screen {
             Screen::List => self.handle_list_key(code, conn),
             Screen::Add(_) => self.handle_form_key(code, conn, FormMode::Add),
-            Screen::Rename(_) => self.handle_form_key(code, conn, FormMode::Rename),
+            Screen::Edit(_) => self.handle_form_key(code, conn, FormMode::Edit),
             Screen::ConfirmDelete => self.handle_delete_key(code, conn),
         }
     }
@@ -364,9 +398,9 @@ impl AccountManager {
             Char('a') => {
                 self.screen = Screen::Add(AccountForm::new_add());
             }
-            Char('r') => {
+            Char('e') | Char('r') => {
                 if let Some(account) = self.accounts.get(self.selection) {
-                    self.screen = Screen::Rename(AccountForm::new_rename(&account.name));
+                    self.screen = Screen::Edit(AccountForm::new_edit(account));
                 }
             }
             Char('d') => {
@@ -410,7 +444,7 @@ impl AccountManager {
 
         // We need to temporarily take the screen to get mutable access to the form
         let form = match &mut self.screen {
-            Screen::Add(f) | Screen::Rename(f) => f,
+            Screen::Add(f) | Screen::Edit(f) => f,
             _ => return AccountAction::Continue,
         };
 
@@ -467,6 +501,13 @@ impl AccountManager {
                         return AccountAction::Continue;
                     }
                     let acct_type = form.fields[TYPE_IDX].value.clone();
+                    let class = match AccountClass::parse(&form.fields[CLASS_IDX].value) {
+                        Some(class) => class,
+                        None => {
+                            self.set_status("Pick a class".into());
+                            return AccountAction::Continue;
+                        }
+                    };
                     let institution = {
                         let v = form.fields[INST_IDX].value.trim().to_string();
                         if v.is_empty() {
@@ -490,7 +531,7 @@ impl AccountManager {
                         conn,
                         &name,
                         &acct_type,
-                        None,
+                        Some(class),
                         institution.as_deref(),
                         last_four.as_deref(),
                     ) {
@@ -504,14 +545,26 @@ impl AccountManager {
                         }
                     }
                 }
-                FormMode::Rename => {
+                FormMode::Edit => {
                     let new_name = form.fields[NAME_IDX].value.trim().to_string();
+                    let class = match AccountClass::parse(&form.fields[CLASS_IDX].value) {
+                        Some(class) => class,
+                        None => {
+                            self.set_status("Pick a class".into());
+                            return AccountAction::Continue;
+                        }
+                    };
                     if let Some(account) = self.accounts.get(self.selection) {
-                        match accounts::rename_account(conn, account.id, &new_name) {
+                        match accounts::update_account(
+                            conn,
+                            account.id,
+                            Some(&new_name),
+                            Some(class),
+                        ) {
                             Ok(()) => {
                                 self.reload(conn);
                                 self.screen = Screen::List;
-                                self.set_status(format!("Renamed to: {new_name}"));
+                                self.set_status(format!("Updated account: {new_name}"));
                             }
                             Err(e) => {
                                 self.set_status(e.to_string());
@@ -559,5 +612,58 @@ impl AccountManager {
 
 enum FormMode {
     Add,
-    Rename,
+    Edit,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+    use nigel_core::db::{get_connection, init_db, AccountClass};
+
+    fn test_conn() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("t.db")).unwrap();
+        init_db(&conn).unwrap();
+        accounts::add_account(&conn, "Globex Card", "credit_card", None, None, None).unwrap();
+        (dir, conn)
+    }
+
+    fn form_of(mgr: &AccountManager) -> &AccountForm {
+        match &mgr.screen {
+            Screen::Add(form) | Screen::Edit(form) => form,
+            _ => panic!("not on a form"),
+        }
+    }
+
+    #[test]
+    fn the_add_form_offers_every_class() {
+        let (_d, conn) = test_conn();
+        let mut mgr = AccountManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+
+        match &form_of(&mgr).fields[CLASS_IDX].kind {
+            FieldKind::Selector { options, .. } => {
+                assert_eq!(options.len(), AccountClass::ALL.len());
+                assert!(!options.iter().any(|o| o == "debit" || o == "credit"));
+            }
+            FieldKind::Text => panic!("not a selector"),
+        }
+    }
+
+    #[test]
+    fn the_edit_form_opens_on_the_accounts_class_and_saves_a_new_one() {
+        let (_d, conn) = test_conn();
+        let mut mgr = AccountManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('e'), &conn);
+        assert_eq!(form_of(&mgr).fields[CLASS_IDX].value, "liability");
+
+        mgr.handle_key(KeyCode::Tab, &conn);
+        mgr.handle_key(KeyCode::Right, &conn);
+        let chosen = form_of(&mgr).fields[CLASS_IDX].value.clone();
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        assert_eq!(mgr.accounts[0].class.as_str(), chosen);
+        assert_eq!(mgr.accounts[0].name, "Globex Card", "the name is untouched");
+    }
 }
