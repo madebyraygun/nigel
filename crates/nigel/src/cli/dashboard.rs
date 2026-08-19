@@ -28,7 +28,7 @@ use nigel_core::error::Result;
 use nigel_core::fmt::number;
 use nigel_core::reports;
 use nigel_core::reviewer::{get_categories, get_flagged_transactions};
-use nigel_core::settings::{get_data_dir, load_settings, save_settings, settings_file_exists};
+use nigel_core::settings::{get_data_dir, load_settings, settings_file_exists};
 
 const GREETINGS: &[&str] = &[
     "Kettle's on.",
@@ -1128,44 +1128,25 @@ pub fn run() -> Result<()> {
 
     // First-run: show onboarding, then ensure data dir + DB exist
     let mut post_setup_action = None;
-    let mut onboarding_company = None;
-    let mut onboarding_profile = nigel_core::db::Profile::default();
+    let stored = load_settings();
+    let mut plan = nigel_core::setup::SetupPlan {
+        user_name: stored.user_name.clone(),
+        company_name: String::new(),
+        profile: nigel_core::db::Profile::default(),
+        password: None,
+    };
     if is_first_run {
         if let Some(result) = super::onboarding::run()? {
-            let mut settings = load_settings();
-            if !result.user_name.is_empty() {
-                settings.user_name = result.user_name;
-            }
-            save_settings(&settings)?;
-
-            if !result.company_name.is_empty() {
-                onboarding_company = Some(result.company_name);
-            }
+            plan.user_name = result.user_name;
+            plan.company_name = result.company_name;
+            plan.profile = result.profile;
+            plan.password = result.password;
             post_setup_action = Some(result.action);
-            onboarding_profile = result.profile;
-
-            if let Some(ref pw) = result.password {
-                nigel_core::db::set_db_password(Some(pw.clone()));
-            }
         }
     }
 
-    // Ensure data dir and database exist (like `nigel init`)
-    let settings = load_settings();
-    let data_dir = std::path::PathBuf::from(&settings.data_dir);
-    std::fs::create_dir_all(&data_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&data_dir)?;
-    let exports_dir = data_dir.join("exports");
-    std::fs::create_dir_all(&exports_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&exports_dir)?;
-    let snapshots_dir = data_dir.join("snapshots");
-    std::fs::create_dir_all(&snapshots_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&snapshots_dir)?;
-    let backups_dir = data_dir.join("backups");
-    std::fs::create_dir_all(&backups_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&backups_dir)?;
-    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
-    nigel_core::db::init_db_with_profile(&conn, onboarding_profile)?;
+    let db_path = nigel_core::setup::run(&plan)?;
+    let conn = nigel_core::db::get_connection(&db_path)?;
 
     // The chosen profile only takes effect on a fresh database. If onboarding
     // ran against books that already exist (settings.json was deleted, or a
@@ -1175,18 +1156,13 @@ pub fn run() -> Result<()> {
     let mut profile_notice = None;
     if post_setup_action.is_some() {
         let seeded = nigel_core::db::get_profile(&conn);
-        if seeded != onboarding_profile {
+        if seeded != plan.profile {
             profile_notice = Some(format!(
                 "These books already keep {} records; the {} choice was ignored.",
                 seeded.as_str(),
-                onboarding_profile.as_str()
+                plan.profile.as_str()
             ));
         }
-    }
-
-    // Save company_name from onboarding to DB metadata
-    if let Some(company) = onboarding_company {
-        nigel_core::db::set_metadata(&conn, "company_name", &company)?;
     }
 
     // Migrate legacy company_name from settings.json → DB metadata
@@ -1197,6 +1173,8 @@ pub fn run() -> Result<()> {
     }
 
     drop(conn);
+
+    let settings = load_settings();
 
     // Handle post-setup action from onboarding
     if let Some(action) = post_setup_action {

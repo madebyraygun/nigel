@@ -28,4 +28,5 @@ pub mod rules;
 #[cfg(feature = "serve")]
 pub mod server;
 pub mod settings;
+pub mod setup;
 pub mod updater;
