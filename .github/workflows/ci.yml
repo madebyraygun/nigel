@@ -79,6 +79,7 @@ jobs:
         run: cargo test -p nigel-core -- --test-threads=1
 
       - name: Install the desktop shell's Linux system libraries
+        timeout-minutes: 10
         # Only Linux needs them: the shell renders through WebKitGTK there,
         # while macOS uses the system WKWebView with nothing to install.
         if: runner.os == 'Linux'
