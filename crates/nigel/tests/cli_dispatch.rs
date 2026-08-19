@@ -2801,6 +2801,101 @@ fn a_refused_import_leaves_no_profile_behind() {
         .stderr(predicate::str::contains("Unknown format: 'sinkhole'"));
 }
 
+/// A statement with one row the parser cannot read and two it can.
+fn write_statement_with_one_bad_row(env: &TestEnv, name: &str) -> PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(
+        &path,
+        "Date,Description,Amount,Running Bal.\n\
+         03/02/2026,GLOBEX HOSTING,-88.00,900.00\n\
+         13/40/2026,CEDAR SYSTEMS,-12.00,888.00\n\
+         03/04/2026,CLIENT PAYMENT,1200.00,2088.00\n",
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn imports_list_shows_what_each_import_dropped() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_statement_with_one_bad_row(&env, "march-checking.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 imported"));
+
+    env.cmd()
+        .arg("imports")
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("march-checking.csv")
+                .and(predicate::str::contains("2 rows, 1 dropped")),
+        );
+}
+
+#[test]
+fn status_names_the_account_whose_books_are_incomplete() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_statement_with_one_bad_row(&env, "february-checking.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .success();
+
+    env.cmd()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Dropped rows:  1 (BofA Checking 1)",
+        ));
+}
+
+#[test]
+fn a_refused_import_says_the_format_and_the_reasons_and_exits_nonzero() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_unreadable_statement(&env, "unreadable.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Nothing could be read from this file as `bofa_checking`")
+                .and(predicate::str::contains("2 rows were malformed"))
+                .and(predicate::str::contains("is not MM/DD/YYYY")),
+        );
+}
+
 #[test]
 fn status_migrates_outdated_database() {
     let env = TestEnv::new();
