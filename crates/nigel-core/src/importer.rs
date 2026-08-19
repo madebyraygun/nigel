@@ -514,7 +514,10 @@ pub fn import_file(
         }));
     }
 
-    let parsed_rows = parsed.rows;
+    let ParseOutcome {
+        rows: parsed_rows,
+        rejects,
+    } = parsed;
     let sample: Vec<ParsedRow> = parsed_rows.iter().take(5).cloned().collect();
 
     let mut imported = 0usize;
@@ -526,7 +529,7 @@ pub fn import_file(
         let min_date = dates.iter().min().copied();
         let max_date = dates.iter().max().copied();
         conn.execute(
-            "INSERT INTO imports (filename, account_id, record_count, date_range_start, date_range_end, checksum) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO imports (filename, account_id, record_count, date_range_start, date_range_end, checksum, malformed_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 file_path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
                 account_id,
@@ -534,10 +537,29 @@ pub fn import_file(
                 min_date,
                 max_date,
                 checksum,
+                malformed as i64,
             ],
         )?;
         let import_id = conn.last_insert_rowid();
         created_import = Some(import_id);
+
+        // The rejected rows ride in the caller's transaction with the import
+        // they belong to, and leave with it: `import_rejects.import_id`
+        // cascades on delete.
+        {
+            let mut stmt = conn.prepare_cached(
+                "INSERT INTO import_rejects (import_id, row_number, content, reason) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for reject in &rejects {
+                stmt.execute(rusqlite::params![
+                    import_id,
+                    reject.row_number as i64,
+                    reject.content,
+                    reject.reason,
+                ])?;
+            }
+        }
 
         for row in &parsed_rows {
             if is_duplicate_row(conn, account_id, row)? {
@@ -2104,5 +2126,116 @@ Date,Note,Amount
             outcome.rejects[0].reason,
             "date \"2026-03-09\" is not MM/DD/YYYY"
         );
+    }
+
+    #[test]
+    fn a_committed_import_records_the_rows_it_dropped() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             2026-03-09,GLOBEX HOSTING,-88.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.result.imported, 1);
+        assert_eq!(outcome.result.malformed, 2);
+
+        let import_id = outcome.result.import_id.expect("an imports row");
+        let (records, malformed): (i64, i64) = conn
+            .query_row(
+                "SELECT record_count, malformed_count FROM imports WHERE id = ?1",
+                [import_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(records, 1);
+        assert_eq!(malformed, 2);
+
+        let mut stmt = conn
+            .prepare("SELECT row_number, content, reason FROM import_rejects WHERE import_id = ?1 ORDER BY row_number")
+            .unwrap();
+        let rejects: Vec<(i64, String, String)> = stmt
+            .query_map([import_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+
+        assert_eq!(rejects.len(), 2);
+        assert_eq!(rejects[0].0, 3);
+        assert_eq!(rejects[0].1, "2026-03-09,GLOBEX HOSTING,-88.00,0.00");
+        assert_eq!(rejects[0].2, "date \"2026-03-09\" is not MM/DD/YYYY");
+        assert_eq!(rejects[1].2, "amount \"n/a\" is not a number");
+    }
+
+    #[test]
+    fn a_rolled_back_import_leaves_no_rejects_either() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+        break_categorization(&conn);
+
+        assert!(import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .is_err());
+
+        assert_eq!(table_count(&conn, "import_rejects"), 0);
+    }
+
+    #[test]
+    fn a_dry_run_records_no_rejects() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+
+        let result = import_file(
+            &conn,
+            &path,
+            "Test Checking",
+            Some("bofa_checking"),
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.malformed, 1);
+        assert_eq!(table_count(&conn, "import_rejects"), 0);
     }
 }
