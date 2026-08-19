@@ -1,6 +1,10 @@
+use rusqlite::Connection;
+
 use nigel_core::db::get_connection;
-use nigel_core::error::Result;
-use nigel_core::imports::{list_imports, list_rejects, ImportListItem, ImportReject};
+use nigel_core::error::{NigelError, Result};
+use nigel_core::imports::{
+    import_exists, list_imports, list_rejects, ImportListItem, ImportReject,
+};
 use nigel_core::settings::get_data_dir;
 
 /// Every import, newest first, with what it kept and what it dropped.
@@ -46,18 +50,31 @@ pub fn history_line(item: &ImportListItem) -> String {
 /// The rows one import could not parse.
 pub fn rejects(id: i64) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    let rejects = list_rejects(&conn, id)?;
-
-    if rejects.is_empty() {
-        println!("Import {id} dropped no rows.");
-        return Ok(());
-    }
-
-    println!("Import {id} dropped {} rows:", rejects.len());
-    for line in reject_lines(&rejects) {
+    for line in rejects_report(&conn, id)? {
         println!("{line}");
     }
     Ok(())
+}
+
+/// What `nigel imports rejects` prints, or the error it refuses with.
+///
+/// An id no import has is a `NotFound`, never "dropped no rows": a clean import
+/// and an import that does not exist are different facts, and only one of them
+/// means the file made it in. `GET /api/imports/{id}/rejects` answers the same
+/// way, from the same probe.
+fn rejects_report(conn: &Connection, id: i64) -> Result<Vec<String>> {
+    if !import_exists(conn, id)? {
+        return Err(NigelError::NotFound(format!("No import with ID {id}")));
+    }
+
+    let rejects = list_rejects(conn, id)?;
+    if rejects.is_empty() {
+        return Ok(vec![format!("Import {id} dropped no rows.")]);
+    }
+
+    let mut lines = vec![format!("Import {id} dropped {} rows:", rejects.len())];
+    lines.extend(reject_lines(&rejects));
+    Ok(lines)
 }
 
 /// Two lines per reject: what failed, then the row it failed on.
@@ -73,6 +90,42 @@ pub fn reject_lines(rejects: &[ImportReject]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nigel_core::db::init_db;
+
+    /// A database with one import that dropped nothing.
+    fn conn_with_import() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO imports (id, filename, account_id, import_date, record_count)
+             VALUES (7, 'march.csv', NULL, '2026-03-02 09:14:11', 42)",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn an_id_no_import_has_is_refused_rather_than_reported_as_clean() {
+        let conn = conn_with_import();
+
+        let err = rejects_report(&conn, 99).unwrap_err();
+
+        assert!(
+            matches!(&err, NigelError::NotFound(msg) if msg == "No import with ID 99"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn an_import_that_dropped_nothing_says_so() {
+        let conn = conn_with_import();
+
+        assert_eq!(
+            rejects_report(&conn, 7).unwrap(),
+            vec!["Import 7 dropped no rows.".to_string()]
+        );
+    }
 
     fn item(filename: &str, transactions: i64, malformed: i64) -> ImportListItem {
         ImportListItem {
