@@ -4,6 +4,7 @@ use chrono::Datelike;
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::db::AccountClass;
 use crate::error::{NigelError, Result};
 
 /// What a build without the `pdf` feature says when asked for a PDF. Shared
@@ -784,12 +785,40 @@ pub fn get_flagged(conn: &Connection) -> Result<Vec<FlaggedTransaction>> {
 // Balance
 // ---------------------------------------------------------------------------
 
+/// What "the balance" of a class means, decided once.
+///
+/// Transactions keep their bank-statement signs everywhere else in the app —
+/// the register, the importers and the cash-position total all read the raw
+/// sum, and none of them change. This is the second reading beside it: the
+/// amount stated so that more of what the class is reads positive. A liability
+/// with money owed reports positive; an asset with money in it reports
+/// positive.
+///
+/// `Liability` and `Equity` differ because the register they are summed from
+/// differs. A liability's rows are its own — a card charge is a negative row
+/// that grows what is owed. Equity, revenue and expense are summed off the cash
+/// side, where an owner contribution and a client payment are both positive
+/// rows and a distribution and a software bill are both negative ones.
+///
+/// Everything that needs a sign calls this. Nothing re-derives one from an
+/// account type or a category name.
+pub fn natural_balance(class: AccountClass, raw_sum: f64) -> f64 {
+    match class {
+        AccountClass::Asset | AccountClass::Equity | AccountClass::Revenue => raw_sum,
+        AccountClass::Liability | AccountClass::Expense => -raw_sum,
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountBalance {
     pub name: String,
     pub account_type: String,
+    pub class: AccountClass,
+    /// The account's own register, summed with the signs it was imported with.
     pub balance: f64,
+    /// The same figure through `natural_balance`: money owed reads positive.
+    pub natural_balance: f64,
 }
 
 #[derive(Serialize)]
@@ -802,19 +831,33 @@ pub struct BalanceReport {
 
 pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
     let mut stmt = conn.prepare(
-        "SELECT a.id, a.name, a.account_type, COALESCE(SUM(t.amount), 0) as balance \
+        "SELECT a.id, a.name, a.account_type, a.class, COALESCE(SUM(t.amount), 0) as balance \
          FROM accounts a LEFT JOIN transactions t ON a.id = t.account_id \
          GROUP BY a.id ORDER BY a.name",
     )?;
-    let accounts: Vec<AccountBalance> = stmt
+    let accounts = stmt
         .query_map([], |row| {
-            Ok(AccountBalance {
-                name: row.get(1)?,
-                account_type: row.get(2)?,
-                balance: row.get(3)?,
-            })
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let accounts: Vec<AccountBalance> = accounts
+        .into_iter()
+        .map(|(name, account_type, class, balance)| {
+            let class = AccountClass::from_db(&class)?;
+            Ok(AccountBalance {
+                name,
+                account_type,
+                class,
+                balance,
+                natural_balance: natural_balance(class, balance),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let total: f64 = accounts.iter().map(|a| a.balance).sum();
 
@@ -2146,5 +2189,67 @@ mod tests {
         let report = get_cashflow(&conn, None, None).unwrap();
         assert!(report.months.len() >= 2);
         assert_eq!(report.months[0].running_balance, 950.0); // first month net only
+    }
+
+    #[test]
+    fn natural_balance_reads_every_class_positive_when_there_is_more_of_it() {
+        use crate::db::AccountClass::*;
+        let table = [
+            // class, raw signed sum, what the class says it means
+            (Asset, 4_928.01, 4_928.01),
+            (Liability, -3_184.90, 3_184.90),
+            (Equity, 12_000.00, 12_000.00),
+            (Revenue, 7_500.00, 7_500.00),
+            (Expense, -250.00, 250.00),
+        ];
+        for (class, raw, expected) in table {
+            assert_eq!(
+                natural_balance(class, raw),
+                expected,
+                "{} on {raw}",
+                class.as_str()
+            );
+        }
+        assert_eq!(table.len(), crate::db::AccountClass::ALL.len());
+    }
+
+    #[test]
+    fn the_balance_report_carries_each_accounts_class_and_natural_reading() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, account_type, class) \
+                 VALUES ('Harbor Checking', 'checking', 'asset');
+             INSERT INTO accounts (name, account_type, class) \
+                 VALUES ('Harbor Card', 'credit_card', 'liability');",
+        )
+        .unwrap();
+        let card: i64 = conn
+            .query_row(
+                "SELECT id FROM accounts WHERE name = 'Harbor Card'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount) \
+             VALUES (?1, '2025-04-02', 'GLOBEX SUPPLIES', -1200.0)",
+            [card],
+        )
+        .unwrap();
+
+        let report = get_balance(&conn).unwrap();
+        let card_row = report
+            .accounts
+            .iter()
+            .find(|a| a.name == "Harbor Card")
+            .expect("the card");
+        assert_eq!(card_row.class, crate::db::AccountClass::Liability);
+        assert_eq!(card_row.balance, -1200.0, "the register keeps its signs");
+        assert_eq!(
+            card_row.natural_balance, 1200.0,
+            "money owed reads positive"
+        );
+        // The cash position is still the cash position.
+        assert_eq!(report.total, -1200.0);
     }
 }
