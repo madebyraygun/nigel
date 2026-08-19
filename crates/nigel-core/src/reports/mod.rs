@@ -297,11 +297,12 @@ pub fn get_expense_breakdown(
     // Custom date ranges (--from/--to) not supported here; expense breakdown
     // is scoped by year/month only, matching the CLI subcommand interface.
     let (clause, params) = date_filter(year, month, None, None)?;
+    let class = AccountClass::Expense.as_str();
 
     let sql = format!(
         "SELECT c.name, SUM(t.amount) as total, COUNT(*) as count \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
-         WHERE {clause} AND c.class = 'expense' AND {EXCLUDE_TRANSFERS} \
+         WHERE {clause} AND c.class = '{class}' AND {EXCLUDE_TRANSFERS} \
          GROUP BY c.name ORDER BY total ASC"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -326,7 +327,7 @@ pub fn get_expense_breakdown(
     let vendor_sql = format!(
         "SELECT t.vendor, SUM(t.amount) as total, COUNT(*) as count \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
-         WHERE {clause} AND c.class = 'expense' AND t.vendor IS NOT NULL \
+         WHERE {clause} AND c.class = '{class}' AND t.vendor IS NOT NULL \
            AND {EXCLUDE_TRANSFERS} \
          GROUP BY t.vendor ORDER BY total ASC LIMIT 10"
     );
