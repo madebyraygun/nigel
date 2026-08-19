@@ -1120,7 +1120,11 @@ happen — preview writes nothing at all, and `sample` is the first five rows.
 The preview body plus an optional `saveProfile`, which remembers the `mapping`
 under that name for next time. It requires a `mapping` to save and refuses the
 name of a built-in importer; both are `400`. The profile is written only after
-the import succeeds.
+the import succeeds. Because that write lands after the transaction commits, a
+profile save that fails on an import that succeeded answers an error for an
+import that is already in the books — retrying the same `uploadId` then reports
+`duplicateFile: true`. Rare by construction: the name and the mapping are
+validated up front, so only a raw SQL failure gets this far.
 
 The sequence is the one the terminal UI has always used: a pre-import snapshot
 into `<data-dir>/snapshots/`, then the import and auto-categorization together
