@@ -40,6 +40,7 @@ export class WcReviewCard extends LitElement {
       font-size: var(--wa-font-size-lg, 16px);
       font-weight: var(--wa-font-weight-semibold, 600);
       overflow-wrap: anywhere;
+      user-select: text;
     }
 
     .amount {
@@ -63,6 +64,7 @@ export class WcReviewCard extends LitElement {
     dd {
       margin: 0;
       overflow-wrap: anywhere;
+      user-select: text;
     }
 
     .current {

@@ -205,6 +205,12 @@ pub fn build_router(state: AppState) -> Router {
 /// freely.
 #[cfg(feature = "desktop")]
 pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> Router {
+    // A process that builds this router serves text exports over the scheme
+    // rather than drawing a TUI, and the report formatters are shared with the
+    // terminal. Doing it here rather than leaving it to the caller keeps the
+    // escape sequences out of a downloaded file whoever builds the router.
+    disable_ansi_output();
+
     let api = routes::api_router(&state);
     finish_router(state, api, trusted)
 }

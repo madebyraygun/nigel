@@ -72,6 +72,10 @@ export class WcImportHistory extends LitElement {
         vertical-align: top;
       }
 
+      td:not(.actions) {
+        user-select: text;
+      }
+
       th {
         font-weight: var(--wa-font-weight-medium, 500);
         color: var(--wa-color-muted);

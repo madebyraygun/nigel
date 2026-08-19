@@ -338,10 +338,7 @@ async fn register(
         }
         // The route's only filter is the account; the category filters are
         // CLI-only, and `ReportParams::parse` refuses them by name.
-        let filters = reports::RegisterFilters {
-            account: params.account.clone(),
-            category: None,
-        };
+        let filters = reports::RegisterFilters::for_account(params.account.clone());
         reports::get_register(
             conn,
             params.year,

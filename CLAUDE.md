@@ -23,6 +23,8 @@ with no tax mapping) — chosen at `nigel init --profile` or in onboarding and s
 | `docs/api.md` | HTTP endpoint inventory, error envelope, security model |
 | `docs/invoicing.md` | Invoicing setup (Stripe, Mailgun, R2) and commands |
 | `docs/importers.md` | Importer formats and how to add one |
+| `docs/desktop.md` | The Tauri desktop shell: transport, origins, exports, dev loop |
+| `docs/native-feel.md` | The conventions that keep the SPA from reading as a website in a box |
 | `docs/backlog-cli.md` | The `backlog` CLI manual |
 | `docs/product/foundation.md` | Positioning, the ladder, licensing, Nigel Cloud scope — what monetization traces to |
 | `backlog/decisions/` | Decisions with their reasoning, newest first |

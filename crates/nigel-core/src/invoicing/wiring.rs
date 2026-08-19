@@ -48,15 +48,18 @@ pub fn company_name(conn: &Connection) -> String {
 /// Resolved here rather than at each `Branding` site: the fields are only ever
 /// correct together, and six hand-built literals each doing their own
 /// `get_metadata` calls is how a document ends up with an address and no phone.
+/// The fields are private and `company_profile` is the only constructor, so that
+/// stays true of every profile that exists.
 ///
-/// A DTO: the public fields enforce no invariant, and anyone linking this crate
-/// may set them to any combination.
+/// The address, the phone and the logo reach a document only through `branding`,
+/// which is why they have no accessor: a caller wanting the letterhead wants all
+/// of it, assembled, not three strings to arrange itself.
 pub struct CompanyProfile {
-    pub name: String,
-    pub address: String,
-    pub phone: String,
-    pub logo: String,
-    pub payment_instructions: String,
+    name: String,
+    address: String,
+    phone: String,
+    logo: String,
+    payment_instructions: String,
 }
 
 pub fn company_profile(conn: &Connection) -> CompanyProfile {
@@ -71,6 +74,17 @@ pub fn company_profile(conn: &Connection) -> CompanyProfile {
 }
 
 impl CompanyProfile {
+    /// The business name, as the subject line and the report headers want it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The direct-deposit or cheque instructions an invoice prints, empty when
+    /// the operator has set none.
+    pub fn payment_instructions(&self) -> &str {
+        &self.payment_instructions
+    }
+
     /// The branding for this profile, with the template and contact address the
     /// caller resolved. One constructor, so no site can forget a field.
     pub fn branding<'a>(&'a self, template: &'a str, contact_email: &'a str) -> Branding<'a> {
@@ -133,13 +147,37 @@ pub fn optional_publisher(cfg: &InvoicingConfig) -> Option<R2Publisher> {
 /// them here would corrupt ratatui's alternate screen and would fire once per
 /// call rather than once per send.
 ///
-/// A DTO: the public fields enforce no invariant, and anyone linking this crate
-/// may set them to any combination.
+/// The fields are private and `build_clients` is the only constructor, which is
+/// what makes its checks unskippable: the public base URL must produce a working
+/// link, and the from address must be a bare address safe to put in a header. A
+/// hand-assembled set skips all of that and mails from whatever it was given.
 pub struct SendClients {
-    pub stripe: StripeClient,
-    pub r2: R2Publisher,
-    pub mail: MailgunClient,
-    pub warnings: Vec<String>,
+    stripe: StripeClient,
+    r2: R2Publisher,
+    mail: MailgunClient,
+    warnings: Vec<String>,
+}
+
+impl SendClients {
+    /// The payment gateway.
+    pub fn stripe(&self) -> &StripeClient {
+        &self.stripe
+    }
+
+    /// The asset publisher the invoice page is uploaded through.
+    pub fn r2(&self) -> &R2Publisher {
+        &self.r2
+    }
+
+    /// The mail client, carrying the sender identity `build_clients` validated.
+    pub fn mail(&self) -> &MailgunClient {
+        &self.mail
+    }
+
+    /// Configuration Nigel will send with but wants the operator to look at.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
 }
 
 /// The clients a send needs, or the first refusal the configuration earns.

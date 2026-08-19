@@ -222,23 +222,15 @@ mod tests {
         assert_eq!(
             register_subtitle(
                 "FY 2025",
-                &RegisterFilters {
-                    account: Some("BofA Checking".into()),
-                    category: Some(CategorySelection::Named {
-                        id: 1,
-                        name: "Taxes & Licenses".into(),
-                    }),
-                }
+                &RegisterFilters::for_account(Some("BofA Checking".into()))
+                    .with_category(CategorySelection::named_for_test(1, "Taxes & Licenses"))
             ),
             "FY 2025 — account: BofA Checking, category: Taxes & Licenses"
         );
         assert_eq!(
             register_subtitle(
                 "All dates",
-                &RegisterFilters {
-                    account: None,
-                    category: Some(CategorySelection::Uncategorized),
-                }
+                &RegisterFilters::for_account(None).with_category(CategorySelection::Uncategorized)
             ),
             "All dates — uncategorized"
         );

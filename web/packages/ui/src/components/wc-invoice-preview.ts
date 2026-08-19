@@ -1,7 +1,9 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import './wc-notice-bar.js';
 import './wc-document-frame.js';
+import type { ExportTarget } from './wc-export-links.js';
+import { dispatchNcToast } from './wc-toast.js';
 
 /**
  * The sandbox a framed document is shown in.
@@ -10,6 +12,17 @@ import './wc-document-frame.js';
  * re-export is the name the rest of the codebase already imports it by.
  */
 export { PREVIEW_SANDBOX } from './wc-document-frame.js';
+
+/**
+ * A word on why a save failed, short enough to read as a reason rather than
+ * a stack trace. Empty when the error has no message or the message is long.
+ */
+const MAX_DETAIL_LENGTH = 120;
+
+function failureDetail(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return detail.length > 0 && detail.length <= MAX_DETAIL_LENGTH ? detail : '';
+}
 
 /**
  * The invoice page as the client will see it, behind a disclosure.
@@ -36,7 +49,7 @@ export class WcInvoicePreview extends LitElement {
 
     summary {
       padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-      cursor: pointer;
+      cursor: default;
       font-weight: var(--wa-font-weight-medium, 500);
     }
 
@@ -62,8 +75,22 @@ export class WcInvoicePreview extends LitElement {
       font-size: var(--wa-font-size-s, 13px);
     }
 
-    a {
+    a,
+    button[data-pdf-link] {
       color: var(--wa-color-brand);
+    }
+
+    button[data-pdf-link] {
+      font: inherit;
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: default;
+    }
+
+    button[data-pdf-link]:disabled {
+      opacity: 0.5;
+      cursor: default;
     }
 
     .unavailable {
@@ -79,6 +106,10 @@ export class WcInvoicePreview extends LitElement {
   /** The PDF address. Offered only when `pdfAvailable`. */
   @property({ type: String, attribute: 'pdf-src' })
   pdfSrc = '';
+
+  /** Wins over `pdfSrc` when set. */
+  @property({ attribute: false })
+  pdfTarget: ExportTarget | null = null;
 
   /**
    * Whether this build of the server can render a PDF.
@@ -105,6 +136,52 @@ export class WcInvoicePreview extends LitElement {
     this.open = details.open;
   };
 
+  /** Guards a second click while the first save is still running. */
+  @state()
+  private downloadingPdf = false;
+
+  /** The same treatment `wc-export-links` gives its links, for the one here. */
+  private renderPdfLink() {
+    const target = this.pdfTarget;
+    if (target?.kind === 'action') {
+      return html`<button
+        type="button"
+        data-pdf-link
+        ?disabled=${this.downloadingPdf}
+        @click=${(event: Event) => this.runPdfDownload(event, target)}
+      >
+        Download the PDF
+      </button>`;
+    }
+    const href = target?.kind === 'href' ? target.href : this.pdfSrc;
+    return html`<a href=${href} data-pdf-link download>Download the PDF</a>`;
+  }
+
+  /**
+   * `run` throws on failure rather than reporting it itself, so a full disk
+   * or a read-only destination has to be surfaced here — otherwise the
+   * button un-busies and the operator believes the PDF saved.
+   */
+  private runPdfDownload = async (
+    event: Event,
+    target: Extract<ExportTarget, { kind: 'action' }>,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (this.downloadingPdf) return;
+    this.downloadingPdf = true;
+    try {
+      await target.run();
+    } catch (error) {
+      const detail = failureDetail(error);
+      dispatchNcToast(this, {
+        message: detail ? `Couldn't save the PDF. ${detail}` : "Couldn't save the PDF.",
+        variant: 'danger',
+      });
+    } finally {
+      this.downloadingPdf = false;
+    }
+  };
+
   render() {
     return html`
       <details ?open=${this.open} @toggle=${this.handleToggle}>
@@ -129,7 +206,7 @@ export class WcInvoicePreview extends LitElement {
                 >`
               : nothing}
             ${this.pdfAvailable
-              ? html`<a href=${this.pdfSrc} data-pdf-link download>Download the PDF</a>`
+              ? this.renderPdfLink()
               : html`<span class="unavailable" data-pdf-unavailable
                   >PDF export is not available in this build.</span
                 >`}

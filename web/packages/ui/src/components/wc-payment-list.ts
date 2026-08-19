@@ -67,6 +67,10 @@ export class WcPaymentList extends LitElement {
       white-space: nowrap;
     }
 
+    td {
+      user-select: text;
+    }
+
     th {
       color: var(--wa-color-muted);
       font-weight: var(--wa-font-weight-medium, 500);

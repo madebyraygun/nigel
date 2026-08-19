@@ -789,6 +789,16 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-invoice-summary')).toBeNull();
   });
 
+  it('hands the preview a pdf target rather than a bare href', async () => {
+    const { el, fake } = await mount('number=1250');
+
+    const preview = el.shadowRoot?.querySelector('wc-invoice-preview');
+
+    expect((preview as { pdfTarget?: unknown } | null)?.pdfTarget).toEqual(
+      fake.invoicePreviewTarget(1250),
+    );
+  });
+
   it('hands the send dialog a pdf target rather than a bare href', async () => {
     const { el, fake } = await mount('number=1250');
 

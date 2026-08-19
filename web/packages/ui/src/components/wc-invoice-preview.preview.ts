@@ -44,6 +44,16 @@ const preview: Preview = {
         <wc-invoice-preview open src=${page} .pdfAvailable=${false}></wc-invoice-preview>
       `,
     },
+    {
+      name: 'pdf-action',
+      render: () => html`
+        <wc-invoice-preview
+          open
+          src=${page}
+          .pdfTarget=${{ kind: 'action', run: async () => {} }}
+        ></wc-invoice-preview>
+      `,
+    },
   ],
 };
 

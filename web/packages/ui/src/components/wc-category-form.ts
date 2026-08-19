@@ -178,6 +178,7 @@ export class WcCategoryForm extends LitElement {
             data-name
             label="Name"
             autocomplete="off"
+            spellcheck="false"
             value=${this.value.name}
             ?disabled=${this.disabled}
             @input=${this.handleField('name')}
@@ -203,6 +204,7 @@ export class WcCategoryForm extends LitElement {
           data-tax-line
           label="Tax line"
           autocomplete="off"
+          spellcheck="false"
           hint="Free text, as on Schedule C."
           value=${this.value.taxLine}
           ?disabled=${this.disabled}
@@ -223,6 +225,7 @@ export class WcCategoryForm extends LitElement {
             type="text"
             list="form-line-options"
             autocomplete="off"
+            spellcheck="false"
             .value=${this.value.formLine}
             ?disabled=${this.disabled}
             @input=${this.handleField('formLine')}

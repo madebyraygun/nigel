@@ -44,6 +44,7 @@ export class WcReconcileResult extends LitElement {
       margin: 0;
       justify-self: end;
       font-variant-numeric: tabular-nums;
+      user-select: text;
     }
 
     dt.difference,

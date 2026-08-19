@@ -96,6 +96,20 @@ describe('wc-money', () => {
       : String(styles);
     expect(cssText).toContain('tabular-nums');
   });
+
+  // The document turns off user-select so the desktop shell does not paint a
+  // selection while dragging its chrome, and that choice inherits through
+  // every shadow boundary underneath it. A figure is exactly the kind of
+  // thing a person copies out of the app, so this component opts back in
+  // rather than losing selection everywhere it renders an amount.
+  it('stays selectable despite the document-level user-select: none', async () => {
+    const el = await mount({ amount: 1 });
+    const styles = (el.constructor as typeof WcMoney).styles;
+    const cssText = Array.isArray(styles)
+      ? styles.map((s) => String(s)).join('\n')
+      : String(styles);
+    expect(cssText).toContain('user-select: text');
+  });
 });
 
 describePreviewA11y(preview);

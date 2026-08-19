@@ -93,6 +93,10 @@ export class WcManagerTable extends LitElement {
         vertical-align: top;
       }
 
+      td {
+        user-select: text;
+      }
+
       th {
         font-weight: var(--wa-font-weight-medium, 500);
         color: var(--wa-color-muted);
@@ -123,6 +127,7 @@ export class WcManagerTable extends LitElement {
         justify-content: flex-end;
         gap: var(--wa-space-2xs, 4px);
         white-space: nowrap;
+        user-select: none;
       }
 
       th.actions-header {

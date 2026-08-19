@@ -71,8 +71,9 @@ The workspace has two members, and the line between them is what a client needs 
 
 `nigel-core` (`crates/nigel-core/`) is the `nigel_core` library: the SQLite data layer, importers,
 the rules engine, reports, invoicing, and the web server (`server`, feature-gated behind `serve`).
-It links without clap, ratatui or crossterm, so any client — the `nigel` binary, a future desktop
-shell, a test — can depend on it without pulling in a terminal UI.
+It links without clap, ratatui or crossterm, so any client — the `nigel` binary, the desktop
+shell (`crates/nigel-desktop`, its own workspace — see `docs/desktop.md`), a test — can depend
+on it without pulling in a terminal UI.
 
 `nigel` (`crates/nigel/`) is the binary: the clap CLI (`cli/`), the shared ratatui/TUI helpers
 (`tui.rs`, `effects.rs`), the interactive register browser (`browser.rs`), and `main.rs`, which
@@ -261,6 +262,7 @@ docs/
   api.md                # HTTP API inventory (endpoints, error envelope, security model)
   importers.md          # Importer format specifications and authoring guide
   invoicing.md          # Invoicing setup (secrets, R2/Cloudflare routing) and command reference
+  desktop.md            # The Tauri desktop shell: transport, origins, exports, dev loop
   walkthrough.md        # Guided tour using demo data
   skills.md             # Claude skills documentation
 ```

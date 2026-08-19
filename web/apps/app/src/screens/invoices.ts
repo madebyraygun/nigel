@@ -943,6 +943,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       <wc-invoice-preview
         .src=${this.client.invoicePreviewUrl(detail.number, 'html')}
         .pdfSrc=${this.client.invoicePreviewUrl(detail.number, 'pdf')}
+        .pdfTarget=${this.client.invoicePreviewTarget(detail.number)}
         .pdfAvailable=${this.pdfExport}
         .missing=${this.invoicing?.missing ?? []}
       ></wc-invoice-preview>

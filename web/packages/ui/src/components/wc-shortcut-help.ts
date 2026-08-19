@@ -54,7 +54,7 @@ export class WcShortcutHelp extends LitElement {
       border: 1px solid transparent;
       border-radius: var(--wa-radius-sm, 6px);
       padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-      cursor: pointer;
+      cursor: default;
     }
 
     .trigger:hover,
