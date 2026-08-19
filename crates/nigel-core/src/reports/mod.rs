@@ -501,8 +501,12 @@ pub struct RegisterReport {
 /// Which categories a register selection covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CategorySelection {
-    /// `name` is the display name of the category row `id` refers to;
-    /// construct via `RegisterFilters::resolve` so the pair cannot drift.
+    /// `name` is the display name of the category row `id` refers to. The two
+    /// halves come out of one row in `RegisterFilters::resolve`, and the variant
+    /// is `non_exhaustive` so that stays the only way to get one: the id drives
+    /// the SQL and the name goes in the report header, so a pair that disagrees
+    /// prints one category's name over another category's rows.
+    #[non_exhaustive]
     Named {
         id: i64,
         name: String,
@@ -510,20 +514,59 @@ pub enum CategorySelection {
     Uncategorized,
 }
 
+impl CategorySelection {
+    /// A named selection assembled without a database, for tests in crates that
+    /// depend on this one. Not compiled into a normal build: production callers
+    /// go through `RegisterFilters::resolve`, which is what makes the id and the
+    /// name describe the same row.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn named_for_test(id: i64, name: impl Into<String>) -> Self {
+        Self::Named {
+            id,
+            name: name.into(),
+        }
+    }
+}
+
 /// Non-date filters applied to a register selection. Carries the display names
 /// so report headers can describe the selection. The category was validated at
 /// construction; the account deliberately was not — an unknown account is an
 /// empty register, matching what `--account` has always done.
 ///
-/// A DTO: the public fields enforce no invariant, and anyone linking this crate
-/// may set them to any combination.
+/// The fields are private so the validated category cannot be swapped for an
+/// unvalidated one after the fact. Both ways to build one carry a category the
+/// database agreed to: `resolve` reads it out, and `for_account` sets none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RegisterFilters {
-    pub account: Option<String>,
-    pub category: Option<CategorySelection>,
+    account: Option<String>,
+    category: Option<CategorySelection>,
 }
 
 impl RegisterFilters {
+    /// Filter on an account and nothing else.
+    ///
+    /// What the HTTP register routes want: they refuse category filters by name
+    /// in `ReportParams::parse`, so the category half is always empty and there
+    /// is nothing to validate against the database.
+    pub fn for_account(account: Option<String>) -> Self {
+        Self {
+            account,
+            category: None,
+        }
+    }
+
+    /// Add an already-resolved category selection.
+    ///
+    /// Test-only, like `CategorySelection::named_for_test`: no production caller
+    /// wants one. The CLI resolves its filters from user input, and the HTTP
+    /// routes refuse category filters by name, so `resolve` and `for_account`
+    /// cover every real path.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn with_category(mut self, category: CategorySelection) -> Self {
+        self.category = Some(category);
+        self
+    }
+
     /// Resolve raw CLI arguments, validating the category name against the
     /// database and resolving it to an id; the account passes through
     /// unvalidated. Only active categories match: an inactive one has zero

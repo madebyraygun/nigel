@@ -451,7 +451,8 @@ pub fn preview(number: i64, output_dir: Option<String>) -> Result<()> {
         );
     }
     let profile = company_profile(&conn);
-    if let Some(notice) = payment_instructions_notice(&profile.payment_instructions, has_override) {
+    if let Some(notice) = payment_instructions_notice(profile.payment_instructions(), has_override)
+    {
         eprintln!("{notice}");
     }
     let branding = profile.branding(&template, &contact_email);
@@ -595,7 +596,7 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
     let contact_email = contact_email_for_preview(&cfg).0;
     let profile = company_profile(&conn);
     if let Some(notice) = payment_instructions_notice(
-        &profile.payment_instructions,
+        profile.payment_instructions(),
         matches!(template, std::borrow::Cow::Owned(_)),
     ) {
         eprintln!("{notice}");
@@ -627,8 +628,8 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         }
     }
 
-    let clients = build_clients(cfg, &profile.name)?;
-    for warning in &clients.warnings {
+    let clients = build_clients(cfg, profile.name())?;
+    for warning in clients.warnings() {
         eprintln!("notice: {warning}");
     }
     let outcome = send_invoice(
@@ -636,9 +637,9 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         invoice.id,
         today,
         &branding,
-        &clients.stripe,
-        &clients.r2,
-        &clients.mail,
+        clients.stripe(),
+        clients.r2(),
+        clients.mail(),
     )?;
     println!("Sent invoice #{number}: {}", outcome.public_url);
     // What the send went ahead despite — a letterhead logo that could not be
@@ -1230,14 +1231,16 @@ mod tests {
             from_name: None,
             ..configured()
         };
-        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        let built = build_clients(cfg, "Bluepeak").expect("built");
+        let mail = built.mail();
         assert_eq!(mail.envelope.from_name.as_deref(), Some("Bluepeak"));
 
         let cfg = InvoicingConfig {
             from_name: Some("Bluepeak Books".into()),
             ..configured()
         };
-        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        let built = build_clients(cfg, "Bluepeak").expect("built");
+        let mail = built.mail();
         assert_eq!(
             mail.envelope.from_name.as_deref(),
             Some("Bluepeak Books"),
@@ -1251,7 +1254,8 @@ mod tests {
             from_name: None,
             ..configured()
         };
-        let mail = build_clients(cfg, "").expect("built").mail;
+        let built = build_clients(cfg, "").expect("built");
+        let mail = built.mail();
         assert!(mail.envelope.from_name.is_none());
     }
 
@@ -1261,7 +1265,8 @@ mod tests {
             reply_to_email: Some("sam@elsewhere.test".into()),
             ..configured()
         };
-        let mail = build_clients(cfg, "Bluepeak").expect("built").mail;
+        let built = build_clients(cfg, "Bluepeak").expect("built");
+        let mail = built.mail();
         assert_eq!(
             mail.envelope.reply_to.as_deref(),
             Some("sam@elsewhere.test")
@@ -1278,15 +1283,15 @@ mod tests {
             ..configured()
         };
         let built = build_clients(cfg, "Bluepeak").expect("built");
-        assert_eq!(built.mail.envelope.from_address, "billing@elsewhere.test");
-        assert_eq!(built.warnings.len(), 1, "got: {:?}", built.warnings);
-        assert!(built.warnings[0].contains("mailgun_domain"));
+        assert_eq!(built.mail().envelope.from_address, "billing@elsewhere.test");
+        assert_eq!(built.warnings().len(), 1, "got: {:?}", built.warnings());
+        assert!(built.warnings()[0].contains("mailgun_domain"));
 
         let on_domain = build_clients(configured(), "Bluepeak").expect("built");
         assert!(
-            on_domain.warnings.is_empty(),
+            on_domain.warnings().is_empty(),
             "got: {:?}",
-            on_domain.warnings
+            on_domain.warnings()
         );
     }
 

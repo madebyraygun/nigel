@@ -324,10 +324,7 @@ async fn register(
         if let Some(account) = request.params.account.as_deref() {
             ensure_account_exists(conn, account)?;
         }
-        let filters = reports::RegisterFilters {
-            account: request.params.account.clone(),
-            category: None,
-        };
+        let filters = reports::RegisterFilters::for_account(request.params.account.clone());
         let report = reports::get_register(
             conn,
             request.params.year,

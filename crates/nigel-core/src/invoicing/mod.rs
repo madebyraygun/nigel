@@ -30,7 +30,7 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// the CLI and a blocking thread the server never gets back. Bounding it here
 /// rather than at each call site is what makes "every outbound invoicing
 /// request is bounded" a property of the module instead of a habit.
-pub(crate) fn http_client() -> reqwest::blocking::Client {
+pub(in crate::invoicing) fn http_client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
