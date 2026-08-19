@@ -60,6 +60,42 @@ fn read_error(path: &Path, error: &std::io::Error) -> String {
     format!("Couldn't read {}: {error}", path.display())
 }
 
+use tauri_plugin_dialog::DialogExt;
+
+use crate::db;
+
+/// Spool a file the user dropped onto the window.
+///
+/// Async for `stage_file`'s benefit rather than the dialog's: reading and
+/// writing a statement is blocking work, and an async `#[tauri::command]` runs
+/// it on the async runtime instead of the main thread.
+#[tauri::command]
+pub async fn stage_import(path: String) -> Result<StagedUpload, String> {
+    stage_file(
+        Path::new(&path),
+        &uploads::uploads_dir(&db::database_path()),
+    )
+}
+
+/// Open a native file dialog filtered to what the importers read, and spool
+/// whatever comes back.
+///
+/// `Ok(None)` is a cancelled dialog, which is a normal outcome and not an
+/// error: the user changed their mind.
+#[tauri::command]
+pub async fn pick_import_file(app: tauri::AppHandle) -> Result<Option<StagedUpload>, String> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter("Statements", &uploads::ALLOWED_EXTENSIONS)
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    stage_file(&path, &uploads::uploads_dir(&db::database_path())).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
