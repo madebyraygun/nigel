@@ -490,6 +490,7 @@ impl AccountManager {
                         conn,
                         &name,
                         &acct_type,
+                        None,
                         institution.as_deref(),
                         last_four.as_deref(),
                     ) {

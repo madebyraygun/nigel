@@ -514,6 +514,7 @@ impl CategoryManager {
                             conn,
                             &name,
                             &cat_type,
+                            None,
                             tax_line.as_deref(),
                             form_line.as_deref(),
                         ) {
@@ -534,6 +535,7 @@ impl CategoryManager {
                                 cat.id,
                                 &name,
                                 &cat_type,
+                                cat.class,
                                 tax_line.as_deref(),
                                 form_line.as_deref(),
                             ) {
