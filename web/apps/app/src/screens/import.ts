@@ -173,7 +173,7 @@ export class NigelImportScreen extends LitElement {
   private staged: StagedUpload | null = null;
 
   /** Fixed for the screen's life: one client, one answer. */
-  private source: ImportSource = { kind: 'browser' };
+  @state() private source: ImportSource = { kind: 'browser' };
 
   private unsubscribeDragDrop: (() => void) | null = null;
 
@@ -195,8 +195,14 @@ export class NigelImportScreen extends LitElement {
   /** Toast text already shown, so a repeated failure does not stack up. */
   private toasted = new Set<string>();
 
+  willUpdate(): void {
+    // Before the first render rather than after it: `source` decides how the
+    // dropzone paints, and setting reactive state once the update has
+    // completed would cost a second one.
+    if (!this.hasUpdated) this.source = this.client.importSource();
+  }
+
   firstUpdated(): void {
-    this.source = this.client.importSource();
     this.listenForDrops();
     void this.load();
   }

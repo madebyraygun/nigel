@@ -4,8 +4,11 @@
 use std::path::Path;
 
 use serde::Serialize;
+use tauri_plugin_dialog::DialogExt;
 
 use nigel_core::server::uploads;
+
+use crate::db;
 
 /// A file the desktop shell has spooled.
 ///
@@ -59,10 +62,6 @@ pub fn stage_file(path: &Path, uploads_dir: &Path) -> Result<StagedUpload, Strin
 fn read_error(path: &Path, error: &std::io::Error) -> String {
     format!("Couldn't read {}: {error}", path.display())
 }
-
-use tauri_plugin_dialog::DialogExt;
-
-use crate::db;
 
 /// Spool a file the user dropped onto the window.
 ///

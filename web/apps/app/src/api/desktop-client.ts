@@ -90,10 +90,14 @@ export class DesktopApiClient extends FetchApiClient {
     const subscribe = (name: string, toEvent: (payload: unknown) => DragDropEvent) => {
       void this.listen(name, (event) => {
         if (!cancelled) handler(toEvent(event.payload));
-      }).then((unlisten) => {
-        if (cancelled) unlisten();
-        else off.push(unlisten);
-      });
+      })
+        .then((unlisten) => {
+          if (cancelled) unlisten();
+          else off.push(unlisten);
+        })
+        // An ACL-denied `listen` leaves the picker as the only way in, which
+        // works; a rejection thrown from here would only be unhandled.
+        .catch(() => {});
     };
 
     subscribe(DRAG_EVENTS.enter, () => ({ type: 'over' }));
