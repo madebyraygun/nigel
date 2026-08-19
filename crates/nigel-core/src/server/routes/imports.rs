@@ -33,6 +33,7 @@ use super::with_conn;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/imports", get(list_imports))
+        .route("/imports/{id}/rejects", get(import_rejects))
         .route("/imports/{id}", delete(undo_import))
         .route("/imports/formats", get(list_formats))
         .route(
@@ -77,6 +78,24 @@ async fn undo_import(
 
 async fn list_imports(State(state): State<AppState>) -> ApiResult<Json<Vec<ImportListItem>>> {
     Ok(Json(with_conn(&state, imports::list_imports).await?))
+}
+
+/// The rows one import could not parse. A missing import is a `404` rather
+/// than an empty list: "nothing was dropped" and "no such import" are
+/// different answers.
+async fn import_rejects(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<Vec<imports::ImportReject>>> {
+    let rejects = with_conn(&state, move |conn| {
+        if !imports::import_exists(conn, id)? {
+            return Err(NigelError::NotFound(format!("No import with ID {id}")));
+        }
+        imports::list_rejects(conn, id)
+    })
+    .await?;
+
+    Ok(Json(rejects))
 }
 
 async fn list_csv_profiles(State(state): State<AppState>) -> ApiResult<Json<Vec<CsvProfile>>> {
@@ -1050,5 +1069,43 @@ mod tests {
             "{body}"
         );
         assert_eq!(counts(&db_path), before, "the refused confirm wrote rows");
+    }
+
+    #[tokio::test]
+    async fn an_imports_rejects_are_readable_and_go_with_the_undo() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let mixed = b"Date,Description,Amount,Running Bal.\n\
+                      04/01/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+                      2026-04-09,GLOBEX HOSTING,-88.00,0.00\n"
+            .to_vec();
+        let upload_id = upload_ok(&app, &token, "april.csv", &mixed).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+        let (status, confirmed) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+        assert_eq!(status, StatusCode::OK, "{confirmed}");
+        assert_eq!(confirmed["malformed"], 1);
+        let import_id = confirmed["importId"].as_i64().expect("an importId");
+
+        let history = ok_json(&app, "/api/imports", &token).await;
+        assert_eq!(history[0]["malformedCount"], 1);
+
+        let rejects = ok_json(&app, &format!("/api/imports/{import_id}/rejects"), &token).await;
+        assert_eq!(rejects.as_array().unwrap().len(), 1);
+        assert_eq!(rejects[0]["rowNumber"], 3);
+        assert_eq!(
+            rejects[0]["content"],
+            "2026-04-09,GLOBEX HOSTING,-88.00,0.00"
+        );
+        assert_eq!(
+            rejects[0]["reason"],
+            "date \"2026-04-09\" is not MM/DD/YYYY"
+        );
+
+        let (status, _) = delete_json(&app, &format!("/api/imports/{import_id}"), &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) =
+            get_json(&app, &format!("/api/imports/{import_id}/rejects"), &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 }
