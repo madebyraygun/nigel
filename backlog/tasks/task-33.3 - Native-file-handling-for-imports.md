@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-19 14:59'
+updated_date: '2026-08-19 15:18'
 labels:
   - tauri
   - frontend
@@ -37,7 +37,8 @@ CI cannot open a native dialog or synthesize an OS drag, so the shell's half of 
 task is proved by hand. On macOS, run through the following in order:
 
 1. Build the web assets (`cd web && npm run build`), then launch the shell with
-   `cargo run -p nigel-desktop` from the repository root.
+   `cargo run` from `crates/nigel-desktop`. The desktop crate is excluded from the
+   root workspace, so `-p nigel-desktop` does not resolve from the repository root.
 2. On the import screen, click the drop well. The native file dialog opens, its
    filter offers only the spreadsheet extensions the importers accept, and the
    chosen statement comes back onto the screen labelled with its filename and size.
@@ -53,7 +54,17 @@ task is proved by hand. On macOS, run through the following in order:
    it. The file is re-staged from the retained path and the confirm succeeds instead
    of failing with an expired upload.
 
-Steps 4 through 7 have no automated coverage in this plan — native drag events, the
-unreadable-file path through the shell, the end-to-end confirm in the packaged app,
-and re-staging after expiry are all operator-verified only.
+What is operator-only is the shell's own edge: the native dialog in steps 2 and 3,
+a real OS drag reaching the window in steps 4 and 5, and the end-to-end confirm in
+the packaged app in step 6.
+
+Everything those steps drive once the event arrives is pinned automatically. The
+reduction of Tauri's four drag events to over/leave/drop is covered in
+`web/apps/app/src/api/desktop-client.test.ts`; the screen's highlight response and
+its refusal of an unreadable drop are covered in
+`web/apps/app/src/screens/import.test.ts`. Step 7 in particular has two pins — the
+retained-path re-stage test in `import.test.ts` and
+`a_staged_id_the_spool_has_forgotten_is_the_upload_expired_404` in
+`crates/nigel-desktop/tests/desktop_imports.rs` — so the manual pass there is
+confirming the timing in a real session, not the logic.
 <!-- SECTION:NOTES:END -->

@@ -16,7 +16,7 @@ serve` uses, so building the SPA comes first:
 
 ```bash
 cd web && npm run build
-cargo run -p nigel-desktop
+cd crates/nigel-desktop && cargo run
 ```
 
 Skip the first step and the window still opens — it just shows the "SPA not
@@ -26,7 +26,7 @@ sourceless `cargo build` shows for the CLI.
 ## The dev loop
 
 The SPA is embedded at build time, so a change to `web/` needs `npm run
-build` and a `cargo run -p nigel-desktop` rebuild before the shell shows it —
+build` and a `cargo run` rebuild before the shell shows it —
 there is no live reload here. The Vite dev server that gives the browser loop
 its speed proxies over HTTP, and a custom URI scheme is not something it can
 proxy to, so that loop stays outside the shell entirely:
@@ -37,7 +37,7 @@ cd web && npm run dev          # terminal 2
 ```
 
 Use the browser loop for UI work — it is the fast one — and reach for
-`cargo run -p nigel-desktop` only to check the transport itself: the scheme
+`cargo run` in `crates/nigel-desktop` only to check the transport itself: the scheme
 protocol, the save dialog, the PDF handling, anything a browser tab can't
 stand in for.
 
