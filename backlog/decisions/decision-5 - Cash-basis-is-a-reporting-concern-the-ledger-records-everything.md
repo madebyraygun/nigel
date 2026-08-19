@@ -30,6 +30,9 @@ Two permanent invariants, then the v1 scope boundary.
 **1. Cash basis is a reporting concern, not a recording concern.** The ledger records
 everything; the report decides what to recognise. Cash basis stays the default and the
 primary supported mode. This invariant is permanent — it is not a v1 simplification.
+"Everything" means every cash event the register records — every transaction, transfer
+and split. Documents that are not yet money, invoices foremost, join the ledger when
+their posting rules ship; decision-6 keeps them off it in v1.
 
 **2. The second leg is always derived, never asked for.** The account comes from the
 import; the user picks a category, exactly as today. Any screen that asks a user to
@@ -41,11 +44,13 @@ constraint from classification to the ledger itself.
 multi-currency are **deferred beyond v1, not rejected**. The architecture is chosen so
 that adding them later is feature work rather than a migration:
 
-- **Accrual** arrives for free from invariant 1: posting rules plus a report basis
-  toggle, not a schema rewrite. Decision-6 already posts invoices accrual-shaped; only
-  the report's recognition rule changes.
+- **Accrual** arrives from invariant 1: posting rules plus a report basis toggle, not
+  a schema rewrite. Invoicing stays off the ledger in v1 (decision-6); accrual later
+  means adding invoice posting rules and the toggle against a schema that needs no
+  change.
 - **A/P** needs nothing now. When it comes, it is another liability account under the
-  TASK-9.1 classification, exactly as A/R is an asset account.
+  TASK-9.1 classification — the same way A/R becomes an asset account when accrual
+  ships (decision-6).
 - **Multi-currency** gets the one deliberate cheap hook: a `currency` column on journal
   lines, `NOT NULL`, defaulted to the book's currency, with v1 validation rejecting any
   other value. It is the single deferred feature whose absence from the schema would
@@ -66,6 +71,7 @@ that adding them later is feature work rather than a migration:
 - Nothing below the report layer may branch on basis. A recording-layer "cash mode"
   would be exactly the conflation this decision exists to prevent, and it is what would
   turn the accrual toggle back into a migration.
-- Decision-6 is where invariant 1 is most at risk, because invoicing is the one place
-  Nigel already records money that has not arrived. Its posting rule is chosen so that
-  an unpaid invoice can never appear in cash-basis income.
+- Decision-6 is where the cash-basis promise is most at risk, because invoicing is the
+  one place Nigel already records money that has not arrived. It keeps invoicing off
+  the ledger in v1, so an unpaid invoice structurally cannot appear in cash-basis
+  income.

@@ -4,7 +4,7 @@ title: Trial balance read from journal lines
 status: To Do
 assignee: []
 created_date: '2026-08-19 16:10'
-updated_date: '2026-08-19 16:10'
+updated_date: '2026-08-19 16:41'
 labels:
   - reports
 milestone: m-0
@@ -21,13 +21,13 @@ The trial balance becomes a read: sum journal lines per account, print debit and
 
 ## Relationship to TASK-27
 
-TASK-27 derives a trial balance from single-entry data, and its own text already says that if journal lines land, "this report should be reimplemented as a straight query over journal lines and its derivation logic dropped." This task **is** that reimplementation, and it supersedes TASK-27's derivation approach outright. What carries over from TASK-27 rather than being dropped:
+TASK-27 derived a trial balance from single-entry data, and its own text said that if journal lines land, "this report should be reimplemented as a straight query over journal lines and its derivation logic dropped." This task **is** that report, and TASK-27 is closed as superseded by it. What carries over from TASK-27 rather than being dropped:
 
 - The output contract: one row per account with separate Debit and Credit columns, `--format csv` producing an Account/Debit/Credit file that tax software (TaxAct Business) accepts without hand-editing.
 - The reporting-year framing: balance-sheet rows as of the last day of the reporting year, income and expense rows for the year.
 - The warnings: uncategorized transactions on or before year end are named (they sit in the uncategorized account, so the report should say so rather than tie quietly around them).
 
-Whether TASK-27 is closed now or kept as a pre-ledger stopgap for the immediate filing window is the operator's call, recorded in TASK-27 itself. Either way, no derivation logic is written twice: if TASK-27 ships first it builds the as-of-date primitives (with TASK-46 and TASK-102.1), and this task replaces its internals.
+No pre-ledger stopgap ships: the operator closed TASK-27 rather than keeping it for the filing window, so no derivation logic is written at all. The as-of-date balance primitive is shared with TASK-46 and TASK-102.1 — whichever of this task and TASK-102.1 starts first builds it.
 
 On vocabulary: the standing constraint is that nobody sees the word "debit" *unless they go looking for it* — and asking for a trial balance is going looking. Debit/Credit columns are correct here; every default surface keeps decision-5's invariant 2.
 <!-- SECTION:DESCRIPTION:END -->

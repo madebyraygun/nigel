@@ -1,9 +1,12 @@
 ---
 id: TASK-9.7
-title: 'Invoicing posting rules: A/R in the ledger, cash in the reports'
+title: >-
+  Invoicing reconciliation: payments linked to bank deposits, off the ledger in
+  v1
 status: To Do
 assignee: []
 created_date: '2026-08-19 16:09'
+updated_date: '2026-08-19 16:40'
 labels:
   - architecture
   - invoicing
@@ -13,7 +16,7 @@ dependencies:
 references:
   - >-
     backlog/decisions/decision-6 -
-    Invoice-payments-post-to-accounts-receivable-cash-basis-reports-read-the-bank.md
+    Invoicing-stays-off-the-ledger-in-v1-recognition-is-the-bank-deposit.md
 parent_task_id: TASK-9
 priority: medium
 ---
@@ -21,33 +24,29 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Implements decision-6 — the posting rule that ties invoicing to the ledger, and the guardrail that keeps the cash-basis promise. This is the single place the promise could break, so the task exists to make the rule enforced rather than understood.
-
-## The rule (decision-6)
-
-- An issued invoice posts to an A/R account (receivable against revenue).
-- A recorded payment clears A/R.
-- **Cash-basis reports exclude A/R entirely** — recognition happens when money hits the bank, which is what the register already records.
-- **Unpaid invoices never appear in cash-basis income.** If one does, the change meant to strengthen the product has broken its primary use case.
+Implements decision-6: invoicing stays off the ledger in v1, and what ties the two subsystems together is a reconciliation link, not a posting rule. There is no A/R account in v1 — a deposit categorized to income is the recognition, once, at the bank, exactly as today — so this task's job is to make the invoicing tables and the register checkable against each other instead of silently divergent.
 
 ## The link
 
-`invoice_payments` gains a nullable `transaction_id` naming the bank deposit that settled the payment. Linking is suggested (same amount inside a date window) and **user-confirmed, never silent** — all financial modifications require confirmation. A linked deposit books its cash against A/R instead of an income category, so the money is recognised exactly once, at the bank. An amount difference (a processor deposit net of fees is the known case) must be categorised explicitly as part of confirming the link — a fee leg on the same entry — never absorbed. Unlinked disagreements surface on a reconciliation surface and nothing auto-resolves; the bank wins for cash-basis figures either way.
+`invoice_payments` gains a nullable `transaction_id` naming the bank deposit that settled the payment. Links are suggested — same amount inside a date window — and **user-confirmed, never silent**: all financial modifications require confirmation. An amount difference (a processor deposit net of fees is the known case) is recorded on the link as the explanation; nothing books a fee leg in v1, and the deposit stays the income figure.
 
-## Fixture
+## The disagreement surface
 
-An issued-unpaid invoice (Acme) and a part-paid one (Cedar Systems), with invented amounts: the cash-basis P&L shows only the banked money, A/R carries the rest, and the parity/regression test pins it.
+A payment with no matching deposit inside the window, or a difference the operator has not confirmed, surfaces on a reconciliation surface — a queue, not a heuristic. Nothing auto-resolves, and cash-basis figures follow the bank unconditionally, because the bank is the only thing posting.
+
+## The guardrail
+
+This is the single place the cash-basis promise could break, so the fixture pins it: an issued-unpaid invoice (Acme) and a part-paid one (Cedar Systems), with invented amounts — neither moves the cash-basis P&L by a cent, and no A/R appears on any v1 report. When accrual ships later, this link is also what the opening-A/R derivation reads; nothing more is built for that now.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An issued invoice posts to an A/R account and a recorded payment clears it, per decision-6
-- [ ] #2 Cash-basis reports exclude A/R entirely: on a fixture with an unpaid invoice (Acme) and a part-paid one (Cedar Systems), the cash-basis P&L shows only banked money, and a test pins it
-- [ ] #3 invoice_payments gains a nullable transaction_id; links are suggested by amount and date window but always user-confirmed, and an amount difference must be categorised explicitly (fee leg) as part of confirming
-- [ ] #4 Unlinked disagreements surface on a reconciliation surface and nothing auto-resolves; cash-basis figures follow the bank either way
-- [ ] #5 A/R appears on the balance sheet and trial balance, and never in cash-basis income
-- [ ] #6 Update test coverage
-- [ ] #7 Create or update documentation, making sure to remove any out of date information
-- [ ] #8 All linting checks pass
-- [ ] #9 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
+- [ ] #1 Invoices and invoice payments post nothing to the ledger; no A/R account exists on any v1 surface, and a deposit categorized to income remains the sole recognition path
+- [ ] #2 invoice_payments gains a nullable transaction_id; links are suggested by amount within a date window and always user-confirmed, and an amount difference is recorded on the link as its explanation without booking a fee leg
+- [ ] #3 Unmatched payments and unconfirmed differences surface on a reconciliation surface; nothing auto-resolves, and cash-basis figures follow the bank unconditionally
+- [ ] #4 On a fixture with an issued-unpaid invoice (Acme) and a part-paid one (Cedar Systems), the cash-basis P&L is unchanged by both, and a test pins it
+- [ ] #5 Update test coverage
+- [ ] #6 Create or update documentation, making sure to remove any out of date information
+- [ ] #7 All linting checks pass
+- [ ] #8 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->

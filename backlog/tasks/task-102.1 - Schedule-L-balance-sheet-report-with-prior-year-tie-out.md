@@ -4,7 +4,7 @@ title: Schedule L balance sheet report with prior-year tie-out
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
-updated_date: '2026-08-13 19:48'
+updated_date: '2026-08-19 16:39'
 labels:
   - tax
   - reports
@@ -53,3 +53,9 @@ Coordinate with TASK-27 (trial balance): both need as-of-date balances from TASK
 - [ ] #9 All linting checks pass
 - [ ] #10 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+TASK-27 is closed as superseded by TASK-9.11. The coordinate-with-TASK-27 note in the description now points at TASK-46 (as-of-date balances) and TASK-9.11 (trial balance from journal lines): whichever of this task and TASK-9.11 starts first builds the shared as-of-date primitive.
+<!-- SECTION:NOTES:END -->
