@@ -23,7 +23,6 @@ async function mount(client = new FakeApiClient()): Promise<{
   client.calls.length = 0;
 
   const el = document.createElement('nigel-setup-screen');
-  el.client = client;
   document.body.appendChild(el);
   await el.updateComplete;
   return { el, client };
@@ -51,6 +50,23 @@ async function typeInto(el: NigelSetupScreen, label: string, value: string): Pro
   input.value = value;
   input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   await el.updateComplete;
+}
+
+/** Answer the motion query the gate and its components both read. */
+function preferReducedMotion(): void {
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    (query: string) =>
+      ({
+        matches: query.includes('prefers-reduced-motion'),
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList,
+  );
 }
 
 /** Walk arrival -> profile, choosing business or personal. */
@@ -95,6 +111,53 @@ describe('setup screen', () => {
     );
     await el.updateComplete;
     expect(el.shadowRoot?.textContent).toContain('What are we keeping books for?');
+  });
+
+  it('skips the intro on a keypress too', async () => {
+    // The spec offers a click *or* a key, and the key has to work from wherever
+    // focus happens to be: nothing on the arrival takes it, so the listener
+    // cannot hang off the stage the click uses.
+    const { el } = await mount();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    await el.updateComplete;
+    expect(el.shadowRoot?.textContent).toContain('What are we keeping books for?');
+  });
+
+  it('stops listening for that key once the gate is gone', async () => {
+    // A window listener outlives the element it was registered from unless it
+    // is taken off, and this one drives a step change.
+    const { el } = await mount();
+    el.remove();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.textContent).toContain("Hello. I'm Nigel.");
+  });
+
+  it('runs a reveal ticker so the wordmark assembles', async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts no ticker when motion is unwelcome', async () => {
+    // `wc-wordmark` draws itself whole in that case and ignores `reveal`
+    // entirely, so the interval would re-render the gate thirty times over to
+    // no visible effect.
+    preferReducedMotion();
+    vi.useFakeTimers();
+    try {
+      const { el } = await mount();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(el.shadowRoot?.textContent).toContain("Hello. I'm Nigel.");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('asks nothing of the server before the last step', async () => {
@@ -246,6 +309,19 @@ describe('setup screen', () => {
 
     expect(el.shadowRoot?.textContent).toContain('No database found at /nope/nigel.db.');
     expect(reloads).toBe(0);
+  });
+
+  it('refuses to step back while a request is in flight', async () => {
+    // A step change mid-request would land the failure sentence under the
+    // identity step, where it reads as a complaint about the name.
+    const { el, client } = await mount();
+    vi.spyOn(client, 'setup').mockImplementation(() => new Promise(() => {}));
+    await toFirstMove(el);
+
+    button(el, 'Start fresh')?.click();
+    await el.updateComplete;
+
+    expect(button(el, 'Back')?.hasAttribute('disabled')).toBe(true);
   });
 
   it('goes back a step without losing what was typed', async () => {

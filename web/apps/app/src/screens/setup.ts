@@ -1,13 +1,12 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
-import { customElement, state, property } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
-import '@nigel/ui';
+import { prefersReducedMotion } from '@nigel/ui';
 import { controlsCss } from '@nigel/theme';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
-import type { ApiClient } from '../api/index.js';
 import type { BooksProfile, SetupAction } from '../api/types.js';
 import type { ScreenContext } from './context.js';
 
@@ -141,13 +140,6 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     `,
   ];
 
-  /**
-   * Overridable so tests can drive the screen the way every other screen is
-   * driven. The screen itself reaches the server only through the store.
-   */
-  @property({ attribute: false })
-  client: ApiClient | null = null;
-
   @state() private step: Step = 'arrival';
   @state() private reveal = 0;
   @state() private profile: BooksProfile = 'business';
@@ -164,6 +156,17 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // At the window rather than on the stage: nothing on the arrival takes
+    // focus, so a listener on the gate's own markup would never be reached by
+    // the key it is waiting for.
+    window.addEventListener('keydown', this.skipIntro);
+    // `wc-wordmark` draws itself whole when motion is unwelcome and ignores
+    // `reveal` entirely, so a ticker would re-render the gate thirty times
+    // over for nothing.
+    if (prefersReducedMotion()) {
+      this.reveal = 1;
+      return;
+    }
     this.ticker = setInterval(() => {
       this.reveal = Math.min(1, this.reveal + REVEAL_TICK_MS / REVEAL_MS);
       if (this.reveal >= 1) this.stopReveal();
@@ -171,6 +174,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
   }
 
   disconnectedCallback(): void {
+    window.removeEventListener('keydown', this.skipIntro);
     this.stopReveal();
     super.disconnectedCallback();
   }
@@ -180,7 +184,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     this.ticker = null;
   }
 
-  /** Any click during the arrival goes straight to the first question. */
+  /** Any click or key during the arrival goes straight to the first question. */
   private skipIntro = (): void => {
     if (this.step !== 'arrival') return;
     this.stopReveal();
@@ -307,7 +311,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     const companyLabel = this.profile === 'personal' ? 'Household name' : 'Business name';
     return html`
       <h1>Who am I working for?</h1>
-      <div class="form" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="form">
         <wa-input
           label="Your name"
           hint="So I know who I'm greeting. First name is plenty."
@@ -349,7 +353,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
   private renderFirstMove() {
     return html`
       <h1>How shall we start?</h1>
-      <div class="cards" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="cards">
         <div class="card">
           <strong>Show me the demo</strong>
           <span>
@@ -391,7 +395,12 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         </div>
       </div>
       <div class="actions">
-        <wa-button appearance="outlined" @click=${() => (this.step = 'identity')}>Back</wa-button>
+        <wa-button
+          appearance="outlined"
+          ?disabled=${this.busy !== null}
+          @click=${() => (this.step = 'identity')}
+          >Back</wa-button
+        >
       </div>
     `;
   }
