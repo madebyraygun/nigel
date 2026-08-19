@@ -187,11 +187,18 @@ impl ImportScreen {
             Line::from(""),
         ];
 
+        // Wrapped, because what lands here is a sentence from somewhere else —
+        // a refusal naming the format and the first reasons runs past 200
+        // characters, and a truncated reason is a reason nobody can act on.
         for line in result.message.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("   {line}"),
-                Style::default().fg(color),
-            )));
+            let (wrapped, _) =
+                crate::tui::wrap_text(line, (content_area.width as usize).max(20) - 6);
+            for wrapped_line in wrapped.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("   {wrapped_line}"),
+                    Style::default().fg(color),
+                )));
+            }
         }
 
         frame.render_widget(Paragraph::new(lines), content_area);
@@ -328,5 +335,68 @@ fn run_import(conn: &Connection, file_path: &Path, account_name: &str) -> Import
                 is_error: false,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nigel_core::error::EmptyImport;
+
+    fn refused() -> ImportScreen {
+        let empty = EmptyImport {
+            format: "bofa_checking".into(),
+            malformed: 3,
+            reasons: vec![
+                "date \"2026-13-40\" is not MM/DD/YYYY".into(),
+                "expected at least 3 columns, found 1".into(),
+                "the description column is empty".into(),
+            ],
+        };
+
+        ImportScreen {
+            accounts: vec!["Cedar Systems Checking".into()],
+            account_idx: 0,
+            file_path: "march.csv".into(),
+            focused: FIELD_FILE,
+            screen: Screen::Result(ImportResult {
+                message: empty.to_string(),
+                is_error: true,
+            }),
+            status_message: None,
+            greeting: "Good morning".into(),
+        }
+    }
+
+    /// The screen as an 80x24 terminal renders it, one string per row.
+    fn rendered(screen: &ImportScreen) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| screen.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_refusal_long_enough_to_overrun_the_terminal_still_reads_to_its_last_reason() {
+        let screen = rendered(&refused());
+
+        assert!(
+            screen.contains("Nothing could be read from this file"),
+            "{screen}"
+        );
+        assert!(screen.contains("bofa_checking"), "{screen}");
+        // The reasons are the whole point of the sentence and the last of them
+        // sits ~280 characters in — off the right edge of any terminal.
+        assert!(
+            screen.contains("the description column is empty"),
+            "{screen}"
+        );
     }
 }
