@@ -226,7 +226,9 @@ describe('the other tables', () => {
 
   it('renders a missing tax line as blank rather than null', () => {
     const { rows } = taxTable({
-      lineItems: [{ name: 'Fees', taxLine: null, categoryType: 'expense', total: -24 }],
+      lineItems: [
+        { name: 'Fees', taxLine: null, categoryType: 'expense', class: 'expense', total: -24 },
+      ],
     });
     expect(rows[0]?.cells.taxLine).toBe('');
   });

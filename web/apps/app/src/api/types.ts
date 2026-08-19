@@ -106,7 +106,16 @@ export interface PnlReport {
 export interface AccountBalance {
   name: string;
   accountType: string;
+  /** `asset`, `liability`, `equity`, `revenue` or `expense`. */
+  class: string;
+  /** The register summed with the signs the transactions were imported with. */
   balance: number;
+  /**
+   * The same figure stated so that more of what the class is reads positive —
+   * a liability with money owed reports positive. `total` sums `balance`, not
+   * this, so the two are not interchangeable.
+   */
+  naturalBalance: number;
 }
 
 /** `GET /api/reports/balance` */
@@ -174,6 +183,8 @@ export interface TaxItem {
   name: string;
   taxLine: string | null;
   categoryType: string;
+  /** The class the summary is ordered by: earned, taken out, then spent. */
+  class: string;
   total: number;
 }
 

@@ -19,8 +19,20 @@ const PNL: PnlReport = {
 
 const BALANCE: BalanceReport = {
   accounts: [
-    { name: 'BofA Checking', accountType: 'checking', balance: 4928.01 },
-    { name: 'BofA Credit Card', accountType: 'credit_card', balance: -318.49 },
+    {
+      name: 'BofA Checking',
+      accountType: 'checking',
+      class: 'asset',
+      balance: 4928.01,
+      naturalBalance: 4928.01,
+    },
+    {
+      name: 'BofA Credit Card',
+      accountType: 'credit_card',
+      class: 'liability',
+      balance: -318.49,
+      naturalBalance: 318.49,
+    },
   ],
   total: 4609.52,
   ytdNetIncome: 87780.32,

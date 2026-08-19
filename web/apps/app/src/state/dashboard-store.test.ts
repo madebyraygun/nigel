@@ -18,7 +18,15 @@ const PNL: PnlReport = {
 };
 
 const BALANCE: BalanceReport = {
-  accounts: [{ name: 'BofA Checking', accountType: 'checking', balance: 4928.01 }],
+  accounts: [
+    {
+      name: 'BofA Checking',
+      accountType: 'checking',
+      class: 'asset',
+      balance: 4928.01,
+      naturalBalance: 4928.01,
+    },
+  ],
   total: 4928.01,
   ytdNetIncome: 87780.32,
 };

@@ -113,6 +113,13 @@ nigel update                                      # Check for and install the la
 nigel completions bash                            # Generate shell completions (bash, zsh, fish, powershell)
 ```
 
+A renamed distributions category needs its class set by hand. The v10 backfill
+recognizes `Owner Draw / Distribution` and `Owner Contribution` by name; a
+category called something else was classified from its type and landed on
+`expense`, where the K-1 worksheet counts it as a deduction. Give it the class
+it actually is — `nigel categories update <id> "<name>" --type expense --class
+equity` — and its `K-16d` money is reported as distributions.
+
 ### Web UI
 
 Requires Node 20.19+ (22 recommended). All commands run from `web/`.

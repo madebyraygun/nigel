@@ -529,7 +529,7 @@ export class FakeApiClient implements ApiClient {
 
   rulesError: Error | null = null;
   createAccountError: Error | null = null;
-  renameAccountError: Error | null = null;
+  updateAccountError: Error | null = null;
   deleteAccountError: Error | null = null;
   createCategoryError: Error | null = null;
   updateCategoryError: Error | null = null;
@@ -565,7 +565,7 @@ export class FakeApiClient implements ApiClient {
 
   async updateAccount(id: number, input: AccountPatch): Promise<Account> {
     this.calls.push(`updateAccount:${id}:${JSON.stringify(input)}`);
-    if (this.renameAccountError) throw this.renameAccountError;
+    if (this.updateAccountError) throw this.updateAccountError;
 
     const account = this.accounts.find((candidate) => candidate.id === id);
     if (!account) throw new Error(`no account ${id} in the fixture`);

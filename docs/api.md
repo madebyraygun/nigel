@@ -300,6 +300,12 @@ imported with, which is what `total` adds up; `naturalBalance` is the same
 figure stated so that more of what the class is reads positive — a liability
 with money owed reports positive.
 
+The tax summary's line items each carry `class` as well, and it is what they
+are ordered by: revenue first, then equity, then expense, then the two
+balance-sheet classes a category should not be on at all. `categoryType` is
+still the word the Type column prints; `class` is what the ordering and the
+K-1's treatment follow.
+
 ### List responses
 
 The eight list endpoints answer with a bare JSON array — no envelope, no
