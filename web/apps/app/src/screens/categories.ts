@@ -47,6 +47,11 @@ interface Editor {
   /** The category being edited; absent when creating. */
   id?: number;
   value: CategoryFormValue;
+  /**
+   * Whether the class on screen is the operator's answer rather than the
+   * control's opening default. A create sends the field only when it is.
+   */
+  classChosen: boolean;
 }
 
 /**
@@ -126,7 +131,7 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
   // -- editing --------------------------------------------------------------
 
   private openCreate = (): void => {
-    this.editor = { value: EMPTY_CATEGORY_FORM };
+    this.editor = { value: EMPTY_CATEGORY_FORM, classChosen: false };
     this.formErrors = {};
     this.dialogError = null;
   };
@@ -140,7 +145,11 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
   private handleFormChange = (event: Event): void => {
     if (!this.editor) return;
     const detail = (event as CustomEvent<NcCategoryFormChangeDetail>).detail;
-    this.editor = { ...this.editor, value: detail.value };
+    this.editor = {
+      ...this.editor,
+      value: detail.value,
+      classChosen: this.editor.classChosen || detail.value.class !== this.editor.value.class,
+    };
   };
 
   private handleAction = (event: Event): void => {
@@ -149,7 +158,7 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
     if (!category) return;
 
     if (action === 'edit') {
-      this.editor = { id, value: toCategoryForm(category) };
+      this.editor = { id, value: toCategoryForm(category), classChosen: true };
       this.formErrors = {};
       this.dialogError = null;
       return;
@@ -180,7 +189,9 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
       return;
     }
 
-    await this.send(() => this.client.createCategory(newCategoryRequest(editor.value)));
+    await this.send(() =>
+      this.client.createCategory(newCategoryRequest(editor.value, editor.classChosen)),
+    );
   };
 
   private async send(request: () => Promise<unknown>): Promise<void> {

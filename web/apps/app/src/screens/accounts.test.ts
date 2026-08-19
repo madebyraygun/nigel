@@ -159,11 +159,40 @@ describe('nigel-accounts-screen', () => {
 
     expect(fake.calls).toEqual([
       'getAccounts',
-      'createAccount:{"name":"Chase Business","accountType":"checking","class":"asset","institution":"Chase","lastFour":"9921"}',
+      'createAccount:{"name":"Chase Business","accountType":"checking","institution":"Chase","lastFour":"9921"}',
       'getAccounts',
     ]);
     expect(dialog(el)).toBeNull();
     expect(table(el).rows).toHaveLength(3);
+  });
+
+  it('leaves the class out when the operator never picked one', async () => {
+    // The server derives it from the type; sending the control's untouched
+    // default would file a credit card as an asset.
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Globex Card');
+    await pick(el, '[data-type]', 'credit_card');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createAccount:{"name":"Globex Card","accountType":"credit_card","institution":null,"lastFour":null}',
+    );
+    expect(fake.accounts.find((account) => account.name === 'Globex Card')?.class).toBe(
+      'liability',
+    );
+  });
+
+  it('sends the class the operator did pick', async () => {
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Owner Loan');
+    await pick(el, '[data-class]', 'liability');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createAccount:{"name":"Owner Loan","accountType":"checking","class":"liability","institution":null,"lastFour":null}',
+    );
   });
 
   it('sends empty optional fields as null rather than as empty strings', async () => {

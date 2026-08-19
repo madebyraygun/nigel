@@ -107,6 +107,18 @@ async function type(
   await settle(el);
 }
 
+async function pick(
+  el: NigelCategoriesScreen,
+  hook: string,
+  value: string,
+): Promise<void> {
+  const control = form(el).shadowRoot?.querySelector<HTMLInputElement>(hook);
+  if (!control) throw new Error(`no ${hook} in the form`);
+  control.value = value;
+  control.dispatchEvent(new Event('change'));
+  await settle(el);
+}
+
 async function openAdd(el: NigelCategoriesScreen): Promise<void> {
   layout(el).dispatchEvent(new CustomEvent('nc-manager-add'));
   await settle(el);
@@ -192,9 +204,38 @@ describe('nigel-categories-screen', () => {
 
     expect(fake.calls).toEqual([
       'getCategories',
-      'createCategory:{"name":"Contract labor","categoryType":"expense","class":"expense","taxLine":"Contract labor","formLine":"1120S-11"}',
+      'createCategory:{"name":"Contract labor","categoryType":"expense","taxLine":"Contract labor","formLine":"1120S-11"}',
       'getCategories',
     ]);
+  });
+
+  it('leaves the class out when the operator never picked one', async () => {
+    // An income category whose class control was never touched still reads
+    // "expense": the derivation belongs to the server, not to the default.
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Workshop Fees');
+    await pick(el, '[data-type]', 'income');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createCategory:{"name":"Workshop Fees","categoryType":"income","taxLine":null,"formLine":null}',
+    );
+    expect(
+      fake.categories.find((category) => category.name === 'Workshop Fees')?.class,
+    ).toBe('revenue');
+  });
+
+  it('sends the class the operator did pick', async () => {
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Member Draw');
+    await pick(el, '[data-class]', 'equity');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createCategory:{"name":"Member Draw","categoryType":"expense","class":"equity","taxLine":null,"formLine":null}',
+    );
   });
 
   it('sends only the fields an edit changed', async () => {

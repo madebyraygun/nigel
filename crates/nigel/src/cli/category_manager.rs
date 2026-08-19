@@ -59,6 +59,13 @@ enum Screen {
 struct CategoryForm {
     fields: Vec<FormField>,
     focused: usize,
+    /// Whether the operator moved the class selector.
+    ///
+    /// The field has to open on something, and what it opens on is a default
+    /// rather than an answer. An add sends `None` until this is true, so
+    /// `add_category` derives the class from the type — otherwise every income
+    /// category added without touching the field would be filed as an expense.
+    class_chosen: bool,
 }
 
 struct FormField {
@@ -105,6 +112,7 @@ impl CategoryForm {
                 },
             ],
             focused: 0,
+            class_chosen: false,
         }
     }
 
@@ -141,6 +149,7 @@ impl CategoryForm {
                 },
             ],
             focused: 0,
+            class_chosen: true,
         }
     }
 }
@@ -483,6 +492,7 @@ impl CategoryManager {
                 };
             }
             KeyCode::Left => {
+                let focused = form.focused;
                 if let FieldKind::Selector { options, selected } =
                     &mut form.fields[form.focused].kind
                 {
@@ -491,15 +501,22 @@ impl CategoryManager {
                     } else {
                         *selected - 1
                     };
-                    form.fields[form.focused].value = options[*selected].clone();
+                    form.fields[focused].value = options[*selected].clone();
+                }
+                if focused == CLASS_IDX {
+                    form.class_chosen = true;
                 }
             }
             KeyCode::Right => {
+                let focused = form.focused;
                 if let FieldKind::Selector { options, selected } =
                     &mut form.fields[form.focused].kind
                 {
                     *selected = (*selected + 1) % options.len();
-                    form.fields[form.focused].value = options[*selected].clone();
+                    form.fields[focused].value = options[*selected].clone();
+                }
+                if focused == CLASS_IDX {
+                    form.class_chosen = true;
                 }
             }
             KeyCode::Char(c) => {
@@ -526,6 +543,9 @@ impl CategoryManager {
                         return CategoryAction::Continue;
                     }
                 };
+                // Absent means "derive it from the type", which is what an
+                // untouched selector means on an add.
+                let chosen_class = form.class_chosen.then_some(class);
                 let tax_line = {
                     let v = form.fields[TAX_LINE_IDX].value.trim().to_string();
                     if v.is_empty() {
@@ -549,7 +569,7 @@ impl CategoryManager {
                             conn,
                             &name,
                             &cat_type,
-                            Some(class),
+                            chosen_class,
                             tax_line.as_deref(),
                             form_line.as_deref(),
                         ) {
@@ -670,6 +690,55 @@ mod tests {
             }
             FieldKind::Text => panic!("not a selector"),
         }
+    }
+
+    #[test]
+    fn the_add_form_sends_no_class_until_the_operator_picks_one() {
+        // Expense is what the control opens on; an income category whose class
+        // was never touched must still be classified from its type.
+        let (_d, conn) = test_conn();
+        let mut mgr = CategoryManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        for c in "Workshop Fees".chars() {
+            mgr.handle_key(KeyCode::Char(c), &conn);
+        }
+        for _ in 0..TYPE_IDX {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        mgr.handle_key(KeyCode::Right, &conn); // expense -> income
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let added = mgr
+            .categories
+            .iter()
+            .find(|c| c.name == "Workshop Fees")
+            .expect("the added category");
+        assert_eq!(added.category_type, "income");
+        assert_eq!(added.class, AccountClass::Revenue, "derived from the type");
+    }
+
+    #[test]
+    fn a_class_the_operator_picked_on_the_add_form_is_the_one_saved() {
+        let (_d, conn) = test_conn();
+        let mut mgr = CategoryManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        for c in "Member Draw".chars() {
+            mgr.handle_key(KeyCode::Char(c), &conn);
+        }
+        for _ in 0..CLASS_IDX {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        mgr.handle_key(KeyCode::Left, &conn); // expense -> revenue
+        mgr.handle_key(KeyCode::Left, &conn); // revenue -> equity
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let added = mgr
+            .categories
+            .iter()
+            .find(|c| c.name == "Member Draw")
+            .expect("the added category");
+        assert_eq!(added.category_type, "expense");
+        assert_eq!(added.class, AccountClass::Equity, "not the type's expense");
     }
 
     #[test]

@@ -40,6 +40,11 @@ interface Editor {
   /** The account being edited; absent when creating. */
   id?: number;
   value: AccountFormValue;
+  /**
+   * Whether the class on screen is the operator's answer rather than the
+   * control's opening default. A create sends the field only when it is.
+   */
+  classChosen: boolean;
 }
 
 /** Empty means "no value", which on the wire is null rather than "". */
@@ -124,7 +129,7 @@ export class NigelAccountsScreen extends LitElement {
   // -- editing --------------------------------------------------------------
 
   private openCreate = (): void => {
-    this.editor = { mode: 'create', value: EMPTY_ACCOUNT_FORM };
+    this.editor = { mode: 'create', value: EMPTY_ACCOUNT_FORM, classChosen: false };
     this.formErrors = {};
     this.dialogError = null;
   };
@@ -138,7 +143,11 @@ export class NigelAccountsScreen extends LitElement {
   private handleFormChange = (event: Event): void => {
     if (!this.editor) return;
     const detail = (event as CustomEvent<NcAccountFormChangeDetail>).detail;
-    this.editor = { ...this.editor, value: detail.value };
+    this.editor = {
+      ...this.editor,
+      value: detail.value,
+      classChosen: this.editor.classChosen || detail.value.class !== this.editor.value.class,
+    };
   };
 
   private handleAction = (event: Event): void => {
@@ -147,7 +156,7 @@ export class NigelAccountsScreen extends LitElement {
     if (!account) return;
 
     if (action === 'edit') {
-      this.editor = { mode: 'edit', id, value: toFormValue(account) };
+      this.editor = { mode: 'edit', id, value: toFormValue(account), classChosen: true };
       this.formErrors = {};
       this.dialogError = null;
       return;
@@ -170,7 +179,9 @@ export class NigelAccountsScreen extends LitElement {
         await this.client.createAccount({
           name: editor.value.name.trim(),
           accountType: editor.value.accountType,
-          class: editor.value.class,
+          // Absent means "derive it from the type", which is the right answer
+          // for a class control the operator never touched.
+          ...(editor.classChosen ? { class: editor.value.class } : {}),
           institution: orNull(editor.value.institution),
           lastFour: orNull(editor.value.lastFour),
         });

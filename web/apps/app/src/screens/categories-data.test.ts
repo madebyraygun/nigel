@@ -31,13 +31,16 @@ describe('toCategoryForm', () => {
 describe('newCategoryRequest', () => {
   it('trims, and sends an empty optional field as null', () => {
     expect(
-      newCategoryRequest({
-        name: '  Consulting income  ',
-        categoryType: 'income',
-        class: 'revenue',
-        taxLine: '',
-        formLine: '   ',
-      }),
+      newCategoryRequest(
+        {
+          name: '  Consulting income  ',
+          categoryType: 'income',
+          class: 'revenue',
+          taxLine: '',
+          formLine: '   ',
+        },
+        true,
+      ),
     ).toEqual({
       name: 'Consulting income',
       categoryType: 'income',
@@ -45,6 +48,13 @@ describe('newCategoryRequest', () => {
       taxLine: null,
       formLine: null,
     });
+  });
+});
+
+describe('newCategoryRequest without a chosen class', () => {
+  it('omits the field entirely, so the server derives it from the type', () => {
+    const request = newCategoryRequest(toCategoryForm(row), false);
+    expect('class' in request).toBe(false);
   });
 });
 
@@ -126,7 +136,7 @@ describe('class round trips through the form', () => {
       formLine: null,
     };
     expect(toCategoryForm(row).class).toBe('equity');
-    expect(newCategoryRequest(toCategoryForm(row)).class).toBe('equity');
+    expect(newCategoryRequest(toCategoryForm(row), true).class).toBe('equity');
   });
 
   it('patches the class alone and leaves an unchanged class out', () => {

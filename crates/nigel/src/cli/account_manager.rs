@@ -58,6 +58,13 @@ enum Screen {
 struct AccountForm {
     fields: Vec<FormField>,
     focused: usize,
+    /// Whether the operator moved the class selector.
+    ///
+    /// The field has to open on something, and what it opens on is a default
+    /// rather than an answer. An add sends `None` until this is true, so
+    /// `add_account` derives the class from the type — otherwise every card
+    /// added without touching the field would be filed as an asset.
+    class_chosen: bool,
 }
 
 struct FormField {
@@ -104,6 +111,7 @@ impl AccountForm {
                 },
             ],
             focused: 0,
+            class_chosen: false,
         }
     }
 
@@ -118,6 +126,7 @@ impl AccountForm {
                 class_field(account.class),
             ],
             focused: 0,
+            class_chosen: true,
         }
     }
 }
@@ -464,6 +473,7 @@ impl AccountManager {
                 };
             }
             Left => {
+                let focused = form.focused;
                 if let FieldKind::Selector { options, selected } =
                     &mut form.fields[form.focused].kind
                 {
@@ -472,15 +482,22 @@ impl AccountManager {
                     } else {
                         *selected - 1
                     };
-                    form.fields[form.focused].value = options[*selected].clone();
+                    form.fields[focused].value = options[*selected].clone();
+                }
+                if focused == CLASS_IDX {
+                    form.class_chosen = true;
                 }
             }
             Right => {
+                let focused = form.focused;
                 if let FieldKind::Selector { options, selected } =
                     &mut form.fields[form.focused].kind
                 {
                     *selected = (*selected + 1) % options.len();
-                    form.fields[form.focused].value = options[*selected].clone();
+                    form.fields[focused].value = options[*selected].clone();
+                }
+                if focused == CLASS_IDX {
+                    form.class_chosen = true;
                 }
             }
             Char(c) => {
@@ -508,6 +525,8 @@ impl AccountManager {
                             return AccountAction::Continue;
                         }
                     };
+                    // Absent means "derive it from the type".
+                    let class = form.class_chosen.then_some(class);
                     let institution = {
                         let v = form.fields[INST_IDX].value.trim().to_string();
                         if v.is_empty() {
@@ -531,7 +550,7 @@ impl AccountManager {
                         conn,
                         &name,
                         &acct_type,
-                        Some(class),
+                        class,
                         institution.as_deref(),
                         last_four.as_deref(),
                     ) {
@@ -649,6 +668,58 @@ mod tests {
             }
             FieldKind::Text => panic!("not a selector"),
         }
+    }
+
+    #[test]
+    fn the_add_form_sends_no_class_until_the_operator_picks_one() {
+        // The control has to show something, and asset is what it shows. Sending
+        // that untouched default would file every card as an asset.
+        let (_d, conn) = test_conn();
+        let mut mgr = AccountManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        for c in "Initech Card".chars() {
+            mgr.handle_key(KeyCode::Char(c), &conn);
+        }
+        for _ in 0..TYPE_IDX {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        mgr.handle_key(KeyCode::Right, &conn); // checking -> credit_card
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let added = mgr
+            .accounts
+            .iter()
+            .find(|a| a.name == "Initech Card")
+            .expect("the added account");
+        assert_eq!(added.account_type, "credit_card");
+        assert_eq!(
+            added.class,
+            AccountClass::Liability,
+            "derived from the type"
+        );
+    }
+
+    #[test]
+    fn a_class_the_operator_picked_on_the_add_form_is_the_one_saved() {
+        let (_d, conn) = test_conn();
+        let mut mgr = AccountManager::new(&conn, "Hello.");
+        mgr.handle_key(KeyCode::Char('a'), &conn);
+        for c in "Owner Loan".chars() {
+            mgr.handle_key(KeyCode::Char(c), &conn);
+        }
+        for _ in 0..CLASS_IDX {
+            mgr.handle_key(KeyCode::Tab, &conn);
+        }
+        mgr.handle_key(KeyCode::Right, &conn); // asset -> liability
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let added = mgr
+            .accounts
+            .iter()
+            .find(|a| a.name == "Owner Loan")
+            .expect("the added account");
+        assert_eq!(added.account_type, "checking");
+        assert_eq!(added.class, AccountClass::Liability, "not the type's asset");
     }
 
     #[test]

@@ -17,11 +17,22 @@ export function toCategoryForm(row: CategoryRow): CategoryFormValue {
   };
 }
 
-export function newCategoryRequest(value: CategoryFormValue): NewCategoryRequest {
+/**
+ * The create body, with `class` present only when the operator chose one.
+ *
+ * `chosenClass` is not a formality: the control has to show something, and
+ * what it shows is a default rather than an answer. Sending it anyway files an
+ * income category as an expense — the route derives the right class from the
+ * type when the field is absent, and absent is what an untouched control means.
+ */
+export function newCategoryRequest(
+  value: CategoryFormValue,
+  chosenClass: boolean,
+): NewCategoryRequest {
   return {
     name: value.name.trim(),
     categoryType: value.categoryType,
-    class: value.class,
+    ...(chosenClass ? { class: value.class } : {}),
     taxLine: orNull(value.taxLine),
     formLine: orNull(value.formLine),
   };
