@@ -228,6 +228,39 @@ const MIGRATIONS: &[Migration] = &[
         description: "seed payment_instructions from the paragraph the stock page used to print",
         up: |conn| seed_payment_instructions(conn, contact_address()),
     },
+    Migration {
+        version: 10,
+        description: "record what an import dropped: imports.malformed_count and import_rejects",
+        up: |conn| {
+            // v5's probe, for v5's reason: SQLite has no ADD COLUMN IF NOT
+            // EXISTS, and a replay must be harmless.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('imports') WHERE name = 'malformed_count'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                // NOT NULL DEFAULT 0 fills every existing row: an import from
+                // before the count existed dropped nothing anyone recorded.
+                conn.execute_batch(
+                    "ALTER TABLE imports ADD COLUMN malformed_count INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS import_rejects (
+                    id INTEGER PRIMARY KEY,
+                    import_id INTEGER NOT NULL,
+                    row_number INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    FOREIGN KEY (import_id) REFERENCES imports(id) ON DELETE CASCADE
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_import_rejects_import
+                     ON import_rejects(import_id);",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -835,6 +868,78 @@ mod tests {
         run_migrations(&conn).unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn a_database_from_before_the_column_migrates_to_zero_dropped_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("test.db")).unwrap();
+        // An `imports` table as it was before it recorded what it dropped.
+        conn.execute_batch(
+            "CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                account_type TEXT NOT NULL
+             );
+             CREATE TABLE imports (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                account_id INTEGER,
+                import_date TEXT DEFAULT (datetime('now')),
+                record_count INTEGER,
+                date_range_start TEXT,
+                date_range_end TEXT,
+                checksum TEXT
+             );
+             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO accounts (name, account_type)
+                 VALUES ('Cedar Systems Checking', 'checking');
+             INSERT INTO imports (filename, account_id, record_count, checksum)
+                 VALUES ('march.csv', 1, 12, 'a1b2c3');",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "9").unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        let malformed: i64 = conn
+            .query_row(
+                "SELECT malformed_count FROM imports WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            malformed, 0,
+            "an old import reads as having dropped nothing"
+        );
+        let rejects: i64 = conn
+            .query_row("SELECT count(*) FROM import_rejects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rejects, 0);
+    }
+
+    #[test]
+    fn deleting_an_import_takes_its_rejects_with_it() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, account_type) VALUES ('Cedar Systems Checking', 'checking');
+             INSERT INTO imports (filename, account_id, record_count, checksum, malformed_count)
+                 VALUES ('march.csv', 1, 4, 'a1b2c3', 2);
+             INSERT INTO import_rejects (import_id, row_number, content, reason)
+                 VALUES (1, 7, '2026-03-09,GLOBEX HOSTING,-88.00', 'date \"2026-03-09\" is not MM/DD/YYYY'),
+                        (1, 9, '2026-03-11,INITECH LICENSE,n/a', 'amount \"n/a\" is not a number');",
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM imports WHERE id = 1", [])
+            .unwrap();
+
+        let left: i64 = conn
+            .query_row("SELECT count(*) FROM import_rejects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "the cascade did not fire");
     }
 }
 
