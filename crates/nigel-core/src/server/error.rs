@@ -192,6 +192,18 @@ impl From<NigelError> for ApiError {
                 Self::not_found_because(err.to_string(), "category_not_found")
             }
             NigelError::NotFound(_) => Self::not_found(err.to_string()),
+            // A file that parsed to nothing is the caller's to fix — the wrong
+            // format, or a column mapping off by one — so the parts go in
+            // `details` for a client that wants to say it in its own words.
+            NigelError::EmptyImport(empty) => {
+                let details = serde_json::json!({
+                    "reason": "empty_import",
+                    "format": empty.format,
+                    "malformed": empty.malformed,
+                    "reasons": empty.reasons,
+                });
+                Self::bad_request(empty.to_string()).with_details(details)
+            }
             NigelError::UnknownFormat(_) | NigelError::NoImporter(_) | NigelError::Invalid(_) => {
                 Self::bad_request(err.to_string())
             }

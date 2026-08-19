@@ -1023,4 +1023,32 @@ mod tests {
         );
         assert_eq!(retried["imported"], 3);
     }
+
+    #[tokio::test]
+    async fn a_confirm_that_parses_nothing_is_refused_with_reasons() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let before = counts(&db_path);
+
+        let iso = b"Date,Description,Amount,Running Bal.\n\
+                    2026-03-02,HARBOR & VALE RETAINER,1800.00,0.00\n"
+            .to_vec();
+        let upload_id = upload_ok(&app, &token, "march.csv", &iso).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+
+        let (status, body) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "empty_import");
+        assert_eq!(body["error"]["details"]["format"], "bofa_checking");
+        assert_eq!(body["error"]["details"]["malformed"], 1);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Nothing could be read"),
+            "{body}"
+        );
+        assert_eq!(counts(&db_path), before, "the refused confirm wrote rows");
+    }
 }
