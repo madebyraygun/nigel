@@ -483,7 +483,7 @@ fn insert_demo_data(conn: &Connection) -> Result<usize> {
 
     // Create account
     conn.execute(
-        "INSERT INTO accounts (name, account_type, institution) VALUES (?1, 'checking', 'Bank of America')",
+        "INSERT INTO accounts (name, account_type, institution, class) VALUES (?1, 'checking', 'Bank of America', 'asset')",
         [ACCOUNT_NAME],
     )?;
     let account_id = conn.last_insert_rowid();
