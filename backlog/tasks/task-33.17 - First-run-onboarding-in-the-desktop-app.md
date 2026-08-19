@@ -4,10 +4,12 @@ title: First-run onboarding in the desktop app
 status: To Do
 assignee: []
 created_date: '2026-08-19 14:30'
+updated_date: '2026-08-19 14:33'
 labels:
   - frontend
 dependencies: []
 parent_task_id: TASK-33
+priority: high
 ---
 
 ## Description
