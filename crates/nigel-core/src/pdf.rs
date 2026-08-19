@@ -622,28 +622,42 @@ pub fn render_tax(report: &TaxSummary, company: &str, date_range: &str) -> Resul
 
     let cols = &[
         Col {
-            width: 70.0,
+            width: 55.0,
             align: Align::Left,
         },
         Col {
-            width: 40.0,
+            width: 38.0,
             align: Align::Left,
         },
         Col {
-            width: 30.0,
+            width: 25.0,
             align: Align::Left,
         },
         Col {
-            width: 37.8,
+            width: 25.0,
+            align: Align::Left,
+        },
+        Col {
+            width: 34.8,
             align: Align::Right,
         },
     ];
-    pdf.table_header(cols, &["Category", "Tax Line", "Type", "Amount"]);
+    pdf.table_header(cols, &["Category", "Tax Line", "Type", "Class", "Amount"]);
 
     for item in &report.line_items {
         let tl = item.tax_line.as_deref().unwrap_or("");
         let amt = money(item.total.abs());
-        pdf.table_row(cols, &[&item.name, tl, &item.category_type, &amt], false);
+        pdf.table_row(
+            cols,
+            &[
+                &item.name,
+                tl,
+                &item.category_type,
+                item.class.as_str(),
+                &amt,
+            ],
+            false,
+        );
     }
 
     pdf.into_bytes()

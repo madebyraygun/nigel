@@ -205,12 +205,13 @@ pub fn format_expenses(data: &reports::ExpenseBreakdown) -> String {
 
 pub fn format_tax(data: &reports::TaxSummary) -> String {
     let mut table = Table::new();
-    table.set_header(vec!["Category", "Tax Line", "Type", "Amount"]);
+    table.set_header(vec!["Category", "Tax Line", "Type", "Class", "Amount"]);
     for item in &data.line_items {
         table.add_row(vec![
             Cell::new(&item.name),
             Cell::new(item.tax_line.as_deref().unwrap_or("")),
             Cell::new(&item.category_type),
+            Cell::new(item.class.as_str()),
             Cell::new(money(item.total.abs())),
         ]);
     }
@@ -517,8 +518,25 @@ pub fn format_aging(data: &crate::invoicing::invoices::AgingReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_aging, format_k1, with_header};
+    use super::{format_aging, format_k1, format_tax, with_header};
+    use crate::db::AccountClass;
     use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+
+    fn tax_item(
+        name: &str,
+        tax_line: &str,
+        category_type: &str,
+        class: AccountClass,
+        total: f64,
+    ) -> crate::reports::TaxItem {
+        crate::reports::TaxItem {
+            name: name.into(),
+            tax_line: Some(tax_line.into()),
+            category_type: category_type.into(),
+            class,
+            total,
+        }
+    }
 
     fn bucket(label: &'static str, count: usize, total: f64) -> AgingBucket {
         AgingBucket {
@@ -593,6 +611,37 @@ mod tests {
         let out = format_aging(&aging_fixture(vec![]));
         assert!(out.contains("No open invoices."));
         assert!(out.contains("90+"));
+    }
+
+    #[test]
+    fn format_tax_names_the_class_each_line_is_ordered_by() {
+        // The summary is sorted by class, so a reader who cannot see the class
+        // cannot see why a draw sits between the income and the deductions.
+        let out = format_tax(&crate::reports::TaxSummary {
+            line_items: vec![
+                tax_item(
+                    "Workshop Fees",
+                    "Gross receipts",
+                    "income",
+                    AccountClass::Revenue,
+                    4200.0,
+                ),
+                tax_item(
+                    "Member Draw",
+                    "Distributions",
+                    "expense",
+                    AccountClass::Equity,
+                    -1500.0,
+                ),
+            ],
+        });
+
+        assert!(out.contains("Class"), "the column header");
+        assert!(out.contains("revenue"));
+        assert!(out.contains("equity"));
+        // AC #6: the five class words, nothing borrowed from a ledger.
+        let lower = out.to_lowercase();
+        assert!(!lower.contains("debit"));
     }
 
     #[test]

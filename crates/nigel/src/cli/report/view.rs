@@ -510,14 +510,18 @@ pub(crate) fn build_expenses(
 pub(crate) fn build_tax(year: Option<i32>) -> Result<Box<dyn ReportView>> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let data = reports::get_tax_summary(&conn, year)?;
+    Ok(Box::new(tax_view(&data, year)))
+}
 
+fn tax_view(data: &reports::TaxSummary, year: Option<i32>) -> TableReportView {
     let widths = vec![
         Constraint::Fill(1),
         Constraint::Length(20),
         Constraint::Length(12),
+        Constraint::Length(12),
         Constraint::Length(14),
     ];
-    let header = Row::new(["Category", "Tax Line", "Type", "Amount"])
+    let header = Row::new(["Category", "Tax Line", "Type", "Class", "Amount"])
         .style(HEADER_ROW_STYLE)
         .bottom_margin(1);
 
@@ -534,18 +538,17 @@ pub(crate) fn build_tax(year: Option<i32>) -> Result<Box<dyn ReportView>> {
             text_cell(&item.name),
             text_cell(item.tax_line.as_deref().unwrap_or("")),
             text_cell(&item.category_type),
+            text_cell(item.class.as_str()),
             Cell::from(Span::styled(money(item.total.abs()), style)),
         ]));
     }
 
     let effective_year = year.unwrap_or_else(|| chrono::Datelike::year(&chrono::Local::now()));
-    Ok(Box::new(
-        TableReportView::new("Tax Summary", header, rows, widths).with_date(
-            ReportKind::Tax.granularity(),
-            effective_year,
-            None,
-        ),
-    ))
+    TableReportView::new("Tax Summary", header, rows, widths).with_date(
+        ReportKind::Tax.granularity(),
+        effective_year,
+        None,
+    )
 }
 
 pub(crate) fn build_cashflow(
@@ -1120,6 +1123,54 @@ mod tests {
             invoices,
             outstanding: 100.0 * invoice_count as f64,
         }
+    }
+
+    fn tax_fixture() -> nigel_core::reports::TaxSummary {
+        nigel_core::reports::TaxSummary {
+            line_items: vec![
+                nigel_core::reports::TaxItem {
+                    name: "Workshop Fees".into(),
+                    tax_line: Some("Gross receipts".into()),
+                    category_type: "income".into(),
+                    class: AccountClass::Revenue,
+                    total: 4200.0,
+                },
+                nigel_core::reports::TaxItem {
+                    name: "Member Draw".into(),
+                    tax_line: Some("Distributions".into()),
+                    category_type: "expense".into(),
+                    class: AccountClass::Equity,
+                    total: -1500.0,
+                },
+            ],
+        }
+    }
+
+    fn rendered(view: &mut TableReportView) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        terminal
+            .draw(|frame| ReportView::draw(view, frame))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(100)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_tax_view_names_the_class_each_line_is_ordered_by() {
+        let mut view = tax_view(&tax_fixture(), Some(2025));
+        let screen = rendered(&mut view);
+
+        assert!(screen.contains("Class"), "the column header");
+        assert!(screen.contains("revenue"));
+        assert!(screen.contains("equity"));
+        assert!(!screen.to_lowercase().contains("debit"));
     }
 
     #[test]
