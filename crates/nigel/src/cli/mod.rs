@@ -15,6 +15,7 @@ mod fixture_capture;
 pub mod goodbye;
 pub mod import;
 pub mod import_manager;
+pub mod imports;
 pub mod init;
 pub mod invoice;
 pub mod invoice_manager;
@@ -114,6 +115,11 @@ pub enum Commands {
     Invoice {
         #[command(subcommand)]
         command: InvoiceCommands,
+    },
+    /// Inspect import history and the rows an import dropped.
+    Imports {
+        #[command(subcommand)]
+        command: ImportsCommands,
     },
     /// Import a CSV/XLSX file and auto-categorize transactions.
     Import {
@@ -225,6 +231,17 @@ pub enum Commands {
     Completions {
         /// Shell: bash, zsh, fish, powershell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ImportsCommands {
+    /// List every import, newest first, with its row and dropped counts.
+    List,
+    /// Show the rows an import could not parse.
+    Rejects {
+        /// Import id, from `nigel imports list`.
+        id: i64,
     },
 }
 
