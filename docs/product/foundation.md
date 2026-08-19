@@ -27,9 +27,7 @@ Three commitments, permanent:
 2. **The books are a local file, forever.** No Nigel feature may require cloud custody
    of the books. Hosted offerings are convenience around the file — delivery, backup —
    never a migration of the file into our hands.
-3. **Absent quietly.** An unconfigured or unpurchased capability does not nag, upsell
-   inside workflows, or render broken controls. The pay button precedent (live, inert
-   or absent) is the pattern for everything commercial.
+3. **Never nagware.** An unconfigured or unpurchased capability does not nag, upsell inside workflows, or render broken controls. Small commercial notes about Nigel Cloud may appear during onboarding or in the settings app, which are for convenience and do not hold any features hostage. The pay button precedent (live, inert or absent) is the pattern for everything commercial.
 
 ## The ladder
 
@@ -39,7 +37,7 @@ rung below has; each rung removes work.
 | Rung | What you get | What you pay |
 |---|---|---|
 | **Build it yourself** | The full app from source; local delivery mode (epic 114) means invoicing and documents work with no cloud accounts at all | Nothing |
-| **Nigel Desktop** | Signed, notarized, auto-updating builds for macOS, Windows and Linux, from nigel.works or the app stores | Perpetual license with 12 months of updates |
+| **Nigel Desktop** | Signed, notarized, auto-updating builds for macOS, Windows and Linux, from nigel.works | Perpetual license with 12 months of updates |
 | **Nigel Cloud** | Hosted delivery: invoice and document pages served from nigel.works, mail sent from our infrastructure, acceptance recorded by us as a third party; later, zero-knowledge encrypted backup and sync | Subscription, which includes a Desktop license while active |
 
 The rungs map onto the `delivery` setting: `local` (no infrastructure), `hosted` (your
@@ -56,24 +54,20 @@ free), and `nigel` (our infrastructure, authenticated by your license).
   running. Bookkeeping has an annual rhythm (tax years, bank format drift); the renewal
   matches it honestly.
 - **Sales run through a merchant of record** (checkout, VAT and sales tax, license key
-  issuance, refunds). App store listings are a discovery channel with their own update
-  path; the subscription is sold on nigel.works only, never by in-app purchase.
+  issuance, refunds). Subscription is sold on nigel.works only, never by in-app purchase.
 - **The key is a signed token** carried in config: the updater presents it for the feed,
   and `delivery = "nigel"` presents it to the Cloud API. Offline validation for the
   build, online validation for the service. No other phone-home.
-- **The name is the enforcement.** Trademark policy: builds not produced by nigel.works
+- **Trademark remains ours** Trademark policy: builds not produced by nigel.works
   do not use the Nigel name or icon. The policy is published in this repository; the
   code stays MIT.
 - **Nothing commercial is compiled in**: no price, no key, no endpoint that cannot be
   overridden in config. The public repository carries no licensing server, signing key
   or store credential; that machinery lives in a private repository, which depends on
   this one and not the reverse (the lib+bin precedent).
-- **The public repository does not build the artifacts it sells.** Its CI compiles and
-  tests the desktop crate so the shell cannot rot, and publishes no installer and no
-  update manifest. Producing them there would put the packaging and the update feed in
-  public and make every fork a distributor of something indistinguishable from the paid
-  build. `backlog/decisions/decision-3` records this and rewrites tasks 33.5 and 33.6,
-  which were written before it and asked the public CI to publish installers.
+- **The public repository does not build the commercial artifacts.** The public CI compiles and
+  tests the desktop crate, and publishes no installer and no
+  update manifest. `backlog/decisions/decision-3` records this.
 
 ## Nigel Cloud: scope by milestone
 
@@ -93,10 +87,9 @@ in this repository and its service half in the private repository are both real.
   leaves the operator. Conflicts are surfaced, not silently merged.
 
 Explicitly **not** on this roadmap: multi-tenant hosted live books (a nigel.works web
-app holding decryption keys and serving everyone's books). It would break promise 2,
-and the trust model — `serve` binds localhost — is built on its absence. If a hosted
+app holding decryption keys and serving everyone's books). If a hosted
 instance is ever offered it is a single-tenant deployment of the same standalone server
-an operator could run themselves (the epic 32 / task 33.7 shape).
+an operator could run themselves.
 
 ## Multi-user and the bookkeeper view
 
@@ -110,6 +103,6 @@ first question a working consultancy asks is "can my accountant see this?"
 
 - No feature-gated or crippled open-source build, ever.
 - No custody of decryption keys or plaintext books on our infrastructure.
-- No in-workflow upsells; commercial surfaces are the website and the docs.
-- No payment processing of our own — payments remain the operator's Stripe relationship.
+- In-app purchases. Minimal callouts to the website when appropriate, only offering convenience, never gating features.
+- No in-app payment processing — payments remain the operator's Stripe relationship.
 - No e-signature product claims; hosted acceptance is recorded assent, witnessed.
