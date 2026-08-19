@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { DesktopApiClient } from './desktop-client.js';
+import { FetchApiClient, type DragDropEvent } from './client.js';
+import { DesktopApiClient, createApiClient } from './desktop-client.js';
 
 describe('DesktopApiClient', () => {
   it('answers an action target that fetches the bytes and hands them to the native side', async () => {
@@ -15,6 +16,7 @@ describe('DesktopApiClient', () => {
     );
     const client = new DesktopApiClient({
       fetchImpl,
+      listen: eventBus().listen,
       invoke: async (_cmd, args) => {
         saved.push(args as { name: string; bytes: number[] });
         return null;
@@ -44,6 +46,7 @@ describe('DesktopApiClient', () => {
     );
     const client = new DesktopApiClient({
       fetchImpl,
+      listen: eventBus().listen,
       invoke: async (_cmd, args) => {
         saved.push(args as { name: string });
         return null;
@@ -57,10 +60,188 @@ describe('DesktopApiClient', () => {
 
   it('raises a failed export rather than swallowing it', async () => {
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 500 }));
-    const client = new DesktopApiClient({ fetchImpl, invoke: async () => null });
+    const client = new DesktopApiClient({
+      fetchImpl,
+      listen: eventBus().listen,
+      invoke: async () => null,
+    });
 
     await expect(
       (client.exportTarget('pnl', 'pdf') as { run: () => Promise<void> }).run(),
     ).rejects.toThrow();
+  });
+});
+
+/** A fake `__TAURI__.event.listen`, with the handlers reachable per event. */
+function eventBus() {
+  const handlers = new Map<string, Array<(event: { payload: unknown }) => void>>();
+  const unlistened: string[] = [];
+
+  const listen = async (
+    name: string,
+    handler: (event: { payload: unknown }) => void,
+  ) => {
+    const forName = handlers.get(name) ?? [];
+    forName.push(handler);
+    handlers.set(name, forName);
+    return () => unlistened.push(name);
+  };
+
+  const emit = (name: string, payload: unknown) => {
+    for (const handler of handlers.get(name) ?? []) handler({ payload });
+  };
+
+  return { listen, emit, unlistened, names: () => [...handlers.keys()] };
+}
+
+describe('DesktopApiClient importSource', () => {
+  it('picks through the native dialog and answers the staged upload', async () => {
+    const invoked: Array<[string, Record<string, unknown>]> = [];
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async (cmd, args) => {
+        invoked.push([cmd, args]);
+        return {
+          uploadId: 'a1b2',
+          filename: 'cedar-april-2025.csv',
+          size: 8214,
+          path: '/home/books/cedar-april-2025.csv',
+        };
+      },
+    });
+
+    const source = client.importSource();
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const staged = await source.pick();
+
+    expect(invoked[0][0]).toBe('pick_import_file');
+    expect(staged).toEqual({
+      uploadId: 'a1b2',
+      filename: 'cedar-april-2025.csv',
+      size: 8214,
+      path: '/home/books/cedar-april-2025.csv',
+    });
+  });
+
+  it('reports a cancelled dialog as null rather than as a failure', async () => {
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async () => null,
+    });
+
+    const source = client.importSource();
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    await expect(source.pick()).resolves.toBeNull();
+  });
+
+  it('stages a dropped path by its path', async () => {
+    const invoked: Array<[string, Record<string, unknown>]> = [];
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async (cmd, args) => {
+        invoked.push([cmd, args]);
+        return {
+          uploadId: 'c3d4',
+          filename: 'juniper-may-2025.xlsx',
+          size: 41000,
+          path: '/home/books/juniper-may-2025.xlsx',
+        };
+      },
+    });
+
+    const source = client.importSource();
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const staged = await source.stagePath('/home/books/juniper-may-2025.xlsx');
+
+    expect(invoked[0]).toEqual([
+      'stage_import',
+      { path: '/home/books/juniper-may-2025.xlsx' },
+    ]);
+    expect(staged.uploadId).toBe('c3d4');
+  });
+
+  it('reduces the four Tauri drag events to over, leave and drop', async () => {
+    const bus = eventBus();
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: bus.listen,
+      invoke: async () => null,
+    });
+
+    const source = client.importSource();
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const seen: DragDropEvent[] = [];
+    const off = source.onDragDrop((event) => seen.push(event));
+    await Promise.resolve();
+
+    expect(bus.names()).toEqual([
+      'tauri://drag-enter',
+      'tauri://drag-over',
+      'tauri://drag-drop',
+      'tauri://drag-leave',
+    ]);
+
+    bus.emit('tauri://drag-enter', {
+      paths: ['/home/books/cedar-april-2025.csv'],
+      position: { x: 10, y: 20 },
+    });
+    bus.emit('tauri://drag-over', { position: { x: 12, y: 24 } });
+    bus.emit('tauri://drag-drop', {
+      paths: ['/home/books/cedar-april-2025.csv'],
+      position: { x: 12, y: 24 },
+    });
+    bus.emit('tauri://drag-leave', null);
+
+    expect(seen).toEqual([
+      { type: 'over' },
+      { type: 'over' },
+      { type: 'drop', paths: ['/home/books/cedar-april-2025.csv'] },
+      { type: 'leave' },
+    ]);
+
+    off();
+    expect(bus.unlistened).toHaveLength(4);
+  });
+
+  it('reports a drop carrying no paths as an empty drop rather than throwing', async () => {
+    const bus = eventBus();
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: bus.listen,
+      invoke: async () => null,
+    });
+
+    const source = client.importSource();
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const seen: DragDropEvent[] = [];
+    source.onDragDrop((event) => seen.push(event));
+    await Promise.resolve();
+
+    bus.emit('tauri://drag-drop', { position: { x: 1, y: 1 } });
+
+    expect(seen).toEqual([{ type: 'drop', paths: [] }]);
+  });
+});
+
+describe('createApiClient', () => {
+  it('answers a browser client when there is no Tauri global', () => {
+    expect(createApiClient()).toBeInstanceOf(FetchApiClient);
+    expect(createApiClient().importSource()).toEqual({ kind: 'browser' });
+  });
+
+  it('answers a native client when the shell exposes invoke and listen', () => {
+    const globals = globalThis as Record<string, unknown>;
+    globals.__TAURI__ = {
+      core: { invoke: async () => null },
+      event: { listen: async () => () => {} },
+    };
+    try {
+      expect(createApiClient().importSource().kind).toBe('native');
+    } finally {
+      delete globals.__TAURI__;
+    }
   });
 });
