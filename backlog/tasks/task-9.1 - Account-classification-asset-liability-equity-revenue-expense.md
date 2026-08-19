@@ -4,6 +4,7 @@ title: 'Account classification: asset, liability, equity, revenue, expense'
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:45'
+updated_date: '2026-08-19 17:03'
 labels:
   - architecture
   - tax
@@ -29,7 +30,7 @@ Introduce a single accounting class vocabulary — `asset`, `liability`, `equity
 
 **Deliberately a classification change, not a table merger.** Categories and accounts stay in their own tables; they simply gain a shared class. The full promotion of categories into a unified chart of accounts belongs with TASK-9.2, where the journal lines that need it live. This keeps the change additive and migratable, and the classes survive the merger intact when it comes.
 
-Migration backfills existing data: checking/savings → asset, credit_card/line_of_credit → liability, income categories → revenue, expense categories → expense, and the seeded `Owner Draw / Distribution` category → equity. Nothing needs re-categorizing by hand.
+Migration backfills existing data: checking/savings → asset, credit_card/line_of_credit → liability, income categories → revenue, expense categories → expense, and the seeded `Owner Draw / Distribution` category → equity. Nothing needs re-categorizing by hand. A `cash` account type, if it exists by then, maps cash → asset.
 
 ## The trap to watch for
 
