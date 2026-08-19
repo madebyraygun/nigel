@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::categorizer::{categorize_transactions, CategorizeResult};
 use crate::error::{NigelError, Result};
 use crate::models::ParsedRow;
 
@@ -356,7 +357,7 @@ pub fn parse_generic_csv(
 /// The format key used for an inline column mapping, which has no saved name.
 pub const GENERIC_FORMAT: &str = "generic";
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub imported: usize,
@@ -497,6 +498,71 @@ pub fn import_file(
         sample,
         format: Some(format),
         import_id: created_import,
+    })
+}
+
+/// One import, as an entry point describes it.
+///
+/// A struct rather than six positional arguments because three callers hand
+/// over the same thing and only one of them can see the others.
+pub struct ImportRequest<'a> {
+    pub file_path: &'a Path,
+    pub account_name: &'a str,
+    pub format_key: Option<&'a str>,
+    pub inline_config: Option<&'a GenericCsvConfig>,
+}
+
+/// A committed import: what was written, and what categorization made of it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOutcome {
+    #[serde(flatten)]
+    pub result: ImportResult,
+    pub categorized: usize,
+    /// The whole ledger's flagged count, not just this import's.
+    pub still_flagged: usize,
+}
+
+/// Import a file and categorize what it added, as one unit of work.
+///
+/// The transaction is the whole point: `import_file` writes the `imports` row
+/// and then a transaction apiece, and `categorize_transactions` updates each
+/// row it matches, so a failure anywhere in the middle would otherwise leave
+/// committed transactions, a spent checksum, and no way to retry the file.
+/// Everything here rolls back to the state the pre-import snapshot describes.
+///
+/// The snapshot itself belongs outside, and before: it is the escape hatch for
+/// what a transaction cannot undo.
+pub fn import_and_categorize(
+    conn: &Connection,
+    request: &ImportRequest<'_>,
+) -> Result<ImportOutcome> {
+    let tx = conn.unchecked_transaction()?;
+    let result = import_file(
+        &tx,
+        request.file_path,
+        request.account_name,
+        request.format_key,
+        false,
+        request.inline_config,
+    )?;
+    // A file already imported is answered, not undone — there is nothing new
+    // to categorize, and saying "0 categorized" is the truth rather than a
+    // sweep of the whole ledger.
+    let counts = if result.duplicate_file {
+        CategorizeResult {
+            categorized: 0,
+            still_flagged: 0,
+        }
+    } else {
+        categorize_transactions(&tx)?
+    };
+    tx.commit()?;
+
+    Ok(ImportOutcome {
+        result,
+        categorized: counts.categorized,
+        still_flagged: counts.still_flagged,
     })
 }
 
@@ -1675,5 +1741,126 @@ Date,Note,Amount
             .query_row("SELECT count(*) FROM transactions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 2);
+    }
+    /// A trigger that aborts the UPDATE `categorize_transactions` runs, which
+    /// is a failure between the import and the categorize step with no test
+    /// hook in the production path.
+    fn break_categorization(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TRIGGER fail_categorize BEFORE UPDATE ON transactions \
+             BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+        )
+        .unwrap();
+    }
+
+    fn repair_categorization(conn: &Connection) {
+        conn.execute_batch("DROP TRIGGER fail_categorize").unwrap();
+    }
+
+    fn add_matching_rule(conn: &Connection) {
+        let category_id: i64 = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO rules (pattern, match_type, vendor, category_id) \
+             VALUES ('CEDAR', 'contains', 'Cedar Systems', ?1)",
+            [category_id],
+        )
+        .unwrap();
+    }
+
+    fn table_count(conn: &Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_failure_during_categorization_leaves_nothing_behind() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[
+                ("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00"),
+                ("03/09/2026", "GLOBEX HOSTING", "-88.00"),
+            ],
+        );
+        break_categorization(&conn);
+
+        let err = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &csv_path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("injected failure"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(table_count(&conn, "transactions"), 0);
+        assert_eq!(table_count(&conn, "imports"), 0);
+    }
+
+    #[test]
+    fn a_rolled_back_import_does_not_spend_the_checksum() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00")],
+        );
+        let request = ImportRequest {
+            file_path: &csv_path,
+            account_name: "Test Checking",
+            format_key: Some("bofa_checking"),
+            inline_config: None,
+        };
+
+        break_categorization(&conn);
+        assert!(import_and_categorize(&conn, &request).is_err());
+        repair_categorization(&conn);
+
+        let outcome = import_and_categorize(&conn, &request).unwrap();
+        assert!(
+            !outcome.result.duplicate_file,
+            "the failed run spent the checksum"
+        );
+        assert_eq!(outcome.result.imported, 1);
+        assert_eq!(outcome.categorized, 1);
+        assert_eq!(table_count(&conn, "imports"), 1);
+    }
+
+    #[test]
+    fn a_duplicate_file_commits_nothing_and_categorizes_nothing() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00")],
+        );
+        let request = ImportRequest {
+            file_path: &csv_path,
+            account_name: "Test Checking",
+            format_key: Some("bofa_checking"),
+            inline_config: None,
+        };
+
+        import_and_categorize(&conn, &request).unwrap();
+        let again = import_and_categorize(&conn, &request).unwrap();
+
+        assert!(again.result.duplicate_file);
+        assert_eq!(again.categorized, 0);
+        assert_eq!(again.still_flagged, 0);
+        assert_eq!(table_count(&conn, "imports"), 1);
     }
 }
