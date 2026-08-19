@@ -316,7 +316,7 @@ export class NigelImportScreen extends LitElement {
       const staged = await this.source.pick();
       if (staged !== null) this.adopt(staged);
     } catch (error) {
-      this.surface(error);
+      this.refuse(error);
     }
   };
 
@@ -331,6 +331,7 @@ export class NigelImportScreen extends LitElement {
     }
 
     this.highlight = false;
+    if (this.busy !== null) return;
     const path = supportedDrop(event.paths);
     if (path === null) {
       this.dropzoneError = unsupportedFileMessage();
@@ -345,7 +346,7 @@ export class NigelImportScreen extends LitElement {
     try {
       this.adopt(await this.source.stagePath(path));
     } catch (error) {
-      this.surface(error);
+      this.refuse(error);
     } finally {
       this.busy = null;
     }
@@ -534,6 +535,19 @@ export class NigelImportScreen extends LitElement {
     }
 
     if (routed.toast) this.toast(routed.message);
+  }
+
+  /**
+   * A staging failure, which the shell reports as a bare string.
+   *
+   * Tauri rejects a `Result<_, String>` with the string itself, so the size
+   * refusal and the unreadable-file message are not `ApiError`s and would
+   * reach `surface` as an unrecognized throw and be flattened to the generic
+   * toast. They are already the sentence to show, under the well.
+   */
+  private refuse(error: unknown): void {
+    if (typeof error === 'string') this.dropzoneError = error;
+    else this.surface(error);
   }
 
   /** Everything about the current file, gone. */

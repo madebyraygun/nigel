@@ -776,6 +776,7 @@ function nativeSource(fake: FakeApiClient) {
   const staged: StagedUpload[] = [];
   let nextId = 1;
   let picked: string | null = null;
+  let refusal: string | null = null;
   let handler: ((event: DragDropEvent) => void) | null = null;
   let subscribes = 0;
   let unsubscribes = 0;
@@ -795,8 +796,15 @@ function nativeSource(fake: FakeApiClient) {
 
   fake.importSourceValue = {
     kind: 'native',
-    pick: async () => (picked === null ? null : stage(picked)),
-    stagePath: async (path) => stage(path),
+    pick: async () => {
+      // Tauri rejects a `Result<_, String>` with the bare string.
+      if (refusal !== null) throw refusal;
+      return picked === null ? null : stage(picked);
+    },
+    stagePath: async (path) => {
+      if (refusal !== null) throw refusal;
+      return stage(path);
+    },
     onDragDrop: (fn) => {
       subscribes += 1;
       handler = fn;
@@ -811,6 +819,10 @@ function nativeSource(fake: FakeApiClient) {
     /** What the next dialog answers; null is a cancel, which is the default. */
     willPick: (path: string | null) => {
       picked = path;
+    },
+    /** What the shell refuses with, in the shape Tauri rejects in. */
+    willRefuse: (message: string) => {
+      refusal = message;
     },
     staged,
     emit: (event: DragDropEvent) => handler?.(event),
@@ -960,5 +972,70 @@ describe('the import screen in native mode', () => {
 
     expect(dropzone(el).native).toBe(false);
     expect(dropzone(el).highlight).toBe(false);
+  });
+
+  it('ignores a drop that lands while a call is already in flight', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    const { el } = await mount(fake);
+
+    native.emit({ type: 'drop', paths: ['/home/books/cedar-april-2025.csv'] });
+    await settle(el);
+    await setForm(el, { account: 'BofA Checking' });
+
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realPreview = fake.previewImport.bind(fake);
+    fake.previewImport = async (input) => {
+      await held;
+      return realPreview(input);
+    };
+
+    await click(el, 'Preview');
+    expect(dropzone(el).busy).toBe(true);
+
+    native.emit({ type: 'drop', paths: ['/home/books/juniper-may-2025.xlsx'] });
+    await settle(el);
+
+    // The preview in flight describes the first file; swapping it underneath
+    // would confirm a file nobody previewed.
+    expect(native.staged.map((s) => s.path)).toEqual([
+      '/home/books/cedar-april-2025.csv',
+    ]);
+    expect(dropzone(el).filename).toBe('cedar-april-2025.csv');
+    expect(dropzone(el).busy).toBe(true);
+
+    release();
+    await settle(el);
+
+    expect(panelHeadings(el)).toContain('Preview');
+  });
+
+  it('shows a staging refusal in the words the shell chose', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    native.willRefuse('That file is over the 25 MB limit.');
+    const { el } = await mount(fake);
+
+    native.emit({ type: 'drop', paths: ['/home/books/cedar-april-2025.csv'] });
+    await settle(el);
+
+    expect(dropzone(el).error).toBe('That file is over the 25 MB limit.');
+  });
+
+  it('shows a refusal from the dialog the same way', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    native.willRefuse("Couldn't read /home/books/cedar-april-2025.csv");
+    const { el } = await mount(fake);
+
+    dropzone(el).dispatchEvent(
+      new CustomEvent('nc-pick-request', { bubbles: true, composed: true }),
+    );
+    await settle(el);
+
+    expect(dropzone(el).error).toBe("Couldn't read /home/books/cedar-april-2025.csv");
   });
 });
