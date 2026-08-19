@@ -30,6 +30,7 @@ import {
   type ImporterFormat,
   type ImportListItem,
   type ImportPreview,
+  type ImportReject,
   type ImportRequest,
   type InvalidPasswordDetails,
   type InvoiceDetail,
@@ -316,6 +317,8 @@ export interface ApiClient {
   getCsvProfiles(): Promise<CsvProfile[]>;
   /** Import history, newest first — what the undo screen offers to roll back. */
   getImports(): Promise<ImportListItem[]>;
+  /** The rows one import could not parse. */
+  getImportRejects(id: number): Promise<ImportReject[]>;
   /**
    * Roll one import back: its transactions and its record.
    *
@@ -677,6 +680,10 @@ export class FetchApiClient implements ApiClient {
 
   getImports(): Promise<ImportListItem[]> {
     return this.request<ImportListItem[]>('GET', '/imports');
+  }
+
+  getImportRejects(id: number): Promise<ImportReject[]> {
+    return this.request<ImportReject[]>('GET', `/imports/${id}/rejects`);
   }
 
   deleteImport(id: number): Promise<UndoneImport> {

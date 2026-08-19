@@ -14,6 +14,7 @@ const IMPORTS: ImportListItem[] = [
     accountName: 'BofA Checking',
     importDate: '2025-04-02 09:14:11',
     transactionCount: 42,
+    malformedCount: 2,
   },
   {
     id: 9,
@@ -21,6 +22,7 @@ const IMPORTS: ImportListItem[] = [
     accountName: 'BofA Checking',
     importDate: '2025-02-01 08:02:55',
     transactionCount: 3,
+    malformedCount: 0,
   },
 ];
 
