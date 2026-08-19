@@ -17,9 +17,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::backup;
-use crate::categorizer::categorize_transactions;
 use crate::error::NigelError;
-use crate::importer::{self, CsvProfile, GenericCsvConfig, ImportResult, ImporterFormat};
+use crate::importer::{
+    self, import_and_categorize, CsvProfile, GenericCsvConfig, ImportOutcome, ImportRequest,
+    ImportResult, ImporterFormat,
+};
 use crate::imports::{self, ImportListItem};
 
 use super::super::error::{ApiError, ApiResult};
@@ -170,7 +172,7 @@ async fn preview(
         request.mapping,
     )?;
 
-    let result = blocking(&state, move |db_path| plan.run(&db_path, true)).await?;
+    let result = blocking(&state, move |db_path| plan.run(&db_path)).await?;
 
     Ok(Json(result))
 }
@@ -192,9 +194,7 @@ struct ConfirmRequest {
 #[serde(rename_all = "camelCase")]
 struct ConfirmResponse {
     #[serde(flatten)]
-    result: ImportResult,
-    categorized: usize,
-    still_flagged: usize,
+    outcome: ImportOutcome,
     /// Where the pre-import snapshot went, the same line the CLI prints.
     snapshot: String,
 }
@@ -230,15 +230,7 @@ async fn confirm(
         super::ensure_account_exists(&conn, &plan.account)?;
         backup::snapshot(&conn, &snapshot_path)?;
 
-        let result = plan.import(&conn, false)?;
-        // A file already imported is answered, not undone: the CLI stops here
-        // too, before categorizing.
-        let (categorized, still_flagged) = if result.duplicate_file {
-            (0, 0)
-        } else {
-            let counts = categorize_transactions(&conn).map_err(ApiError::from)?;
-            (counts.categorized, counts.still_flagged)
-        };
+        let outcome = plan.run_import(&conn)?;
 
         // After the import rather than before it, so a file that would not
         // parse does not leave a profile behind.
@@ -247,9 +239,7 @@ async fn confirm(
         }
 
         Ok(ConfirmResponse {
-            result,
-            categorized,
-            still_flagged,
+            outcome,
             snapshot: snapshot_path.display().to_string(),
         })
     })
@@ -303,21 +293,36 @@ impl ImportPlan {
         })
     }
 
-    fn import(&self, conn: &rusqlite::Connection, dry_run: bool) -> ApiResult<ImportResult> {
+    /// The preview: a dry run that writes nothing.
+    fn preview(&self, conn: &rusqlite::Connection) -> ApiResult<ImportResult> {
         importer::import_file(
             conn,
             &self.upload.path,
             &self.account,
             self.format.as_deref(),
-            dry_run,
+            true,
             self.mapping.as_ref(),
         )
         .map_err(import_error)
     }
 
-    fn run(&self, db_path: &std::path::Path, dry_run: bool) -> ApiResult<ImportResult> {
+    /// The real thing: import and categorize, committed together or not at all.
+    fn run_import(&self, conn: &rusqlite::Connection) -> ApiResult<ImportOutcome> {
+        import_and_categorize(
+            conn,
+            &ImportRequest {
+                file_path: &self.upload.path,
+                account_name: &self.account,
+                format_key: self.format.as_deref(),
+                inline_config: self.mapping.as_ref(),
+            },
+        )
+        .map_err(import_error)
+    }
+
+    fn run(&self, db_path: &std::path::Path) -> ApiResult<ImportResult> {
         let conn = crate::db::get_connection(db_path)?;
-        self.import(&conn, dry_run)
+        self.preview(&conn)
     }
 }
 
@@ -978,5 +983,44 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+    /// The same injected failure the importer tests use, reached through the
+    /// route: the confirm must answer an error and leave the database alone.
+    #[tokio::test]
+    async fn a_confirm_that_fails_partway_writes_nothing_and_can_be_retried() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let before = counts(&db_path);
+
+        {
+            let conn = crate::db::open_connection(&db_path, None).expect("open db");
+            conn.execute_batch(
+                "CREATE TRIGGER fail_categorize BEFORE UPDATE ON transactions \
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+            )
+            .unwrap();
+        }
+
+        let upload_id = upload_ok(&app, &token, "april.csv", &statement()).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+        let (status, body) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(counts(&db_path), before, "the failed confirm wrote rows");
+        // The upload survives a failure so the same id can be retried.
+        assert_eq!(spooled_count(&db_path), 1);
+
+        {
+            let conn = crate::db::open_connection(&db_path, None).expect("open db");
+            conn.execute_batch("DROP TRIGGER fail_categorize").unwrap();
+        }
+
+        let (status, retried) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+        assert_eq!(status, StatusCode::OK, "{retried}");
+        assert_eq!(
+            retried["duplicateFile"], false,
+            "the failed run spent the checksum: {retried}"
+        );
+        assert_eq!(retried["imported"], 3);
     }
 }

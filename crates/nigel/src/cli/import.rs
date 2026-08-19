@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use crate::cli::backup;
-use nigel_core::categorizer::categorize_transactions;
 use nigel_core::db::get_connection;
 use nigel_core::error::Result;
-use nigel_core::importer::{import_file, save_csv_profile, GenericCsvConfig};
+use nigel_core::importer::{
+    import_and_categorize, import_file, save_csv_profile, GenericCsvConfig, ImportRequest,
+};
 use nigel_core::settings::get_data_dir;
 
 pub struct ImportOpts<'a> {
@@ -62,21 +63,21 @@ pub fn run(file: &str, account: &str, opts: ImportOpts<'_>) -> Result<()> {
         println!("Pre-import snapshot saved to {}", snap_path.display());
     }
 
-    let result = import_file(
-        &conn,
-        &file_path,
-        account,
-        opts.format,
-        opts.dry_run,
-        inline_config.as_ref(),
-    )?;
-
-    if result.duplicate_file {
-        println!("This file has already been imported (duplicate checksum).");
-        return Ok(());
-    }
-
     if opts.dry_run {
+        let result = import_file(
+            &conn,
+            &file_path,
+            account,
+            opts.format,
+            true,
+            inline_config.as_ref(),
+        )?;
+
+        if result.duplicate_file {
+            println!("This file has already been imported (duplicate checksum).");
+            return Ok(());
+        }
+
         println!("Dry run \u{2014} no changes made");
         if result.malformed > 0 {
             println!(
@@ -104,6 +105,22 @@ pub fn run(file: &str, account: &str, opts: ImportOpts<'_>) -> Result<()> {
         return Ok(());
     }
 
+    let outcome = import_and_categorize(
+        &conn,
+        &ImportRequest {
+            file_path: &file_path,
+            account_name: account,
+            format_key: opts.format,
+            inline_config: inline_config.as_ref(),
+        },
+    )?;
+    let result = &outcome.result;
+
+    if result.duplicate_file {
+        println!("This file has already been imported (duplicate checksum).");
+        return Ok(());
+    }
+
     if result.malformed > 0 {
         println!(
             "{} imported, {} skipped (duplicates), {} skipped (malformed data)",
@@ -115,11 +132,9 @@ pub fn run(file: &str, account: &str, opts: ImportOpts<'_>) -> Result<()> {
             result.imported, result.skipped
         );
     }
-
-    let cat_result = categorize_transactions(&conn)?;
     println!(
         "{} categorized, {} still flagged",
-        cat_result.categorized, cat_result.still_flagged
+        outcome.categorized, outcome.still_flagged
     );
 
     Ok(())

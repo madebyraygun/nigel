@@ -12,9 +12,8 @@ use rusqlite::Connection;
 
 use crate::cli::accounts;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
-use nigel_core::categorizer::categorize_transactions;
 use nigel_core::error::Result;
-use nigel_core::importer::import_file;
+use nigel_core::importer::{import_and_categorize, ImportRequest};
 use nigel_core::settings::{get_data_dir, shellexpand_path};
 
 pub enum ImportAction {
@@ -289,43 +288,41 @@ fn run_import(conn: &Connection, file_path: &Path, account_name: &str) -> Import
         };
     }
 
-    match import_file(conn, file_path, account_name, None, false, None) {
+    match import_and_categorize(
+        conn,
+        &ImportRequest {
+            file_path,
+            account_name,
+            format_key: None,
+            inline_config: None,
+        },
+    ) {
         Err(e) => ImportResult {
             message: format!("Import failed: {e}"),
             is_error: true,
         },
-        Ok(result) => {
-            if result.duplicate_file {
+        Ok(outcome) => {
+            if outcome.result.duplicate_file {
                 return ImportResult {
                     message: "This file has already been imported (duplicate checksum).".into(),
                     is_error: false,
                 };
             }
-
-            let mut msg = if result.malformed > 0 {
+            let mut msg = if outcome.result.malformed > 0 {
                 format!(
                     "{} imported, {} skipped (duplicates), {} skipped (malformed data)",
-                    result.imported, result.skipped, result.malformed
+                    outcome.result.imported, outcome.result.skipped, outcome.result.malformed
                 )
             } else {
                 format!(
                     "{} imported, {} skipped (duplicates)",
-                    result.imported, result.skipped
+                    outcome.result.imported, outcome.result.skipped
                 )
             };
-
-            match categorize_transactions(conn) {
-                Ok(cat) => {
-                    msg.push_str(&format!(
-                        "\n{} categorized, {} still flagged",
-                        cat.categorized, cat.still_flagged
-                    ));
-                }
-                Err(e) => {
-                    msg.push_str(&format!("\nCategorization error: {e}"));
-                }
-            }
-
+            msg.push_str(&format!(
+                "\n{} categorized, {} still flagged",
+                outcome.categorized, outcome.still_flagged
+            ));
             ImportResult {
                 message: msg,
                 is_error: false,
