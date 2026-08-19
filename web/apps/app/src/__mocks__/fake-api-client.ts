@@ -37,7 +37,6 @@ import type {
   ImportConfirmation,
   ImporterFormat,
   ImportListItem,
-  ImportReject,
   ImportPreview,
   ImportRequest,
   InvoiceDetail,
@@ -840,7 +839,6 @@ export class FakeApiClient implements ApiClient {
   // would pass even if the refresh were never wired up.
 
   imports: ImportListItem[] = [];
-  rejects: Record<number, ImportReject[]> = {};
   reconciliations: ReconciliationRecord[] = [];
 
   /** What the ledger sums to per account name, for `reconcile` to compare against. */
@@ -859,14 +857,6 @@ export class FakeApiClient implements ApiClient {
     this.calls.push('getImports');
     if (this.importsError) throw this.importsError;
     return this.imports;
-  }
-
-  async getImportRejects(id: number): Promise<ImportReject[]> {
-    this.calls.push(`getImportRejects:${id}`);
-    if (!this.imports.some((candidate) => candidate.id === id)) {
-      throw notFoundError(`No import with ID ${id}`);
-    }
-    return this.rejects[id] ?? [];
   }
 
   async deleteImport(id: number): Promise<UndoneImport> {

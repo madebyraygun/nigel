@@ -834,15 +834,6 @@ export interface ImportListItem {
   malformedCount: number;
 }
 
-/** `GET /api/imports/{id}/rejects` — one row the parser refused. */
-export interface ImportReject {
-  id: number;
-  /** The line in the file, as the parser counted it. */
-  rowNumber: number;
-  content: string;
-  reason: string;
-}
-
 /** `DELETE /api/imports/:id` — what rolling one back removed. */
 export interface UndoneImport {
   id: number;
