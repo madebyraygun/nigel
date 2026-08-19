@@ -10,9 +10,10 @@ import {
   type WcDropzone,
   type WcImportForm,
   type WcSampleTable,
+  unsupportedFileMessage,
 } from '@nigel/ui';
 
-import { ApiError } from '../api/index.js';
+import { ApiError, type DragDropEvent, type StagedUpload } from '../api/index.js';
 import { UPLOAD_NOT_FOUND } from '../api/types.js';
 import type { Account, ImporterFormat } from '../api/types.js';
 import {
@@ -764,5 +765,200 @@ describe('nigel-import-screen', () => {
     expect(el.shadowRoot?.querySelector('.load-error')?.textContent).toContain(
       'profiles are down',
     );
+  });
+});
+
+/**
+ * Point the fake client at a native source, and hand the test the two things
+ * only the shell can do: answer the dialog, and drop a file on the window.
+ */
+function nativeSource(fake: FakeApiClient) {
+  const staged: StagedUpload[] = [];
+  let nextId = 1;
+  let picked: string | null = null;
+  let handler: ((event: DragDropEvent) => void) | null = null;
+  let subscribes = 0;
+  let unsubscribes = 0;
+
+  const stage = (path: string): StagedUpload => {
+    const uploadId = `staged-${nextId++}`;
+    fake.liveUploads.add(uploadId);
+    const upload = {
+      uploadId,
+      filename: path.slice(path.lastIndexOf('/') + 1),
+      size: 8214,
+      path,
+    };
+    staged.push(upload);
+    return upload;
+  };
+
+  fake.importSourceValue = {
+    kind: 'native',
+    pick: async () => (picked === null ? null : stage(picked)),
+    stagePath: async (path) => stage(path),
+    onDragDrop: (fn) => {
+      subscribes += 1;
+      handler = fn;
+      return () => {
+        unsubscribes += 1;
+        handler = null;
+      };
+    },
+  };
+
+  return {
+    /** What the next dialog answers; null is a cancel, which is the default. */
+    willPick: (path: string | null) => {
+      picked = path;
+    },
+    staged,
+    emit: (event: DragDropEvent) => handler?.(event),
+    counts: () => ({ subscribes, unsubscribes }),
+    isSubscribed: () => handler !== null,
+  };
+}
+
+describe('the import screen in native mode', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('puts the dropzone in native mode', async () => {
+    const fake = client();
+    nativeSource(fake);
+    const { el } = await mount(fake);
+
+    expect(dropzone(el).native).toBe(true);
+  });
+
+  it('stages what the native dialog returns and previews it', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    native.willPick('/home/books/cedar-april-2025.csv');
+    const { el } = await mount(fake);
+
+    dropzone(el).dispatchEvent(
+      new CustomEvent('nc-pick-request', { bubbles: true, composed: true }),
+    );
+    await settle(el);
+
+    expect(dropzone(el).filename).toBe('cedar-april-2025.csv');
+    await setForm(el, { account: 'BofA Checking' });
+    await click(el, 'Preview');
+
+    expect(panelHeadings(el)).toContain('Preview');
+    // Nothing was uploaded: the file never crossed the wire.
+    expect(fake.calls.filter((c) => c.startsWith('uploadImport'))).toHaveLength(0);
+    const previewCall = fake.calls.find((c) => c.startsWith('previewImport'));
+    if (previewCall === undefined) throw new Error('no previewImport call');
+    expect(bodyOf(previewCall).uploadId).toBe('staged-1');
+  });
+
+  it('leaves the screen alone when the dialog is cancelled', async () => {
+    const fake = client();
+    nativeSource(fake);
+    const { el } = await mount(fake);
+
+    dropzone(el).dispatchEvent(
+      new CustomEvent('nc-pick-request', { bubbles: true, composed: true }),
+    );
+    await settle(el);
+
+    expect(dropzone(el).filename).toBe('');
+    expect(dropzone(el).error).toBe('');
+  });
+
+  it('highlights the dropzone while a file is over the window', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    const { el } = await mount(fake);
+
+    native.emit({ type: 'over' });
+    await settle(el);
+    expect(dropzone(el).highlight).toBe(true);
+
+    native.emit({ type: 'leave' });
+    await settle(el);
+    expect(dropzone(el).highlight).toBe(false);
+  });
+
+  it('stages the first usable path in a drop', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    const { el } = await mount(fake);
+
+    native.emit({
+      type: 'drop',
+      paths: ['/home/books/receipt.pdf', '/home/books/juniper-may-2025.xlsx'],
+    });
+    await settle(el);
+
+    expect(native.staged.map((s) => s.path)).toEqual([
+      '/home/books/juniper-may-2025.xlsx',
+    ]);
+    expect(dropzone(el).filename).toBe('juniper-may-2025.xlsx');
+    expect(dropzone(el).highlight).toBe(false);
+  });
+
+  it('says the same thing the dropzone would about a drop it cannot read', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    const { el } = await mount(fake);
+
+    native.emit({ type: 'drop', paths: ['/home/books/receipt.pdf'] });
+    await settle(el);
+
+    expect(dropzone(el).error).toBe(unsupportedFileMessage());
+    expect(native.staged).toHaveLength(0);
+  });
+
+  it('re-stages from the retained path when the spool has forgotten the file', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    fake.previewErrorOnce = new ApiError({
+      code: 'not_found',
+      rawCode: 'not_found',
+      message: 'gone',
+      status: 404,
+      details: { reason: UPLOAD_NOT_FOUND },
+    });
+    const { el } = await mount(fake);
+
+    native.emit({ type: 'drop', paths: ['/home/books/cedar-april-2025.csv'] });
+    await settle(el);
+    await setForm(el, { account: 'BofA Checking' });
+    await click(el, 'Preview');
+
+    // Recovered without saying anything: the file is still on disk.
+    expect(panelHeadings(el)).toContain('Preview');
+    expect(native.staged.map((s) => s.path)).toEqual([
+      '/home/books/cedar-april-2025.csv',
+      '/home/books/cedar-april-2025.csv',
+    ]);
+    expect(dropzone(el).error).toBe('');
+  });
+
+  it('unsubscribes from the window on disconnect and resubscribes on reconnect', async () => {
+    const fake = client();
+    const native = nativeSource(fake);
+    const { el } = await mount(fake);
+
+    expect(native.counts()).toEqual({ subscribes: 1, unsubscribes: 0 });
+
+    el.remove();
+    expect(native.counts()).toEqual({ subscribes: 1, unsubscribes: 1 });
+    expect(native.isSubscribed()).toBe(false);
+
+    document.body.appendChild(el);
+    await settle(el);
+    expect(native.counts()).toEqual({ subscribes: 2, unsubscribes: 1 });
+  });
+
+  it('leaves the dropzone alone when the client is a browser', async () => {
+    const { el } = await mount();
+
+    expect(dropzone(el).native).toBe(false);
+    expect(dropzone(el).highlight).toBe(false);
   });
 });
