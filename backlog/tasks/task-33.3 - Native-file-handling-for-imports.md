@@ -1,9 +1,11 @@
 ---
 id: TASK-33.3
 title: Native file handling for imports
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-06 16:29'
+updated_date: '2026-08-19 14:16'
 labels:
   - tauri
   - frontend
