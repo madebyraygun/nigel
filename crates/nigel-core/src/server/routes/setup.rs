@@ -7,8 +7,9 @@
 //! be locked — and in web mode the session guard applies as it does everywhere
 //! else, since the user arrived through the token URL.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -18,7 +19,6 @@ use crate::db;
 use crate::setup::SetupPlan;
 
 use super::super::error::{ApiError, ApiResult};
-use super::super::extract::ApiJson;
 use super::super::secret::Secret;
 use super::super::state::AppState;
 use super::status::{current_status, initialized, StatusResponse};
@@ -48,8 +48,18 @@ struct SetupRequest {
 
 async fn post_setup(
     State(state): State<AppState>,
-    ApiJson(request): ApiJson<SetupRequest>,
+    body: Result<Json<SetupRequest>, JsonRejection>,
 ) -> ApiResult<Json<StatusResponse>> {
+    // `ApiJson` would be the house extractor here, but its rejection carries
+    // serde's own text, which quotes the offending value — and one of the
+    // values in this body is a password. `POST /api/unlock` declines it for
+    // the same reason.
+    let Json(request) = body.map_err(|_| {
+        ApiError::bad_request(
+            "Expected a JSON body of the form {\"userName\": \"...\", \"companyName\": \"...\", \"profile\": \"business\", \"action\": \"fresh\"}.",
+        )
+    })?;
+
     let Some(profile) = db::Profile::parse(request.profile.trim()) else {
         return Err(ApiError::bad_request(format!(
             "Unknown profile '{}'. Expected 'business' or 'personal'.",
@@ -75,12 +85,6 @@ async fn post_setup(
         Some(value) => Some(value.to_string()),
     };
 
-    let plan = SetupPlan {
-        user_name: request.user_name.trim().to_string(),
-        company_name: request.company_name.trim().to_string(),
-        profile,
-        password,
-    };
     let action = request.action;
 
     {
@@ -88,12 +92,28 @@ async fn post_setup(
         // a database file and then rebinds the path every later request reads.
         let _gate = state.db_gate.write().await;
 
-        if initialized(&state.db_path()) {
+        // One read of the served path, feeding both the guard and the write.
+        // Two reads could straddle a settings.json rewritten in between, and
+        // the route would check one directory for existing books and create
+        // them in another.
+        let served = state.db_path();
+        if initialized(&served) {
             return Err(ApiError::conflict(
                 "These books are already set up.",
                 serde_json::json!({ "reason": "already_initialized" }),
             ));
         }
+
+        let plan = SetupPlan {
+            user_name: request.user_name.trim().to_string(),
+            company_name: request.company_name.trim().to_string(),
+            profile,
+            password,
+            data_dir: served
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
+        };
 
         let db_path = tokio::task::spawn_blocking(move || -> ApiResult<PathBuf> {
             let fresh = crate::setup::run(&plan)?;
@@ -234,6 +254,52 @@ mod tests {
 
         assert!(!answer.to_string().contains("correct horse"), "{answer}");
         crate::db::set_db_password(None);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_password_is_refused_without_quoting_it() {
+        // serde's type-mismatch text quotes the offending value, and here that
+        // value is the password. The rejection is answered with one fixed
+        // sentence for the same reason `POST /api/unlock` is.
+        let (_config, _dir, db_path) = empty_books();
+        let (app, token) = app_for(&db_path);
+        let mut body = fresh_body();
+        body["password"] = json!(12345);
+
+        let (status, answer) = post_json(&app, "/api/setup", &token, &body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        assert!(
+            !answer.to_string().contains("12345"),
+            "the rejection quoted the password back: {answer}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_books_land_where_the_server_is_looking() {
+        // The 409 guard reads the served path; the write has to use that same
+        // value, or a settings.json repointed between the two would have the
+        // route check one directory and create books in another.
+        let (_config, dir, db_path) = empty_books();
+        let (app, token) = app_for(&db_path);
+
+        let elsewhere = dir.path().join("elsewhere");
+        let mut settings = crate::settings::load_settings();
+        settings.data_dir = elsewhere.to_string_lossy().to_string();
+        crate::settings::save_settings(&settings).expect("repoint settings");
+
+        let (status, answer) = post_json(&app, "/api/setup", &token, &fresh_body()).await;
+
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        assert!(
+            db_path.exists(),
+            "no books at the served path {}",
+            db_path.display()
+        );
+        assert!(
+            !elsewhere.join("nigel.db").exists(),
+            "the books followed settings.json instead of the served path"
+        );
     }
 
     #[tokio::test]

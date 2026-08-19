@@ -23,10 +23,17 @@ pub struct SetupPlan {
     pub profile: db::Profile,
     /// `Some` encrypts the database; `None` leaves the current key alone.
     pub password: Option<String>,
+    /// Where the books go.
+    ///
+    /// The caller's value rather than `settings.json`'s, because a caller may
+    /// have already decided which directory it is talking about: the web route
+    /// checks the path it is serving for existing books, and has to write to
+    /// that same value or the check and the write can disagree.
+    pub data_dir: PathBuf,
 }
 
-/// Create the data directory tree and the database, and answer where the
-/// database landed.
+/// Create the data directory tree and the database under `plan.data_dir`, and
+/// answer where the database landed.
 ///
 /// Safe to call against books that already exist: the directory creation is
 /// idempotent, `init_db_with_profile` migrates rather than reseeds, and an
@@ -42,9 +49,9 @@ pub fn run(plan: &SetupPlan) -> Result<PathBuf> {
         db::set_db_password(Some(password.clone()));
     }
 
-    let data_dir = PathBuf::from(&stored.data_dir);
+    let data_dir = &plan.data_dir;
     for dir in [
-        data_dir.clone(),
+        data_dir.to_path_buf(),
         data_dir.join("exports"),
         data_dir.join("snapshots"),
         data_dir.join("backups"),
@@ -85,6 +92,7 @@ mod tests {
             company_name: "Cedar Systems".to_string(),
             profile: crate::db::Profile::Business,
             password: password.map(str::to_string),
+            data_dir: PathBuf::from(crate::settings::load_settings().data_dir),
         }
     }
 
@@ -178,6 +186,25 @@ mod tests {
 
         assert!(!crate::db::is_encrypted(&db_path).expect("probe"));
         crate::db::open_connection(&db_path, None).expect("open plaintext");
+    }
+
+    #[test]
+    fn it_writes_where_the_plan_says_rather_than_where_settings_points() {
+        // The caller owns the directory. A caller that has already decided
+        // which books it means — the web route, checking the path it serves —
+        // must not have the write land somewhere else.
+        let (_config, dir) = fixture();
+        let mut elsewhere = plan(None);
+        elsewhere.data_dir = dir.path().join("elsewhere");
+
+        let db_path = run(&elsewhere).expect("setup");
+
+        assert_eq!(db_path, dir.path().join("elsewhere").join("nigel.db"));
+        assert!(db_path.exists(), "no database at {}", db_path.display());
+        assert!(
+            !dir.path().join("books").join("nigel.db").exists(),
+            "it followed settings.json instead of the plan"
+        );
     }
 
     #[test]
