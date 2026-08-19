@@ -76,7 +76,9 @@ export {
 } from './wc-register-toolbar.js';
 export {
   WcDropzone,
+  DEFAULT_EXTENSIONS,
   DEFAULT_MAX_BYTES,
+  unsupportedFileMessage,
   type NcFileErrorDetail,
   type NcFileSelectDetail,
 } from './wc-dropzone.js';

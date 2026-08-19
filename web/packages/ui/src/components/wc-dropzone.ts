@@ -15,6 +15,22 @@ export interface NcFileErrorDetail {
 /** 25 MB — what `POST /api/imports/upload` accepts before answering 413. */
 export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 
+/** What the importers read, which is also what the picker offers. */
+export const DEFAULT_EXTENSIONS = ['.csv', '.xlsx', '.xls'] as const;
+
+/**
+ * The one sentence a file nigel cannot read produces.
+ *
+ * Exported because a native shell decides this before the component ever sees
+ * a file — it is handed a path, not a `File` — and two copies of a sentence
+ * drift.
+ */
+export function unsupportedFileMessage(
+  extensions: readonly string[] = DEFAULT_EXTENSIONS,
+): string {
+  return `nigel reads ${extensions.join(', ')} statements. That one is something else.`;
+}
+
 /**
  * A file well: drag a statement onto it, or click to open the picker.
  *
@@ -162,7 +178,7 @@ export class WcDropzone extends LitElement {
 
   /** Extensions the picker offers and the well accepts, comma separated. */
   @property({ type: String })
-  accept = '.csv,.xlsx,.xls';
+  accept = DEFAULT_EXTENSIONS.join(',');
 
   /** Largest file to emit. Zero disables the check. */
   @property({ type: Number, attribute: 'max-bytes' })
@@ -185,6 +201,20 @@ export class WcDropzone extends LitElement {
   @property({ type: Boolean, reflect: true })
   disabled = false;
 
+  /**
+   * The shell owns choosing and dragging.
+   *
+   * The browse action asks for a pick rather than opening one, and the HTML5
+   * handlers stand down: Tauri intercepts drag events in the webview, so a
+   * handler here would never fire and `highlight` is how the real drag gets in.
+   */
+  @property({ type: Boolean, reflect: true })
+  native = false;
+
+  /** The drag-over treatment, driven by the owner in native mode. */
+  @property({ type: Boolean, reflect: true })
+  highlight = false;
+
   /** Purely visual, so it stays internal rather than becoming a property. */
   @state() private dragover = false;
 
@@ -206,7 +236,7 @@ export class WcDropzone extends LitElement {
     const extensions = this.extensions;
     const name = file.name.toLowerCase();
     if (extensions.length > 0 && !extensions.some((ext) => name.endsWith(ext))) {
-      return `nigel reads ${extensions.join(', ')} statements. That one is something else.`;
+      return unsupportedFileMessage(extensions);
     }
     if (this.maxBytes > 0 && file.size > this.maxBytes) {
       const limit = Math.round(this.maxBytes / (1024 * 1024));
@@ -241,6 +271,12 @@ export class WcDropzone extends LitElement {
 
   private handleBrowse = (): void => {
     if (this.blocked) return;
+    if (this.native) {
+      this.dispatchEvent(
+        new CustomEvent('nc-pick-request', { bubbles: true, composed: true }),
+      );
+      return;
+    }
     this.input?.click();
   };
 
@@ -253,16 +289,18 @@ export class WcDropzone extends LitElement {
   };
 
   private handleDragOver = (event: DragEvent): void => {
-    if (this.blocked) return;
+    if (this.native || this.blocked) return;
     event.preventDefault();
     this.dragover = true;
   };
 
   private handleDragLeave = (): void => {
+    if (this.native) return;
     this.dragover = false;
   };
 
   private handleDrop = (event: DragEvent): void => {
+    if (this.native) return;
     event.preventDefault();
     this.dragover = false;
     if (this.blocked) return;
@@ -277,25 +315,27 @@ export class WcDropzone extends LitElement {
   };
 
   render() {
+    const marked = this.native ? this.highlight : this.dragover;
+
     return html`
       <div
-        class="zone ${this.dragover ? 'dragover' : ''}"
+        class="zone ${marked ? 'dragover' : ''}"
         @dragover=${this.handleDragOver}
         @dragleave=${this.handleDragLeave}
         @drop=${this.handleDrop}
       >
         ${this.filename ? this.renderSelected() : this.renderWell()}
       </div>
-      <input
-        type="file"
-        accept=${this.accept}
-        tabindex="-1"
-        aria-hidden="true"
-        @change=${this.handleInputChange}
-      />
-      ${this.error
-        ? html`<p class="error" role="alert">${this.error}</p>`
-        : nothing}
+      ${this.native
+        ? nothing
+        : html`<input
+            type="file"
+            accept=${this.accept}
+            tabindex="-1"
+            aria-hidden="true"
+            @change=${this.handleInputChange}
+          />`}
+      ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
     `;
   }
 
@@ -352,5 +392,6 @@ declare global {
   interface HTMLElementEventMap {
     'nc-file-select': CustomEvent<NcFileSelectDetail>;
     'nc-file-error': CustomEvent<NcFileErrorDetail>;
+    'nc-pick-request': CustomEvent<void>;
   }
 }
