@@ -4,13 +4,19 @@ import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import { ACCOUNT_TYPES, accountTypeLabel } from './account-type.js';
+import {
+  ACCOUNT_CLASSES,
+  accountClassLabel,
+  type AccountClassValue,
+} from './account-class.js';
 import { controlsCss } from '@nigel/theme';
 
-export type WcAccountFormMode = 'create' | 'rename';
+export type WcAccountFormMode = 'create' | 'edit';
 
 export interface AccountFormValue {
   name: string;
   accountType: string;
+  class: string;
   institution: string;
   lastFour: string;
 }
@@ -27,6 +33,7 @@ export interface NcAccountFormChangeDetail {
 export const EMPTY_ACCOUNT_FORM: AccountFormValue = {
   name: '',
   accountType: ACCOUNT_TYPES[0],
+  class: 'asset',
   institution: '',
   lastFour: '',
 };
@@ -52,13 +59,13 @@ export function validateAccountForm(value: AccountFormValue): AccountFormErrors 
 }
 
 /**
- * The account add/rename field group.
+ * The account add/edit field group.
  *
  * Controlled: it renders `value` and emits every edit, because the screen owns
- * the request and has to know what it would send. Rename mode shows one field,
- * which is all `PATCH /api/accounts/:id` accepts — type, institution and last
- * four are creation-time facts, and the other three render as text so the form
- * does not silently imply otherwise.
+ * the request and has to know what it would send. Edit mode shows the name and
+ * the class, which is all `PATCH /api/accounts/:id` accepts — type, institution
+ * and last four are creation-time facts, and those three render as text so the
+ * form does not silently imply otherwise.
  */
 @customElement('wc-account-form')
 export class WcAccountForm extends LitElement {
@@ -159,7 +166,7 @@ export class WcAccountForm extends LitElement {
             ? html`<p class="error" role="alert">${this.errors.name}</p>`
             : nothing}
         </div>
-        ${this.mode === 'create' ? this.renderCreateFields() : this.renderFixed()}
+        ${this.mode === 'create' ? this.renderCreateFields() : this.renderEditFields()}
       </div>
     `;
   }
@@ -178,6 +185,7 @@ export class WcAccountForm extends LitElement {
             html`<wa-option value=${type}>${accountTypeLabel(type)}</wa-option>`,
         )}
       </wa-select>
+      ${this.renderClassSelect()}
       <div class="row">
         <wa-input
           data-institution
@@ -205,6 +213,35 @@ export class WcAccountForm extends LitElement {
             : nothing}
         </div>
       </div>
+    `;
+  }
+
+  private renderEditFields() {
+    return html`${this.renderClassSelect()} ${this.renderFixed()}`;
+  }
+
+  private renderClassSelect() {
+    const unknownClass = !ACCOUNT_CLASSES.includes(
+      this.value.class as AccountClassValue,
+    );
+
+    return html`
+      <wa-select
+        data-class
+        label="Class"
+        hint="Where this sits in the accounting structure."
+        value=${this.value.class}
+        ?disabled=${this.disabled}
+        @change=${this.handleField('class')}
+      >
+        ${ACCOUNT_CLASSES.map(
+          (value) =>
+            html`<wa-option value=${value}>${accountClassLabel(value)}</wa-option>`,
+        )}
+        ${unknownClass
+          ? html`<wa-option value=${this.value.class}>${this.value.class}</wa-option>`
+          : nothing}
+      </wa-select>
     `;
   }
 

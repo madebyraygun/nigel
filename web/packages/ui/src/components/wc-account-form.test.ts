@@ -15,6 +15,7 @@ import preview from './wc-account-form.preview.js';
 const filled: AccountFormValue = {
   name: 'BofA Checking',
   accountType: 'checking',
+  class: 'asset',
   institution: 'Bank of America',
   lastFour: '4821',
 };
@@ -67,16 +68,23 @@ describe('wc-account-form', () => {
     document.body.innerHTML = '';
   });
 
-  it('collects all four fields in create mode', async () => {
+  it('collects every field in create mode', async () => {
     const el = await mount();
-    for (const hook of ['[data-name]', '[data-type]', '[data-institution]', '[data-last-four]']) {
+    for (const hook of [
+      '[data-name]',
+      '[data-type]',
+      '[data-class]',
+      '[data-institution]',
+      '[data-last-four]',
+    ]) {
       expect(el.shadowRoot?.querySelector(hook), hook).toBeTruthy();
     }
   });
 
-  it('collects only the name in rename mode, and says why', async () => {
-    const el = await mount({ mode: 'rename', value: filled });
+  it('collects the name and the class in edit mode, and says what is fixed', async () => {
+    const el = await mount({ mode: 'edit', value: filled });
     expect(el.shadowRoot?.querySelector('[data-name]')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('[data-class]')).toBeTruthy();
     expect(el.shadowRoot?.querySelector('[data-type]')).toBeNull();
     expect(el.shadowRoot?.querySelector('[data-institution]')).toBeNull();
     expect(el.shadowRoot?.querySelector('.hint')?.textContent).toContain(

@@ -6,6 +6,7 @@ import type { Preview } from '../../preview/types.js';
 const filled = {
   name: 'Software / Subscriptions',
   categoryType: 'expense',
+  class: 'expense',
   taxLine: 'Other expenses',
   formLine: '1120S-19',
 };
@@ -39,6 +40,14 @@ const preview: Preview = {
         ></wc-category-form>`,
     },
     {
+      name: 'a class from outside the vocabulary',
+      render: () => html`
+        <wc-category-form
+          .value=${{ ...filled, class: 'contra-asset' }}
+        ></wc-category-form>
+      `,
+    },
+    {
       name: 'with-error',
       render: () =>
         html`<wc-category-form
@@ -53,6 +62,7 @@ const preview: Preview = {
           .value=${{
             name: 'Consulting income',
             categoryType: 'income',
+            class: 'revenue',
             taxLine: 'Gross receipts',
             formLine: '1120S-1a',
           }}

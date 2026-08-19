@@ -205,6 +205,17 @@ function sortRules(rules: RuleRow[]): RuleRow[] {
 }
 
 /**
+ * What a create without a `class` gets, the way the server derives it — a
+ * fixture that skipped the derivation would answer with a row no endpoint
+ * could ever return.
+ */
+function classForAccountType(accountType: string): string {
+  return accountType === 'credit_card' || accountType === 'line_of_credit'
+    ? 'liability'
+    : 'asset';
+}
+
+/**
  * A 409 exactly as the server shapes one, for the guardrail paths.
  *
  * Every manager screen has to render four of these, and hand-building the
@@ -544,6 +555,7 @@ export class FakeApiClient implements ApiClient {
       id: this.nextId++,
       name: input.name,
       accountType: input.accountType,
+      class: input.class ?? classForAccountType(input.accountType),
       institution: input.institution ?? null,
       lastFour: input.lastFour ?? null,
     };
@@ -551,13 +563,14 @@ export class FakeApiClient implements ApiClient {
     return account;
   }
 
-  async renameAccount(id: number, input: AccountPatch): Promise<Account> {
-    this.calls.push(`renameAccount:${id}:${JSON.stringify(input)}`);
+  async updateAccount(id: number, input: AccountPatch): Promise<Account> {
+    this.calls.push(`updateAccount:${id}:${JSON.stringify(input)}`);
     if (this.renameAccountError) throw this.renameAccountError;
 
     const account = this.accounts.find((candidate) => candidate.id === id);
     if (!account) throw new Error(`no account ${id} in the fixture`);
-    account.name = input.name;
+    if (input.name !== undefined) account.name = input.name;
+    if (input.class !== undefined) account.class = input.class;
     return { ...account };
   }
 
@@ -577,6 +590,7 @@ export class FakeApiClient implements ApiClient {
       id: this.nextId++,
       name: input.name,
       categoryType: input.categoryType,
+      class: input.class ?? (input.categoryType === 'income' ? 'revenue' : 'expense'),
       taxLine: input.taxLine ?? null,
       formLine: input.formLine ?? null,
     };
@@ -594,6 +608,7 @@ export class FakeApiClient implements ApiClient {
     // Absent keeps, null clears — the double_option semantics the route has.
     if (input.name !== undefined) category.name = input.name;
     if (input.categoryType !== undefined) category.categoryType = input.categoryType;
+    if (input.class !== undefined) category.class = input.class;
     if (input.taxLine !== undefined) category.taxLine = input.taxLine;
     if (input.formLine !== undefined) category.formLine = input.formLine;
     return { ...category };

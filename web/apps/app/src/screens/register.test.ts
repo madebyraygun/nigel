@@ -9,22 +9,38 @@ import type { Account, CategoryRow, RegisterRow } from '../api/types.js';
 import { todayIso } from './register-data.js';
 
 const accounts: Account[] = [
-  { id: 1, name: 'BofA Checking', accountType: 'checking', institution: null, lastFour: null },
+  {
+    id: 1,
+    name: 'BofA Checking',
+    accountType: 'checking',
+    class: 'asset',
+    institution: null,
+    lastFour: null,
+  },
   {
     id: 2,
     name: 'BofA Credit Card',
     accountType: 'credit_card',
+    class: 'liability',
     institution: null,
     lastFour: null,
   },
 ];
 
 const categories: CategoryRow[] = [
-  { id: 3, name: 'Consulting income', categoryType: 'income', taxLine: null, formLine: null },
+  {
+    id: 3,
+    name: 'Consulting income',
+    categoryType: 'income',
+    class: 'revenue',
+    taxLine: null,
+    formLine: null,
+  },
   {
     id: 12,
     name: 'Software / Subscriptions',
     categoryType: 'expense',
+    class: 'expense',
     taxLine: null,
     formLine: null,
   },

@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@nigel/ui';
 import {
+  accountClassLabel,
   accountTypeLabel,
   confirmDialog,
   EMPTY_ACCOUNT_FORM,
@@ -17,25 +18,26 @@ import {
 } from '@nigel/ui';
 
 import { ApiError, type ApiClient } from '../api/index.js';
-import type { Account } from '../api/types.js';
+import type { Account, AccountPatch } from '../api/types.js';
 import { guardrailMessage } from './manager-errors.js';
 import type { ScreenContext } from './context.js';
 
 const COLUMNS: ManagerColumn[] = [
   { key: 'name', label: 'Name' },
   { key: 'accountType', label: 'Type' },
+  { key: 'class', label: 'Class' },
   { key: 'institution', label: 'Institution' },
   { key: 'lastFour', label: 'Last four' },
 ];
 
 const ACTIONS: ManagerAction[] = [
-  { name: 'rename', label: 'Rename', icon: 'wc-icon-edit' },
+  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
   { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
 ];
 
 interface Editor {
   mode: WcAccountFormMode;
-  /** The account being renamed; absent when creating. */
+  /** The account being edited; absent when creating. */
   id?: number;
   value: AccountFormValue;
 }
@@ -50,6 +52,7 @@ function toFormValue(account: Account): AccountFormValue {
   return {
     name: account.name,
     accountType: account.accountType,
+    class: account.class,
     institution: account.institution ?? '',
     lastFour: account.lastFour ?? '',
   };
@@ -111,6 +114,7 @@ export class NigelAccountsScreen extends LitElement {
       cells: [
         account.name,
         accountTypeLabel(account.accountType),
+        accountClassLabel(account.class),
         account.institution,
         account.lastFour,
       ],
@@ -142,8 +146,8 @@ export class NigelAccountsScreen extends LitElement {
     const account = this.accounts.find((candidate) => candidate.id === id);
     if (!account) return;
 
-    if (action === 'rename') {
-      this.editor = { mode: 'rename', id, value: toFormValue(account) };
+    if (action === 'edit') {
+      this.editor = { mode: 'edit', id, value: toFormValue(account) };
       this.formErrors = {};
       this.dialogError = null;
       return;
@@ -166,17 +170,24 @@ export class NigelAccountsScreen extends LitElement {
         await this.client.createAccount({
           name: editor.value.name.trim(),
           accountType: editor.value.accountType,
+          class: editor.value.class,
           institution: orNull(editor.value.institution),
           lastFour: orNull(editor.value.lastFour),
         });
       } else if (editor.id !== undefined) {
         const current = this.accounts.find((account) => account.id === editor.id);
-        // A rename to the same name is a request that can only fail on itself.
-        if (current && current.name === editor.value.name.trim()) {
+        const patch: AccountPatch = {};
+        const name = editor.value.name.trim();
+        if (!current || current.name !== name) patch.name = name;
+        if (!current || current.class !== editor.value.class) {
+          patch.class = editor.value.class;
+        }
+        // An edit that changed nothing is a request that can only fail on itself.
+        if (Object.keys(patch).length === 0) {
           this.closeEditor();
           return;
         }
-        await this.client.renameAccount(editor.id, { name: editor.value.name.trim() });
+        await this.client.updateAccount(editor.id, patch);
       }
 
       this.closeEditor();
@@ -272,7 +283,7 @@ export class NigelAccountsScreen extends LitElement {
       <wc-manager-dialog
         slot="overlay"
         open
-        heading=${creating ? 'Add account' : 'Rename account'}
+        heading=${creating ? 'Add account' : 'Edit account'}
         confirm-label=${creating ? 'Add account' : 'Save'}
         ?busy=${this.saving}
         .error=${this.dialogError}

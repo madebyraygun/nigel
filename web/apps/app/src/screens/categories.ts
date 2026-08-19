@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@nigel/ui';
 import {
+  accountClassLabel,
   confirmDialog,
   EMPTY_CATEGORY_FORM,
   formLineSuggestions,
@@ -32,6 +33,7 @@ import type { ScreenId } from './registry.js';
 const COLUMNS: ManagerColumn[] = [
   { key: 'name', label: 'Name' },
   { key: 'categoryType', label: 'Type' },
+  { key: 'class', label: 'Class' },
   { key: 'taxLine', label: 'Tax line' },
   { key: 'formLine', label: 'Form line', mono: true },
 ];
@@ -114,6 +116,7 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
       cells: [
         category.name,
         category.categoryType === 'income' ? 'Income' : 'Expense',
+        accountClassLabel(category.class),
         category.taxLine,
         category.formLine,
       ],

@@ -276,8 +276,8 @@ export interface ApiClient {
   categorize(): Promise<CategorizeResult>;
 
   createAccount(input: NewAccountRequest): Promise<Account>;
-  /** The only edit an account has: `PATCH /api/accounts/:id` takes a name. */
-  renameAccount(id: number, input: AccountPatch): Promise<Account>;
+  /** Name, class, or both — `PATCH /api/accounts/:id` takes a partial. */
+  updateAccount(id: number, input: AccountPatch): Promise<Account>;
   /** Hard delete, and it takes the account's reconciliations with it. */
   deleteAccount(id: number): Promise<Deleted>;
 
@@ -601,7 +601,7 @@ export class FetchApiClient implements ApiClient {
     return this.request<Account>('POST', '/accounts', input);
   }
 
-  renameAccount(id: number, input: AccountPatch): Promise<Account> {
+  updateAccount(id: number, input: AccountPatch): Promise<Account> {
     return this.request<Account>('PATCH', `/accounts/${id}`, input);
   }
 

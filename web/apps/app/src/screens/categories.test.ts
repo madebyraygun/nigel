@@ -17,6 +17,7 @@ const CATEGORIES: CategoryRow[] = [
     id: 3,
     name: 'Consulting income',
     categoryType: 'income',
+    class: 'revenue',
     taxLine: 'Gross receipts',
     formLine: '1120S-1a',
   },
@@ -24,13 +25,15 @@ const CATEGORIES: CategoryRow[] = [
     id: 12,
     name: 'Software / Subscriptions',
     categoryType: 'expense',
+    class: 'expense',
     taxLine: 'Other expenses',
     formLine: '1120S-19',
   },
   {
     id: 14,
-    name: 'Meals / Entertainment',
+    name: 'Owner Draw',
     categoryType: 'expense',
+    class: 'equity',
     taxLine: null,
     formLine: null,
   },
@@ -155,17 +158,27 @@ describe('nigel-categories-screen', () => {
     expect(table(el).rows.map((row) => row.cells[0])).toEqual([
       'Consulting income',
       'Software / Subscriptions',
-      'Meals / Entertainment',
+      'Owner Draw',
     ]);
   });
 
   it('renders every field, with missing ones left null for the table', async () => {
     const { el } = await mount();
     expect(table(el).rows[2].cells).toEqual([
-      'Meals / Entertainment',
+      'Owner Draw',
       'Expense',
+      'Equity',
       null,
       null,
+    ]);
+  });
+
+  it('shows each category class in the list', async () => {
+    const { el } = await mount();
+    expect(table(el).rows.map((row) => row.cells[2])).toEqual([
+      'Revenue',
+      'Expense',
+      'Equity',
     ]);
   });
 
@@ -179,7 +192,7 @@ describe('nigel-categories-screen', () => {
 
     expect(fake.calls).toEqual([
       'getCategories',
-      'createCategory:{"name":"Contract labor","categoryType":"expense","taxLine":"Contract labor","formLine":"1120S-11"}',
+      'createCategory:{"name":"Contract labor","categoryType":"expense","class":"expense","taxLine":"Contract labor","formLine":"1120S-11"}',
       'getCategories',
     ]);
   });

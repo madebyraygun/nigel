@@ -118,6 +118,11 @@ export {
   type AccountTypeValue,
 } from './account-type.js';
 export {
+  ACCOUNT_CLASSES,
+  accountClassLabel,
+  type AccountClassValue,
+} from './account-class.js';
+export {
   WcAccountForm,
   EMPTY_ACCOUNT_FORM,
   validateAccountForm,

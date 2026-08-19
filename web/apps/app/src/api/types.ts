@@ -292,6 +292,16 @@ export interface Account {
   id: number;
   name: string;
   accountType: string;
+  /**
+   * Where the account sits in the accounting structure: asset, liability,
+   * equity, revenue or expense.
+   *
+   * A plain string rather than a union, for `RuleRow.matchType`'s reason: every
+   * write path validates against the five, but a row written by some other tool
+   * cannot be assumed to be one of them, and typing it narrowly would make the
+   * form's select quietly retype an account it merely displayed.
+   */
+  class: string;
   institution: string | null;
   lastFour: string | null;
 }
@@ -301,6 +311,11 @@ export interface CategoryRow {
   id: number;
   name: string;
   categoryType: string;
+  /**
+   * Where the category sits in the accounting structure: asset, liability,
+   * equity, revenue or expense. A plain string for `Account.class`'s reason.
+   */
+  class: string;
   taxLine: string | null;
   formLine: string | null;
 }
@@ -495,28 +510,26 @@ export interface RuleRow {
   hitCount: number;
 }
 
-/** `POST /api/accounts` */
+/** `POST /api/accounts` — `class` absent means the account type decides. */
 export interface NewAccountRequest {
   name: string;
   accountType: string;
+  class?: string;
   institution?: string | null;
   lastFour?: string | null;
 }
 
-/**
- * `PATCH /api/accounts/:id`
- *
- * Renaming is the whole of it: institution and last four are set at creation,
- * which is all the data layer offers.
- */
+/** `PATCH /api/accounts/:id` — name, class, or both. An empty body is a 400. */
 export interface AccountPatch {
-  name: string;
+  name?: string;
+  class?: string;
 }
 
-/** `POST /api/categories` */
+/** `POST /api/categories` — `class` absent means the category type decides. */
 export interface NewCategoryRequest {
   name: string;
   categoryType: string;
+  class?: string;
   taxLine?: string | null;
   formLine?: string | null;
 }
@@ -531,6 +544,7 @@ export interface NewCategoryRequest {
 export interface CategoryPatch {
   name?: string;
   categoryType?: string;
+  class?: string;
   taxLine?: string | null;
   formLine?: string | null;
 }

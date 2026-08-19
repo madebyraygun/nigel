@@ -11,6 +11,7 @@ const row: CategoryRow = {
   id: 12,
   name: 'Software / Subscriptions',
   categoryType: 'expense',
+  class: 'expense',
   taxLine: 'Other expenses',
   formLine: '1120S-19',
 };
@@ -20,6 +21,7 @@ describe('toCategoryForm', () => {
     expect(toCategoryForm({ ...row, taxLine: null, formLine: null })).toEqual({
       name: 'Software / Subscriptions',
       categoryType: 'expense',
+      class: 'expense',
       taxLine: '',
       formLine: '',
     });
@@ -32,12 +34,14 @@ describe('newCategoryRequest', () => {
       newCategoryRequest({
         name: '  Consulting income  ',
         categoryType: 'income',
+        class: 'revenue',
         taxLine: '',
         formLine: '   ',
       }),
     ).toEqual({
       name: 'Consulting income',
       categoryType: 'income',
+      class: 'revenue',
       taxLine: null,
       formLine: null,
     });
@@ -85,6 +89,7 @@ describe('categoryPatch', () => {
       categoryPatch(row, {
         name: 'Software',
         categoryType: 'income',
+        class: 'expense',
         taxLine: 'Gross receipts',
         formLine: '',
       }),
@@ -107,5 +112,34 @@ describe('isEmptyPatch', () => {
   it('recognizes the patch that must never be sent', () => {
     expect(isEmptyPatch({})).toBe(true);
     expect(isEmptyPatch({ taxLine: null })).toBe(false);
+  });
+});
+
+describe('class round trips through the form', () => {
+  it('carries the class into the form and back out on create', () => {
+    const row: CategoryRow = {
+      id: 9,
+      name: 'Member Draw',
+      categoryType: 'expense',
+      class: 'equity',
+      taxLine: null,
+      formLine: null,
+    };
+    expect(toCategoryForm(row).class).toBe('equity');
+    expect(newCategoryRequest(toCategoryForm(row)).class).toBe('equity');
+  });
+
+  it('patches the class alone and leaves an unchanged class out', () => {
+    const current: CategoryRow = {
+      id: 9,
+      name: 'Member Draw',
+      categoryType: 'expense',
+      class: 'expense',
+      taxLine: null,
+      formLine: null,
+    };
+    const next = { ...toCategoryForm(current), class: 'equity' };
+    expect(categoryPatch(current, next)).toEqual({ class: 'equity' });
+    expect(categoryPatch(current, toCategoryForm(current))).toEqual({});
   });
 });
