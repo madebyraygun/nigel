@@ -7,7 +7,7 @@ All importer code lives in `crates/nigel-core/src/importer.rs`. Nigel uses enum 
 ```
 CSV/XLSX file
   → ImporterKind::detect() inspects headers/structure
-  → ImporterKind::parse() extracts Vec<ParsedRow>
+  → ImporterKind::parse() extracts ParseOutcome { rows, rejects }
   → import_file() deduplicates and inserts into SQLite
 ```
 
@@ -15,7 +15,9 @@ Key types:
 
 - **`ImporterKind`** — enum with one variant per bank format
 - **`ParsedRow`** — intermediate representation: `{ date: String, description: String, amount: f64 }`
-- **`ImportResult`** — returned by `import_file()`: counts of imported/skipped rows
+- **`ParseOutcome`** — what one parse produced: `{ rows: Vec<ParsedRow>, rejects: Vec<RejectedRow> }`
+- **`RejectedRow`** — a row that could not be read: `{ row_number: u64, content: String, reason: String }` — the 1-based line in the file, its fields rejoined with commas, and why. Stored in `import_rejects` and readable back per import
+- **`ImportResult`** — returned by `import_file()`: counts of imported/skipped/malformed rows
 
 ## Step-by-Step: Adding an Importer
 
@@ -98,37 +100,58 @@ Tips:
 
 ### 5. Write the parse function
 
-Extract rows into `Vec<ParsedRow>`, following the ParsedRow contract (see below).
+Extract rows into a `ParseOutcome`, following the parse contract (see below).
 
 ```rust
-fn parse_chase_checking(file_path: &Path) -> Result<Vec<ParsedRow>> {
-    let content = std::fs::read_to_string(file_path)?;
-    let mut rows = Vec::new();
+fn parse_chase_checking(file_path: &Path) -> Result<ParseOutcome> {
+    const MIN_COLS: usize = 4;
+    let mut rdr = create_csv_reader(file_path)?;
+    let mut out = ParseOutcome::default();
     let mut found_header = false;
 
-    for line in content.lines() {
-        let fields: Vec<&str> = parse_csv_line(line);
+    for result in rdr.records() {
+        let record = match result {
+            Ok(record) => record,
+            Err(err) => {
+                out.reject_unreadable(&err);
+                continue;
+            }
+        };
         if !found_header {
-            if fields.first().map_or(false, |f| f.trim() == "Details") {
+            if record.get(0).is_some_and(|f| f.trim() == "Details") {
                 found_header = true;
             }
             continue;
         }
-        if fields.len() < 4 || fields[0].trim().is_empty() {
+        if record.is_empty() || record[0].trim().is_empty() {
             continue;
         }
-        let Some(date) = parse_date_mdy(fields[1]) else {
+        if record.len() < MIN_COLS {
+            let reason = format!(
+                "expected at least {MIN_COLS} columns, found {}",
+                record.len()
+            );
+            out.reject(&record, reason);
+            continue;
+        }
+        let Some(date) = parse_date_mdy(&record[1]) else {
+            let reason = format!("date {:?} is not MM/DD/YYYY", record[1].trim());
+            out.reject(&record, reason);
             continue;
         };
-        let description = fields[2].trim().to_string();
-        let amount = parse_amount(fields[3]); // already negative for debits
-        rows.push(ParsedRow {
+        let description = record[2].trim().to_string();
+        let Some(amount) = parse_amount(&record[3]) else {
+            let reason = format!("amount {:?} is not a number", record[3].trim());
+            out.reject(&record, reason);
+            continue;
+        };
+        out.rows.push(ParsedRow {
             date,
             description,
             amount,
         });
     }
-    Ok(rows)
+    Ok(out)
 }
 ```
 
@@ -159,12 +182,13 @@ fn test_chase_checking_parse() {
                    CREDIT,01/16/2025,DIRECT DEPOSIT,3200.00,ACH_CREDIT,5157.50,\n";
     std::fs::write(&path, content).unwrap();
 
-    let rows = ImporterKind::ChaseChecking.parse(&path).unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].date, "2025-01-15");
-    assert_eq!(rows[0].description, "AMAZON PURCHASE");
-    assert_eq!(rows[0].amount, -42.5);
-    assert_eq!(rows[1].amount, 3200.0);
+    let out = ImporterKind::ChaseChecking.parse(&path).unwrap();
+    assert_eq!(out.rows.len(), 2);
+    assert!(out.rejects.is_empty());
+    assert_eq!(out.rows[0].date, "2025-01-15");
+    assert_eq!(out.rows[0].description, "AMAZON PURCHASE");
+    assert_eq!(out.rows[0].amount, -42.5);
+    assert_eq!(out.rows[1].amount, 3200.0);
 }
 
 #[test]
@@ -186,18 +210,31 @@ These are available in `crates/nigel-core/src/importer.rs` for use in any parser
 
 | Function | Purpose |
 |----------|---------|
-| `parse_amount(raw)` | Strips commas, quotes, whitespace → `f64` (returns 0.0 on failure) |
-| `parse_date_mdy(raw)` | Converts `MM/DD/YYYY` → `YYYY-MM-DD` string |
+| `create_csv_reader(path)` | A flexible-length `csv::Reader` over the file, headers off |
+| `parse_amount(raw)` | Strips commas, quotes, whitespace → `Option<f64>`; `None` is a reject, not a zero |
+| `parse_date_mdy(raw)` | Converts `MM/DD/YYYY` → `Option<String>` of `YYYY-MM-DD` |
 | `excel_serial_to_date(serial)` | Converts Excel serial number → `YYYY-MM-DD` string |
-| `parse_csv_line(line)` | Splits a CSV line by comma (simple, no quoted-field handling) |
 
-## ParsedRow Contract
+## Parse Contract
 
-Every parser must produce `Vec<ParsedRow>` where:
+Every parser must produce a `ParseOutcome`. Each `ParsedRow` in `rows` carries:
 
 - **`date`** — `YYYY-MM-DD` format (use `parse_date_mdy` for MM/DD/YYYY sources, `excel_serial_to_date` for XLSX)
 - **`description`** — as-is from the source, trimmed
 - **`amount`** — negative = expense/debit, positive = income/credit. If the source uses separate debit/credit columns or a type indicator, normalize to this convention in the parser.
+
+A row the parser cannot read goes to `rejects` — `out.reject(&record, reason)`, or
+`out.reject_unreadable(&err)` when the CSV reader itself could not produce a record. The
+reject keeps the line number in the file, the raw row, and a reason in the parser's own
+words (`date "13/40/2025" is not MM/DD/YYYY`), because that reason is what the reader
+sees in `nigel imports rejects <id>` and has to fix the file by.
+
+A silent `continue` is only for lines that are not transactions at all: blank rows, the
+header, a "Beginning balance" summary. Anything that was meant to be a transaction and
+is not usable is a reject — dropping it silently is how a statement imports short and
+nobody finds out. A file whose parse yields no rows at all is refused by the import,
+which reports the format, the malformed count and the first reasons rather than
+recording an empty import.
 
 ## Feature Gating
 
