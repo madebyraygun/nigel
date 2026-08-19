@@ -218,8 +218,10 @@ pub fn get_pnl(
 ) -> Result<PnlReport> {
     let (clause, params) = date_filter(year, month, from_date, to_date)?;
 
-    let income = query_category_totals(conn, &clause, &params, "income", "total DESC")?;
-    let expenses = query_category_totals(conn, &clause, &params, "expense", "total ASC")?;
+    let income =
+        query_category_totals(conn, &clause, &params, AccountClass::Revenue, "total DESC")?;
+    let expenses =
+        query_category_totals(conn, &clause, &params, AccountClass::Expense, "total ASC")?;
 
     let total_income: f64 = income.iter().map(|i| i.total).sum();
     let total_expenses: f64 = expenses.iter().map(|i| i.total).sum();
@@ -237,13 +239,14 @@ fn query_category_totals(
     conn: &Connection,
     clause: &str,
     params: &[String],
-    category_type: &str,
+    class: AccountClass,
     order: &str,
 ) -> Result<Vec<PnlItem>> {
+    let class = class.as_str();
     let sql = format!(
         "SELECT c.name, SUM(t.amount) as total \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
-         WHERE {clause} AND c.category_type = '{category_type}' AND {EXCLUDE_TRANSFERS} \
+         WHERE {clause} AND c.class = '{class}' AND {EXCLUDE_TRANSFERS} \
          GROUP BY c.name ORDER BY {order}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -298,7 +301,7 @@ pub fn get_expense_breakdown(
     let sql = format!(
         "SELECT c.name, SUM(t.amount) as total, COUNT(*) as count \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
-         WHERE {clause} AND c.category_type = 'expense' AND {EXCLUDE_TRANSFERS} \
+         WHERE {clause} AND c.class = 'expense' AND {EXCLUDE_TRANSFERS} \
          GROUP BY c.name ORDER BY total ASC"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -323,7 +326,7 @@ pub fn get_expense_breakdown(
     let vendor_sql = format!(
         "SELECT t.vendor, SUM(t.amount) as total, COUNT(*) as count \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
-         WHERE {clause} AND c.category_type = 'expense' AND t.vendor IS NOT NULL \
+         WHERE {clause} AND c.class = 'expense' AND t.vendor IS NOT NULL \
            AND {EXCLUDE_TRANSFERS} \
          GROUP BY t.vendor ORDER BY total ASC LIMIT 10"
     );
@@ -354,7 +357,10 @@ pub fn get_expense_breakdown(
 pub struct TaxItem {
     pub name: String,
     pub tax_line: Option<String>,
+    /// The word the "Type" column prints — income or expense, unchanged.
     pub category_type: String,
+    /// Where the line sits in the accounting structure.
+    pub class: AccountClass,
     pub total: f64,
 }
 
@@ -364,28 +370,58 @@ pub struct TaxSummary {
     pub line_items: Vec<TaxItem>,
 }
 
+/// Where a class sits in the tax summary's listing: what was earned, then what
+/// the owner took out, then what was spent, then the balance-sheet classes a
+/// category should not be on at all — visible at the bottom rather than hidden.
+fn tax_summary_rank(class: AccountClass) -> u8 {
+    match class {
+        AccountClass::Revenue => 0,
+        AccountClass::Equity => 1,
+        AccountClass::Expense => 2,
+        AccountClass::Asset => 3,
+        AccountClass::Liability => 4,
+    }
+}
+
 pub fn get_tax_summary(conn: &Connection, year: Option<i32>) -> Result<TaxSummary> {
     let (clause, params) = date_filter(year, None, None, None)?;
 
     let sql = format!(
-        "SELECT c.name, c.tax_line, c.category_type, SUM(t.amount) as total \
+        "SELECT c.name, c.tax_line, c.category_type, c.class, SUM(t.amount) as total \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
          WHERE {clause} \
-         GROUP BY c.name, c.tax_line, c.category_type \
-         ORDER BY c.category_type DESC, c.tax_line"
+         GROUP BY c.name, c.tax_line, c.category_type, c.class \
+         ORDER BY c.tax_line"
     );
     let mut stmt = conn.prepare(&sql)?;
     let param_values = to_sql_params(&params);
-    let items: Vec<TaxItem> = stmt
+    let raw: Vec<(String, Option<String>, String, String, f64)> = stmt
         .query_map(param_values.as_slice(), |row| {
-            Ok(TaxItem {
-                name: row.get(0)?,
-                tax_line: row.get(1)?,
-                category_type: row.get(2)?,
-                total: row.get(3)?,
-            })
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut items: Vec<TaxItem> = raw
+        .into_iter()
+        .map(|(name, tax_line, category_type, class, total)| {
+            Ok(TaxItem {
+                name,
+                tax_line,
+                category_type,
+                class: AccountClass::from_db(&class)?,
+                total,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // Ranked here rather than in SQL: an ordering built from an exhaustive
+    // match is one the compiler rechecks when a class is added.
+    items.sort_by_key(|item| (tax_summary_rank(item.class), item.tax_line.clone()));
 
     Ok(TaxSummary { line_items: items })
 }
@@ -865,8 +901,8 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
     let ytd_net_income: f64 = conn.query_row(
         &format!(
             "SELECT COALESCE(SUM(t.amount), 0) as net \
-             FROM transactions t LEFT JOIN categories c ON t.category_id = c.id \
-             WHERE t.date LIKE ?1 AND {EXCLUDE_TRANSFERS}"
+             FROM transactions t JOIN categories c ON t.category_id = c.id \
+             WHERE t.date LIKE ?1 AND c.class IN ('revenue', 'expense') AND {EXCLUDE_TRANSFERS}"
         ),
         [format!("{current_year}%")],
         |row| row.get(0),
@@ -936,13 +972,28 @@ pub enum K1Mapping {
     Explicit(String),
     AutoGrossReceipts,
     Unmapped,
+    /// Owner equity: a Schedule K item, never a deduction, whatever form line
+    /// the category carries.
+    Equity,
 }
 
-pub fn resolve_k1_mapping(form_line: Option<&str>, category_type: &str) -> K1Mapping {
+/// Where a category's activity lands on the worksheet.
+///
+/// The class is read first and it is final. A form line is a mapping the
+/// operator can edit; the class is what the row *is*, and an equity row
+/// carrying a deduction form line is a chart-of-accounts mistake rather than a
+/// deduction. Asset and liability categories are not income-statement activity
+/// at all.
+pub fn resolve_k1_mapping(form_line: Option<&str>, class: AccountClass) -> K1Mapping {
+    match class {
+        AccountClass::Equity => return K1Mapping::Equity,
+        AccountClass::Asset | AccountClass::Liability => return K1Mapping::Excluded,
+        AccountClass::Revenue | AccountClass::Expense => {}
+    }
     match form_line {
         Some("excluded") => K1Mapping::Excluded,
         Some(fl) => K1Mapping::Explicit(fl.to_string()),
-        None if category_type == "income" => K1Mapping::AutoGrossReceipts,
+        None if class == AccountClass::Revenue => K1Mapping::AutoGrossReceipts,
         None => K1Mapping::Unmapped,
     }
 }
@@ -952,16 +1003,16 @@ pub fn get_k1_prep(conn: &Connection, year: Option<i32>) -> Result<K1PrepReport>
 
     // Query all categorized transactions grouped by category
     let sql = format!(
-        "SELECT c.form_line, c.name, c.category_type, SUM(t.amount) as total \
+        "SELECT c.form_line, c.name, c.category_type, c.class, SUM(t.amount) as total \
          FROM transactions t JOIN categories c ON t.category_id = c.id \
          WHERE {clause} \
-         GROUP BY c.form_line, c.name, c.category_type ORDER BY c.form_line"
+         GROUP BY c.form_line, c.name, c.category_type, c.class ORDER BY c.form_line"
     );
     let mut stmt = conn.prepare(&sql)?;
     let param_values = to_sql_params(&params);
     let rows: Vec<(Option<String>, String, String, f64)> = stmt
         .query_map(param_values.as_slice(), |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(3)?, row.get(4)?))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -978,10 +1029,24 @@ pub fn get_k1_prep(conn: &Connection, year: Option<i32>) -> Result<K1PrepReport>
     let mut auto_mapped = Vec::new();
     let mut unmapped = Vec::new();
 
-    for (form_line, name, category_type, total) in &rows {
-        let mapping = resolve_k1_mapping(form_line.as_deref(), category_type);
+    for (form_line, name, class, total) in &rows {
+        let class = AccountClass::from_db(class)?;
+        let mapping = resolve_k1_mapping(form_line.as_deref(), class);
         let line = match mapping {
             K1Mapping::Excluded => continue,
+            K1Mapping::Equity => {
+                // Money out to the owner is a distribution; money in is a
+                // contribution and reduces nothing.
+                if *total < 0.0 {
+                    distributions += -total;
+                }
+                schedule_k_items.push(K1LineItem {
+                    form_line: form_line.clone().unwrap_or_else(|| "\u{2014}".to_string()),
+                    category_name: name.clone(),
+                    total: *total,
+                });
+                continue;
+            }
             K1Mapping::AutoGrossReceipts => {
                 gross_receipts += total;
                 auto_mapped.push(name.clone());
@@ -1002,9 +1067,6 @@ pub fn get_k1_prep(conn: &Connection, year: Option<i32>) -> Result<K1PrepReport>
             "1120S-2" => cogs += total.abs(),
             "1120S-5" => other_income += total,
             fl if fl.starts_with("K-") => {
-                if fl == "K-16d" {
-                    distributions += total.abs();
-                }
                 schedule_k_items.push(K1LineItem {
                     form_line: line.clone(),
                     category_name: name.clone(),
@@ -2010,18 +2072,27 @@ mod tests {
     #[test]
     fn test_resolve_k1_mapping() {
         use K1Mapping::*;
-        assert_eq!(resolve_k1_mapping(Some("excluded"), "expense"), Excluded);
-        assert_eq!(resolve_k1_mapping(Some("excluded"), "income"), Excluded);
         assert_eq!(
-            resolve_k1_mapping(Some("1120S-19"), "expense"),
+            resolve_k1_mapping(Some("excluded"), AccountClass::Expense),
+            Excluded
+        );
+        assert_eq!(
+            resolve_k1_mapping(Some("excluded"), AccountClass::Revenue),
+            Excluded
+        );
+        assert_eq!(
+            resolve_k1_mapping(Some("1120S-19"), AccountClass::Expense),
             Explicit("1120S-19".into())
         );
         assert_eq!(
-            resolve_k1_mapping(Some("K-16d"), "expense"),
+            resolve_k1_mapping(Some("K-16d"), AccountClass::Expense),
             Explicit("K-16d".into())
         );
-        assert_eq!(resolve_k1_mapping(None, "income"), AutoGrossReceipts);
-        assert_eq!(resolve_k1_mapping(None, "expense"), Unmapped);
+        assert_eq!(
+            resolve_k1_mapping(None, AccountClass::Revenue),
+            AutoGrossReceipts
+        );
+        assert_eq!(resolve_k1_mapping(None, AccountClass::Expense), Unmapped);
     }
 
     fn k1_fixture(conn: &Connection) -> i64 {
@@ -2034,9 +2105,10 @@ mod tests {
     }
 
     fn k1_cat(conn: &Connection, name: &str, ctype: &str, form_line: Option<&str>) -> i64 {
+        let class = crate::db::class_for_category_type(ctype);
         conn.execute(
-            "INSERT INTO categories (name, category_type, form_line) VALUES (?1, ?2, ?3)",
-            rusqlite::params![name, ctype, form_line],
+            "INSERT INTO categories (name, category_type, form_line, class) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![name, ctype, form_line, class.as_str()],
         )
         .unwrap();
         conn.last_insert_rowid()
@@ -2251,5 +2323,305 @@ mod tests {
         );
         // The cash position is still the cash position.
         assert_eq!(report.total, -1200.0);
+    }
+
+    /// One account, one client payment, one software bill, one owner draw and
+    /// one owner contribution — the shape that made distributions read as
+    /// deductions.
+    fn db_with_equity() -> (tempfile::TempDir, Connection) {
+        let (dir, conn) = test_db();
+        conn.execute(
+            "INSERT INTO accounts (name, account_type, class) \
+             VALUES ('Cedar Checking', 'checking', 'asset')",
+            [],
+        )
+        .unwrap();
+        let account = conn.last_insert_rowid();
+        let cat = |name: &str| -> i64 {
+            conn.query_row("SELECT id FROM categories WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        let rows: [(&str, &str, f64, i64); 4] = [
+            (
+                "2025-01-10",
+                "CEDAR SYSTEMS INVOICE",
+                8_000.0,
+                cat("Client Services"),
+            ),
+            (
+                "2025-02-05",
+                "SOFTWARE RENEWAL",
+                -300.0,
+                cat("Software & Subscriptions"),
+            ),
+            (
+                "2025-03-01",
+                "OWNER DRAW",
+                -2_000.0,
+                cat("Owner Draw / Distribution"),
+            ),
+            (
+                "2025-03-02",
+                "OWNER FUNDS IN",
+                1_000.0,
+                cat("Owner Contribution"),
+            ),
+        ];
+        for (date, desc, amount, category) in rows {
+            conn.execute(
+                "INSERT INTO transactions (account_id, date, description, amount, category_id, vendor) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'Cedar Systems')",
+                rusqlite::params![account, date, desc, amount, category],
+            )
+            .unwrap();
+        }
+        (dir, conn)
+    }
+
+    #[test]
+    fn the_pnl_leaves_owner_equity_out_of_both_columns() {
+        let (_dir, conn) = db_with_equity();
+        let report = get_pnl(&conn, Some(2025), None, None, None).unwrap();
+
+        assert_eq!(
+            report.total_income, 8_000.0,
+            "the contribution is not revenue"
+        );
+        assert_eq!(report.total_expenses, -300.0, "the draw is not a deduction");
+        assert_eq!(report.net, 7_700.0);
+        assert!(!report
+            .expenses
+            .iter()
+            .any(|item| item.name == "Owner Draw / Distribution"));
+        assert!(!report
+            .income
+            .iter()
+            .any(|item| item.name == "Owner Contribution"));
+    }
+
+    #[test]
+    fn the_expense_breakdown_leaves_owner_equity_out() {
+        let (_dir, conn) = db_with_equity();
+        let report = get_expense_breakdown(&conn, Some(2025), None).unwrap();
+        assert_eq!(report.total, -300.0);
+        assert!(!report
+            .categories
+            .iter()
+            .any(|item| item.name == "Owner Draw / Distribution"));
+        // The vendor rollup shares the filter, or the draw rides in under a
+        // vendor name instead of under its category.
+        let cedar: f64 = report
+            .top_vendors
+            .iter()
+            .filter(|v| v.vendor == "Cedar Systems")
+            .map(|v| v.total)
+            .sum();
+        assert_eq!(cedar, -300.0);
+    }
+
+    #[test]
+    fn ytd_net_income_is_revenue_and_expense_only() {
+        let (_dir, conn) = test_db();
+        let this_year = Datelike::year(&chrono::Local::now());
+        conn.execute(
+            "INSERT INTO accounts (name, account_type, class) \
+             VALUES ('Cedar Checking', 'checking', 'asset')",
+            [],
+        )
+        .unwrap();
+        let account = conn.last_insert_rowid();
+        let cat = |name: &str| -> i64 {
+            conn.query_row("SELECT id FROM categories WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        for (day, amount, category) in [
+            ("01-10", 8_000.0, cat("Client Services")),
+            ("02-05", -300.0, cat("Software & Subscriptions")),
+            ("03-01", -2_000.0, cat("Owner Draw / Distribution")),
+        ] {
+            conn.execute(
+                "INSERT INTO transactions (account_id, date, description, amount, category_id) \
+                 VALUES (?1, ?2, 'x', ?3, ?4)",
+                rusqlite::params![account, format!("{this_year}-{day}"), amount, category],
+            )
+            .unwrap();
+        }
+
+        let report = get_balance(&conn).unwrap();
+        assert_eq!(report.ytd_net_income, 7_700.0, "a draw is not a loss");
+        // The cash position still counts every dollar that moved.
+        assert_eq!(report.total, 5_700.0);
+    }
+
+    #[test]
+    fn the_tax_summary_carries_each_lines_class_and_lists_equity_after_revenue() {
+        let (_dir, conn) = db_with_equity();
+        let report = get_tax_summary(&conn, Some(2025)).unwrap();
+
+        let class_of = |name: &str| {
+            report
+                .line_items
+                .iter()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} missing"))
+                .class
+        };
+        assert_eq!(class_of("Client Services"), AccountClass::Revenue);
+        assert_eq!(class_of("Owner Draw / Distribution"), AccountClass::Equity);
+        assert_eq!(class_of("Software & Subscriptions"), AccountClass::Expense);
+
+        let order: Vec<AccountClass> = report.line_items.iter().map(|i| i.class).collect();
+        let first_expense = order
+            .iter()
+            .position(|c| *c == AccountClass::Expense)
+            .unwrap();
+        let last_revenue = order
+            .iter()
+            .rposition(|c| *c == AccountClass::Revenue)
+            .unwrap();
+        assert!(last_revenue < first_expense, "revenue first: {order:?}");
+        // The user-facing word is untouched.
+        assert_eq!(
+            report
+                .line_items
+                .iter()
+                .find(|i| i.name == "Client Services")
+                .unwrap()
+                .category_type,
+            "income"
+        );
+    }
+
+    #[test]
+    fn the_k1_routes_equity_to_schedule_k_and_never_to_deductions() {
+        let (_dir, conn) = db_with_equity();
+        // An equity category a user mapped to a deduction line by hand: the
+        // class has to outrank the form line, or the old defect comes back
+        // through the chart of accounts.
+        let stray = k1_cat(&conn, "Owner Perks", "expense", Some("1120S-19"));
+        conn.execute(
+            "UPDATE categories SET class = 'equity' WHERE id = ?1",
+            [stray],
+        )
+        .unwrap();
+        let account: i64 = conn
+            .query_row("SELECT id FROM accounts LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        k1_txn(&conn, account, "2025-04-01", -500.0, stray);
+
+        let r = get_k1_prep(&conn, Some(2025)).unwrap();
+
+        assert_eq!(r.gross_receipts, 8_000.0);
+        assert_eq!(r.total_deductions, 300.0, "software only");
+        assert!(r
+            .deduction_lines
+            .iter()
+            .all(|d| d.category_name != "Owner Draw / Distribution"
+                && d.category_name != "Owner Perks"));
+        assert!(r
+            .other_deductions
+            .iter()
+            .all(|d| d.category_name != "Owner Perks"));
+        // Money out to the owner is a distribution wherever it was mapped.
+        assert_eq!(r.validation.distributions, 2_500.0);
+        // Money in from the owner is not.
+        assert!(r
+            .schedule_k_items
+            .iter()
+            .any(|k| k.category_name == "Owner Contribution"));
+        assert_eq!(r.ordinary_business_income, 7_700.0);
+    }
+
+    #[test]
+    fn k1_mapping_reads_the_class_before_the_form_line() {
+        use K1Mapping::*;
+        assert_eq!(
+            resolve_k1_mapping(Some("1120S-19"), AccountClass::Equity),
+            Equity
+        );
+        assert_eq!(resolve_k1_mapping(None, AccountClass::Equity), Equity);
+        assert_eq!(
+            resolve_k1_mapping(Some("excluded"), AccountClass::Expense),
+            Excluded
+        );
+        assert_eq!(
+            resolve_k1_mapping(None, AccountClass::Revenue),
+            AutoGrossReceipts
+        );
+        assert_eq!(resolve_k1_mapping(None, AccountClass::Expense), Unmapped);
+        assert_eq!(
+            resolve_k1_mapping(Some("1120S-2"), AccountClass::Expense),
+            Explicit("1120S-2".to_string())
+        );
+        // A category on a balance-sheet class is not income-statement activity.
+        assert_eq!(
+            resolve_k1_mapping(Some("1120S-19"), AccountClass::Asset),
+            Excluded
+        );
+        assert_eq!(resolve_k1_mapping(None, AccountClass::Liability), Excluded);
+    }
+
+    /// AC #7. A category on each class in turn, all four carrying the same
+    /// amount: the expense totals may move for `expense` and for nothing else.
+    /// This is the test a sixth class has to keep passing, and the reason no
+    /// class match may carry a catch-all arm.
+    #[test]
+    fn no_class_but_expense_can_reach_the_expense_totals() {
+        for class in AccountClass::ALL {
+            let (_dir, conn) = test_db();
+            conn.execute(
+                "INSERT INTO accounts (name, account_type, class) \
+                 VALUES ('Juniper Checking', 'checking', 'asset')",
+                [],
+            )
+            .unwrap();
+            let account = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO categories (name, category_type, class) \
+                 VALUES ('Probe', 'expense', ?1)",
+                [class.as_str()],
+            )
+            .unwrap();
+            let probe = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO transactions (account_id, date, description, amount, category_id) \
+                 VALUES (?1, '2025-05-01', 'PROBE', -1000.0, ?2)",
+                rusqlite::params![account, probe],
+            )
+            .unwrap();
+
+            let expected = if class == AccountClass::Expense {
+                -1000.0
+            } else {
+                0.0
+            };
+            assert_eq!(
+                get_pnl(&conn, Some(2025), None, None, None)
+                    .unwrap()
+                    .total_expenses,
+                expected,
+                "P&L expenses absorbed a {} category",
+                class.as_str()
+            );
+            assert_eq!(
+                get_expense_breakdown(&conn, Some(2025), None)
+                    .unwrap()
+                    .total,
+                expected,
+                "the expense breakdown absorbed a {} category",
+                class.as_str()
+            );
+            let deductions = get_k1_prep(&conn, Some(2025)).unwrap().total_deductions;
+            assert_eq!(
+                deductions,
+                0.0,
+                "the K-1 deducted a {} category with no form line",
+                class.as_str()
+            );
+        }
     }
 }

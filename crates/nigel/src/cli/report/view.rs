@@ -14,6 +14,7 @@ use crate::tui::{
     FOOTER_STYLE, HEADER_STYLE,
 };
 use nigel_core::db::get_connection;
+use nigel_core::db::AccountClass;
 use nigel_core::error::Result;
 use nigel_core::fmt::money;
 use nigel_core::reports::{self, DateGranularity, ReportKind};
@@ -523,10 +524,11 @@ pub(crate) fn build_tax(year: Option<i32>) -> Result<Box<dyn ReportView>> {
     let mut rows = Vec::new();
 
     for item in &data.line_items {
-        let style = if item.category_type == "income" {
-            AMOUNT_POS_STYLE
-        } else {
-            AMOUNT_NEG_STYLE
+        let style = match item.class {
+            AccountClass::Revenue | AccountClass::Asset => AMOUNT_POS_STYLE,
+            AccountClass::Expense | AccountClass::Liability | AccountClass::Equity => {
+                AMOUNT_NEG_STYLE
+            }
         };
         rows.push(Row::new([
             text_cell(&item.name),
