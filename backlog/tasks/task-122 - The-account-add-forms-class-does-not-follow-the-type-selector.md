@@ -4,6 +4,7 @@ title: The account add form's class does not follow the type selector
 status: To Do
 assignee: []
 created_date: '2026-08-19 18:39'
+updated_date: '2026-08-19 19:58'
 labels:
   - tui
 dependencies: []
@@ -21,3 +22,9 @@ In the TUI account add form (TASK-9.1), the class field defaults to asset and st
 - [ ] #2 A class the operator explicitly set is never overridden by a later type change
 - [ ] #3 Covered by TUI form tests
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The web account create form has the same gap: EMPTY_ACCOUNT_FORM defaults class to asset and always sends it, so the server's account-type derivation never runs — a credit card added through the web stores as asset until the operator changes it. Fix both surfaces together: an untouched class control tracks the type selection; an explicitly chosen class is never overridden.
+<!-- SECTION:NOTES:END -->

@@ -1,10 +1,11 @@
 ---
 id: TASK-33.17
 title: First-run onboarding in the desktop app
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-19 14:30'
-updated_date: '2026-08-19 14:33'
+updated_date: '2026-08-19 19:58'
 labels:
   - frontend
 dependencies: []
