@@ -4,9 +4,11 @@ title: 'Account classification: asset, liability, equity, revenue, expense'
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:45'
+updated_date: '2026-08-19 16:11'
 labels:
   - architecture
   - tax
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-9
 priority: high

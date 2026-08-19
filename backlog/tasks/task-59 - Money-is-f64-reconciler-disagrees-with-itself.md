@@ -1,12 +1,14 @@
 ---
 id: TASK-59
-title: Money is f64, and the reconciler already disagrees with itself
+title: 'Money is f64, and the reconciler already disagrees with itself'
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-08-19 16:11'
 labels:
   - tech-debt
   - correctness
+milestone: m-0
 dependencies: []
 priority: medium
 ---

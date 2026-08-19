@@ -4,10 +4,12 @@ title: The import sequence is not atomic
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-08-19 16:11'
 labels:
   - bug
   - importer
   - data-integrity
+milestone: m-0
 dependencies: []
 priority: high
 ---
