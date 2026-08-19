@@ -14,6 +14,60 @@ async function mount(props: Partial<WcWordmark> = {}): Promise<WcWordmark> {
 
 const chars = (el: WcWordmark) => [...(el.shadowRoot?.querySelectorAll('.char') ?? [])];
 
+/**
+ * Specificity as one comparable number. `:host()` weighs as a pseudo-class
+ * plus its argument, which is what makes `:host([animated]) .char` a (0,3,0)
+ * that a bare `.char` (0,1,0) can never outrank.
+ */
+function specificity(selector: string): number {
+  return (selector.match(/\.[\w-]+|\[[^\]]+\]|:[\w-]+/g) ?? []).length;
+}
+
+/** Whether a rule from the component's own sheet reaches the `.char` spans. */
+function reachesChar(el: WcWordmark, selector: string): boolean {
+  const host = selector.match(/^:host\((.+)\)\s+(.*)$/);
+  if (host) return el.matches(host[1]) && host[2] === '.char';
+  return selector === '.char';
+}
+
+/**
+ * The `animation` a `.char` actually ends up with.
+ *
+ * jsdom neither cascades across a shadow boundary nor evaluates a media
+ * query, so `getComputedStyle` answers nothing here and the cascade is walked
+ * over the component's own rules instead.
+ */
+function winningAnimation(el: WcWordmark, systemReducedMotion = false): string {
+  const probe = document.createElement('style');
+  probe.textContent = el.shadowRoot?.querySelector('style')?.textContent ?? '';
+  document.head.appendChild(probe);
+
+  const rules: CSSStyleRule[] = [];
+  for (const rule of [...(probe.sheet?.cssRules ?? [])]) {
+    const media = rule as CSSMediaRule;
+    if (media.conditionText !== undefined) {
+      if (systemReducedMotion && media.conditionText.includes('prefers-reduced-motion: reduce')) {
+        rules.push(...([...media.cssRules] as CSSStyleRule[]));
+      }
+    } else if ((rule as CSSStyleRule).selectorText !== undefined) {
+      rules.push(rule as CSSStyleRule);
+    }
+  }
+  probe.remove();
+
+  let winner = '';
+  let best = -1;
+  rules.forEach((rule, order) => {
+    if (!rule.style.animation || !reachesChar(el, rule.selectorText)) return;
+    const weight = specificity(rule.selectorText) * 1000 + order;
+    if (weight >= best) {
+      best = weight;
+      winner = rule.style.animation;
+    }
+  });
+  return winner;
+}
+
 describe('wc-wordmark', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -88,6 +142,16 @@ describe('wc-wordmark', () => {
   it('does not animate when motion is unwelcome', async () => {
     const el = await mount({ animated: true, reducedMotion: true });
     expect(el.hasAttribute('reduced-motion')).toBe(true);
+    expect(winningAnimation(el)).toBe('none');
+  });
+
+  it('stands the animation down for a system that asked for less motion', async () => {
+    // The media query is the safety net for a host that never learned about
+    // the preference, and it only helps if it outweighs the rule it is there
+    // to overrule.
+    const el = await mount({ animated: true });
+    expect(winningAnimation(el)).not.toBe('none');
+    expect(winningAnimation(el, true)).toBe('none');
   });
 });
 

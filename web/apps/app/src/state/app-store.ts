@@ -1,6 +1,6 @@
 import { signal, computed, Signal } from '../mixins/signal-watcher.js';
 import { ApiError, appLocked, type ApiClient } from '../api/index.js';
-import type { StatusResponse } from '../api/types.js';
+import type { SetupRequest, StatusResponse } from '../api/types.js';
 
 /**
  * Read-only view handed to consumers. Mutation goes through the store's
@@ -31,6 +31,9 @@ export type BootPhase = 'starting' | 'locked' | 'needs-setup' | 'failed' | 'read
 /** What a data-directory switch reported. */
 export type SwitchOutcome = { ok: true } | { ok: false; message: string };
 
+/** What a setup attempt reported. */
+export type SetupOutcome = { ok: true } | { ok: false; message: string };
+
 export interface AppStore {
   status: ReadonlySignal<StatusResponse | null>;
   statusLoading: ReadonlySignal<boolean>;
@@ -44,6 +47,7 @@ export interface AppStore {
 
   refreshStatus(): Promise<void>;
   unlock(password: string): Promise<UnlockOutcome>;
+  runSetup(input: SetupRequest): Promise<SetupOutcome>;
   switchDataDir(path: string): Promise<SwitchOutcome>;
 }
 
@@ -111,6 +115,22 @@ export function initializeAppStore(
     }
   };
 
+  const runSetup = async (input: SetupRequest): Promise<SetupOutcome> => {
+    try {
+      _status.set(await client.setup(input));
+      _statusError.set(null);
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof ApiError ? error.message : String(error),
+      };
+    }
+    // The route answers the fresh status, so the phase moves without a second
+    // round trip; the refresh is what picks up the background update check.
+    await refreshStatus();
+    return { ok: true };
+  };
+
   const switchDataDir = async (path: string): Promise<SwitchOutcome> => {
     try {
       await client.setDataDir(path);
@@ -153,6 +173,7 @@ export function initializeAppStore(
 
     refreshStatus,
     unlock,
+    runSetup,
     switchDataDir,
   };
 

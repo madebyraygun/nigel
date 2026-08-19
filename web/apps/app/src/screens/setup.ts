@@ -1,0 +1,408 @@
+import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
+import { customElement, state, property } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/input/input.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@nigel/ui';
+import { controlsCss } from '@nigel/theme';
+
+import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { getAppStore, type AppStore } from '../state/app-store.js';
+import type { ApiClient } from '../api/index.js';
+import type { BooksProfile, SetupAction } from '../api/types.js';
+import type { ScreenContext } from './context.js';
+
+/** How long the wordmark takes to assemble before the first question arrives. */
+const REVEAL_MS = 1200;
+const REVEAL_TICK_MS = 40;
+
+type Step = 'arrival' | 'profile' | 'identity' | 'first-move';
+
+/**
+ * The first-run gate: the four answers a set of books is created from.
+ *
+ * Rendered instead of the app shell, not inside it — with no sidebar and no
+ * screen there is nothing that could fetch data from a database that does not
+ * exist yet. One question is visible at a time, in the terminal onboarding's
+ * order, and nothing reaches the server until the last step: the first three
+ * are entirely local, so a wrong turn costs a click rather than a set of books.
+ */
+@customElement('nigel-setup-screen')
+export class NigelSetupScreen extends SignalWatcher(LitElement) {
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: block;
+        min-height: 100vh;
+        background: var(--wa-color-bg);
+        color: var(--wa-color-text);
+        font-family: var(--wa-font-family-sans);
+      }
+
+      .stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        padding: var(--wa-space-xl, 24px);
+        overflow: hidden;
+      }
+
+      wc-particle-field {
+        position: absolute;
+        inset: 0;
+      }
+
+      .panel {
+        position: relative;
+        width: 100%;
+        max-width: 42rem;
+        display: grid;
+        gap: var(--wa-space-l, 16px);
+        justify-items: center;
+        text-align: center;
+      }
+
+      wc-wordmark {
+        --nc-wordmark-size: var(--wa-font-size-s, 13px);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: var(--wa-font-size-2xl, 24px);
+        font-weight: var(--wa-font-weight-semibold, 600);
+      }
+
+      p {
+        margin: 0;
+        color: var(--wa-color-muted);
+        max-width: 34rem;
+      }
+
+      .cards {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        width: 100%;
+        text-align: left;
+      }
+
+      .card {
+        display: grid;
+        gap: var(--wa-space-2xs, 4px);
+        padding: var(--wa-space-l, 16px);
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-l, 12px);
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+      }
+
+      .card:hover,
+      .card:focus-visible {
+        border-color: var(--wa-color-brand);
+      }
+
+      .card strong {
+        font-size: var(--wa-font-size-l, 15px);
+      }
+
+      .card span {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+
+      .form {
+        display: grid;
+        gap: var(--wa-space-m, 12px);
+        width: 100%;
+        max-width: 26rem;
+        text-align: left;
+      }
+
+      .actions {
+        display: flex;
+        gap: var(--wa-space-s, 8px);
+        justify-content: center;
+      }
+
+      .footnote,
+      .skip {
+        color: var(--wa-color-muted);
+        font-size: var(--wa-font-size-s, 13px);
+      }
+
+      .error {
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s, 13px);
+        margin: 0;
+      }
+    `,
+  ];
+
+  /**
+   * Overridable so tests can drive the screen the way every other screen is
+   * driven. The screen itself reaches the server only through the store.
+   */
+  @property({ attribute: false })
+  client: ApiClient | null = null;
+
+  @state() private step: Step = 'arrival';
+  @state() private reveal = 0;
+  @state() private profile: BooksProfile = 'business';
+  @state() private userName = '';
+  @state() private companyName = '';
+  @state() private password = '';
+  @state() private confirm = '';
+  @state() private dataDir = '';
+  @state() private error = '';
+  @state() private busy: SetupAction | 'load' | null = null;
+
+  private store: AppStore = getAppStore();
+  private ticker: ReturnType<typeof setInterval> | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.ticker = setInterval(() => {
+      this.reveal = Math.min(1, this.reveal + REVEAL_TICK_MS / REVEAL_MS);
+      if (this.reveal >= 1) this.stopReveal();
+    }, REVEAL_TICK_MS);
+  }
+
+  disconnectedCallback(): void {
+    this.stopReveal();
+    super.disconnectedCallback();
+  }
+
+  private stopReveal(): void {
+    if (this.ticker !== null) clearInterval(this.ticker);
+    this.ticker = null;
+  }
+
+  /** Any click during the arrival goes straight to the first question. */
+  private skipIntro = (): void => {
+    if (this.step !== 'arrival') return;
+    this.stopReveal();
+    this.reveal = 1;
+    this.step = 'profile';
+  };
+
+  private chooseProfile(profile: BooksProfile): void {
+    this.profile = profile;
+    this.step = 'identity';
+  }
+
+  private readField(
+    event: Event,
+    key: 'userName' | 'companyName' | 'password' | 'confirm' | 'dataDir',
+  ): void {
+    this[key] = (event.target as HTMLInputElement).value;
+  }
+
+  private submitIdentity(): void {
+    if (this.password && this.password !== this.confirm) {
+      this.error = "Those two don't match. Have another go.";
+      return;
+    }
+    this.error = '';
+    this.step = 'first-move';
+  }
+
+  private plan(action: SetupAction) {
+    return {
+      userName: this.userName.trim(),
+      companyName: this.companyName.trim(),
+      profile: this.profile,
+      ...(this.password ? { password: this.password } : {}),
+      action,
+    };
+  }
+
+  private runSetup = async (action: SetupAction): Promise<void> => {
+    this.busy = action;
+    this.error = '';
+    const outcome = await this.store.runSetup(this.plan(action));
+    this.busy = null;
+    // A success unmounts this screen: the boot phase moves to `ready` and the
+    // shell takes over, so there is nothing to render here afterwards.
+    if (!outcome.ok) this.error = `That didn't take. ${outcome.message}`;
+  };
+
+  private loadExisting = async (): Promise<void> => {
+    const path = this.dataDir.trim();
+    if (!path) {
+      this.error = 'I need a directory to look in.';
+      return;
+    }
+    this.busy = 'load';
+    this.error = '';
+    const outcome = await this.store.switchDataDir(path);
+    this.busy = null;
+    if (!outcome.ok) this.error = outcome.message;
+  };
+
+  render() {
+    return html`
+      <div class="stage" @click=${this.skipIntro}>
+        <wc-particle-field></wc-particle-field>
+        <div class="panel">
+          <wc-wordmark animated .reveal=${this.reveal}></wc-wordmark>
+          ${this.renderStep()}
+          ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderStep() {
+    switch (this.step) {
+      case 'arrival':
+        return html`
+          <h1>Hello. I'm Nigel.</h1>
+          <p>
+            I keep books. Cash-basis, single-entry, on this machine and nowhere
+            else. Four questions and we can start.
+          </p>
+          <wa-button variant="brand" @click=${this.skipIntro}>Right then</wa-button>
+          <p class="skip">Click anywhere to skip the theatrics.</p>
+        `;
+      case 'profile':
+        return html`
+          <h1>What are we keeping books for?</h1>
+          <div class="cards">
+            <button
+              class="card"
+              data-profile="business"
+              @click=${() => this.chooseProfile('business')}
+            >
+              <strong>A business</strong>
+              <span>
+                Schedule C or 1120-S chart of accounts, with the tax lines already
+                mapped. Invoices, clients, the lot.
+              </span>
+            </button>
+            <button
+              class="card"
+              data-profile="personal"
+              @click=${() => this.chooseProfile('personal')}
+            >
+              <strong>Personal finances</strong>
+              <span>A household chart. No tax mapping, no invoices to chase.</span>
+            </button>
+          </div>
+          <p class="footnote">
+            This picks the chart of accounts, and it's decided once — when the
+            books are created.
+          </p>
+        `;
+      case 'identity':
+        return this.renderIdentity();
+      case 'first-move':
+        return this.renderFirstMove();
+    }
+  }
+
+  private renderIdentity() {
+    const companyLabel = this.profile === 'personal' ? 'Household name' : 'Business name';
+    return html`
+      <h1>Who am I working for?</h1>
+      <div class="form" @click=${(e: Event) => e.stopPropagation()}>
+        <wa-input
+          label="Your name"
+          hint="So I know who I'm greeting. First name is plenty."
+          .value=${this.userName}
+          @input=${(e: Event) => this.readField(e, 'userName')}
+        ></wa-input>
+        <wa-input
+          label=${companyLabel}
+          hint="It goes on the books, and on invoices if you send any."
+          .value=${this.companyName}
+          @input=${(e: Event) => this.readField(e, 'companyName')}
+        ></wa-input>
+        <wa-input
+          type="password"
+          label="Password (optional)"
+          autocomplete="new-password"
+          password-toggle
+          hint="Encrypts the database file. There is no recovery: lose it and the books are gone. Leave it blank and the file stays plain."
+          .value=${this.password}
+          @input=${(e: Event) => this.readField(e, 'password')}
+        ></wa-input>
+        ${this.password
+          ? html`<wa-input
+              type="password"
+              label="Type it again"
+              autocomplete="new-password"
+              .value=${this.confirm}
+              @input=${(e: Event) => this.readField(e, 'confirm')}
+            ></wa-input>`
+          : nothing}
+      </div>
+      <div class="actions">
+        <wa-button appearance="outlined" @click=${() => (this.step = 'profile')}>Back</wa-button>
+        <wa-button variant="brand" @click=${() => this.submitIdentity()}>Carry on</wa-button>
+      </div>
+    `;
+  }
+
+  private renderFirstMove() {
+    return html`
+      <h1>How shall we start?</h1>
+      <div class="cards" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="card">
+          <strong>Show me the demo</strong>
+          <span>
+            Eighteen months of invented books for a fictional consultancy. Its
+            own directory, so it never touches yours.
+          </span>
+          <wa-button
+            variant="brand"
+            ?disabled=${this.busy !== null}
+            @click=${() => this.runSetup('demo')}
+            >${this.busy === 'demo' ? 'Loading the demo…' : 'Load the demo'}</wa-button
+          >
+        </div>
+        <div class="card">
+          <strong>Start from scratch</strong>
+          <span>
+            An empty ledger and a chart of accounts. Import a statement when
+            you're ready.
+          </span>
+          <wa-button
+            variant="brand"
+            ?disabled=${this.busy !== null}
+            @click=${() => this.runSetup('fresh')}
+            >${this.busy === 'fresh' ? 'Setting up…' : 'Start fresh'}</wa-button
+          >
+        </div>
+        <div class="card">
+          <strong>Load books I already have</strong>
+          <span>Point me at a directory with a nigel.db in it.</span>
+          <wa-input
+            label="Data directory"
+            placeholder="~/Documents/nigel"
+            .value=${this.dataDir}
+            @input=${(e: Event) => this.readField(e, 'dataDir')}
+          ></wa-input>
+          <wa-button ?disabled=${this.busy !== null} @click=${this.loadExisting}
+            >${this.busy === 'load' ? 'Looking…' : 'Load them'}</wa-button
+          >
+        </div>
+      </div>
+      <div class="actions">
+        <wa-button appearance="outlined" @click=${() => (this.step = 'identity')}>Back</wa-button>
+      </div>
+    `;
+  }
+}
+
+export function renderSetup(_ctx: ScreenContext): TemplateResult {
+  return html`<nigel-setup-screen></nigel-setup-screen>`;
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'nigel-setup-screen': NigelSetupScreen;
+  }
+}

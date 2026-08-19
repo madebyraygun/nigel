@@ -278,3 +278,48 @@ describe('switching data directory', () => {
     expect(reloads).toBe(0);
   });
 });
+
+describe('running setup', () => {
+  beforeEach(() => {
+    resetAppStore();
+    appLocked.set(false);
+  });
+
+  const plan = {
+    userName: 'Marta',
+    companyName: 'Cedar Systems',
+    profile: 'business',
+    action: 'fresh',
+  } as const;
+
+  it('creates the books and lands on ready', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+
+    const outcome = await store.runSetup(plan);
+
+    expect(outcome).toEqual({ ok: true });
+    expect(store.boot.get()).toBe('ready');
+    expect(store.companyName.get()).toBe('Cedar Systems');
+  });
+
+  it('reports a refusal without changing the phase', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    client.setupError = new ApiError({
+      code: 'conflict',
+      rawCode: 'conflict',
+      message: 'These books are already set up.',
+      status: 409,
+    });
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+
+    const outcome = await store.runSetup(plan);
+
+    expect(outcome).toEqual({ ok: false, message: 'These books are already set up.' });
+    expect(store.boot.get()).toBe('needs-setup');
+  });
+});

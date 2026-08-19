@@ -23,10 +23,11 @@ import {
  * shorthand, a second `:host` rule, or a declaration written without its
  * trailing semicolon all answer the way the browser would.
  *
- * `unlock` is exempt. It replaces the shell rather than filling it — there is
- * no sidebar and no header behind the password prompt — and centres itself.
+ * The gates are exempt. Each replaces the shell rather than filling it — there
+ * is no sidebar and no header behind the password prompt or the first-run
+ * questions — and each centres itself.
  */
-const EXEMPT = ['unlock.ts'];
+const EXEMPT = ['setup.ts', 'unlock.ts'];
 
 const modules = import.meta.glob<Record<string, unknown>>(
   ['../screens/*.ts', '!../screens/*.test.ts'],

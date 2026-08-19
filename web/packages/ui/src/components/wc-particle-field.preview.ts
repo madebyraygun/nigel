@@ -3,7 +3,7 @@ import './wc-particle-field.js';
 import type { Preview } from '../../preview/types.js';
 
 const box = (content: unknown) =>
-  html`<div style="position: relative; height: 240px; background: var(--nc-color-arcade-bg, #1f1f28);">
+  html`<div style="position: relative; height: 240px; background: var(--nc-color-arcade-bg, #17171d);">
     ${content}
   </div>`;
 

@@ -109,7 +109,7 @@ export class WcWordmark extends LitElement {
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .char {
+      :host([animated]) .char {
         animation: none;
       }
     }
