@@ -11,6 +11,7 @@ pub mod categories;
 pub mod categorizer;
 pub mod clock;
 pub mod db;
+pub mod demo;
 pub mod error;
 pub mod fmt;
 pub mod importer;
