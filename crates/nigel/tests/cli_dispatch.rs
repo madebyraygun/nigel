@@ -2737,6 +2737,70 @@ fn test_import_generic_csv_with_saved_profile() {
         .stdout(predicate::str::contains("1 imported"));
 }
 
+/// A statement whose rows the parser refuses one by one, leaving nothing to
+/// import. The header is the only line `bofa_checking` can read.
+fn write_unreadable_statement(env: &TestEnv, name: &str) -> PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(
+        &path,
+        "Date,Description,Amount,Running Bal.\n\
+         13/40/2026,GLOBEX HOSTING,-88.00,900.00\n\
+         13/41/2026,CEDAR SYSTEMS,-12.00,888.00\n",
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_refused_import_leaves_no_profile_behind() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_unreadable_statement(&env, "unreadable-profile.csv");
+
+    // The mapping is well formed; the file it points at is not. --save-profile
+    // must wait for the import, or a refusal names a profile nobody can use.
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--date-col",
+            "0",
+            "--desc-col",
+            "1",
+            "--amount-col",
+            "2",
+            "--save-profile",
+            "sinkhole",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Nothing could be read from this file",
+        ));
+
+    let good_path = env.home.path().join("readable.csv");
+    std::fs::write(
+        &good_path,
+        "03/02/2026,GLOBEX HOSTING,-88.00\n03/04/2026,CLIENT PAYMENT,1200.00\n",
+    )
+    .unwrap();
+
+    env.cmd()
+        .args([
+            "import",
+            &good_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "sinkhole",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown format: 'sinkhole'"));
+}
+
 #[test]
 fn status_migrates_outdated_database() {
     let env = TestEnv::new();

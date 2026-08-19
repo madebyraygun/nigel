@@ -36,25 +36,32 @@ pub fn run(file: &str, account: &str, opts: ImportOpts<'_>) -> Result<()> {
         None
     };
 
-    // Save profile only when not doing a dry run
-    if !opts.dry_run {
-        if let Some(profile_name) = opts.save_profile {
-            let config = inline_config.as_ref().map_or_else(
-                || {
-                    build_generic_config(
-                        opts.date_col,
-                        opts.desc_col,
-                        opts.amount_col,
-                        opts.date_format,
-                        "--save-profile",
-                    )
-                },
-                |c| Ok(c.clone()),
-            )?;
-            save_csv_profile(&conn, profile_name, &config)?;
-            println!("Saved profile '{profile_name}'");
+    // Built here so a mapping that cannot be a profile — missing columns, the
+    // name of a built-in importer — is refused before anything is written. The
+    // write itself waits until the import has succeeded, below. A dry run never
+    // saves: it is a preview, and it writes nothing else either.
+    let profile_to_save = if opts.dry_run {
+        None
+    } else {
+        match opts.save_profile {
+            Some(name) => {
+                let config = inline_config.as_ref().map_or_else(
+                    || {
+                        build_generic_config(
+                            opts.date_col,
+                            opts.desc_col,
+                            opts.amount_col,
+                            opts.date_format,
+                            "--save-profile",
+                        )
+                    },
+                    |c| Ok(c.clone()),
+                )?;
+                Some((name, config))
+            }
+            None => None,
         }
-    }
+    };
 
     if !opts.dry_run {
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -115,6 +122,14 @@ pub fn run(file: &str, account: &str, opts: ImportOpts<'_>) -> Result<()> {
         },
     )?;
     let result = &outcome.result;
+
+    // After the import rather than before it, so a file that would not parse
+    // does not leave a profile behind. `POST /api/imports/confirm` orders the
+    // two the same way, for the same reason.
+    if let Some((profile_name, config)) = profile_to_save {
+        save_csv_profile(&conn, profile_name, &config)?;
+        println!("Saved profile '{profile_name}'");
+    }
 
     if result.duplicate_file {
         println!("This file has already been imported (duplicate checksum).");
