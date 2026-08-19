@@ -1,10 +1,10 @@
 ---
 id: TASK-33.10
 title: Decide the core crate's public API surface at the split
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-16 12:58'
-updated_date: '2026-08-18 03:27'
+updated_date: '2026-08-19 14:11'
 labels:
   - tauri
   - backend
