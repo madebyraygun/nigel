@@ -604,7 +604,7 @@ mod tests {
     fn a_refused_void_makes_no_call_and_leaves_the_invoice_alone() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 100.0, "2026-08-05", "stripe", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-05", "stripe", None, "2026-08-05").unwrap();
         let gateway = FakeGw::default();
         let publisher = FakePub::default();
 

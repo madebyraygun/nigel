@@ -470,7 +470,15 @@ fn insert_demo_invoicing(conn: &Connection) -> Result<(usize, usize)> {
             mark_published(conn, id, &issued)?;
         }
         if let Some((amount, days_ago)) = invoice.payment {
-            record_payment(conn, id, amount, &offset_day(today, -days_ago), "ach", None)?;
+            record_payment(
+                conn,
+                id,
+                amount,
+                &offset_day(today, -days_ago),
+                "ach",
+                None,
+                &offset_day(today, 0),
+            )?;
         }
     }
 

@@ -560,6 +560,7 @@ async fn pay(
     // keeps a request that cannot succeed from opening a connection at all.
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
+    let today = crate::clock::today();
 
     // The config and the data directory are resolved **inside** the closure,
     // which runs after `with_conn_api` has taken the `db_gate` read guard. A
@@ -582,6 +583,7 @@ async fn pay(
                 publisher.as_ref(),
                 &cfg,
                 &state.data_dir(),
+                &today,
             )
         }
     })
@@ -599,6 +601,7 @@ fn pay_with<P: AssetPublisher>(
     publisher: Option<&P>,
     cfg: &InvoicingConfig,
     data_dir: &std::path::Path,
+    today: &str,
 ) -> ApiResult<PayResult> {
     let invoice = find_invoice(conn, number)?;
     let paid = inv::paid_amount(conn, invoice.id)?;
@@ -611,6 +614,7 @@ fn pay_with<P: AssetPublisher>(
         &request.date,
         &request.method,
         None,
+        today,
     )
     .map_err(|e| enrich_conflict(e, &invoice, paid))?;
 
@@ -1902,6 +1906,7 @@ mod tests {
             Some(&publisher),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment goes through");
 
@@ -1932,6 +1937,7 @@ mod tests {
             Some(&ForbiddenPub),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("a failed republish is not a failed payment");
 
@@ -1964,6 +1970,7 @@ mod tests {
             Some(&publisher),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment goes through");
 
@@ -1990,6 +1997,7 @@ mod tests {
             None::<&FakePub>,
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment lands");
 
@@ -2180,12 +2188,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_partial_payment_moves_the_status_to_partial_and_a_full_one_to_paid() {
+    async fn a_partial_payment_leaves_a_balance_and_a_full_one_settles_it() {
         let _config = TempConfig::new();
         let (_dir, db_path) = seeded_db();
         let (app, token) = app_for(&db_path);
 
-        // 1251: sent, 1,850 outstanding.
+        // 1251: 1,850 outstanding, due 2026-04-06 — a day the wall clock is
+        // past, so a part-paid 1251 reads `overdue` rather than `partial`.
+        // That is the read this branch exists to make true.
         let (status, partial) = post_json(
             &app,
             "/api/invoices/1251/pay",
@@ -2194,7 +2204,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{partial}");
-        assert_eq!(partial["status"], "partial");
+        assert_eq!(partial["status"], "overdue");
+        assert_eq!(partial["paid"], 500.0);
         assert_eq!(partial["balance"], 1350.0);
         assert_eq!(partial["payments"][0]["method"], "ach");
 

@@ -229,6 +229,13 @@ pub fn is_settled(total: f64, paid: f64) -> bool {
     paid >= total - CENT_SLACK
 }
 
+/// Record one payment and re-derive the invoice's status.
+///
+/// `paid_date` is the day the money moved — a gateway session's own day, or a
+/// date somebody typed. `today` is the reference day the status is derived
+/// against, which is the day the run is happening. They are two different
+/// facts: a December payment recorded in January is December's, and aging the
+/// invoice from December would leave an invoice months past due reading `sent`.
 pub fn record_payment(
     conn: &Connection,
     invoice_id: i64,
@@ -236,9 +243,11 @@ pub fn record_payment(
     paid_date: &str,
     method: &str,
     stripe_session: Option<&str>,
+    today: &str,
 ) -> Result<bool> {
     validate_payment_method(method)?;
     let paid_date = validate_date(paid_date, "payment")?;
+    let today = validate_date(today, "reference")?;
     ensure_not_void(&get_invoice(conn, invoice_id)?, "paid")?;
     if let Some(sid) = stripe_session {
         let seen: bool = conn.query_row(
@@ -255,9 +264,7 @@ pub fn record_payment(
          VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![invoice_id, amount, paid_date, method, stripe_session],
     )?;
-    // The payment date, not the wall clock, is the reference day so the derived
-    // status is deterministic regardless of when the payment is entered.
-    refresh_status(conn, invoice_id, &paid_date)?;
+    refresh_status(conn, invoice_id, &today)?;
     Ok(true)
 }
 
@@ -1158,7 +1165,16 @@ mod tests {
         )
         .unwrap();
 
-        assert!(record_payment(&conn, id, 200.0, "2026-08-10", "direct_deposit", None).unwrap());
+        assert!(record_payment(
+            &conn,
+            id,
+            200.0,
+            "2026-08-10",
+            "direct_deposit",
+            None,
+            "2026-08-10"
+        )
+        .unwrap());
         assert_eq!(paid_amount(&conn, id).unwrap(), 200.0);
         assert_eq!(refresh_status(&conn, id, "2026-08-11").unwrap(), "paid");
     }
@@ -1189,7 +1205,7 @@ mod tests {
         )
         .unwrap();
 
-        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None).unwrap();
+        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None, "2026-08-10").unwrap();
         assert_eq!(refresh_status(&conn, id, "2026-08-15").unwrap(), "partial");
         assert_eq!(refresh_status(&conn, id, "2026-08-25").unwrap(), "overdue");
     }
@@ -1205,8 +1221,26 @@ mod tests {
         }];
         let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
 
-        assert!(record_payment(&conn, id, 100.0, "2026-08-10", "stripe", Some("cs_1")).unwrap());
-        assert!(!record_payment(&conn, id, 100.0, "2026-08-10", "stripe", Some("cs_1")).unwrap());
+        assert!(record_payment(
+            &conn,
+            id,
+            100.0,
+            "2026-08-10",
+            "stripe",
+            Some("cs_1"),
+            "2026-08-10"
+        )
+        .unwrap());
+        assert!(!record_payment(
+            &conn,
+            id,
+            100.0,
+            "2026-08-10",
+            "stripe",
+            Some("cs_1"),
+            "2026-08-10"
+        )
+        .unwrap());
         assert_eq!(paid_amount(&conn, id).unwrap(), 100.0);
     }
 
@@ -1239,7 +1273,7 @@ mod tests {
         // 33.40 * 3 lands on 100.19999999999999 in binary floating point, a hair under
         // the 100.20 total. The invoice is settled in full and must read as paid.
         for _ in 0..3 {
-            record_payment(&conn, id, 33.40, "2026-08-10", "ach", None).unwrap();
+            record_payment(&conn, id, 33.40, "2026-08-10", "ach", None, "2026-08-10").unwrap();
         }
         assert!(paid_amount(&conn, id).unwrap() < 100.20);
         assert_eq!(refresh_status(&conn, id, "2026-08-25").unwrap(), "paid");
@@ -1271,7 +1305,7 @@ mod tests {
         )
         .unwrap();
 
-        record_payment(&conn, id, 99.99, "2026-08-10", "ach", None).unwrap();
+        record_payment(&conn, id, 99.99, "2026-08-10", "ach", None, "2026-08-10").unwrap();
         assert_eq!(refresh_status(&conn, id, "2026-08-15").unwrap(), "partial");
     }
 
@@ -1450,7 +1484,16 @@ mod tests {
     fn a_paid_invoice_refuses_deletion() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 100.0, "2026-08-06", "direct_deposit", None).unwrap();
+        record_payment(
+            &conn,
+            id,
+            100.0,
+            "2026-08-06",
+            "direct_deposit",
+            None,
+            "2026-08-06",
+        )
+        .unwrap();
 
         let err = delete_invoice(&conn, id).unwrap_err();
         assert_eq!(block_code(&err), "not_deletable");
@@ -1463,7 +1506,16 @@ mod tests {
     fn a_draft_with_a_partial_payment_refuses_deletion() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-06", "direct_deposit", None).unwrap();
+        record_payment(
+            &conn,
+            id,
+            40.0,
+            "2026-08-06",
+            "direct_deposit",
+            None,
+            "2026-08-06",
+        )
+        .unwrap();
         assert_eq!(get_invoice(&conn, id).unwrap().status, "draft");
 
         let err = delete_invoice(&conn, id).unwrap_err();
@@ -1560,7 +1612,16 @@ mod tests {
                 as fn(&Connection, i64),
             |conn, id| void_invoice(conn, id, "2026-08-05").unwrap(),
             |conn, id| {
-                record_payment(conn, id, 100.0, "2026-08-05", "direct_deposit", None).unwrap();
+                record_payment(
+                    conn,
+                    id,
+                    100.0,
+                    "2026-08-05",
+                    "direct_deposit",
+                    None,
+                    "2026-08-05",
+                )
+                .unwrap();
             },
         ] {
             let id = seed_draft(&conn);
@@ -1711,7 +1772,8 @@ mod tests {
         let id = seed_draft(&conn);
         void_invoice(&conn, id, "2026-08-06").unwrap();
 
-        let err = record_payment(&conn, id, 10.0, "2026-08-07", "ach", None).unwrap_err();
+        let err =
+            record_payment(&conn, id, 10.0, "2026-08-07", "ach", None, "2026-08-07").unwrap_err();
         assert_eq!(conflict_code(&err), "void");
         assert!(payments(&conn, id).unwrap().is_empty(), "a row was written");
     }
@@ -1727,7 +1789,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = record_payment(&conn, id, 10.0, "2026-08-07", "ach", None).unwrap_err();
+        let err =
+            record_payment(&conn, id, 10.0, "2026-08-07", "ach", None, "2026-08-07").unwrap_err();
         assert_eq!(conflict_code(&err), "void");
     }
 
@@ -1792,7 +1855,7 @@ mod tests {
     fn a_paid_draft_is_refused_for_its_payments_not_for_being_sent() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 100.0, "2026-08-10", "ach", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-10", "ach", None, "2026-08-10").unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
         assert_eq!(invoice.status, "paid");
         assert_eq!(invoice.published_at, None);
@@ -1809,7 +1872,7 @@ mod tests {
     fn an_invoice_with_payments_refuses_edit_and_void() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None).unwrap();
+        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None, "2026-08-10").unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
 
         let edit_err = ensure_editable(&conn, &invoice).unwrap_err();
@@ -2351,7 +2414,7 @@ mod tests {
     fn voiding_an_invoice_with_payments_is_refused() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None).unwrap();
+        record_payment(&conn, id, 50.0, "2026-08-10", "ach", None, "2026-08-10").unwrap();
 
         let err = void_invoice(&conn, id, "2026-08-11").unwrap_err();
         assert_eq!(conflict_code(&err), "has_payments");
@@ -2577,8 +2640,26 @@ mod tests {
         let (_d, conn) = test_conn();
         let partial = open_invoice(&conn, "Acme", "2026-07-01", Some("2026-07-20"), 100.0);
         let settled = open_invoice(&conn, "Globex", "2026-07-01", Some("2026-07-20"), 250.0);
-        record_payment(&conn, partial, 40.0, "2026-07-25", "ach", None).unwrap();
-        record_payment(&conn, settled, 250.0, "2026-07-25", "ach", None).unwrap();
+        record_payment(
+            &conn,
+            partial,
+            40.0,
+            "2026-07-25",
+            "ach",
+            None,
+            "2026-07-25",
+        )
+        .unwrap();
+        record_payment(
+            &conn,
+            settled,
+            250.0,
+            "2026-07-25",
+            "ach",
+            None,
+            "2026-07-25",
+        )
+        .unwrap();
 
         let report = ar_aging_detail(&conn, AGING_TODAY).unwrap();
         let partial_number = number_of(&conn, partial);
@@ -2711,7 +2792,7 @@ mod tests {
     fn list_invoices_is_newest_first_and_carries_client_and_paid() {
         let (_d, conn) = test_conn();
         let (_cid, ids) = seed_three(&conn);
-        record_payment(&conn, ids[1], 50.0, "2026-08-05", "ach", None).unwrap();
+        record_payment(&conn, ids[1], 50.0, "2026-08-05", "ach", None, "2026-08-05").unwrap();
 
         let rows = list_invoices(&conn, None, None).unwrap();
         assert_eq!(rows.len(), 3);
@@ -2743,11 +2824,29 @@ mod tests {
         let (_d, conn) = test_conn();
         let (_cid, ids) = seed_three(&conn);
         // Five payments spread across three invoices, in one call.
-        record_payment(&conn, ids[0], 25.0, "2026-08-05", "ach", None).unwrap();
-        record_payment(&conn, ids[0], 25.0, "2026-08-06", "ach", None).unwrap();
-        record_payment(&conn, ids[1], 40.0, "2026-08-05", "ach", None).unwrap();
-        record_payment(&conn, ids[1], 60.0, "2026-08-07", "other", None).unwrap();
-        record_payment(&conn, ids[2], 300.0, "2026-08-05", "direct_deposit", None).unwrap();
+        record_payment(&conn, ids[0], 25.0, "2026-08-05", "ach", None, "2026-08-05").unwrap();
+        record_payment(&conn, ids[0], 25.0, "2026-08-06", "ach", None, "2026-08-06").unwrap();
+        record_payment(&conn, ids[1], 40.0, "2026-08-05", "ach", None, "2026-08-05").unwrap();
+        record_payment(
+            &conn,
+            ids[1],
+            60.0,
+            "2026-08-07",
+            "other",
+            None,
+            "2026-08-07",
+        )
+        .unwrap();
+        record_payment(
+            &conn,
+            ids[2],
+            300.0,
+            "2026-08-05",
+            "direct_deposit",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
 
         let rows = list_invoices(&conn, None, None).unwrap();
         let paid = |id: i64| rows.iter().find(|r| r.id == id).unwrap().paid;
@@ -2777,7 +2876,7 @@ mod tests {
         let (_cid, ids) = seed_three(&conn);
         mark_published(&conn, ids[0], "2026-08-05").unwrap();
         mark_published(&conn, ids[1], "2026-08-05").unwrap();
-        record_payment(&conn, ids[1], 50.0, "2026-08-06", "ach", None).unwrap();
+        record_payment(&conn, ids[1], 50.0, "2026-08-06", "ach", None, "2026-08-06").unwrap();
 
         let numbers = |status: &str| -> Vec<i64> {
             let mut ids: Vec<i64> = list_invoices(&conn, Some(status), None)
@@ -2849,7 +2948,16 @@ mod tests {
         assert!(err.to_string().contains("direct_deposit"), "got: {err}");
 
         // record_payment refuses before the insert, so no CHECK ever fires.
-        let err = record_payment(&conn, ids[0], 10.0, "2026-08-05", "bitcoin", None).unwrap_err();
+        let err = record_payment(
+            &conn,
+            ids[0],
+            10.0,
+            "2026-08-05",
+            "bitcoin",
+            None,
+            "2026-08-05",
+        )
+        .unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
         assert!(payments(&conn, ids[0]).unwrap().is_empty());
 
@@ -2862,9 +2970,27 @@ mod tests {
     fn payments_come_back_oldest_first() {
         let (_d, conn) = test_conn();
         let (_cid, ids) = seed_three(&conn);
-        record_payment(&conn, ids[0], 10.0, "2026-08-09", "ach", None).unwrap();
-        record_payment(&conn, ids[0], 20.0, "2026-08-05", "stripe", None).unwrap();
-        record_payment(&conn, ids[0], 30.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, ids[0], 10.0, "2026-08-09", "ach", None, "2026-08-09").unwrap();
+        record_payment(
+            &conn,
+            ids[0],
+            20.0,
+            "2026-08-05",
+            "stripe",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
+        record_payment(
+            &conn,
+            ids[0],
+            30.0,
+            "2026-08-05",
+            "other",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
 
         let rows = payments(&conn, ids[0]).unwrap();
         let dates: Vec<&str> = rows.iter().map(|p| p.paid_date.as_str()).collect();
@@ -2943,7 +3069,7 @@ mod tests {
             "Invalid due date: 26-8-9 (expected YYYY-MM-DD)"
         );
 
-        let err = record_payment(&conn, id, 50.0, "26-8-9", "ach", None).unwrap_err();
+        let err = record_payment(&conn, id, 50.0, "26-8-9", "ach", None, "26-8-9").unwrap_err();
         assert_eq!(
             err.to_string(),
             "Invalid payment date: 26-8-9 (expected YYYY-MM-DD)"
@@ -3057,7 +3183,7 @@ mod tests {
     fn record_payment_stores_an_unpadded_date_padded() {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
-        record_payment(&conn, id, 50.0, "2026-8-9", "ach", None).unwrap();
+        record_payment(&conn, id, 50.0, "2026-8-9", "ach", None, "2026-8-9").unwrap();
 
         let dates: Vec<String> = payments(&conn, id)
             .unwrap()
@@ -3075,7 +3201,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed_draft(&conn);
 
-        let err = record_payment(&conn, id, 50.0, "March", "ach", None).unwrap_err();
+        let err = record_payment(&conn, id, 50.0, "March", "ach", None, "March").unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
         assert_eq!(
             err.to_string(),
@@ -3176,5 +3302,56 @@ mod tests {
             err.to_string(),
             "Invalid published date: March (expected YYYY-MM-DD)"
         );
+    }
+
+    /// A backdated payment must not time-travel the status refresh: the money
+    /// moved in December, the run is happening in January, and the invoice is
+    /// overdue on the day somebody is looking at it.
+    #[test]
+    fn a_backdated_payment_derives_its_status_against_the_run_day() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2025-12-01",
+            Some("2025-12-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, id, "2025-12-01").unwrap();
+
+        assert!(
+            record_payment(&conn, id, 40.0, "2025-12-29", "stripe", None, "2026-01-08").unwrap()
+        );
+
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "overdue");
+        assert_eq!(payments(&conn, id).unwrap()[0].paid_date, "2025-12-29");
+    }
+
+    /// The reference day is validated like every other date the writer stores.
+    #[test]
+    fn a_malformed_reference_day_is_refused_by_name() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(&conn, cid, "2026-08-04", None, "USD", &items, None, None).unwrap();
+
+        let err = record_payment(&conn, id, 40.0, "2026-08-05", "ach", None, "26-8-9")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reference"), "got: {err}");
     }
 }

@@ -291,8 +291,16 @@ mod tests {
     fn the_seam_reads_the_payments_and_the_page_shows_them() {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
-        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
-            .unwrap();
+        crate::invoicing::invoices::record_payment(
+            &conn,
+            id,
+            40.0,
+            "2026-08-05",
+            "other",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
         let client = get_client(&conn, invoice.client_id).unwrap();
 
@@ -315,8 +323,16 @@ mod tests {
     fn the_pdf_and_the_page_carry_the_same_money_labels() {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
-        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
-            .unwrap();
+        crate::invoicing::invoices::record_payment(
+            &conn,
+            id,
+            40.0,
+            "2026-08-05",
+            "other",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
         let client = get_client(&conn, invoice.client_id).unwrap();
 
@@ -344,8 +360,16 @@ mod tests {
     fn the_pdf_and_the_page_render_every_figure_identically() {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
-        crate::invoicing::invoices::record_payment(&conn, id, 40.0, "2026-08-05", "other", None)
-            .unwrap();
+        crate::invoicing::invoices::record_payment(
+            &conn,
+            id,
+            40.0,
+            "2026-08-05",
+            "other",
+            None,
+            "2026-08-05",
+        )
+        .unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
         let client = get_client(&conn, invoice.client_id).unwrap();
 
@@ -406,7 +430,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
         set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
-        record_payment(&conn, id, 100.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
 
         assert_eq!(invoice.status, "paid");
@@ -422,7 +446,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed(&conn, &one_item());
         set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let invoice = get_invoice(&conn, id).unwrap();
 
         assert!(matches!(

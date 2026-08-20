@@ -1554,7 +1554,15 @@ impl InvoiceManager {
         let invoice_id = detail.invoice.id;
         let number = detail.invoice.number;
         let was_published = detail.invoice.published_at.is_some();
-        if let Err(e) = record_payment(conn, invoice_id, amount, &date, method, None) {
+        if let Err(e) = record_payment(
+            conn,
+            invoice_id,
+            amount,
+            &date,
+            method,
+            None,
+            &crate::cli::today(),
+        ) {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
@@ -2237,7 +2245,7 @@ mod tests {
     fn balance_is_total_minus_paid() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
 
         let mgr = manager(&conn);
         let row = &mgr.rows[0];
@@ -2252,7 +2260,7 @@ mod tests {
     fn enter_loads_the_detail_for_the_selected_invoice() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
 
@@ -2359,7 +2367,7 @@ mod tests {
     fn the_detail_renders_the_invoice_its_payments_and_the_action_keys() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
@@ -2458,7 +2466,7 @@ mod tests {
     fn p_prefills_the_amount_with_the_outstanding_balance_and_today() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -2471,7 +2479,7 @@ mod tests {
     fn p_on_a_settled_invoice_prefills_an_empty_amount() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 100.0);
-        record_payment(&conn, id, 100.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -2495,7 +2503,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 1_000.0);
         for method in METHODS {
-            record_payment(&conn, id, 1.0, "2026-08-01", method, None)
+            record_payment(&conn, id, 1.0, "2026-08-01", method, None, "2026-08-01")
                 .unwrap_or_else(|e| panic!("method {method} is not insertable: {e}"));
         }
     }
@@ -2673,7 +2681,7 @@ mod tests {
     fn a_valid_payment_is_recorded_and_returns_to_detail() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
         submit_payment(&mut mgr, &conn, "750.00", "2026-08-20");
@@ -2757,7 +2765,7 @@ mod tests {
     fn the_pay_form_renders_the_balance_line_and_the_fields() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -2939,7 +2947,7 @@ mod tests {
 
         // Somebody else publishes it while the confirmation is up.
         mark_published(&conn, id, "2026-07-17").unwrap();
-        record_payment(&conn, id, 100.0, "2026-07-18", "ach", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-07-18", "ach", None, "2026-07-18").unwrap();
 
         mgr.handle_key(KeyCode::Char('y'), &conn);
 
@@ -3155,7 +3163,7 @@ mod tests {
     fn v_on_an_invoice_with_payments_is_refused_before_the_dialog() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
 
@@ -3832,7 +3840,7 @@ mod tests {
     fn the_list_renders_its_columns_inside_eighty_columns() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
 
         let screen = rendered(&mut mgr);
@@ -3883,7 +3891,7 @@ mod tests {
     fn an_ordinary_row_keeps_the_specced_columns() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
 
         let rendered = list_row(&row_of(&conn));
         assert_eq!(rendered.chars().count(), ROW_WIDTH);
@@ -3897,7 +3905,7 @@ mod tests {
     fn every_screen_survives_a_terminal_narrower_than_its_columns() {
         let (dir, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
 
         let mut narrow =

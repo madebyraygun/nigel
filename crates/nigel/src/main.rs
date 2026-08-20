@@ -281,7 +281,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 amount,
                 date,
                 method,
-            } => cli::invoice::pay(number, amount, &date, &method),
+            } => cli::invoice::pay(number, amount, &date, &method, &cli::today()),
             InvoiceCommands::Aging => cli::invoice::aging(&cli::today()),
             InvoiceCommands::Import { db } => cli::invoice::import(&db),
             InvoiceCommands::Template { command } => match command {

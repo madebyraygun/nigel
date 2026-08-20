@@ -672,14 +672,14 @@ pub fn sync(today: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str) -> Result<()> {
+pub fn pay(number: i64, amount: Option<f64>, date: &str, method: &str, today: &str) -> Result<()> {
     let data_dir = get_data_dir();
     let conn = get_connection(&data_dir.join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "paid")?;
     let paid = paid_amount(&conn, invoice.id)?;
     let amount = payment_amount(&invoice, paid, amount)?;
-    record_payment(&conn, invoice.id, amount, date, method, None)?;
+    record_payment(&conn, invoice.id, amount, date, method, None, today)?;
     let invoice = get_invoice(&conn, invoice.id)?;
     println!(
         "Recorded {amount:.2} against invoice #{number} ({})",
@@ -1003,6 +1003,7 @@ mod tests {
             "2026-08-05",
             "other",
             None,
+            "2026-08-05",
         )
         .unwrap();
         id
@@ -1094,7 +1095,7 @@ mod tests {
     fn republishing_an_unpublished_invoice_says_nothing() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
 
         assert!(republish_after_payment(&conn, id, &test_config(), _d.path()).is_empty());
     }
