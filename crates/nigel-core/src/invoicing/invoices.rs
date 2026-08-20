@@ -98,9 +98,35 @@ pub fn create_invoice(
     notes: Option<&str>,
     terms: Option<&str>,
 ) -> Result<i64> {
-    // Before the transaction opens, so a refusal writes nothing. This is also
-    // the existence check: `ensure_client_active` reads the row, so a missing
-    // client is its `NotFound` rather than a second query's.
+    let tx = conn.unchecked_transaction()?;
+    let id = insert_invoice(
+        &tx, client_id, issue_date, due_date, currency, items, notes, terms,
+    )?;
+    tx.commit()?;
+    Ok(id)
+}
+
+/// [`create_invoice`]'s body with no transaction of its own, for a caller that
+/// already has one open.
+///
+/// SQLite has no nested `BEGIN`, so a generator that must write the invoice and
+/// the row recording *why* it exists together cannot call `create_invoice`. The
+/// validation still runs before the first insert, so a refusal writes nothing
+/// here either.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::invoicing) fn insert_invoice(
+    conn: &Connection,
+    client_id: i64,
+    issue_date: &str,
+    due_date: Option<&str>,
+    currency: &str,
+    items: &[NewLineItem],
+    notes: Option<&str>,
+    terms: Option<&str>,
+) -> Result<i64> {
+    // Before anything is written, so a refusal leaves nothing behind. This is
+    // also the existence check: `ensure_client_active` reads the row, so a
+    // missing client is its `NotFound` rather than a second query's.
     ensure_client_active(conn, client_id)?;
     validate_items(items)?;
     let issue_date = validate_date(issue_date, "issue")?;
@@ -109,15 +135,14 @@ pub fn create_invoice(
         None => None,
     };
     let currency = validate_currency(currency)?;
-    let tx = conn.unchecked_transaction()?;
 
-    let number = next_number(&tx)?;
+    let number = next_number(conn)?;
     let subtotal: f64 = items.iter().map(|i| i.quantity * i.unit_amount).sum();
     let tax = 0.0;
     let total = subtotal + tax;
     let token = gen_token();
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO invoices
             (number, client_id, issue_date, due_date, status, currency, subtotal, tax, total, notes, terms, token)
          VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -125,11 +150,11 @@ pub fn create_invoice(
             number, client_id, issue_date, due_date, currency, subtotal, tax, total, notes, terms, token
         ],
     )?;
-    let invoice_id = tx.last_insert_rowid();
+    let invoice_id = conn.last_insert_rowid();
 
     for (idx, item) in items.iter().enumerate() {
         let line_total = item.quantity * item.unit_amount;
-        tx.execute(
+        conn.execute(
             "INSERT INTO invoice_line_items
                 (invoice_id, description, quantity, unit_amount, line_total, position)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -144,8 +169,7 @@ pub fn create_invoice(
         )?;
     }
 
-    set_metadata(&tx, NEXT_NUMBER_KEY, &(number + 1).to_string())?;
-    tx.commit()?;
+    set_metadata(conn, NEXT_NUMBER_KEY, &(number + 1).to_string())?;
     Ok(invoice_id)
 }
 

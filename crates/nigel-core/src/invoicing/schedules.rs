@@ -11,7 +11,9 @@ use serde::Serialize;
 
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::ensure_client_active;
+use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use crate::invoicing::invoices::{validate_currency, validate_date, validate_items, NewLineItem};
+use crate::invoicing::render_html::Branding;
 
 /// How often a schedule bills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,6 +412,239 @@ pub fn advance_period(cadence: Cadence, anchor_day: u32, period: &str) -> Result
     Ok(format!("{year:04}-{month:02}-{day:02}"))
 }
 
+/// The collaborators an autosend run needs.
+///
+/// Injected, never resolved here: `src/invoicing/` does not read settings, so
+/// the branding and the three clients come from the front end — the same seam
+/// `send_with` and `void_with` use.
+pub struct Senders<'a, G, P, M> {
+    pub branding: &'a Branding<'a>,
+    pub gateway: &'a G,
+    pub publisher: &'a P,
+    pub mailer: &'a M,
+}
+
+/// One invoice a run produced, and what happened to it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Generated {
+    pub schedule_id: i64,
+    /// The cycle's scheduled issue date, which is also the invoice's.
+    pub period: String,
+    pub invoice_id: i64,
+    pub number: i64,
+    pub client_name: String,
+    pub total: f64,
+    pub currency: String,
+    pub sent: bool,
+    /// Why an autosend schedule's invoice is still a draft, or `None`. Never
+    /// silently empty on a schedule that asked to send.
+    pub not_sent: Option<String>,
+}
+
+/// A schedule whose walk stopped, and where.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleFailure {
+    pub schedule_id: i64,
+    pub period: String,
+    pub message: String,
+}
+
+/// What one run did. Data rather than a print, so a terminal and a browser can
+/// render the same run.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleRunReport {
+    pub generated: Vec<Generated>,
+    pub failures: Vec<ScheduleFailure>,
+}
+
+impl ScheduleRunReport {
+    /// Anything a scheduled job must see in the exit status: a schedule that
+    /// could not be generated, or a send that was asked for and did not happen.
+    pub fn has_failures(&self) -> bool {
+        !self.failures.is_empty() || self.generated.iter().any(|g| g.not_sent.is_some())
+    }
+}
+
+/// The sentence an autosend schedule earns on an installation that cannot send.
+const NOT_CONFIGURED: &str = "sending is not configured on this installation";
+
+/// Generate every invoice currently due, drafting all of them.
+///
+/// `run_due_schedules` with nothing to send through: an autosend schedule still
+/// gets its draft and is reported as unsent, which is what makes an
+/// unconfigured installation honest rather than silent.
+pub fn draft_due_schedules(conn: &Connection, today: &str) -> Result<ScheduleRunReport> {
+    run_due_schedules::<
+        crate::invoicing::stripe::StripeClient,
+        crate::invoicing::r2::R2Publisher,
+        crate::invoicing::mailgun::MailgunClient,
+    >(conn, today, None)
+}
+
+/// Generate every invoice currently due, sending the ones whose schedule asked.
+///
+/// For each active schedule, periods are walked from `next_period` through
+/// `today`: **each missed cycle generates its own invoice, dated that period's
+/// issue date rather than the run day**, so catch-up bills every missed cycle in
+/// order and a February invoice generated in March is already due.
+///
+/// Each generation is one transaction — the invoice, the run row recording which
+/// schedule and which period produced it, and the advanced `next_period`
+/// together. Sequential numbering falls out of `next_number` running inside it.
+/// A rerun finds the `UNIQUE(schedule_id, period)` row and generates nothing.
+///
+/// Sending happens **after** that transaction commits, because it reaches the
+/// network. A send that fails leaves the invoice the draft it already was, and
+/// the report names it and why.
+pub fn run_due_schedules<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
+    conn: &Connection,
+    today: &str,
+    senders: Option<&Senders<'_, G, P, M>>,
+) -> Result<ScheduleRunReport> {
+    let today = validate_date(today, "run")?;
+    let mut report = ScheduleRunReport::default();
+
+    for schedule in list_schedules(conn, ScheduleScope::Active)? {
+        let mut cursor = schedule.next_period.clone();
+        // ISO YYYY-MM-DD dates compare correctly as strings, and both sides are
+        // padded by their own writers.
+        while cursor <= today {
+            match generate_period(conn, &schedule, &cursor, &today) {
+                Ok(Some(invoice_id)) => {
+                    report
+                        .generated
+                        .push(describe(conn, &schedule, &cursor, invoice_id)?);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    // One sick schedule does not stop the others: the rest of the
+                    // book still has invoices that are due.
+                    report.failures.push(ScheduleFailure {
+                        schedule_id: schedule.id,
+                        period: cursor.clone(),
+                        message: e.to_string(),
+                    });
+                    break;
+                }
+            }
+            cursor = advance_period(
+                Cadence::parse(&schedule.cadence)?,
+                schedule.anchor_day,
+                &cursor,
+            )?;
+        }
+    }
+
+    for generated in &mut report.generated {
+        if !autosend_for(conn, generated.schedule_id)? {
+            continue;
+        }
+        match senders {
+            None => generated.not_sent = Some(NOT_CONFIGURED.to_string()),
+            Some(senders) => match crate::invoicing::send::send_invoice(
+                conn,
+                generated.invoice_id,
+                &today,
+                senders.branding,
+                senders.gateway,
+                senders.publisher,
+                senders.mailer,
+            ) {
+                Ok(_) => generated.sent = true,
+                Err(e) => generated.not_sent = Some(e.to_string()),
+            },
+        }
+    }
+
+    Ok(report)
+}
+
+fn autosend_for(conn: &Connection, schedule_id: i64) -> Result<bool> {
+    Ok(get_schedule(conn, schedule_id)?.autosend)
+}
+
+/// One period, in one transaction. `Ok(None)` means this period was already
+/// generated — the run row is the authority, so the cycle advances and nothing
+/// is billed twice.
+fn generate_period(
+    conn: &Connection,
+    schedule: &Schedule,
+    period: &str,
+    generated_at: &str,
+) -> Result<Option<i64>> {
+    let next = advance_period(
+        Cadence::parse(&schedule.cadence)?,
+        schedule.anchor_day,
+        period,
+    )?;
+    let tx = conn.unchecked_transaction()?;
+
+    let already: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM invoice_schedule_runs WHERE schedule_id = ?1 AND period = ?2)",
+        rusqlite::params![schedule.id, period],
+        |r| r.get(0),
+    )?;
+    if already {
+        tx.execute(
+            "UPDATE invoice_schedules SET next_period = ?2 WHERE id = ?1 AND next_period <= ?2",
+            rusqlite::params![schedule.id, next],
+        )?;
+        tx.commit()?;
+        return Ok(None);
+    }
+
+    let items = schedule_items(&tx, schedule.id)?;
+    let due_date = schedule
+        .net_days
+        .map(|days| crate::invoicing::invoices::plus_days(period, days))
+        .transpose()?;
+    let invoice_id = crate::invoicing::invoices::insert_invoice(
+        &tx,
+        schedule.client_id,
+        period,
+        due_date.as_deref(),
+        &schedule.currency,
+        &items,
+        schedule.notes.as_deref(),
+        schedule.terms.as_deref(),
+    )?;
+    tx.execute(
+        "INSERT INTO invoice_schedule_runs (schedule_id, period, invoice_id, generated_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![schedule.id, period, invoice_id, generated_at],
+    )?;
+    tx.execute(
+        "UPDATE invoice_schedules SET next_period = ?2 WHERE id = ?1",
+        rusqlite::params![schedule.id, next],
+    )?;
+    tx.commit()?;
+    Ok(Some(invoice_id))
+}
+
+fn describe(
+    conn: &Connection,
+    schedule: &Schedule,
+    period: &str,
+    invoice_id: i64,
+) -> Result<Generated> {
+    let invoice = crate::invoicing::invoices::get_invoice(conn, invoice_id)?;
+    let client = crate::invoicing::clients::get_client(conn, schedule.client_id)?;
+    Ok(Generated {
+        schedule_id: schedule.id,
+        period: period.to_string(),
+        invoice_id,
+        number: invoice.number,
+        client_name: client.name,
+        total: invoice.total,
+        currency: invoice.currency,
+        sent: false,
+        not_sent: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,7 +652,7 @@ mod tests {
     use crate::invoicing::clients::{add_client, archive_client};
     use crate::migrations::run_migrations;
 
-    fn test_conn() -> (tempfile::TempDir, Connection) {
+    pub(super) fn test_conn() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
         let conn = get_connection(&dir.path().join("t.db")).unwrap();
         init_db(&conn).unwrap();
@@ -425,7 +660,7 @@ mod tests {
         (dir, conn)
     }
 
-    fn items() -> Vec<NewLineItem> {
+    pub(super) fn sample_items() -> Vec<NewLineItem> {
         vec![NewLineItem {
             description: "Hosting & maintenance".into(),
             quantity: 1.0,
@@ -433,7 +668,7 @@ mod tests {
         }]
     }
 
-    fn seed(conn: &Connection) -> (i64, i64) {
+    pub(super) fn seed(conn: &Connection) -> (i64, i64) {
         let client = add_client(conn, "Cedar Systems", Some("ops@cedar.test"), None, None).unwrap();
         let schedule = add_schedule(
             conn,
@@ -447,7 +682,7 @@ mod tests {
                 notes: Some("Monthly hosting.".into()),
                 terms: Some("Net 30.".into()),
                 autosend: false,
-                items: items(),
+                items: sample_items(),
             },
         )
         .unwrap();
@@ -492,7 +727,7 @@ mod tests {
             notes: None,
             terms: None,
             autosend: false,
-            items: items(),
+            items: sample_items(),
         };
 
         let empty = NewSchedule {
@@ -687,5 +922,449 @@ mod tests {
         ] {
             assert!(matches!(result.unwrap_err(), NigelError::NotFound(_)));
         }
+    }
+
+    fn numbers(report: &ScheduleRunReport) -> Vec<i64> {
+        report.generated.iter().map(|g| g.number).collect()
+    }
+
+    fn periods(report: &ScheduleRunReport) -> Vec<String> {
+        report.generated.iter().map(|g| g.period.clone()).collect()
+    }
+
+    fn issued(conn: &Connection, number: i64) -> (String, Option<String>) {
+        conn.query_row(
+            "SELECT issue_date, due_date FROM invoices WHERE number = ?1",
+            [number],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_run_generates_every_missed_cycle_dated_by_its_own_period() {
+        // AC #5: catch-up bills every missed cycle, in order, dated the period's
+        // issue date rather than the run day.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        let report = draft_due_schedules(&conn, "2026-04-15").unwrap();
+        assert_eq!(
+            periods(&report),
+            ["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01"]
+        );
+        assert_eq!(
+            numbers(&report),
+            [1248, 1249, 1250, 1251],
+            "AC #7: sequential"
+        );
+
+        assert_eq!(
+            issued(&conn, 1248),
+            ("2026-01-01".into(), Some("2026-01-31".into()))
+        );
+        assert_eq!(
+            issued(&conn, 1251),
+            ("2026-04-01".into(), Some("2026-05-01".into()))
+        );
+
+        assert_eq!(get_schedule(&conn, id).unwrap().next_period, "2026-05-01");
+        for generated in &report.generated {
+            assert!(!generated.sent, "AC #4: drafting is the default");
+            assert_eq!(generated.not_sent, None);
+            assert_eq!(generated.client_name, "Cedar Systems");
+            assert_eq!(generated.total, 450.0);
+        }
+        assert!(report.failures.is_empty());
+        assert!(!report.has_failures());
+    }
+
+    #[test]
+    fn running_twice_for_the_same_period_generates_nothing_the_second_time() {
+        // AC #3, by recorded provenance rather than date inference.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        let first = draft_due_schedules(&conn, "2026-02-15").unwrap();
+        assert_eq!(numbers(&first), [1248, 1249]);
+
+        let second = draft_due_schedules(&conn, "2026-02-15").unwrap();
+        assert!(second.generated.is_empty(), "{:?}", second.generated);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let runs = schedule_runs(&conn, id).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].period, "2026-01-01");
+        assert_eq!(runs[0].number, 1248);
+        assert_eq!(runs[1].period, "2026-02-01");
+        assert_eq!(runs[1].generated_at, "2026-02-15");
+    }
+
+    #[test]
+    fn a_run_row_already_there_advances_the_cycle_without_billing_again() {
+        // The row is the authority even if `next_period` was rewound by hand.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        draft_due_schedules(&conn, "2026-01-15").unwrap();
+
+        conn.execute(
+            "UPDATE invoice_schedules SET next_period = '2026-01-01' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        let again = draft_due_schedules(&conn, "2026-01-15").unwrap();
+        assert!(again.generated.is_empty());
+        assert_eq!(get_schedule(&conn, id).unwrap().next_period, "2026-02-01");
+    }
+
+    #[test]
+    fn a_monthly_schedule_anchored_at_month_end_bills_the_short_months() {
+        // AC #6, end to end through a run.
+        let (_d, conn) = test_conn();
+        let client = add_client(&conn, "Initech", Some("ap@initech.test"), None, None).unwrap();
+        add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: client,
+                cadence: Cadence::Monthly,
+                anchor_day: 31,
+                start_period: "2026-01-31".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: false,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+
+        let report = draft_due_schedules(&conn, "2026-05-15").unwrap();
+        assert_eq!(
+            periods(&report),
+            ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"]
+        );
+        assert_eq!(issued(&conn, 1251), ("2026-04-30".into(), None));
+    }
+
+    #[test]
+    fn paused_and_ended_schedules_generate_nothing() {
+        let (_d, conn) = test_conn();
+        let (_client, paused) = seed(&conn);
+        pause_schedule(&conn, paused).unwrap();
+        assert!(draft_due_schedules(&conn, "2026-06-01")
+            .unwrap()
+            .generated
+            .is_empty());
+
+        resume_schedule(&conn, paused).unwrap();
+        end_schedule(&conn, paused, "2026-01-01").unwrap();
+        assert!(draft_due_schedules(&conn, "2026-06-01")
+            .unwrap()
+            .generated
+            .is_empty());
+    }
+
+    #[test]
+    fn several_schedules_at_once_keep_the_numbering_sequential() {
+        // AC #7 across schedules, not just within one.
+        let (_d, conn) = test_conn();
+        seed(&conn);
+        let other = add_client(&conn, "Juniper Labs", Some("ap@juniper.test"), None, None).unwrap();
+        add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: other,
+                cadence: Cadence::Quarterly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: false,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+
+        let report = draft_due_schedules(&conn, "2026-04-15").unwrap();
+        let all = numbers(&report);
+        assert_eq!(all.len(), 6, "four monthly plus two quarterly: {all:?}");
+        let mut sorted = all.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted, (1248..=1253).collect::<Vec<_>>(), "{all:?}");
+    }
+
+    #[test]
+    fn a_schedule_whose_client_was_archived_is_reported_and_does_not_stop_the_others() {
+        let (_d, conn) = test_conn();
+        let (archived_client, archived) = seed(&conn);
+        let ok_client = add_client(&conn, "Globex", Some("ap@globex.test"), None, None).unwrap();
+        add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: ok_client,
+                cadence: Cadence::Monthly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: false,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+        archive_client(&conn, archived_client, "2026-01-01").unwrap();
+
+        let report = draft_due_schedules(&conn, "2026-02-15").unwrap();
+        assert_eq!(
+            numbers(&report),
+            [1248, 1249],
+            "the healthy schedule still billed"
+        );
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].schedule_id, archived);
+        assert!(
+            report.failures[0].message.contains("archived"),
+            "{:?}",
+            report.failures[0]
+        );
+        assert!(report.has_failures());
+    }
+
+    #[test]
+    fn an_autosend_schedule_with_nothing_to_send_through_still_drafts_and_says_why() {
+        // AC #9: reported, never silently skipped, never half-sent.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        update_schedule(
+            &conn,
+            id,
+            &ScheduleUpdate {
+                autosend: Some(true),
+                ..ScheduleUpdate::default()
+            },
+        )
+        .unwrap();
+
+        let report = draft_due_schedules(&conn, "2026-01-15").unwrap();
+        assert_eq!(numbers(&report), [1248]);
+        let generated = &report.generated[0];
+        assert!(!generated.sent);
+        assert_eq!(
+            generated.not_sent.as_deref(),
+            Some("sending is not configured on this installation")
+        );
+        assert!(
+            report.has_failures(),
+            "cron has to see this in the exit status"
+        );
+
+        let status: String = conn
+            .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "draft");
+    }
+}
+
+#[cfg(all(test, feature = "pdf"))]
+mod autosend_tests {
+    use super::tests::*;
+    use super::*;
+    use crate::invoicing::gateway::{
+        fake_logo_publishing, AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
+    };
+    use crate::invoicing::render_html::DEFAULT_TEMPLATE;
+    use crate::models::{Client, Invoice};
+    use std::cell::RefCell;
+
+    struct Gateway;
+    impl PaymentGateway for Gateway {
+        fn create_payment_link(&self, invoice: &Invoice, _c: &Client) -> Result<PaymentLink> {
+            Ok(PaymentLink {
+                id: format!("plink_{}", invoice.number),
+                url: format!("https://pay.example.test/{}", invoice.number),
+            })
+        }
+        fn paid_sessions(&self, _id: &str) -> Result<Vec<PaidSession>> {
+            Ok(Vec::new())
+        }
+        fn deactivate_payment_link(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Publisher;
+    impl AssetPublisher for Publisher {
+        fn publish(&self, token: &str, _h: &[u8], _p: &[u8]) -> Result<String> {
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fn publish_page(&self, token: &str, _h: &[u8]) -> Result<String> {
+            Ok(format!("https://billing.example.test/i/{token}/index.html"))
+        }
+        fake_logo_publishing!("https://billing.example.test/i");
+    }
+
+    #[derive(Default)]
+    struct Post {
+        to: RefCell<Vec<String>>,
+    }
+    impl Mailer for Post {
+        fn send_invoice(
+            &self,
+            to: &str,
+            _cc: &[String],
+            _s: &str,
+            _h: &str,
+            _p: &[u8],
+        ) -> Result<()> {
+            self.to.borrow_mut().push(to.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_autosend_schedule_sends_and_a_drafting_one_beside_it_does_not() {
+        // AC #4: explicit per schedule, drafting the default.
+        let (_d, conn) = test_conn();
+        let (_client, drafting) = seed(&conn);
+        let sending_client = crate::invoicing::clients::add_client(
+            &conn,
+            "Globex",
+            Some("ap@globex.test"),
+            None,
+            None,
+        )
+        .unwrap();
+        let sending = add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: sending_client,
+                cadence: Cadence::Monthly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: true,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+
+        let branding = crate::invoicing::render_html::Branding {
+            company: "Bluepeak",
+            contact_email: "billing@bluepeak.test",
+            ..crate::invoicing::render_html::Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let post = Post::default();
+        let senders = Senders {
+            branding: &branding,
+            gateway: &Gateway,
+            publisher: &Publisher,
+            mailer: &post,
+        };
+
+        let report = run_due_schedules(&conn, "2026-01-15", Some(&senders)).unwrap();
+        assert_eq!(report.generated.len(), 2);
+        assert!(!report.has_failures(), "{report:?}");
+
+        let drafted = report
+            .generated
+            .iter()
+            .find(|g| g.schedule_id == drafting)
+            .unwrap();
+        assert!(!drafted.sent);
+        assert_eq!(drafted.not_sent, None);
+
+        let sent = report
+            .generated
+            .iter()
+            .find(|g| g.schedule_id == sending)
+            .unwrap();
+        assert!(sent.sent);
+        assert_eq!(post.to.borrow().as_slice(), ["ap@globex.test"]);
+
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM invoices WHERE number = ?1",
+                [sent.number],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "sent");
+    }
+
+    #[test]
+    fn an_unsendable_client_still_gets_its_draft_and_the_run_says_why() {
+        // AC #9, with sending fully configured: the refusal is about the client.
+        let (_d, conn) = test_conn();
+        let no_address =
+            crate::invoicing::clients::add_client(&conn, "Harbor & Vale", None, None, None)
+                .unwrap();
+        add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: no_address,
+                cadence: Cadence::Monthly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: true,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+
+        let branding = crate::invoicing::render_html::Branding {
+            company: "Bluepeak",
+            contact_email: "billing@bluepeak.test",
+            ..crate::invoicing::render_html::Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let post = Post::default();
+        let senders = Senders {
+            branding: &branding,
+            gateway: &Gateway,
+            publisher: &Publisher,
+            mailer: &post,
+        };
+
+        let report = run_due_schedules(&conn, "2026-01-15", Some(&senders)).unwrap();
+        assert_eq!(report.generated.len(), 1);
+        let generated = &report.generated[0];
+        assert!(!generated.sent);
+        assert!(
+            generated
+                .not_sent
+                .as_deref()
+                .unwrap_or_default()
+                .contains("no email"),
+            "got: {:?}",
+            generated.not_sent
+        );
+        assert!(report.has_failures());
+        assert!(post.to.borrow().is_empty(), "nothing was half-sent");
+
+        let status: String = conn
+            .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "draft");
     }
 }
