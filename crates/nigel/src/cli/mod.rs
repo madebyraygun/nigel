@@ -486,7 +486,10 @@ pub enum InvoiceCommands {
         /// Invoice number
         number: i64,
         /// Amount paid (default: the full outstanding balance)
-        #[arg(long)]
+        ///
+        /// `allow_negative_numbers` so `--amount -5` reaches the app's own
+        /// "greater than zero" refusal instead of dying as an unknown flag.
+        #[arg(long, allow_negative_numbers = true)]
         amount: Option<f64>,
         /// Payment date: YYYY-MM-DD
         #[arg(long)]
