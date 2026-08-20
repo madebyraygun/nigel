@@ -4,7 +4,7 @@ title: Trial balance report with CSV export
 status: To Do
 assignee: []
 created_date: '2026-08-05 23:26'
-updated_date: '2026-08-13 15:45'
+updated_date: '2026-08-19 16:39'
 labels:
   - enhancement
   - reports
@@ -69,4 +69,9 @@ TASK-102.1 (Schedule L report) needs the same as-of-date balances and the same c
 TASK-28 (CSV output format for all reports) now covers the generic CSV writer. If TASK-28 lands first, AC #7 here narrows to defining the trial-balance column set and AC #8 drops entirely.
 
 TASK-9.1 (account classification) supplies equity and liability classes; AC #3 and AC #4 become straightforward reads rather than special cases once it lands.
+
+- TASK-9.11 on the v1 milestone reimplements the trial balance as a straight read over journal lines — the reimplementation this task's own text anticipates — and carries this task's output contract (Debit/Credit columns, the TaxAct-importable CSV, year-end framing) in its acceptance criteria.
+- Recommendation: TASK-9.11 supersedes this task, and no derivation logic gets written twice. The call that remains is the operator's: whether a pre-ledger trial balance is still wanted for the immediate filing window. If yes, this task ships first as a stopgap (building the as-of-date primitives with TASK-46 and TASK-102.1) and TASK-9.11 later replaces its internals; if no, this task closes in favour of TASK-9.11. Until that call is made, do not start this task.
+
+Closed as superseded by TASK-9.11 (trial balance read from journal lines, v1 milestone), per operator decision. TASK-9.11 carries this task's output contract — Debit/Credit columns, the TaxAct-importable CSV, year-end framing, uncategorized warnings. The as-of-date balance primitive coordination moves to TASK-46 and TASK-102.1.
 <!-- SECTION:NOTES:END -->

@@ -1,10 +1,10 @@
 ---
 id: TASK-33.2
 title: Tauri 2 app shell and backend transport decision
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-17 19:28'
+updated_date: '2026-08-20 14:23'
 labels:
   - tauri
 dependencies:

@@ -745,3 +745,10 @@ describe('FetchApiClient', () => {
     });
   });
 });
+
+describe('importSource', () => {
+  it('answers browser, because a browser has no path to hand over', () => {
+    const client = new FetchApiClient({ fetchImpl: vi.fn() });
+    expect(client.importSource()).toEqual({ kind: 'browser' });
+  });
+});

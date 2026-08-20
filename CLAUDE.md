@@ -26,6 +26,7 @@ with no tax mapping) — chosen at `nigel init --profile` or in onboarding and s
 | `docs/desktop.md` | The Tauri desktop shell: transport, origins, exports, dev loop |
 | `docs/native-feel.md` | The conventions that keep the SPA from reading as a website in a box |
 | `docs/backlog-cli.md` | The `backlog` CLI manual |
+| `docs/product/foundation.md` | Positioning, the ladder, licensing, Nigel Cloud scope — what monetization traces to |
 | `backlog/decisions/` | Decisions with their reasoning, newest first |
 
 Before changing behaviour in an area, read that area's entry in `docs/design-constraints.md`.

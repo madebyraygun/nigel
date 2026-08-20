@@ -1,10 +1,10 @@
 ---
 id: TASK-96
 title: 'Web UI: center the Nothing-to-review empty state'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12 17:51'
-updated_date: '2026-08-14 18:05'
+updated_date: '2026-08-20 14:23'
 labels:
   - web
   - ui

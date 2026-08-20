@@ -1,9 +1,10 @@
 ---
 id: TASK-86
 title: 'Epic: invoicing polish and web theme — one push'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-11 19:39'
+updated_date: '2026-08-20 14:31'
 labels:
   - epic
   - invoicing
@@ -32,7 +33,7 @@ Process: Opus agents write spec + implementation plan per stream, orchestrator a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every stream has an approved spec and plan in docs/superpowers/ before its implementation starts
-- [ ] #2 TASK-63, 64, 67, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80 are Done
-- [ ] #3 Visual PRs (streams 2 documents, 3 UI surfaces, 4 theme) merged only after Sam's review
+- [x] #1 Every stream has an approved spec and plan in docs/superpowers/ before its implementation starts
+- [x] #2 TASK-63, 64, 67, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80 are Done
+- [x] #3 Visual PRs (streams 2 documents, 3 UI surfaces, 4 theme) merged only after Sam's review
 <!-- AC:END -->
