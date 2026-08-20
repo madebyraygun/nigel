@@ -1313,7 +1313,7 @@ export class FakeApiClient implements ApiClient {
       paid: 0,
       balance: source.total,
       canEdit: true,
-      canSend: source.client?.email != null,
+      canSend: source.client?.email != null && source.total > 0,
       canVoid: true,
       canPay: true,
       canDelete: true,

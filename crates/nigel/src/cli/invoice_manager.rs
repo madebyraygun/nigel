@@ -999,7 +999,7 @@ impl InvoiceManager {
             let hint = if is_void(invoice) {
                 " c=duplicate  Up/Down=scroll  Esc=back  q=quit"
             } else if detail.deletable {
-                " s=send  p=record payment  c=duplicate  v=void  d=delete  Up/Down=scroll  Esc=back  q=quit"
+                " s=send  p=record payment  c=duplicate  v=void  d=delete  Up/Down=scroll"
             } else {
                 " s=send  p=record payment  c=duplicate  v=void  Up/Down=scroll  Esc=back  q=quit"
             };
@@ -2935,7 +2935,8 @@ mod tests {
         let id = seed_invoice(&conn, "Acme Co", 1_250.0);
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
-        assert!(rendered(&mut mgr).contains("d=delete"));
+        assert!(rendered(&mut mgr)
+            .contains("s=send  p=record payment  c=duplicate  v=void  d=delete  Up/Down=scroll"));
 
         mark_published(&conn, id, "2026-07-17").unwrap();
         let mut published = manager(&conn);
