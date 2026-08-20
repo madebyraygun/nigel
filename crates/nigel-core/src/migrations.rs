@@ -229,7 +229,7 @@ const MIGRATIONS: &[Migration] = &[
         up: |conn| seed_payment_instructions(conn, contact_address()),
     },
     Migration {
-        version: 12,
+        version: 10,
         description: "add recurring invoice schedules, their items and their run history",
         up: |conn| {
             conn.execute_batch(
@@ -885,10 +885,10 @@ mod tests {
     }
 
     #[test]
-    fn v12_creates_the_three_schedule_tables_and_the_period_uniqueness() {
+    fn v10_creates_the_three_schedule_tables_and_the_period_uniqueness() {
         let (_dir, conn) = test_db();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
-        assert_eq!(LATEST_VERSION, 12);
+        assert_eq!(LATEST_VERSION, 10);
 
         for table in [
             "invoice_schedules",
@@ -929,9 +929,9 @@ mod tests {
     }
 
     #[test]
-    fn v12_is_replayable() {
+    fn v10_is_replayable() {
         let (_dir, conn) = test_db();
-        set_metadata(&conn, "schema_version", "11").unwrap();
+        set_metadata(&conn, "schema_version", "9").unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
