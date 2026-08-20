@@ -8,6 +8,7 @@ updated_date: '2026-08-18 02:04'
 labels:
   - tauri
   - backend
+milestone: m-0
 dependencies:
   - TASK-33.2
 references:

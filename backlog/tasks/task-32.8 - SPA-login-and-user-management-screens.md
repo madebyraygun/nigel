@@ -4,9 +4,11 @@ title: 'SPA: login and user management screens'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
+updated_date: '2026-08-17 15:28'
 labels:
   - multiuser
   - frontend
+milestone: m-0
 dependencies:
   - TASK-32.3
 parent_task_id: TASK-32
