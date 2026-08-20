@@ -1,9 +1,11 @@
 ---
 id: TASK-7
 title: 'Invoicing: Duplicate existing invoice'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-04-25 18:05'
+updated_date: '2026-08-20 14:36'
 labels: []
 dependencies: []
 references:

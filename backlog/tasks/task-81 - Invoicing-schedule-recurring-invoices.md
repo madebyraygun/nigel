@@ -1,9 +1,11 @@
 ---
 id: TASK-81
 title: 'Invoicing: schedule recurring invoices'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-10 21:49'
+updated_date: '2026-08-20 14:36'
 labels:
   - enhancement
   - invoicing

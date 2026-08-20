@@ -1,9 +1,11 @@
 ---
 id: TASK-35
 title: 'Invoicing: overdue status goes stale between events'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-06 19:14'
+updated_date: '2026-08-20 14:36'
 labels:
   - bug
   - invoicing
