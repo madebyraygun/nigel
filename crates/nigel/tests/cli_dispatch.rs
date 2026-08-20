@@ -3712,3 +3712,40 @@ fn invoice_schedule_run_never_prompts_on_an_encrypted_database() {
         .failure()
         .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
 }
+
+/// F3. `--currency` is a value the operator typed; `--from` only fills in what
+/// they left out, the way `--net-days` already does.
+#[test]
+fn an_explicit_currency_survives_seeding_a_schedule_from_an_invoice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "add",
+            "--client",
+            "1",
+            "--cadence",
+            "monthly",
+            "--start",
+            "2026-01-01",
+            "--from",
+            "1248",
+            "--currency",
+            "EUR",
+        ])
+        .assert()
+        .success();
+
+    let currency: String = env
+        .db()
+        .query_row(
+            "SELECT currency FROM invoice_schedules WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the schedule exists");
+    assert_eq!(currency, "EUR", "the typed currency is not the source's");
+}

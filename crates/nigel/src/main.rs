@@ -324,7 +324,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                     terms,
                     autosend,
                 } => cli::invoice_schedule::add(
-                    client, &cadence, &start, anchor_day, net_days, &currency, &items, from, notes,
+                    client, &cadence, &start, anchor_day, net_days, currency, &items, from, notes,
                     terms, autosend,
                 ),
                 InvoiceScheduleCommands::List { all } => cli::invoice_schedule::list(all),

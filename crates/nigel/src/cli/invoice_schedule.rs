@@ -36,7 +36,7 @@ pub fn add(
     start: &str,
     anchor_day: Option<u32>,
     net_days: Option<i64>,
-    currency: &str,
+    currency: Option<String>,
     items: &[String],
     from: Option<i64>,
     notes: Option<String>,
@@ -47,13 +47,16 @@ pub fn add(
 
     // Either explicit items or an invoice's shape, never both — clap refuses the
     // combination, and this is the same duplication core reading the same shape.
+    // The shape only fills in what was not typed: `currency` is an `Option` for
+    // the reason `net_days` is, since a default here would be indistinguishable
+    // from a choice and would quietly overrule one.
     let (items, currency, notes, terms, net_days) = match from {
         Some(number) => {
             let invoice = get_invoice_by_number(&conn, number)?;
             let shape = invoice_shape(&conn, invoice.id)?;
             (
                 shape.items,
-                shape.currency,
+                currency.unwrap_or(shape.currency),
                 notes.or(shape.notes),
                 terms.or(shape.terms),
                 net_days.or(shape.net_days),
@@ -61,7 +64,7 @@ pub fn add(
         }
         None => (
             parse_items(items)?,
-            currency.to_string(),
+            currency.unwrap_or_else(|| "USD".to_string()),
             notes,
             terms,
             net_days,

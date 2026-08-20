@@ -1224,7 +1224,8 @@ nigel invoice schedule add --client 1 --cadence monthly --start 2026-01-01 \
   --net-days 30 --item "Hosting & maintenance:1:450"
 
 nigel invoice schedule add --client 1 --cadence quarterly --start 2026-01-01 \
-  --from 1248          # seed the items, currency, notes and terms from an invoice
+  --from 1248          # seed the shape from an invoice: items, currency,
+                       # notes, terms and its issue-to-due term
 
 nigel invoice schedule list          # active schedules
 nigel invoice schedule list --all    # including paused and ended
@@ -1239,6 +1240,11 @@ anchored on — it defaults to the start date's day.
 **The two are independent.** `--anchor-day 15` with `--start 2026-01-01` bills
 January 1st and then the 15th of every month after it: the start date is where
 the cycle begins, the anchor is where it lands from then on.
+
+`--from` reads the same shape `nigel invoice duplicate` reads: the line items,
+the currency, the notes, the terms, and **the source's issue-to-due term in
+days**, which becomes the schedule's net days. Anything you type beside it wins
+— `--from 1248 --currency EUR` bills in euros whatever the source was in.
 
 ### What a run does
 

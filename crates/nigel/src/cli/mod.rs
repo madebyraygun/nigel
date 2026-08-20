@@ -560,13 +560,13 @@ pub enum InvoiceScheduleCommands {
         /// Days from issue to due on each generated invoice
         #[arg(long = "net-days")]
         net_days: Option<i64>,
-        /// Currency code
-        #[arg(long, default_value = "USD")]
-        currency: String,
+        /// Currency code (default: USD, or the source invoice's with --from)
+        #[arg(long)]
+        currency: Option<String>,
         /// Line item as "desc:qty:unit" (repeatable)
         #[arg(long = "item")]
         items: Vec<String>,
-        /// Seed the items, currency, notes and terms from this invoice number
+        /// Seed the items, currency, notes, terms and its issue-to-due term from this invoice number
         #[arg(long = "from", conflicts_with = "items")]
         from: Option<i64>,
         /// Notes rendered on every generated invoice
