@@ -149,6 +149,100 @@ pub fn create_invoice(
     Ok(invoice_id)
 }
 
+/// What an invoice *is*, independent of what state it is in.
+///
+/// The one reader both duplication and a schedule seed go through, so
+/// "duplicate this invoice" and "bill this shape every month" cannot drift
+/// apart about what gets carried across.
+#[derive(Debug, Clone)]
+pub struct InvoiceShape {
+    pub client_id: i64,
+    pub currency: String,
+    pub notes: Option<String>,
+    pub terms: Option<String>,
+    pub items: Vec<NewLineItem>,
+    /// The source's issue-to-due gap in days, or `None` when it had no due
+    /// date. Days rather than a date, because the shape outlives the calendar
+    /// it was first written against.
+    pub net_days: Option<i64>,
+}
+
+pub fn invoice_shape(conn: &Connection, invoice_id: i64) -> Result<InvoiceShape> {
+    let invoice = get_invoice(conn, invoice_id)?;
+    let net_days = match invoice.due_date.as_deref() {
+        Some(due) => {
+            let issued = parse_date(&invoice.issue_date, "issue")?;
+            Some((parse_date(due, "due")? - issued).num_days())
+        }
+        None => None,
+    };
+    let items = line_items(conn, invoice.id)?
+        .into_iter()
+        .map(|item| NewLineItem {
+            description: item.description,
+            quantity: item.quantity,
+            unit_amount: item.unit_amount,
+        })
+        .collect();
+    Ok(InvoiceShape {
+        client_id: invoice.client_id,
+        currency: invoice.currency,
+        notes: invoice.notes,
+        terms: invoice.terms,
+        items,
+        net_days,
+    })
+}
+
+/// `date` shifted by `days`, as a zero-padded `YYYY-MM-DD`.
+///
+/// The one place a term in days becomes a due date: a duplicate's preserved
+/// offset and a schedule's `net_days` are the same arithmetic, and two copies
+/// of it would eventually disagree at a month boundary.
+pub fn plus_days(date: &str, days: i64) -> Result<String> {
+    let parsed = parse_date(date, "issue")?;
+    parsed
+        .checked_add_signed(chrono::Duration::days(days))
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .ok_or_else(|| NigelError::Invalid(format!("{date} plus {days} days is not a real date.")))
+}
+
+/// Duplicate an invoice into a fresh draft.
+///
+/// **Copied:** client, currency, notes, terms, and every line item's
+/// description, quantity and unit amount.
+///
+/// **Regenerated:** the number (a fresh `next_number`), the token, and
+/// `status = 'draft'`. `published_at`, `voided_at` and the Stripe link fields
+/// start empty — a duplicate has published nothing and been paid for nothing.
+///
+/// **Dates:** `issue_date` is the caller's, because nothing here reads the
+/// clock. When the source carries a due date the new draft **preserves the
+/// source's issue-to-due offset in days** — a Net-14 invoice duplicates as
+/// Net-14 — and a source with no due date yields a draft with none.
+///
+/// Any source duplicates, whatever state it is in: duplication reads a shape,
+/// not a state. It goes through `create_invoice`, so an archived client refuses
+/// exactly as it would for a hand-created invoice.
+pub fn duplicate_invoice(conn: &Connection, source_id: i64, issue_date: &str) -> Result<i64> {
+    let shape = invoice_shape(conn, source_id)?;
+    let issue_date = validate_date(issue_date, "issue")?;
+    let due_date = shape
+        .net_days
+        .map(|days| plus_days(&issue_date, days))
+        .transpose()?;
+    create_invoice(
+        conn,
+        shape.client_id,
+        &issue_date,
+        due_date.as_deref(),
+        &shape.currency,
+        &shape.items,
+        shape.notes.as_deref(),
+        shape.terms.as_deref(),
+    )
+}
+
 fn row_to_invoice(r: &rusqlite::Row) -> rusqlite::Result<Invoice> {
     Ok(Invoice {
         id: r.get(0)?,
@@ -3176,5 +3270,247 @@ mod tests {
             err.to_string(),
             "Invalid published date: March (expected YYYY-MM-DD)"
         );
+    }
+
+    #[test]
+    fn duplicating_copies_the_shape_and_regenerates_the_identity() {
+        let (_d, conn) = test_conn();
+        let client =
+            add_client(&conn, "Cedar Systems", Some("ops@cedar.test"), None, None).unwrap();
+        let items = vec![
+            NewLineItem {
+                description: "Retainer".into(),
+                quantity: 1.0,
+                unit_amount: 2_400.0,
+            },
+            NewLineItem {
+                description: "Hosting".into(),
+                quantity: 3.0,
+                unit_amount: 45.0,
+            },
+        ];
+        let source_id = create_invoice(
+            &conn,
+            client,
+            "2026-06-01",
+            Some("2026-06-15"),
+            "EUR",
+            &items,
+            Some("Thanks for the quarter."),
+            Some("Net 14."),
+        )
+        .unwrap();
+        mark_published(&conn, source_id, "2026-06-02").unwrap();
+        set_payment_link(&conn, source_id, "plink_1", "https://pay.example.test/1").unwrap();
+        let source = get_invoice(&conn, source_id).unwrap();
+
+        let copy_id = duplicate_invoice(&conn, source_id, "2026-09-01").unwrap();
+        let copy = get_invoice(&conn, copy_id).unwrap();
+
+        // Copied.
+        assert_eq!(copy.client_id, source.client_id);
+        assert_eq!(copy.currency, "EUR");
+        assert_eq!(copy.notes.as_deref(), Some("Thanks for the quarter."));
+        assert_eq!(copy.terms.as_deref(), Some("Net 14."));
+        assert_eq!(copy.subtotal, source.subtotal);
+        assert_eq!(copy.total, source.total);
+        let copied: Vec<(String, f64, f64)> = line_items(&conn, copy_id)
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.description, i.quantity, i.unit_amount))
+            .collect();
+        assert_eq!(
+            copied,
+            vec![
+                ("Retainer".to_string(), 1.0, 2_400.0),
+                ("Hosting".to_string(), 3.0, 45.0),
+            ]
+        );
+
+        // Regenerated.
+        assert_eq!(copy.number, source.number + 1);
+        assert_ne!(copy.token, source.token);
+        assert_eq!(copy.status, "draft");
+        assert_eq!(copy.published_at, None);
+        assert_eq!(copy.voided_at, None);
+        assert_eq!(copy.stripe_payment_link_id, None);
+        assert_eq!(copy.stripe_payment_link_url, None);
+    }
+
+    #[test]
+    fn duplicating_preserves_the_issue_to_due_offset_in_days() {
+        let (_d, conn) = test_conn();
+        let client = add_client(&conn, "Globex", Some("ap@globex.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Audit".into(),
+            quantity: 1.0,
+            unit_amount: 500.0,
+        }];
+
+        // Net 14 duplicates as Net 14, across a month boundary and a leap February.
+        let net14 = create_invoice(
+            &conn,
+            client,
+            "2026-01-20",
+            Some("2026-02-03"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        let copy = get_invoice(
+            &conn,
+            duplicate_invoice(&conn, net14, "2028-02-20").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(copy.issue_date, "2028-02-20");
+        assert_eq!(copy.due_date.as_deref(), Some("2028-03-05"));
+
+        // No due date on the source means none on the copy.
+        let open =
+            create_invoice(&conn, client, "2026-01-20", None, "USD", &items, None, None).unwrap();
+        let copy =
+            get_invoice(&conn, duplicate_invoice(&conn, open, "2026-09-01").unwrap()).unwrap();
+        assert_eq!(copy.due_date, None);
+
+        // A same-day due date stays a same-day due date rather than becoming none.
+        let same = create_invoice(
+            &conn,
+            client,
+            "2026-01-20",
+            Some("2026-01-20"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        let copy =
+            get_invoice(&conn, duplicate_invoice(&conn, same, "2026-09-01").unwrap()).unwrap();
+        assert_eq!(copy.due_date.as_deref(), Some("2026-09-01"));
+    }
+
+    #[test]
+    fn any_source_state_duplicates_because_duplication_reads_a_shape() {
+        let (_d, conn) = test_conn();
+        let client =
+            add_client(&conn, "Juniper Labs", Some("ap@juniper.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Workshop".into(),
+            quantity: 1.0,
+            unit_amount: 800.0,
+        }];
+
+        let draft = create_invoice(
+            &conn,
+            client,
+            "2026-05-01",
+            Some("2026-05-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let sent = create_invoice(
+            &conn,
+            client,
+            "2026-05-01",
+            Some("2026-05-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, sent, "2026-05-01").unwrap();
+        refresh_status(&conn, sent, "2026-05-02").unwrap();
+
+        let paid = create_invoice(
+            &conn,
+            client,
+            "2026-05-01",
+            Some("2026-05-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, paid, "2026-05-01").unwrap();
+        record_payment(&conn, paid, 800.0, "2026-05-10", "direct_deposit", None).unwrap();
+
+        let voided = create_invoice(
+            &conn,
+            client,
+            "2026-05-01",
+            Some("2026-05-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        void_invoice(&conn, voided, "2026-05-04").unwrap();
+        refresh_status(&conn, voided, "2026-05-05").unwrap();
+
+        for (label, source) in [
+            ("draft", draft),
+            ("sent", sent),
+            ("paid", paid),
+            ("void", voided),
+        ] {
+            let copy_id = duplicate_invoice(&conn, source, "2026-08-20")
+                .unwrap_or_else(|e| panic!("{label} source refused: {e}"));
+            let copy = get_invoice(&conn, copy_id).unwrap();
+            assert_eq!(copy.status, "draft", "{label} duplicated into a non-draft");
+            assert_eq!(copy.total, 800.0, "{label}");
+        }
+    }
+
+    #[test]
+    fn duplicating_for_an_archived_client_refuses_the_way_create_invoice_does() {
+        let (_d, conn) = test_conn();
+        let client = add_client(
+            &conn,
+            "Harbor & Vale",
+            Some("ap@harborvale.test"),
+            None,
+            None,
+        )
+        .unwrap();
+        let items = vec![NewLineItem {
+            description: "Retainer".into(),
+            quantity: 1.0,
+            unit_amount: 1_000.0,
+        }];
+        let source =
+            create_invoice(&conn, client, "2026-05-01", None, "USD", &items, None, None).unwrap();
+
+        crate::invoicing::clients::archive_client(&conn, client, "2026-06-01").unwrap();
+
+        let err = duplicate_invoice(&conn, source, "2026-08-20").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NigelError::Conflict {
+                    code: "client_archived",
+                    ..
+                }
+            ),
+            "got: {err:?}"
+        );
+        assert!(err.to_string().contains("Harbor & Vale"), "got: {err}");
+    }
+
+    #[test]
+    fn duplicating_a_missing_invoice_is_not_found_and_reserves_no_number() {
+        let (_d, conn) = test_conn();
+        let before = next_number(&conn).unwrap();
+        let err = duplicate_invoice(&conn, 404, "2026-08-20").unwrap_err();
+        assert!(matches!(err, NigelError::NotFound(_)), "got: {err:?}");
+        assert_eq!(next_number(&conn).unwrap(), before);
     }
 }
