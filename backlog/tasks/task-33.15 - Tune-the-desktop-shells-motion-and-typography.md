@@ -4,6 +4,7 @@ title: Tune the desktop shell's motion and typography
 status: To Do
 assignee: []
 created_date: '2026-08-18 01:56'
+updated_date: '2026-08-20 23:50'
 labels:
   - tauri
   - ui
@@ -26,6 +27,8 @@ The hamburger sits after the company name. On a desktop window it belongs at the
 The typeface balance leans mono. IBM Plex Mono is currently the default body face — --wa-font-family-sans falls back to a mono stack — so chrome, labels and prose all render in it. A native app uses the system face for its chrome. Plex Mono should stay where it earns its place: figures, where digits must align, and the brand's own character. This is a change to the theme tokens rather than to components, since a component reads the token and never a hardcoded stack.
 
 The third is the substantial one and the biggest remaining tell after the conventions work: system-ui for chrome is most of what makes an app look like it belongs on the machine.
+
+Two notes from a later read of the code. wc-app-shell already renders the nav toggle before the header title (wc-app-shell.ts:312-320), and the title there is the screen title with the company name living in the sidebar — so AC #2 may already hold; verify in the running shell rather than re-doing it. And while in the tokens: native macOS chrome text is 13px (NSFont.systemFontSize), the base here is 14px today — worth trying 13px for chrome-level text alongside the face change.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
