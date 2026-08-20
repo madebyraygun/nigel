@@ -413,6 +413,15 @@ pub enum InvoiceCommands {
         #[arg(long)]
         terms: Option<String>,
     },
+    /// Copy an invoice into a fresh draft: same client, items, notes and terms,
+    /// a new number, and the source's issue-to-due term.
+    Duplicate {
+        /// Invoice number to copy (shown in `nigel invoice list`)
+        number: i64,
+        /// Issue date for the new draft: YYYY-MM-DD (default: today)
+        #[arg(long = "issue")]
+        issue_date: Option<String>,
+    },
     /// Edit a draft invoice. Published and void invoices refuse edits.
     Edit {
         /// Invoice number (shown in `nigel invoice list`)

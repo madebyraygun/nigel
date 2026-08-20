@@ -10,9 +10,10 @@ use nigel_core::fmt::money;
 use nigel_core::invoicing::clients::get_client;
 use nigel_core::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use nigel_core::invoicing::invoices::{
-    create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
-    get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
-    payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
+    create_invoice, delete_blocker, delete_invoice, duplicate_invoice, ensure_not_void,
+    ensure_voidable, get_invoice, get_invoice_by_number, is_void, line_items, list_invoices,
+    next_number, paid_amount, payment_amount, record_payment, update_invoice, InvoiceListRow,
+    InvoiceUpdate, NewLineItem,
 };
 use nigel_core::invoicing::render::{render_invoice, RenderedInvoice};
 use nigel_core::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
@@ -101,6 +102,18 @@ pub fn new(
     println!(
         "Created draft invoice #{} for {:.2} {}",
         invoice.number, invoice.total, invoice.currency
+    );
+    Ok(())
+}
+
+pub fn duplicate(number: i64, issue_date: &str) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let source = find_invoice(&conn, number)?;
+    let id = duplicate_invoice(&conn, source.id, issue_date)?;
+    let draft = get_invoice(&conn, id)?;
+    println!(
+        "Duplicated invoice #{number} as draft #{} for {:.2} {}",
+        draft.number, draft.total, draft.currency
     );
     Ok(())
 }

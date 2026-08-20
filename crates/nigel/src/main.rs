@@ -247,6 +247,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 notes.as_deref(),
                 terms.as_deref(),
             ),
+            InvoiceCommands::Duplicate { number, issue_date } => {
+                cli::invoice::duplicate(number, issue_date.as_deref().unwrap_or(&cli::today()))
+            }
             InvoiceCommands::Edit {
                 number,
                 issue_date,

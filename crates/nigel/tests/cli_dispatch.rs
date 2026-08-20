@@ -3437,3 +3437,62 @@ fn invoice_pay_refuses_a_malformed_date() {
         .unwrap();
     assert_eq!(payments, 0);
 }
+
+#[test]
+fn invoice_duplicate_creates_a_draft_carrying_the_source_shape() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "1248", "--issue", "2026-09-01"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Duplicated invoice #1248 as draft #1249",
+        ));
+
+    env.cmd()
+        .args(["invoice", "show", "1249"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Acme Co")
+                .and(predicate::str::contains("Consulting"))
+                .and(predicate::str::contains("2026-09-01"))
+                .and(predicate::str::contains("[draft]")),
+        );
+}
+
+#[test]
+fn invoice_duplicate_without_an_issue_date_uses_today() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("as draft #1249"));
+
+    let issued: String = env
+        .db()
+        .query_row(
+            "SELECT issue_date FROM invoices WHERE number = 1249",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the duplicate exists");
+    assert_eq!(issued, chrono::Local::now().format("%Y-%m-%d").to_string());
+}
+
+#[test]
+fn invoice_duplicate_names_a_number_that_is_not_there() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "9999"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No invoice #9999"));
+}
