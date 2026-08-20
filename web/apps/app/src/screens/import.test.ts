@@ -904,6 +904,10 @@ describe('the import screen in native mode', () => {
 
     expect(source.pick).toHaveBeenCalledOnce();
     expect(dropzone(el).busy).toBe(true);
+    // Nothing has been chosen yet, so the screen must not claim to be reading one.
+    expect(el.shadowRoot?.querySelector('wc-spinner')?.getAttribute('label')).toBe(
+      'Waiting for the file dialog',
+    );
 
     release();
     await settle(el);

@@ -39,7 +39,22 @@ import {
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
-type Busy = 'upload' | 'preview' | 'confirm' | null;
+type Busy = 'picking' | 'upload' | 'preview' | 'confirm' | null;
+
+/**
+ * What the spinner says the screen is doing. `picking` waits on the shell's own
+ * dialog, where no file has been chosen yet and nothing is being read.
+ */
+function busyLabel(busy: Busy): string {
+  switch (busy) {
+    case 'confirm':
+      return 'Importing';
+    case 'picking':
+      return 'Waiting for the file dialog';
+    default:
+      return 'Reading the file';
+  }
+}
 
 /**
  * The browser's import flow: choose, preview, confirm — one screen, three
@@ -318,7 +333,9 @@ export class NigelImportScreen extends LitElement {
 
   private handlePickRequest = async (): Promise<void> => {
     if (this.source.kind !== 'native' || this.busy !== null) return;
-    this.busy = 'upload';
+    // Busy so a second request cannot open a second dialog: the webview keeps
+    // running while the shell's dialog is open.
+    this.busy = 'picking';
     try {
       const staged = await this.source.pick();
       if (staged !== null) this.adopt(staged);
@@ -642,10 +659,7 @@ export class NigelImportScreen extends LitElement {
           ></wc-import-form>
 
           ${busyNow
-            ? html`<wc-spinner
-                show-label
-                label=${this.busy === 'confirm' ? 'Importing' : 'Reading the file'}
-              ></wc-spinner>`
+            ? html`<wc-spinner show-label label=${busyLabel(this.busy)}></wc-spinner>`
             : nothing}
         </div>
 
