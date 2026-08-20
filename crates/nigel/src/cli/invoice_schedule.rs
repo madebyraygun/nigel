@@ -299,11 +299,28 @@ pub fn run(today: &str) -> Result<()> {
 
     print_report(&report);
     if report.has_failures() {
-        return Err(NigelError::Other(
-            "Some invoices were not sent. See the lines above.".to_string(),
-        ));
+        return Err(NigelError::Other(incomplete_run_message(&report)));
     }
     Ok(())
+}
+
+/// The sentence behind the non-zero exit.
+///
+/// A run falls short two ways and the log has to say which: a schedule whose
+/// walk stopped left a period unbilled and nothing to look at, where a send
+/// that did not happen left a draft on the books waiting to go out by hand.
+fn incomplete_run_message(report: &ScheduleRunReport) -> String {
+    let stopped = !report.failures.is_empty();
+    let unsent = report.generated.iter().any(|g| g.not_sent.is_some());
+    match (stopped, unsent) {
+        (true, true) => {
+            "Some schedules did not generate and some invoices were not sent. \
+             See the lines above."
+        }
+        (true, false) => "Some schedules did not generate. See the lines above.",
+        _ => "Some invoices were not sent. See the lines above.",
+    }
+    .to_string()
 }
 
 fn print_report(report: &ScheduleRunReport) {
@@ -326,6 +343,68 @@ fn print_report(report: &ScheduleRunReport) {
         eprintln!(
             "notice: schedule {} stopped at {}: {}",
             failure.schedule_id, failure.period, failure.message
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nigel_core::invoicing::schedules::{Generated, ScheduleFailure};
+
+    fn generated(not_sent: Option<&str>) -> Generated {
+        Generated {
+            schedule_id: 1,
+            period: "2026-08-01".into(),
+            invoice_id: 1,
+            number: 1253,
+            client_name: "Cedar Systems".into(),
+            total: 450.0,
+            currency: "USD".into(),
+            sent: not_sent.is_none(),
+            not_sent: not_sent.map(str::to_string),
+        }
+    }
+
+    fn stopped() -> ScheduleFailure {
+        ScheduleFailure {
+            schedule_id: 2,
+            period: "2026-08-01".into(),
+            message: "client 'Harbor & Vale' is archived".into(),
+        }
+    }
+
+    /// A run falls short two ways, and the exit sentence has to say which: a
+    /// schedule that stopped left a period unbilled, where a send that did not
+    /// happen left a draft on the books.
+    #[test]
+    fn the_exit_sentence_names_what_actually_went_wrong() {
+        let sent_failure = ScheduleRunReport {
+            generated: vec![generated(Some("client 'Harbor & Vale' has no email"))],
+            failures: vec![],
+        };
+        assert_eq!(
+            incomplete_run_message(&sent_failure),
+            "Some invoices were not sent. See the lines above."
+        );
+
+        let generation_failure = ScheduleRunReport {
+            generated: vec![generated(None)],
+            failures: vec![stopped()],
+        };
+        assert_eq!(
+            incomplete_run_message(&generation_failure),
+            "Some schedules did not generate. See the lines above."
+        );
+
+        let both = ScheduleRunReport {
+            generated: vec![generated(Some("no email"))],
+            failures: vec![stopped()],
+        };
+        assert_eq!(
+            incomplete_run_message(&both),
+            "Some schedules did not generate and some invoices were not sent. \
+             See the lines above."
         );
     }
 }
