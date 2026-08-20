@@ -11,6 +11,12 @@ pub struct PaymentLink {
 pub struct PaidSession {
     pub session_id: String,
     pub amount: f64,
+    /// When the gateway recorded the checkout session, in Unix seconds — the
+    /// day the client paid, which is not the day a sync happens to run.
+    ///
+    /// `Option` because a gateway that answers without one is a fact `sync`
+    /// handles, and because every fake in the test modules builds this by hand.
+    pub paid_at: Option<i64>,
 }
 
 pub trait PaymentGateway {

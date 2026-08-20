@@ -2624,6 +2624,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -3192,6 +3193,7 @@ mod tests {
                 Ok(vec![PaidSession {
                     session_id: format!("cs_{id}"),
                     amount: 100.0,
+                    paid_at: None,
                 }])
             }
         }

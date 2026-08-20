@@ -214,6 +214,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -230,6 +231,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -254,6 +256,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 100.0,
+            paid_at: None,
         }]);
         assert_eq!(sync_invoice(&conn, id, "2026-08-10", &gw).unwrap(), 1);
         assert_eq!(sync_invoice(&conn, id, "2026-08-11", &gw).unwrap(), 0); // idempotent
@@ -283,6 +286,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 40.0,
+            paid_at: None,
         }]);
         let report = sync_all_report(&conn, "2026-08-10", &gw).unwrap();
         assert_eq!(report.recorded, 1);
@@ -311,6 +315,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 40.0,
+            paid_at: None,
         }]);
         sync_all_report(&conn, "2026-08-10", &gw).unwrap();
         let again = sync_all_report(&conn, "2026-08-11", &gw).unwrap();
@@ -333,6 +338,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 100.0,
+            paid_at: None,
         }]);
         assert_eq!(sync_invoice(&conn, id, "2026-08-10", &gw).unwrap(), 0);
         assert_eq!(paid_amount(&conn, id).unwrap(), 0.0);
@@ -489,6 +495,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
