@@ -244,21 +244,11 @@ async fn detail(
     Ok(Json(detail))
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgingQuery {
-    as_of: Option<String>,
-}
-
 async fn aging(
     State(state): State<AppState>,
-    Query(query): Query<AgingQuery>,
+    Query(query): Query<AsOfQuery>,
 ) -> ApiResult<Json<AgingReport>> {
-    // The server's own today, which is what `nigel invoice aging` uses.
-    let as_of = match query.as_of.as_deref() {
-        Some(value) => super::reports::parse_date("asOf", value)?,
-        None => chrono::Local::now().format("%Y-%m-%d").to_string(),
-    };
+    let as_of = reference_day(query.as_of.as_deref())?;
     let report = with_conn(&state, move |conn| inv::ar_aging_detail(conn, &as_of)).await?;
     Ok(Json(report))
 }

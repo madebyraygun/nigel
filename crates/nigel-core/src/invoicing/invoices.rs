@@ -349,13 +349,6 @@ pub fn with_effective_status(mut invoice: Invoice, paid: f64, today: &str) -> In
     invoice
 }
 
-/// [`get_invoice`] for a screen: the same row, read on `today`.
-pub fn get_invoice_as_of(conn: &Connection, id: i64, today: &str) -> Result<Invoice> {
-    let invoice = get_invoice(conn, id)?;
-    let paid = paid_amount(conn, invoice.id)?;
-    Ok(with_effective_status(invoice, paid, today))
-}
-
 /// [`get_invoice_by_number`] for a screen: the same row, read on `today`.
 pub fn get_invoice_by_number_as_of(conn: &Connection, number: i64, today: &str) -> Result<Invoice> {
     let invoice = get_invoice_by_number(conn, number)?;
@@ -3530,10 +3523,6 @@ mod tests {
 
         let rows = list_invoices(&conn, None, None, "2026-07-15").unwrap();
         assert_eq!(rows[0].status, "sent", "{rows:?}");
-        assert_eq!(
-            get_invoice_as_of(&conn, id, "2026-07-15").unwrap().status,
-            "sent"
-        );
 
         let report = ar_aging_detail(&conn, "2026-07-15").unwrap();
         assert_eq!(report.invoices[0].days_past_due, 44);
