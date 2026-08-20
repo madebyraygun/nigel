@@ -386,6 +386,9 @@ something that does not exist is a wrong question, the same reasoning
 today. An invoice past its due date with money owing reads `overdue` on that day
 even when the stored status still says `sent` or `partial`, which is what keeps
 this endpoint and `/api/invoices/aging` agreeing about the same invoice. The
+overlay only ever widens, never narrows: asked about a past day, a status the
+books already recorded is reported as stored, so an invoice a later event marked
+`overdue` reads `overdue` on a day the report still buckets it as current. The
 status filter selects on the same reading, so `?status=overdue` returns what the
 rows are rendered as. Nothing is written by a read.
 
@@ -431,9 +434,8 @@ it.
 `asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
 today. An invoice past its due date with money owing reads `overdue` on that day
 even when the stored status still says `sent` or `partial`, which is what keeps
-this endpoint and `/api/invoices/aging` agreeing about the same invoice. The
-status filter selects on the same reading, so `?status=overdue` returns what the
-rows are rendered as. Nothing is written by a read.
+this endpoint and `/api/invoices/aging` agreeing about the same invoice. Nothing
+is written by a read.
 
 An unknown number is `404` with `details.reason` = `invoice_not_found`.
 
