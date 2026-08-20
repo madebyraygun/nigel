@@ -20,7 +20,8 @@ use nigel_core::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
     is_void, line_items, list_invoices, paid_amount, payment_amount, payments, record_payment,
-    validate_currency, validate_date, validate_items, InvoiceListRow, NewLineItem, CENT_SLACK,
+    validate_currency, validate_date, validate_items, with_effective_status, InvoiceListRow,
+    NewLineItem, CENT_SLACK,
 };
 use nigel_core::invoicing::render_html::{load_template, Branding};
 use nigel_core::invoicing::send::{send_invoice, SendOutcome};
@@ -380,7 +381,7 @@ struct Detail {
 }
 
 impl Detail {
-    fn load(conn: &Connection, invoice_id: i64) -> Result<Self> {
+    fn load(conn: &Connection, invoice_id: i64, today: &str) -> Result<Self> {
         let invoice = get_invoice(conn, invoice_id)?;
         let client = match get_client(conn, invoice.client_id) {
             Ok(client) => Some(client),
@@ -388,12 +389,15 @@ impl Detail {
             Err(NigelError::NotFound(_)) => None,
             Err(e) => return Err(e),
         };
+        let paid = paid_amount(conn, invoice.id)?;
         Ok(Self {
             items: line_items(conn, invoice.id)?,
             payments: payments(conn, invoice.id)?,
-            paid: paid_amount(conn, invoice.id)?,
+            // Asked of the stored row: what may be deleted is a fact about the
+            // record, not about the day it is being looked at.
             deletable: delete_blocker(conn, &invoice)?.is_none(),
-            invoice,
+            invoice: with_effective_status(invoice, paid, today),
+            paid,
             client,
         })
     }
@@ -467,7 +471,11 @@ impl InvoiceManager {
 
     /// Load (or reload) the detail for one invoice.
     fn load_detail(&mut self, conn: &Connection, invoice_id: i64) -> Result<()> {
-        self.detail = Some(Box::new(Detail::load(conn, invoice_id)?));
+        self.detail = Some(Box::new(Detail::load(
+            conn,
+            invoice_id,
+            &crate::cli::today(),
+        )?));
         Ok(())
     }
 
@@ -2120,6 +2128,40 @@ mod tests {
         InvoiceManager::new(conn, "Hello, Sam.")
     }
 
+    /// The screen the operator actually looks at agrees with the report: the
+    /// list and the detail both read the lapsed due date.
+    #[test]
+    fn the_manager_reads_a_lapsed_due_date_as_overdue() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Globex", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Site build".into(),
+            quantity: 1.0,
+            unit_amount: 960.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-01-05",
+            Some("2026-02-04"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, id, "2026-01-05").unwrap();
+
+        // Loaded on a day past the due date, which every wall clock this runs
+        // on already is.
+        let detail = Detail::load(&conn, id, "2026-03-15").unwrap();
+        assert_eq!(detail.invoice.status, "overdue");
+
+        // The manager reads the wall clock, which is past 2026-02-04 too.
+        let mgr = manager(&conn);
+        assert_eq!(mgr.rows[0].status, "overdue");
+    }
+
     fn is_close(action: InvoiceAction) -> bool {
         matches!(action, InvoiceAction::Close)
     }
@@ -2128,6 +2170,14 @@ mod tests {
     fn seed_invoice(conn: &Connection, client: &str, amount: f64) -> i64 {
         let cid = add_client(conn, client, Some("ops@cedar.test"), None, None).unwrap();
         seed_invoice_for(conn, cid, amount)
+    }
+
+    /// A due date ahead of whatever day the suite runs on, so the status a
+    /// screen reads is about the invoice rather than about the calendar.
+    fn not_yet_due() -> String {
+        (chrono::Local::now() + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string()
     }
 
     fn seed_invoice_for(conn: &Connection, client_id: i64, amount: f64) -> i64 {
@@ -2140,7 +2190,7 @@ mod tests {
             conn,
             client_id,
             "2026-07-16",
-            Some("2026-08-15"),
+            Some(&not_yet_due()),
             "USD",
             &items,
             None,
@@ -3676,16 +3726,6 @@ mod tests {
         fn a_successful_send_publishes_emails_and_shows_the_url() {
             let (_d, conn) = test_conn();
             let id = seed_invoice(&conn, "Cedar Systems", 100.0);
-            // Due ahead of whatever day this runs on: the subject is the
-            // reload, and a screen reads the wall clock.
-            let not_yet_due = (chrono::Local::now() + chrono::Duration::days(30))
-                .format("%Y-%m-%d")
-                .to_string();
-            conn.execute(
-                "UPDATE invoices SET due_date = ?1 WHERE id = ?2",
-                rusqlite::params![not_yet_due, id],
-            )
-            .unwrap();
             let mut mgr = manager(&conn);
             mgr.handle_key(KeyCode::Enter, &conn);
             let mail = FakeMail::default();
@@ -3865,7 +3905,7 @@ mod tests {
         assert!(screen.contains("> 1248"), "{screen}");
         assert!(screen.contains("$2,000.00"), "{screen}");
         assert!(screen.contains("$750.00"), "{screen}");
-        assert!(screen.contains("2026-08-15"), "{screen}");
+        assert!(screen.contains(&not_yet_due()), "{screen}");
         assert!(screen.contains("Enter=open  Esc=back  q=quit"), "{screen}");
     }
 
@@ -3900,7 +3940,7 @@ mod tests {
             rendered.chars().count()
         );
         // The client name yields; the due date is not pushed off the end.
-        assert!(rendered.ends_with("2026-08-15"), "{rendered:?}");
+        assert!(rendered.ends_with(&not_yet_due()), "{rendered:?}");
         assert!(rendered.contains("$9,999,999.99"), "{rendered:?}");
     }
 

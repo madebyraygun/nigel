@@ -3437,3 +3437,41 @@ fn invoice_pay_refuses_a_malformed_date() {
         .unwrap();
     assert_eq!(payments, 0);
 }
+
+/// An invoice whose due date passed with no event since publish reads `overdue`
+/// on both surfaces — and looking at it does not write to it.
+#[test]
+fn invoice_list_and_show_report_a_lapsed_due_date_as_overdue() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Published in the past with a due date behind it, which is the state no
+    // event will ever revisit.
+    env.db()
+        .execute_batch(
+            "UPDATE invoices
+                SET status = 'sent', published_at = '2026-01-05', due_date = '2026-02-04'
+              WHERE number = 1248;",
+        )
+        .expect("publish the seeded invoice");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("overdue"));
+
+    env.cmd()
+        .args(["invoice", "show", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[overdue]"));
+
+    let stored: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("status");
+    assert_eq!(stored, "sent", "a read wrote to the books");
+}

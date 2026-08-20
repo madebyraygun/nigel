@@ -12,7 +12,8 @@ use nigel_core::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
     get_invoice_by_number, is_void, line_items, list_invoices, next_number, paid_amount,
-    payment_amount, record_payment, update_invoice, InvoiceListRow, InvoiceUpdate, NewLineItem,
+    payment_amount, record_payment, update_invoice, with_effective_status, InvoiceListRow,
+    InvoiceUpdate, NewLineItem,
 };
 use nigel_core::invoicing::render::{render_invoice, RenderedInvoice};
 use nigel_core::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
@@ -315,21 +316,22 @@ pub fn format_invoice_show(
     out
 }
 
-pub fn list() -> Result<()> {
+pub fn list(today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     println!(
         "{}",
-        format_invoice_list(&list_invoices(&conn, None, None, &crate::cli::today())?)
+        format_invoice_list(&list_invoices(&conn, None, None, today)?)
     );
     Ok(())
 }
 
-pub fn show(number: i64) -> Result<()> {
+pub fn show(number: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     let client = get_client(&conn, invoice.client_id)?;
     let items = line_items(&conn, invoice.id)?;
     let paid = paid_amount(&conn, invoice.id)?;
+    let invoice = with_effective_status(invoice, paid, today);
 
     print!("{}", format_invoice_show(&invoice, &client, &items, paid));
     Ok(())
