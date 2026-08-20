@@ -4,6 +4,7 @@ title: 'Manual register entries: nigel add, a TUI form, and a web affordance'
 status: To Do
 assignee: []
 created_date: '2026-08-19 17:04'
+updated_date: '2026-08-20 14:19'
 labels:
   - enhancement
 milestone: v1
@@ -36,7 +37,7 @@ A way to add a transaction directly — date, description, amount, account, cate
 
 ## A use case the design must not preclude
 
-Once TASK-9.1 lands its equity class, a manual entry funded from an owner-contribution account records a business expense paid personally — the accountable-plan reimbursement case, currently unexpressible in Nigel. The account picker must simply offer every account rather than assuming bank products. Do **not** build the accountable-plan feature here.
+Once the TASK-9.3 chart merge makes the equity categories pickable as accounts (TASK-9.1 supplies the class; the merge is what puts Owner Contribution in an account picker), a manual entry funded from an owner-contribution account records a business expense paid personally — the accountable-plan reimbursement case, currently unexpressible in Nigel. The account picker must simply offer every account rather than assuming bank products. Do **not** build the accountable-plan feature here.
 
 ## Out of scope
 
@@ -51,10 +52,10 @@ Recurring or scheduled entries (TASK-81 owns recurring generation), receipt atta
 - [ ] #4 Manual rows (import_id IS NULL) can be edited in full and deleted singly, with confirmation; imported rows keep today's edit surface (category, vendor, flag) and remain undeletable row-by-row
 - [ ] #5 Undo semantics are unchanged — it rolls back the last import by import_id and can never take a manual row with it (a test pins this); when manual entries are newer than the offered import, the prompt says so
 - [ ] #6 No snapshot is taken per manual entry, and the reasoning is documented
-- [ ] #7 The account picker offers every account, so an owner-contribution-funded entry is expressible once TASK-9.1's equity class lands; no accountable-plan feature is built
-- [ ] #8 No user-facing surface introduces debit/credit vocabulary; the user types one amount and picks one category
-- [ ] #9 Update test coverage
-- [ ] #10 Create or update documentation, making sure to remove any out of date information
-- [ ] #11 All linting checks pass
-- [ ] #12 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
+- [ ] #7 No user-facing surface introduces debit/credit vocabulary; the user types one amount and picks one category
+- [ ] #8 Update test coverage
+- [ ] #9 Create or update documentation, making sure to remove any out of date information
+- [ ] #10 All linting checks pass
+- [ ] #11 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
+- [ ] #12 The account picker offers every account rather than assuming bank products, so an owner-contribution-funded entry becomes expressible once the TASK-9.3 chart merge lands; no accountable-plan feature is built here
 <!-- AC:END -->

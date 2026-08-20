@@ -4,6 +4,7 @@ title: A cash account type
 status: To Do
 assignee: []
 created_date: '2026-08-19 17:04'
+updated_date: '2026-08-20 14:19'
 labels:
   - enhancement
 milestone: v1
@@ -18,7 +19,7 @@ Every account in Nigel is a bank product: `ACCOUNT_TYPES` is `checking`, `credit
 
 ## Proposal
 
-Add `cash` to the account-type vocabulary. Asset class — the TASK-9.1 mapping already names cash → asset, so classification costs nothing here and nothing gets duplicated. Otherwise it is an **ordinary account**: it appears in the register, in every report, in per-account balances, and in reconciliation exactly like the others. The deliberate work of this task is confirming that ordinariness rather than building anything around it:
+Add `cash` to the account-type vocabulary. Asset class — TASK-9.1's account-type derivation already lands unfamiliar bank-product types on asset by default, and this task adds the explicit cash arm to that derivation, so classification costs one match arm and nothing gets duplicated. Otherwise it is an **ordinary account**: it appears in the register, in every report, in per-account balances, and in reconciliation exactly like the others. The deliberate work of this task is confirming that ordinariness rather than building anything around it:
 
 - **Reconciliation needs nothing.** `nigel reconcile` takes a statement balance and compares it to the calculated balance from transactions (`reconciler.rs` is pure account/date sums, no import involvement). For a cash account the "statement" is the drawer count. Confirm it works unchanged with a test; do not add a till workflow, a float, or a count screen.
 - **No importer variant.** `ImporterKind` variants exist per bank statement format, and cash has no statements. The generic CSV path should still accept a cash account for anyone keeping a spreadsheet — confirm, don't build.
