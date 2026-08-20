@@ -38,6 +38,14 @@ const button = (el: NigelSetupScreen, text: string) =>
     b.textContent?.includes(text),
   ) as HTMLElement | undefined;
 
+const wordmark = (el: NigelSetupScreen) =>
+  el.shadowRoot?.querySelector('wc-wordmark') as (HTMLElement & { reveal: number }) | undefined;
+
+/** The arrival's own elements — the ones that enter after the wordmark. */
+const introNodes = (el: NigelSetupScreen) => [
+  ...(el.shadowRoot?.querySelectorAll('.intro') ?? []),
+];
+
 const field = (el: NigelSetupScreen, label: string) =>
   [...(el.shadowRoot?.querySelectorAll('wa-input') ?? [])].find(
     (i) => i.getAttribute('label') === label,
@@ -69,9 +77,16 @@ function preferReducedMotion(): void {
   );
 }
 
+/** Land the intro the way a key does, so the arrival's buttons are live. */
+async function landIntro(el: NigelSetupScreen): Promise<void> {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await el.updateComplete;
+}
+
 /** Walk arrival -> profile, choosing business or personal. */
 async function toIdentity(el: NigelSetupScreen, profile: 'business' | 'personal') {
-  button(el, 'Right then')?.click();
+  await landIntro(el);
+  button(el, 'Set up my books')?.click();
   await el.updateComplete;
   (el.shadowRoot?.querySelector(`[data-profile="${profile}"]`) as HTMLElement)?.click();
   await el.updateComplete;
@@ -102,37 +117,83 @@ describe('setup screen', () => {
     expect(el.shadowRoot?.querySelector('wc-wordmark')).not.toBeNull();
   });
 
-  it('skips the intro on a click anywhere', async () => {
-    // Delight is additive. Somebody who has seen it once should not have to
-    // sit through it again.
+  it('holds the arrival copy back until the wordmark is drawn', async () => {
+    // The panel is one animation, not a drawn mark above copy that was there
+    // all along: everything the reader can act on waits for the assembly.
     const { el } = await mount();
-    el.shadowRoot?.querySelector('.stage')?.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, composed: true }),
-    );
-    await el.updateComplete;
-    expect(el.shadowRoot?.textContent).toContain('Who are we keeping books for?');
+    expect(wordmark(el)?.reveal).toBeLessThan(1);
+    for (const node of introNodes(el)) {
+      expect(node.classList.contains('intro-ready')).toBe(false);
+      expect(node.classList.contains('intro-instant')).toBe(false);
+    }
   });
 
-  it('skips the intro on a keypress too', async () => {
-    // The spec offers a click *or* a key, and the key has to work from wherever
-    // focus happens to be: nothing on the arrival takes it, so the listener
-    // cannot hang off the stage the click uses.
+  it('fades the copy in once the reveal finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { el } = await mount();
+      vi.advanceTimersByTime(1200);
+      await el.updateComplete;
+
+      expect(wordmark(el)?.reveal).toBe(1);
+      for (const node of introNodes(el)) {
+        expect(node.classList.contains('intro-ready')).toBe(true);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lands the intro on a keypress without leaving the arrival', async () => {
+    // The key skips the theatrics, not the question. Somebody who has seen the
+    // assembly once gets the panel at once, on the step they were already on.
     const { el } = await mount();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     await el.updateComplete;
+
+    expect(el.shadowRoot?.textContent).toContain("Hello. I'm Nigel.");
+    expect(el.shadowRoot?.textContent).not.toContain('Who are we keeping books for?');
+    expect(wordmark(el)?.reveal).toBe(1);
+    for (const node of introNodes(el)) {
+      expect(node.classList.contains('intro-instant')).toBe(true);
+    }
+  });
+
+  it('stops the ticker when the intro is landed early', async () => {
+    vi.useFakeTimers();
+    try {
+      const { el } = await mount();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      await el.updateComplete;
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the arrival only when asked to', async () => {
+    const { el } = await mount();
+    await landIntro(el);
+
+    button(el, 'Set up my books')?.click();
+    await el.updateComplete;
+
     expect(el.shadowRoot?.textContent).toContain('Who are we keeping books for?');
   });
 
   it('stops listening for that key once the gate is gone', async () => {
     // A window listener outlives the element it was registered from unless it
-    // is taken off, and this one drives a step change.
+    // is taken off, and this one drives the reveal.
     const { el } = await mount();
     el.remove();
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     await el.updateComplete;
 
-    expect(el.shadowRoot?.textContent).toContain("Hello. I'm Nigel.");
+    expect(wordmark(el)?.reveal).toBeLessThan(1);
   });
 
   it('runs a reveal ticker so the wordmark assembles', async () => {
@@ -169,13 +230,15 @@ describe('setup screen', () => {
   it('labels the company field from the profile', async () => {
     const { el } = await mount();
     await toIdentity(el, 'business');
-    expect(field(el, 'Business name')).toBeDefined();
+    expect(field(el, 'Business name')?.getAttribute('hint')).toBe(
+      'It goes on your reports and invoices.',
+    );
   });
 
   it('labels it for a household on personal books', async () => {
     const { el } = await mount();
     await toIdentity(el, 'personal');
-    expect(field(el, 'Household name')).toBeDefined();
+    expect(field(el, 'Household name')?.getAttribute('hint')).toBe('It goes on your reports.');
     expect(field(el, 'Business name')).toBeUndefined();
   });
 
@@ -223,9 +286,9 @@ describe('setup screen', () => {
 
   it('sends the demo plan with the demo action', async () => {
     const { el, client } = await mount();
-    await toFirstMove(el);
+    await landIntro(el);
 
-    button(el, 'Load the demo')?.click();
+    button(el, 'Show me the demo')?.click();
     await settle(el);
 
     expect(client.calls.some((c) => c.startsWith('setup:') && c.includes('"action":"demo"'))).toBe(

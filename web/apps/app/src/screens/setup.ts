@@ -126,10 +126,58 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         justify-content: center;
       }
 
-      .footnote,
-      .skip {
+      .footnote {
         color: var(--wa-color-muted);
         font-size: var(--wa-font-size-s, 13px);
+      }
+
+      /*
+       * The arrival's copy and buttons wait for the wordmark to finish
+       * assembling, then fade in a beat apart. Hidden rather than merely
+       * transparent: a button nobody can see is a button nobody should be
+       * able to click or tab to.
+       */
+      .intro {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      .intro-ready {
+        animation: intro-fade-in 320ms ease-out both;
+        animation-delay: calc(var(--intro-order, 0) * 70ms);
+      }
+
+      .intro-order-1 {
+        --intro-order: 1;
+      }
+
+      .intro-order-2 {
+        --intro-order: 2;
+      }
+
+      .intro-instant {
+        opacity: 1;
+        visibility: visible;
+        animation: none;
+      }
+
+      @keyframes intro-fade-in {
+        from {
+          opacity: 0;
+          visibility: hidden;
+        }
+        to {
+          opacity: 1;
+          visibility: visible;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .intro {
+          opacity: 1;
+          visibility: visible;
+          animation: none;
+        }
       }
 
       .error {
@@ -142,6 +190,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
 
   @state() private step: Step = 'arrival';
   @state() private reveal = 0;
+  @state() private introSkipped = false;
   @state() private profile: BooksProfile = 'business';
   @state() private userName = '';
   @state() private companyName = '';
@@ -153,13 +202,14 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
 
   private store: AppStore = getAppStore();
   private ticker: ReturnType<typeof setInterval> | null = null;
+  private elapsed = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
-    // At the window rather than on the stage: nothing on the arrival takes
-    // focus, so a listener on the gate's own markup would never be reached by
-    // the key it is waiting for.
-    window.addEventListener('keydown', this.skipIntro);
+    // At the window rather than on the stage: until the arrival's buttons
+    // arrive nothing here takes focus, so a listener on the gate's own markup
+    // would never be reached by the key it is waiting for.
+    window.addEventListener('keydown', this.finishIntro);
     // `wc-wordmark` draws itself whole when motion is unwelcome and ignores
     // `reveal` entirely, so a ticker would re-render the gate thirty times
     // over for nothing.
@@ -167,14 +217,18 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
       this.reveal = 1;
       return;
     }
+    // Elapsed milliseconds rather than an accumulated fraction: adding
+    // 40/1200 thirty times lands just short of 1, which leaves the mark a tick
+    // shy of drawn and the copy waiting on it.
     this.ticker = setInterval(() => {
-      this.reveal = Math.min(1, this.reveal + REVEAL_TICK_MS / REVEAL_MS);
+      this.elapsed += REVEAL_TICK_MS;
+      this.reveal = Math.min(1, this.elapsed / REVEAL_MS);
       if (this.reveal >= 1) this.stopReveal();
     }, REVEAL_TICK_MS);
   }
 
   disconnectedCallback(): void {
-    window.removeEventListener('keydown', this.skipIntro);
+    window.removeEventListener('keydown', this.finishIntro);
     this.stopReveal();
     super.disconnectedCallback();
   }
@@ -184,13 +238,26 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     this.ticker = null;
   }
 
-  /** Any click or key during the arrival goes straight to the first question. */
-  private skipIntro = (): void => {
-    if (this.step !== 'arrival') return;
+  /**
+   * Any key during the intro lands it where it stands: the wordmark completes
+   * and the copy arrives at once, on the step the reader is already on.
+   */
+  private finishIntro = (): void => {
+    if (this.reveal >= 1) return;
     this.stopReveal();
+    this.introSkipped = true;
     this.reveal = 1;
+  };
+
+  private beginSetup = (): void => {
     this.step = 'profile';
   };
+
+  /** How the arrival's own elements enter, and in what order. */
+  private introClass(order: number): string {
+    if (this.introSkipped) return `intro intro-instant intro-order-${order}`;
+    return this.reveal >= 1 ? `intro intro-ready intro-order-${order}` : 'intro';
+  }
 
   private chooseProfile(profile: BooksProfile): void {
     this.profile = profile;
@@ -248,7 +315,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
 
   render() {
     return html`
-      <div class="stage" @click=${this.skipIntro}>
+      <div class="stage">
         <wc-particle-field></wc-particle-field>
         <div class="panel">
           <wc-wordmark animated .reveal=${this.reveal}></wc-wordmark>
@@ -263,12 +330,19 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     switch (this.step) {
       case 'arrival':
         return html`
-          <h1>Hello. I'm Nigel.</h1>
-          <p>
-            I keep the books. Privacy first. Four questions and we can start.
+          <h1 class=${this.introClass(0)}>Hello. I'm Nigel.</h1>
+          <p class=${this.introClass(1)}>
+            I keep the books, privacy first. Just a few simple questions to start.
           </p>
-          <wa-button variant="brand" @click=${this.skipIntro}>Right then</wa-button>
-          <p class="skip">Click anywhere to skip the theatrics.</p>
+          <div class=${`actions ${this.introClass(2)}`}>
+            <wa-button
+              appearance="outlined"
+              ?disabled=${this.busy !== null}
+              @click=${() => this.runSetup('demo')}
+              >${this.busy === 'demo' ? 'Loading the demo…' : 'Show me the demo'}</wa-button
+            >
+            <wa-button variant="brand" @click=${this.beginSetup}>Set up my books</wa-button>
+          </div>
         `;
       case 'profile':
         return html`
@@ -295,7 +369,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
             </button>
           </div>
           <p class="footnote">
-            This decides your chart of accounts, and can't be changed later. You can always create a new profile to manage another type of books.
+            This decides your chart of accounts, and can't be changed later. You can always create a new profile to manage another set of books.
           </p>
         `;
       case 'identity':
@@ -306,7 +380,11 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
   }
 
   private renderIdentity() {
-    const companyLabel = this.profile === 'personal' ? 'Household name' : 'Business name';
+    const personal = this.profile === 'personal';
+    const companyLabel = personal ? 'Household name' : 'Business name';
+    const companyHint = personal
+      ? 'It goes on your reports.'
+      : 'It goes on your reports and invoices.';
     return html`
       <h1>Tell me about yourself.</h1>
       <div class="form">
@@ -318,7 +396,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         ></wa-input>
         <wa-input
           label=${companyLabel}
-          hint="It goes on the books, and on invoices if you send any."
+          hint=${companyHint}
           .value=${this.companyName}
           @input=${(e: Event) => this.readField(e, 'companyName')}
         ></wa-input>
@@ -327,7 +405,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
           label="Password (optional but recommended)"
           autocomplete="new-password"
           password-toggle
-          hint="Encrypts the database file. Keep this safe, lose it and the books are gone."
+          hint="Encrypts the database file. Keep this safe — lose it and the books are gone."
           .value=${this.password}
           @input=${(e: Event) => this.readField(e, 'password')}
         ></wa-input>
@@ -352,18 +430,6 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     return html`
       <h1>How shall we start?</h1>
       <div class="cards">
-        <div class="card">
-          <strong>Show me the demo</strong>
-          <span>
-            Eighteen months of books for a fictional business. Easy to swap in your books any time.
-          </span>
-          <wa-button
-            variant="brand"
-            ?disabled=${this.busy !== null}
-            @click=${() => this.runSetup('demo')}
-            >${this.busy === 'demo' ? 'Loading the demo…' : 'Load the demo'}</wa-button
-          >
-        </div>
         <div class="card">
           <strong>Start from scratch</strong>
           <span>
