@@ -396,6 +396,36 @@ nigel invoice list            # number, status, client, total, due date
 nigel invoice show 1248       # line items, amount paid, balance, payment link
 ```
 
+## Duplicating an invoice
+
+```bash
+nigel invoice duplicate 1248                      # issued today
+nigel invoice duplicate 1248 --issue 2026-09-01   # issued on a given day
+```
+
+A duplicate is a fresh draft with a new number and a new token. It copies the
+client, the currency, the notes, the terms and every line item. It copies
+nothing about what happened to the source: no published date, no void date, no
+Stripe payment link.
+
+**The term travels, the dates do not.** A source with a due date fourteen days
+after its issue date duplicates as a draft due fourteen days after *its* issue
+date — a Net-14 invoice stays Net-14 in September. A source with no due date
+yields a draft with none, which never goes overdue.
+
+Any invoice duplicates, whatever state it is in — draft, sent, paid or void.
+Duplication reads a shape, not a status, and last quarter's paid invoice is the
+most useful thing to copy. The one refusal is an archived client: the new draft
+goes through the same guard `nigel invoice new` does, and says so.
+
+| Source | Duplicate |
+| --- | --- |
+| any state, active client | a fresh draft under the next number |
+| archived client | refused — unarchive the client first |
+
+The TUI's invoice detail offers `c=duplicate` and lands on the new draft. In the
+browser, **Duplicate** sits in the invoice actions and navigates to the copy.
+
 ## Previewing
 
 ```bash
@@ -582,11 +612,17 @@ branches the same way, on the `status` and `canVoid` the 409 carries.
 | sent, partial, overdue or paid | refused — its URL and its emailed PDF are already in somebody's hands |
 | void | refused — it is a record that something happened |
 | a draft with any payment against it | refused — money arrived against those figures |
+| a draft a schedule generated | refused — the run row is the record of what that period billed |
 
 The guard lives in the data layer beside `ensure_editable` and `ensure_voidable`,
 so a caller reaching `delete_invoice` directly cannot get past it, and the same
 sentence is what the CLI prints, the dashboard puts on its status line and the
 API answers as a `409` with `details.reason = "not_deletable"`.
+
+An invoice a [recurring schedule](#recurring-schedules) generated refuses for
+its own reason, `from_schedule`, naming the schedule in the sentence: the run
+row recording which period it billed points at it, and that row is the
+provenance `nigel invoice schedule show` prints. Void it instead.
 
 The invoice and its line items go in one transaction. Payments are not cascaded:
 the guard means a deletable invoice has none, and the delete re-asserts it. The
@@ -1177,6 +1213,137 @@ when it cannot. `init`, `demo`, `load`,
 `update`, `password`, `restore`, `completions`, `invoice sync` itself, and
 `invoice preview` skip the hook — preview is defined to make no network call, and
 the launch sync would make that false on a configured machine.
+
+## Recurring schedules
+
+Retainers and hosting are billed on a cycle. A schedule stores the shape once,
+and one command generates whatever is due.
+
+```bash
+nigel invoice schedule add --client 1 --cadence monthly --start 2026-01-01 \
+  --net-days 30 --item "Hosting & maintenance:1:450"
+
+nigel invoice schedule add --client 1 --cadence quarterly --start 2026-01-01 \
+  --from 1248          # seed the items, currency, notes and terms from an invoice
+
+nigel invoice schedule list          # active schedules
+nigel invoice schedule list --all    # including paused and ended
+nigel invoice schedule show 1        # items, and every invoice it has generated
+nigel invoice schedule run           # generate everything currently due
+```
+
+`--cadence` is `monthly`, `quarterly` or `yearly`. `--start` is the first
+period's issue date, and `--anchor-day` is the day of the month the cycle is
+anchored on — it defaults to the start date's day.
+
+**The two are independent.** `--anchor-day 15` with `--start 2026-01-01` bills
+January 1st and then the 15th of every month after it: the start date is where
+the cycle begins, the anchor is where it lands from then on.
+
+### What a run does
+
+`nigel invoice schedule run` walks each active schedule's periods from where it
+left off through today. **Each missed cycle generates its own invoice, dated
+that period's issue date rather than the day the run happened.** A machine that
+was asleep through February and March produces a February invoice dated
+February and a March invoice dated March, in that order — and the February one
+is honestly already overdue, which is the true statement about a bill that
+should have gone out six weeks ago.
+
+Each generation is one transaction: the invoice, the row recording which
+schedule and which period produced it, and the schedule's advance. Numbering is
+sequential through `next_invoice_number` even when several schedules generate at
+once, because the counter is read and written inside that same transaction.
+
+**A run is idempotent.** The recorded schedule-and-period pair is unique, so a
+second run for a period that has already been generated writes nothing. This is
+provenance, not a guess from dates: `nigel invoice schedule show` prints the
+pairing, and a rerun after a cron misfire costs nothing.
+
+That same row is why a generated draft cannot be deleted: it is the record of
+what the period billed. Void it instead, the way any invoice a client has seen
+is cancelled.
+
+### Drafting and sending
+
+**A run drafts by default.** Sending is per schedule and opt-in:
+
+```bash
+nigel invoice schedule add … --autosend
+nigel invoice schedule edit 1 --autosend      # or --no-autosend
+```
+
+Unattended sending means a wrong figure can reach a client with nobody
+watching, so it is a decision made once per schedule rather than a default.
+
+An autosend schedule sends through the same path `nigel invoice send` uses, and
+only when all nine invoicing keys are configured. When it cannot send — the
+configuration is incomplete, or the client has no email address — **the invoice
+is still generated as a draft and the run says which one and why**:
+
+```
+Generated 2 invoice(s).
+  #1253  Cedar Systems  $450.00  2026-08-01  sent
+  #1254  Harbor & Vale  $900.00  2026-08-01  draft — not sent: client 'Harbor & Vale' has no email
+```
+
+The command exits non-zero when anything a schedule asked for did not happen, so
+a scheduled job surfaces it instead of swallowing it. Nothing is ever
+half-sent: a failed send leaves the invoice the draft it already was.
+
+### Month end and short months
+
+A monthly schedule anchored on the 31st bills the 28th in February, the 29th in
+a leap February, the 30th in April — and the 31st again in May. The **anchor**
+is what advances, never the clamped day it produced last time, so a short month
+does not permanently move the billing date.
+
+### Editing, pausing and ending
+
+```bash
+nigel invoice schedule edit 1 --item "Hosting & maintenance:1:495"
+nigel invoice schedule edit 1 --net-days 14
+nigel invoice schedule pause 1
+nigel invoice schedule resume 1
+nigel invoice schedule end 1
+```
+
+Line items are held at schedule level and re-read on every run, so **editing a
+schedule changes future invoices and never past ones**. Editing never moves the
+cycle: `next_period` stays where the last run left it.
+
+Pausing stops generation without ending anything. Ending writes a date and stops
+it for good. Neither deletes a row — the schedule, its items and every invoice
+it produced stay readable through `nigel invoice schedule list --all` and
+`nigel invoice schedule show`.
+
+### Running it from cron or launchd
+
+`nigel invoice schedule run` is built to run with nobody at the keyboard, so
+**it never prompts**. On an encrypted database it takes the password from
+`NIGEL_DB_PASSWORD` exactly as `nigel backup` does, and with no password
+available it fails immediately with a sentence naming the variable rather than
+waiting on a prompt no scheduled job can answer.
+
+```bash
+#!/bin/sh
+# ~/bin/nigel-invoice-run.sh
+set -eu
+NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
+  nigel invoice schedule run
+```
+
+Put it in a wrapper script rather than directly in a launchd plist or a crontab
+line, and read the password from a secret store rather than writing it into
+either. Then schedule the wrapper:
+
+```cron
+# 07:00 on the first of every month
+0 7 1 * * /Users/you/bin/nigel-invoice-run.sh >> /Users/you/Library/Logs/nigel-invoices.log 2>&1
+```
+
+The log and the exit status are the whole monitoring story: a run that could not
+send says so on stderr and exits non-zero.
 
 ## Trying it end to end in test mode
 

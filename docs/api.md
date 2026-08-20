@@ -537,6 +537,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices` | `POST` | `clientId`, `issueDate`, `dueDate?`, `currency?`, `items`, `notes?`, `terms?` | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number` | `PATCH` | `issueDate?`, `dueDate?`, `currency?`, `notes?`, `terms?`, `items?` | `InvoiceDetail` |
 | `/api/invoices/:number` | `DELETE` | — | `{ id, deleted }` |
+| `/api/invoices/:number/duplicate` | `POST` | — | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
 | `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings` and `warnings`) |
@@ -818,6 +819,12 @@ it as well.
 }
 ```
 
+An invoice a recurring schedule generated refuses with its own reason,
+`details.reason` = `from_schedule`, and a message naming the schedule. The run
+row recording which period it billed references the invoice, so the delete could
+not succeed anyway; asking here is what keeps that a `409` with a sentence
+instead of a `500`. Void is the way to cancel one.
+
 `canDelete` on the detail is that same guard called, so a screen can disable the
 control without owning a copy of the rule. An unknown number is `404` with
 `details.reason` = `invoice_not_found`.
@@ -827,6 +834,25 @@ deleting the newest draft leaves a gap in the sequence and
 `GET /api/invoices/next-number` answers what it answered before. A gap is normal
 and auditable; reissuing a number that may already have been exported or quoted
 is not.
+
+#### Duplicating an invoice
+
+`POST /api/invoices/:number/duplicate` takes no body and answers `201` with the
+whole new `InvoiceDetail`, the way `POST /api/invoices` does — the browser
+navigates straight to the copy.
+
+The new draft copies the client, currency, notes, terms and line items, and
+carries a new number and a new token. Nothing about the source's history comes
+across: `publishedAt`, `voidedAt`, `stripePaymentLinkId`,
+`stripePaymentLinkUrl` and `publicUrl` are all `null`, and `status` is `draft`.
+
+The issue date is the server's today. When the source carries a due date the
+copy preserves the source's issue-to-due offset in days; a source without one
+yields a copy without one.
+
+Any state duplicates — draft, sent, paid, void. The refusals are the ones
+`POST /api/invoices` already gives: `404 invoice_not_found` for a number that is
+not there, and `409 client_archived` when the source's client has been archived.
 
 #### Voiding and paying
 
@@ -1186,6 +1212,7 @@ its own words instead of parsing ours:
 | `invoice_not_payable` | `step` | Sending an invoice with nothing to charge |
 | `send_not_configured` | `missing`, `step` | Sending or syncing with settings unset |
 | `not_deletable` | — | Deleting an invoice that has been sent, paid or voided |
+| `from_schedule` | — | Deleting an invoice a recurring schedule generated |
 
 The invoice-state reasons are the data layer's own, raised by
 `ensure_editable`, `ensure_voidable`, `ensure_not_void` and `payment_amount`, so

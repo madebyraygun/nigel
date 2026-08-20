@@ -76,6 +76,8 @@ nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"  # Dr
 nigel invoice new … --notes "Thanks" --terms "Net 30"  # Rendered on the invoice page and the PDF
 nigel invoice edit 1248 --due 2026-09-30          # Edit a draft (published invoices refuse)
 nigel invoice edit 1248 --clear-due               # Drop the due date, so it never goes overdue
+nigel invoice duplicate 1248                      # Copy into a fresh draft, issued today
+nigel invoice duplicate 1248 --issue 2026-09-01   # Copy with a given issue date
 nigel invoice void 1248                           # Cancel an invoice (confirms; --yes to skip)
 nigel invoice delete 1252                         # Delete an unsent draft (confirms; --yes to skip)
 nigel invoice list                                # Number, status, client, total, due date
@@ -92,6 +94,15 @@ nigel invoice import --from-invoiceshelf ~/is.sqlite  # One-time InvoiceShelf im
 nigel invoice template export                     # Write the built-in page to <data_dir>/templates/invoice.html
 nigel invoice template export --output ~/mine.html --force  # Somewhere else / overwrite
 nigel invoice template path                       # Where Nigel looks, and whether an override is in effect
+nigel invoice schedule add --client 1 --cadence monthly --start 2026-01-01 --item "Hosting:1:450"
+nigel invoice schedule add --client 1 --cadence quarterly --start 2026-01-01 --from 1248  # Seed from an invoice
+nigel invoice schedule list                       # Active schedules (--all includes paused and ended)
+nigel invoice schedule show 1                     # Items, and every invoice it has generated
+nigel invoice schedule edit 1 --item "Hosting:1:495"   # Applies to future invoices only
+nigel invoice schedule pause 1                    # Stop generating without ending it
+nigel invoice schedule resume 1                   # Start generating again
+nigel invoice schedule end 1                      # End it for good; history is kept
+nigel invoice schedule run                        # Generate everything due (cron/launchd; never prompts)
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
 nigel serve --port 8080                           # Bind a different port (0 = ephemeral)
