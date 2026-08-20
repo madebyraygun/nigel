@@ -4,7 +4,7 @@ title: 'Epic: cash-basis double entry on the v1 milestone'
 status: To Do
 assignee: []
 created_date: '2026-04-25 18:06'
-updated_date: '2026-08-19 16:41'
+updated_date: '2026-08-20 14:01'
 labels:
   - epic
   - architecture
@@ -29,9 +29,9 @@ An earlier version of this epic kept TASK-9.2 deferred with no date and off the 
 
 ## Order of work (the v1 milestone, in dependency order)
 
-1. **TASK-59** — money to integer minor units (in flight). The money type is fixed before the ledger is built on it: double-entry books kept in floating point still fail to balance.
+1. **TASK-59** — money to integer minor units (not started — first on this milestone). The money type is fixed before the ledger is built on it: double-entry books kept in floating point still fail to balance.
 2. **TASK-50 / TASK-51 / TASK-52** — import integrity (in flight). The pipeline that feeds the ledger must not spend checksums, half-commit, or drop rows silently.
-3. **TASK-9.1** — account classification (scheduled). The class vocabulary the chart merge carries forward.
+3. **TASK-9.1** — account classification (in flight). The class vocabulary the chart merge carries forward.
 4. **TASK-9.5** — the Beancount exporter, **before** the migration it verifies: export, migrate, export again, load both in Beancount, compare reports. Identical output is machine-verified proof the backfill preserved the books.
 5. The ledger proper, in dependency order: **TASK-9.3** (chart merge) → **TASK-9.4** (journal schema) → **TASK-9.6** (backfill) → **TASK-9.7** (invoicing reconciliation link) → **TASK-9.8** (reports read lines) → **TASK-9.9** (splits), **TASK-9.10** (transfers as one entry), **TASK-9.11** (trial balance). TASK-9.7 touches only the invoicing tables and is technically independent of the ledger; it is sequenced after the schema work deliberately, so the reconciliation surface and the invoice-bearing parity fixture land together.
 
