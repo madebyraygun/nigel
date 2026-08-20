@@ -5,15 +5,19 @@
   "views": [
     {
       "json": "invoices.json",
-      "params": {},
-      "route": "/api/invoices",
+      "params": {
+        "asOf": "2026-03-15"
+      },
+      "route": "/api/invoices?asOf=2026-03-15",
       "text": "invoices.txt",
       "view": "invoices"
     },
     {
       "json": "invoice-1250.json",
-      "params": {},
-      "route": "/api/invoices/1250",
+      "params": {
+        "asOf": "2026-03-15"
+      },
+      "route": "/api/invoices/1250?asOf=2026-03-15",
       "text": "invoice-1250.txt",
       "view": "invoice-1250"
     },
