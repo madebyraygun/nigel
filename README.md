@@ -217,7 +217,10 @@ NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
 Put this in a wrapper script rather than directly in a launchd plist, and read
 the password from a secret store rather than writing it into a script or a
 plist. The command exits non-zero when a schedule that asked to send could not,
-so the job's log and exit status are enough to notice. See
+so the job's log and exit status are enough to notice. Like every command that
+reads or writes the books it runs the launch-time Stripe sync first, so on a
+Stripe-configured install the job makes network calls before it generates —
+best effort, and it cannot fail the run. See
 [docs/invoicing.md](docs/invoicing.md) for schedules, catch-up behaviour and the
 autosend opt-in.
 

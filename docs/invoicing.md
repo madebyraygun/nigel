@@ -1270,6 +1270,14 @@ That same row is why a generated draft cannot be deleted: it is the record of
 what the period billed. Void it instead, the way any invoice a client has seen
 is cancelled.
 
+**That cuts both ways, so a run never repairs a period it has already billed.**
+Voiding a generated invoice does not make a later run reissue it, and an
+autosend that failed is not retried on the next run — the row exists either
+way, so the period is skipped. Both are recoverable by hand and neither is
+silent: `nigel invoice duplicate` raises a replacement for the voided one, and
+`nigel invoice send` sends the draft the failed run left behind and told you
+about.
+
 ### Drafting and sending
 
 **A run drafts by default.** Sending is per schedule and opt-in:
@@ -1330,6 +1338,13 @@ it produced stay readable through `nigel invoice schedule list --all` and
 `NIGEL_DB_PASSWORD` exactly as `nigel backup` does, and with no password
 available it fails immediately with a sentence naming the variable rather than
 waiting on a prompt no scheduled job can answer.
+
+Like every other command that reads or writes the books, it runs the launch-time
+Stripe sync first (see [Sync on launch](#sync-on-launch)), so on an installation
+with a Stripe key configured the job makes network calls — and may correct a
+published page — before it generates anything. It is best effort and cannot fail
+the run: an unreachable Stripe prints `notice: invoice sync skipped: …` on
+stderr and the generation happens anyway.
 
 ```bash
 #!/bin/sh
