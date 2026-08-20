@@ -44,6 +44,23 @@ const preview: Preview = {
       name: 'disabled',
       render: () => html`<wc-dropzone disabled></wc-dropzone>`,
     },
+    {
+      name: 'native-idle',
+      render: () => html`<wc-dropzone native></wc-dropzone>`,
+    },
+    {
+      name: 'native-highlight',
+      render: () => html`<wc-dropzone native highlight></wc-dropzone>`,
+    },
+    {
+      name: 'native-staged',
+      render: () =>
+        html`<wc-dropzone
+          native
+          filename="cedar-april-2025.csv"
+          .size=${8214}
+        ></wc-dropzone>`,
+    },
   ],
 };
 

@@ -695,6 +695,18 @@ export interface UploadResponse {
   size: number;
 }
 
+/**
+ * A file the native shell has already spooled.
+ *
+ * The first three fields are `UploadResponse`'s, because downstream of the
+ * `uploadId` there is no difference between a staged file and an uploaded one.
+ * `path` is the difference: it is where the file still lives, so a spool that
+ * expired can be refilled without asking the user to choose again.
+ */
+export interface StagedUpload extends UploadResponse {
+  path: string;
+}
+
 /** Column positions for a CSV no built-in importer can read. */
 export interface GenericCsvConfig {
   dateCol: number;
