@@ -265,15 +265,14 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         return html`
           <h1>Hello. I'm Nigel.</h1>
           <p>
-            I keep books. Cash-basis, single-entry, on this machine and nowhere
-            else. Four questions and we can start.
+            I keep the books. Privacy first. Four questions and we can start.
           </p>
           <wa-button variant="brand" @click=${this.skipIntro}>Right then</wa-button>
           <p class="skip">Click anywhere to skip the theatrics.</p>
         `;
       case 'profile':
         return html`
-          <h1>What are we keeping books for?</h1>
+          <h1>Who are we keeping books for?</h1>
           <div class="cards">
             <button
               class="card"
@@ -282,7 +281,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
             >
               <strong>A business</strong>
               <span>
-                Schedule C or 1120-S chart of accounts, with the tax lines already
+                Schedule C or 1120-S chart of accounts, with tax lines already
                 mapped. Invoices, clients, the lot.
               </span>
             </button>
@@ -292,12 +291,11 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
               @click=${() => this.chooseProfile('personal')}
             >
               <strong>Personal finances</strong>
-              <span>A household chart. No tax mapping, no invoices to chase.</span>
+              <span>A household chart. No tax mapping or invoices to chase.</span>
             </button>
           </div>
           <p class="footnote">
-            This picks the chart of accounts, and it's decided once — when the
-            books are created.
+            This decides your chart of accounts, and can't be changed later. You can always create a new profile to manage another type of books.
           </p>
         `;
       case 'identity':
@@ -310,7 +308,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
   private renderIdentity() {
     const companyLabel = this.profile === 'personal' ? 'Household name' : 'Business name';
     return html`
-      <h1>Who am I working for?</h1>
+      <h1>Tell me about yourself.</h1>
       <div class="form">
         <wa-input
           label="Your name"
@@ -326,10 +324,10 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         ></wa-input>
         <wa-input
           type="password"
-          label="Password (optional)"
+          label="Password (optional but recommended)"
           autocomplete="new-password"
           password-toggle
-          hint="Encrypts the database file. There is no recovery: lose it and the books are gone. Leave it blank and the file stays plain."
+          hint="Encrypts the database file. Keep this safe, lose it and the books are gone."
           .value=${this.password}
           @input=${(e: Event) => this.readField(e, 'password')}
         ></wa-input>
@@ -357,8 +355,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         <div class="card">
           <strong>Show me the demo</strong>
           <span>
-            Eighteen months of invented books for a fictional consultancy. Its
-            own directory, so it never touches yours.
+            Eighteen months of books for a fictional business. Easy to swap in your books any time.
           </span>
           <wa-button
             variant="brand"

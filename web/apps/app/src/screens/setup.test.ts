@@ -110,7 +110,7 @@ describe('setup screen', () => {
       new MouseEvent('click', { bubbles: true, composed: true }),
     );
     await el.updateComplete;
-    expect(el.shadowRoot?.textContent).toContain('What are we keeping books for?');
+    expect(el.shadowRoot?.textContent).toContain('Who are we keeping books for?');
   });
 
   it('skips the intro on a keypress too', async () => {
@@ -120,7 +120,7 @@ describe('setup screen', () => {
     const { el } = await mount();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
     await el.updateComplete;
-    expect(el.shadowRoot?.textContent).toContain('What are we keeping books for?');
+    expect(el.shadowRoot?.textContent).toContain('Who are we keeping books for?');
   });
 
   it('stops listening for that key once the gate is gone', async () => {
@@ -184,7 +184,7 @@ describe('setup screen', () => {
     await toIdentity(el, 'business');
     expect(field(el, 'Type it again')).toBeUndefined();
 
-    await typeInto(el, 'Password (optional)', 'hunter2');
+    await typeInto(el, 'Password (optional but recommended)', 'hunter2');
 
     expect(field(el, 'Type it again')).toBeDefined();
   });
@@ -194,7 +194,7 @@ describe('setup screen', () => {
     await toIdentity(el, 'business');
     await typeInto(el, 'Your name', 'Marta');
     await typeInto(el, 'Business name', 'Cedar Systems');
-    await typeInto(el, 'Password (optional)', 'hunter2');
+    await typeInto(el, 'Password (optional but recommended)', 'hunter2');
     await typeInto(el, 'Type it again', 'hunter3');
 
     button(el, 'Carry on')?.click();
@@ -238,7 +238,7 @@ describe('setup screen', () => {
     await toIdentity(el, 'business');
     await typeInto(el, 'Your name', 'Marta');
     await typeInto(el, 'Business name', 'Cedar Systems');
-    await typeInto(el, 'Password (optional)', 'hunter2');
+    await typeInto(el, 'Password (optional but recommended)', 'hunter2');
     await typeInto(el, 'Type it again', 'hunter2');
     button(el, 'Carry on')?.click();
     await el.updateComplete;
