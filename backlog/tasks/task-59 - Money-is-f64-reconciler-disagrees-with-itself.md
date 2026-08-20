@@ -1,10 +1,11 @@
 ---
 id: TASK-59
 title: 'Money is f64, and the reconciler already disagrees with itself'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-08-19 16:11'
+updated_date: '2026-08-20 14:10'
 labels:
   - tech-debt
   - correctness
@@ -27,7 +28,7 @@ This is a conversion touching most of the data layer and should not be bolted on
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is recorded on whether to move to minor-units integers
+- [x] #1 A decision is recorded on whether to move to minor-units integers
 - [ ] #2 is_reconciled and the serialized discrepancy are computed from the same value
 - [ ] #3 If the type change is taken, report figures are unchanged byte-for-byte
 <!-- AC:END -->
