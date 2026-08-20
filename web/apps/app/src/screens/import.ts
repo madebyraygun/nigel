@@ -318,11 +318,14 @@ export class NigelImportScreen extends LitElement {
 
   private handlePickRequest = async (): Promise<void> => {
     if (this.source.kind !== 'native' || this.busy !== null) return;
+    this.busy = 'upload';
     try {
       const staged = await this.source.pick();
       if (staged !== null) this.adopt(staged);
     } catch (error) {
       this.refuse(error);
+    } finally {
+      this.busy = null;
     }
   };
 

@@ -881,6 +881,38 @@ describe('the import screen in native mode', () => {
     expect(dropzone(el).error).toBe('');
   });
 
+  it('allows only one native picker request at a time', async () => {
+    const fake = client();
+    nativeSource(fake);
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+
+    let release = (): void => {};
+    const held = new Promise<null>((resolve) => {
+      release = () => resolve(null);
+    });
+    source.pick = vi.fn(() => held);
+    const { el } = await mount(fake);
+    const request = () =>
+      dropzone(el).dispatchEvent(
+        new CustomEvent('nc-pick-request', { bubbles: true, composed: true }),
+      );
+
+    request();
+    request();
+    await settle(el);
+
+    expect(source.pick).toHaveBeenCalledOnce();
+    expect(dropzone(el).busy).toBe(true);
+
+    release();
+    await settle(el);
+    request();
+    await settle(el);
+
+    expect(source.pick).toHaveBeenCalledTimes(2);
+  });
+
   it('highlights the dropzone while a file is over the window', async () => {
     const fake = client();
     const native = nativeSource(fake);
