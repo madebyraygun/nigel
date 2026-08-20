@@ -48,6 +48,8 @@ cargo install --path .
 
 ## Quick Start
 
+**First run.** `nigel` opens the onboarding in your terminal. `nigel serve` and the desktop app open the same four questions in a browser: what the books are for, who they belong to, an optional password, and whether to start with the demo, an empty ledger, or books you already have. Whichever you use, the books land in your data directory and nothing leaves the machine.
+
 ```bash
 # Initialize — prompts for data directory on first run
 nigel init
@@ -202,6 +204,8 @@ Read the password from a secret store, as above, rather than writing it into a s
 ## Configuration
 
 Settings are stored in `~/.config/nigel/settings.json`. The data directory defaults to `~/Documents/nigel/` and can be changed by re-running `nigel init --data-dir <path>`. Use `nigel load <path>` to switch between existing data directories without reinitializing. `nigel status` shows the active database and summary statistics. Set `"update_check": false` to disable automatic update checks on launch. Invoicing credentials (Stripe, Mailgun, Cloudflare R2) also live in `settings.json` or in matching `NIGEL_*` environment variables, alongside the outgoing email envelope keys `from_email`, `from_name`, `reply_to_email` and `contact_email` — see [docs/invoicing.md](docs/invoicing.md).
+
+An optional password encrypts the database with SQLCipher, from the first page written when it is set during setup. **There is no recovery**: lose the password and the books are gone.
 
 `nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
 

@@ -28,7 +28,7 @@ use nigel_core::error::Result;
 use nigel_core::fmt::number;
 use nigel_core::reports;
 use nigel_core::reviewer::{get_categories, get_flagged_transactions};
-use nigel_core::settings::{get_data_dir, load_settings, save_settings, settings_file_exists};
+use nigel_core::settings::{get_data_dir, load_settings, settings_file_exists};
 
 const GREETINGS: &[&str] = &[
     "Kettle's on.",
@@ -1112,6 +1112,56 @@ fn do_text_export(
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/// The books `prepare_books` created, and what the onboarding asked for next.
+struct PreparedBooks {
+    db_path: std::path::PathBuf,
+    post_setup_action: Option<super::onboarding::PostSetupAction>,
+    /// What the plan asked for, to compare against what the database was
+    /// actually seeded with.
+    profile: nigel_core::db::Profile,
+}
+
+/// Turn a launch into books on disk, or `None` when there are none to make.
+///
+/// `onboarded` is `None` on a first run whose onboarding was skipped, and that
+/// case creates nothing at all. `setup::run` writes settings.json, and an
+/// absent settings.json is exactly what makes the next launch offer the
+/// onboarding again — so creating books here would quietly turn a skip into a
+/// decision the user never made. A returning launch passes `None` too, but it
+/// is not a skip: those books already exist and still have to be opened.
+fn prepare_books(
+    is_first_run: bool,
+    onboarded: Option<super::onboarding::OnboardingResult>,
+) -> Result<Option<PreparedBooks>> {
+    if is_first_run && onboarded.is_none() {
+        return Ok(None);
+    }
+
+    let stored = load_settings();
+    let mut plan = nigel_core::setup::SetupPlan {
+        user_name: stored.user_name.clone(),
+        company_name: String::new(),
+        profile: nigel_core::db::Profile::default(),
+        password: None,
+        data_dir: std::path::PathBuf::from(&stored.data_dir),
+    };
+    let mut post_setup_action = None;
+    if let Some(result) = onboarded {
+        plan.user_name = result.user_name;
+        plan.company_name = result.company_name;
+        plan.profile = result.profile;
+        plan.password = result.password;
+        post_setup_action = Some(result.action);
+    }
+
+    let db_path = nigel_core::setup::run(&plan)?;
+    Ok(Some(PreparedBooks {
+        db_path,
+        post_setup_action,
+        profile: plan.profile,
+    }))
+}
+
 pub fn run() -> Result<()> {
     // Returning users: show splash screen before dashboard
     let is_first_run = !settings_file_exists();
@@ -1127,45 +1177,17 @@ pub fn run() -> Result<()> {
     }
 
     // First-run: show onboarding, then ensure data dir + DB exist
-    let mut post_setup_action = None;
-    let mut onboarding_company = None;
-    let mut onboarding_profile = nigel_core::db::Profile::default();
-    if is_first_run {
-        if let Some(result) = super::onboarding::run()? {
-            let mut settings = load_settings();
-            if !result.user_name.is_empty() {
-                settings.user_name = result.user_name;
-            }
-            save_settings(&settings)?;
+    let onboarded = if is_first_run {
+        super::onboarding::run()?
+    } else {
+        None
+    };
+    let Some(prepared) = prepare_books(is_first_run, onboarded)? else {
+        return Ok(());
+    };
+    let post_setup_action = prepared.post_setup_action;
 
-            if !result.company_name.is_empty() {
-                onboarding_company = Some(result.company_name);
-            }
-            post_setup_action = Some(result.action);
-            onboarding_profile = result.profile;
-
-            if let Some(ref pw) = result.password {
-                nigel_core::db::set_db_password(Some(pw.clone()));
-            }
-        }
-    }
-
-    // Ensure data dir and database exist (like `nigel init`)
-    let settings = load_settings();
-    let data_dir = std::path::PathBuf::from(&settings.data_dir);
-    std::fs::create_dir_all(&data_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&data_dir)?;
-    let exports_dir = data_dir.join("exports");
-    std::fs::create_dir_all(&exports_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&exports_dir)?;
-    let snapshots_dir = data_dir.join("snapshots");
-    std::fs::create_dir_all(&snapshots_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&snapshots_dir)?;
-    let backups_dir = data_dir.join("backups");
-    std::fs::create_dir_all(&backups_dir)?;
-    nigel_core::settings::restrict_dir_permissions(&backups_dir)?;
-    let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
-    nigel_core::db::init_db_with_profile(&conn, onboarding_profile)?;
+    let conn = nigel_core::db::get_connection(&prepared.db_path)?;
 
     // The chosen profile only takes effect on a fresh database. If onboarding
     // ran against books that already exist (settings.json was deleted, or a
@@ -1175,18 +1197,13 @@ pub fn run() -> Result<()> {
     let mut profile_notice = None;
     if post_setup_action.is_some() {
         let seeded = nigel_core::db::get_profile(&conn);
-        if seeded != onboarding_profile {
+        if seeded != prepared.profile {
             profile_notice = Some(format!(
                 "These books already keep {} records; the {} choice was ignored.",
                 seeded.as_str(),
-                onboarding_profile.as_str()
+                prepared.profile.as_str()
             ));
         }
-    }
-
-    // Save company_name from onboarding to DB metadata
-    if let Some(company) = onboarding_company {
-        nigel_core::db::set_metadata(&conn, "company_name", &company)?;
     }
 
     // Migrate legacy company_name from settings.json → DB metadata
@@ -1197,6 +1214,8 @@ pub fn run() -> Result<()> {
     }
 
     drop(conn);
+
+    let settings = load_settings();
 
     // Handle post-setup action from onboarding
     if let Some(action) = post_setup_action {
@@ -2147,5 +2166,36 @@ mod tests {
         assert_eq!(personal.len(), 8, "{personal:?}");
         assert!(!personal.iter().any(|n| n.starts_with("k1-prep")));
         assert!(personal.iter().any(|n| n.starts_with("aging")));
+    }
+    /// A first run whose onboarding was skipped must leave the config
+    /// untouched, so the next launch offers it again.
+    #[test]
+    fn skipping_the_onboarding_on_a_first_run_creates_nothing() {
+        let _guard = nigel_core::settings::TempConfigDir::new();
+        assert!(!nigel_core::settings::settings_file_exists());
+
+        let prepared = prepare_books(true, None).expect("prepare");
+
+        assert!(prepared.is_none(), "a skipped first run still made books");
+        assert!(
+            !nigel_core::settings::settings_file_exists(),
+            "a skipped first run wrote settings.json, which makes the skip final"
+        );
+    }
+
+    /// The same absent onboarding on a *returning* launch is not a skip — it
+    /// is simply a launch that was never offered one — and must still open the
+    /// books that already exist.
+    #[test]
+    fn a_returning_launch_still_prepares_its_books() {
+        let (_guard, data, _conn) = temp_books();
+
+        let prepared = prepare_books(false, None)
+            .expect("prepare")
+            .expect("no books");
+
+        assert_eq!(prepared.db_path, data.path().join("nigel.db"));
+        assert!(prepared.db_path.exists());
+        assert!(prepared.post_setup_action.is_none());
     }
 }

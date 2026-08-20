@@ -4,7 +4,7 @@ title: 'Invoicing in the web UI: API endpoints and SPA screens'
 status: To Do
 assignee: []
 created_date: '2026-08-07 21:53'
-updated_date: '2026-08-08 00:28'
+updated_date: '2026-08-20 14:31'
 labels:
   - invoicing
   - web
@@ -33,5 +33,5 @@ Prerequisite: the invoicing data-layer structs in src/invoicing/ and models.rs n
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Superseded by TASK-68.6, which carries the full web-parity scope of the invoicing epic (TASK-68).
+Superseded by the executed epic 68 (invoicing management surface): the JSON API ships invoice list/detail, clients and /invoices/aging (server/routes/invoices.rs, clients.rs), the SPA ships the invoices and clients screens with figure parity (invoicing-parity.test.ts), and send/pay shipped with explicit confirmation plus preview-before-send (TASK-79). Every AC here describes shipped behavior.
 <!-- SECTION:NOTES:END -->

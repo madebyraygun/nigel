@@ -3,7 +3,11 @@ import './nigel-app.js';
 import type { NigelApp } from './nigel-app.js';
 import { appLocked, appUnauthorized, ApiError } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
-import { FakeApiClient, LOCKED_STATUS } from '../__mocks__/fake-api-client.js';
+import {
+  FakeApiClient,
+  LOCKED_STATUS,
+  UNINITIALIZED_STATUS,
+} from '../__mocks__/fake-api-client.js';
 
 /**
  * The whole app driven by FakeApiClient — which is itself the point: if the
@@ -110,6 +114,35 @@ describe('nigel-app', () => {
     const el = await mount();
     expect(document.title).toBe('Dashboard · Test Consultancy');
     expect(el).toBeTruthy();
+  });
+
+  describe('needs setup', () => {
+    const freshClient = () => {
+      const client = new FakeApiClient();
+      client.status = UNINITIALIZED_STATUS;
+      return client;
+    };
+
+    it('shows the setup gate instead of the app', async () => {
+      const el = await mount(freshClient());
+      expect(el.shadowRoot?.querySelector('nigel-setup-screen')).toBeTruthy();
+    });
+
+    it('renders no shell and no sidebar before the books exist', async () => {
+      // The locked gate's reasoning, for the other empty state: with no shell
+      // there is no screen element, so nothing can query a database that has
+      // not been created yet.
+      const el = await mount(freshClient());
+      expect(shell(el)).toBeNull();
+      expect(sidebar(el)).toBeNull();
+    });
+
+    it('fetches nothing but status before the books exist', async () => {
+      // The whole acceptance criterion in one assertion.
+      const client = freshClient();
+      await mount(client);
+      expect(client.calls).toEqual(['getStatus']);
+    });
   });
 
   describe('locked', () => {

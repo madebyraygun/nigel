@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{db, save, scheme_url, transport, SCHEME};
+use nigel_desktop::{db, imports, save, scheme_url, transport, SCHEME};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
@@ -18,7 +18,11 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![save::save_export])
+        .invoke_handler(tauri::generate_handler![
+            save::save_export,
+            imports::stage_import,
+            imports::pick_import_file
+        ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |_ctx, request, responder| {
             let router = router.clone();
             let runtime = runtime.clone();
@@ -34,6 +38,7 @@ fn main() {
             )
             .title("Nigel")
             .inner_size(1200.0, 820.0)
+            .min_inner_size(900.0, 700.0)
             .build()?;
             Ok(())
         })

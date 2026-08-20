@@ -1,9 +1,11 @@
 ---
 id: TASK-36
 title: 'Invoicing: Stripe payments are dated at sync time, not payment time'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-06 19:14'
+updated_date: '2026-08-20 14:36'
 labels:
   - bug
   - invoicing

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
 import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
+import { declarationsOf } from './token-resolution.js';
 
 const text = nigelTheme.cssText;
 
@@ -161,5 +162,21 @@ describe('the brand ramp', () => {
     for (const step of steps) {
       expect(step).toBeCloseTo(steps[0], 3);
     }
+  });
+
+  it('declares a periodic wordmark ramp in both modes', () => {
+    const declared = declarationsOf('--nc-grad-brand-text-cycle');
+    expect(declared.length).toBeGreaterThanOrEqual(2);
+    for (const value of declared) {
+      expect(value).toContain('repeating-linear-gradient');
+    }
+  });
+
+  it('closes the wordmark ramp on the colour it opened with', () => {
+    // A ramp whose ends disagree shows a seam once per cycle, which is the
+    // whole reason the periodic form exists.
+    const [light] = declarationsOf('--nc-grad-brand-text-cycle');
+    const stops = [...light.matchAll(/#[0-9a-f]{6}/gi)].map((m) => m[0].toLowerCase());
+    expect(stops.at(0)).toBe(stops.at(-1));
   });
 });

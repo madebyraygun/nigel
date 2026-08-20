@@ -16,7 +16,7 @@ serve` uses, so building the SPA comes first:
 
 ```bash
 cd web && npm run build
-cargo run -p nigel-desktop
+cd crates/nigel-desktop && cargo run
 ```
 
 Skip the first step and the window still opens — it just shows the "SPA not
@@ -26,7 +26,7 @@ sourceless `cargo build` shows for the CLI.
 ## The dev loop
 
 The SPA is embedded at build time, so a change to `web/` needs `npm run
-build` and a `cargo run -p nigel-desktop` rebuild before the shell shows it —
+build` and a `cargo run` rebuild before the shell shows it —
 there is no live reload here. The Vite dev server that gives the browser loop
 its speed proxies over HTTP, and a custom URI scheme is not something it can
 proxy to, so that loop stays outside the shell entirely:
@@ -37,7 +37,7 @@ cd web && npm run dev          # terminal 2
 ```
 
 Use the browser loop for UI work — it is the fast one — and reach for
-`cargo run -p nigel-desktop` only to check the transport itself: the scheme
+`cargo run` in `crates/nigel-desktop` only to check the transport itself: the scheme
 protocol, the save dialog, the PDF handling, anything a browser tab can't
 stand in for.
 
@@ -111,6 +111,49 @@ An invoice's PDF is never rendered inline — WebKitGTK has no built-in PDF
 viewer, and nothing in this app tries to frame a PDF — so it follows the same
 route as an export: `openInvoicePreview` fetches the bytes and hands them to
 `save_export` through a native save dialog, on all three platforms.
+
+## Imports
+
+A browser has no path to hand over, so the web flow uploads the bytes and gets
+an `uploadId` back. The shell has the path and no reason to put a statement
+through the webview at all, so it spools the file itself and answers with the
+same `uploadId`:
+
+| | Choosing | Getting the file to the spool |
+|---|---|---|
+| Browser | `wc-dropzone`'s hidden input and HTML5 drop | `POST /api/imports/upload` |
+| Shell | `pick_import_file`, or a drop on the window | `stage_import`, or the same call inside the pick |
+
+Both land in `<data_dir>/tmp/uploads/<id>/<filename>`, both take the name
+through `uploads::sanitize_filename`, both refuse anything over 25 MB, and both
+sweep spools older than an hour first. Preview and confirm are then the
+existing routes over the custom scheme with the staged id — there is no
+desktop-only import endpoint, which is what makes the two paths identical
+downstream rather than merely similar.
+
+`crates/nigel-desktop/src/imports.rs` holds both commands and the `stage_file`
+they share. The extension filter on the dialog is derived from
+`uploads::ALLOWED_EXTENSIONS`, so the dialog and the spool cannot disagree
+about what nigel reads.
+
+Two things are the shell's rather than the page's. Tauri intercepts drag events
+in the webview, so `wc-dropzone`'s own HTML5 handlers never fire there: in
+`native` mode it stands them down and takes its drag treatment from a
+`highlight` property the screen drives from `tauri://drag-enter`,
+`tauri://drag-over`, `tauri://drag-drop` and `tauri://drag-leave`. Those
+subscriptions are why `capabilities/default.json` exists — `plugin:event|listen`
+is ACL-checked on every call, unlike an app command, so without the capability a
+drop would go nowhere and say nothing.
+
+The events are window-level, so a statement dropped anywhere on the window is
+imported while the import screen is showing, and dropped on any other screen
+does nothing.
+
+`DesktopApiClient.importSource()` is the single point where all of this is
+decided. It answers `{kind: 'native', …}`; the web client answers
+`{kind: 'browser'}`; screens branch on the discriminant and never ask which
+shell they are in. A desktop client attached to a remote server will answer
+`browser` from here too, since a server on another machine cannot see this disk.
 
 ## Not a deep link
 

@@ -5,10 +5,11 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-13 15:45'
-updated_date: '2026-08-19 19:58'
+updated_date: '2026-08-20 14:19'
 labels:
   - architecture
   - tax
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-9
 priority: high
@@ -31,7 +32,7 @@ Introduce a single accounting class vocabulary — `asset`, `liability`, `equity
 
 **Deliberately a classification change, not a table merger.** Categories and accounts stay in their own tables; they simply gain a shared class. The full promotion of categories into a unified chart of accounts belongs with TASK-9.2, where the journal lines that need it live. This keeps the change additive and migratable, and the classes survive the merger intact when it comes.
 
-Migration backfills existing data: checking/savings → asset, credit_card/line_of_credit → liability, income categories → revenue, expense categories → expense, and the seeded `Owner Draw / Distribution` category → equity. Nothing needs re-categorizing by hand.
+Migration backfills existing data: checking/savings → asset, credit_card/line_of_credit → liability, income categories → revenue, expense categories → expense, and the seeded `Owner Draw / Distribution` category → equity. Nothing needs re-categorizing by hand. A `cash` account type (TASK-119) never passes through this backfill — the migration only sees types that existed before it ran; cash lands on asset at creation time through the account-type derivation, where TASK-119 adds its explicit arm.
 
 ## The trap to watch for
 

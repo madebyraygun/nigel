@@ -135,7 +135,10 @@ uninitialized, so the SPA can decide which screen to show before it has data.
 }
 ```
 
-`initialized` is whether the database file exists, `encrypted` whether it needs
+`initialized` is whether there are books here — the database file exists **and**
+has been written to. A zero-byte file, which is what a stray connection leaves
+behind, reads as uninitialized, and a client that sees `false` shows the setup
+gate rather than a dashboard over nothing. `encrypted` is whether it needs
 a key, and `locked` whether this process still lacks that key. `companyName` is
 `null` while locked or uninitialized — reading it requires the key — and
 `dataDir` names the directory of the database the server actually opened.
@@ -220,6 +223,46 @@ delay has already been served, the client may retry immediately.
 
 A successful unlock resets the counter. It is not persisted, so restarting the
 server clears it.
+
+### `POST /api/setup`
+
+Creates a set of books on a machine that has none. The web and desktop
+equivalent of the terminal's onboarding: the same four answers, the same three
+exits.
+
+```json
+{
+  "userName": "Marta",
+  "companyName": "Cedar Systems",
+  "profile": "business",
+  "password": "…",
+  "action": "fresh"
+}
+```
+
+`profile` is `business` or `personal` and picks the chart of accounts.
+`password` is optional; when present the database is encrypted from its first
+write, and the process stays unlocked afterwards. `action` is `fresh` — an
+empty ledger — or `demo`, which additionally builds `<data_dir>/demo/` with its
+own seeded database for a fictional consultancy and points the server at it.
+Unknown fields are refused.
+
+The answer is a full [`StatusResponse`](#get-apistatus) for the database that
+now exists, so a client needs no second round trip before it renders.
+
+Setup runs once. A call against books that already exist is `409` with
+`details.reason` of `already_initialized` — the guard is the route's, not the
+client's, so no client bug can write over somebody's ledger. An unknown
+`profile`, or a password holding a control character, is `400`.
+
+It is not exempt from the locked guard and needs no exemption: an
+uninitialized database cannot be locked. In web mode the session guard applies
+as it does to every other endpoint.
+
+**Loading books that already exist is not this endpoint.** That is
+[`POST /api/settings/data-dir`](#switching-data-directory), which already
+validates, migrates and rebinds, and which relocks the server when the target
+turns out to be encrypted.
 
 ## Reading data
 
