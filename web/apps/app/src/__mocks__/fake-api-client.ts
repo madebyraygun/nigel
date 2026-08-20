@@ -4,6 +4,7 @@ import type {
   CashflowParams,
   ExpenseParams,
   ExportTarget,
+  ImportSource,
   ReconciliationParams,
   RegisterParams,
   ReportDateParams,
@@ -72,6 +73,7 @@ import type {
   RuleTestResult,
   SendResult,
   SetPasswordRequest,
+  SetupRequest,
   StatusResponse,
   SyncResult,
   TaxSummary,
@@ -185,6 +187,13 @@ export const LOCKED_STATUS: StatusResponse = {
   companyName: null,
 };
 
+/** A machine that has never run Nigel: settings.json may exist, books do not. */
+export const UNINITIALIZED_STATUS: StatusResponse = {
+  ...UNLOCKED_STATUS,
+  initialized: false,
+  companyName: null,
+};
+
 /** No open receivables — the five buckets exist even when they are all zero. */
 export const EMPTY_AGING: AgingReport = {
   asOf: '2026-03-15',
@@ -265,6 +274,20 @@ export class FakeApiClient implements ApiClient {
     if (this.unlockError) throw this.unlockError;
     this.status = { ...this.status, locked: false };
     return { locked: false };
+  }
+
+  setupError: Error | null = null;
+
+  async setup(input: SetupRequest): Promise<StatusResponse> {
+    this.calls.push(`setup:${JSON.stringify(input)}`);
+    if (this.setupError) throw this.setupError;
+    this.status = {
+      ...this.status,
+      initialized: true,
+      companyName: input.companyName || null,
+      profile: input.profile,
+    };
+    return this.status;
   }
 
   // -- reports --------------------------------------------------------------
@@ -366,6 +389,13 @@ export class FakeApiClient implements ApiClient {
     params: ExportParams = {},
   ): ExportTarget {
     return { kind: 'href', href: this.exportUrl(report, format, params) };
+  }
+
+  /** A browser by default; the native-mode screen tests swap this. */
+  importSourceValue: ImportSource = { kind: 'browser' };
+
+  importSource(): ImportSource {
+    return this.importSourceValue;
   }
 
   // -- register -------------------------------------------------------------

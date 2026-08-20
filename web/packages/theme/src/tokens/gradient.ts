@@ -124,12 +124,25 @@ const GAPS = NIGEL_PALETTE.length - 1;
 const PERIOD_STEPS = NIGEL_PALETTE.length;
 const IMAGE_STEPS = GAPS + PERIOD_STEPS;
 const at = (step: number): string => `${((step / IMAGE_STEPS) * 100).toFixed(4)}%`;
-const cycleStops = [
-  ...NIGEL_PALETTE.map((c, i) => `${c} ${at(i)}`),
-  `${NIGEL_PALETTE[0]} ${at(PERIOD_STEPS)}`,
-].join(', ');
-const cycle = unsafeCSS(`repeating-linear-gradient(90deg, ${cycleStops})`);
+
+const cycleFrom = (palette: readonly string[]): string => {
+  const stops = [
+    ...palette.map((color, i) => `${color} ${at(i)}`),
+    `${palette[0]} ${at(PERIOD_STEPS)}`,
+  ].join(', ');
+  return `repeating-linear-gradient(90deg, ${stops})`;
+};
+
+const cycle = unsafeCSS(cycleFrom(NIGEL_PALETTE));
+const inkCycle = unsafeCSS(cycleFrom(NIGEL_PALETTE_INK));
 const cycleSize = unsafeCSS(`${((IMAGE_STEPS / GAPS) * 100).toFixed(4)}% 100%`);
+
+/**
+ * The pastel cycle as a value `color.ts` can name in dark mode, where the
+ * wordmark keeps the pastels. Both ramps have seven stops, so one
+ * `--nc-grad-brand-size` serves either.
+ */
+export const brandCycle = css`${cycle}`;
 
 /**
  * The drift itself: one period per iteration, which `--nc-grad-brand-size`
@@ -172,6 +185,10 @@ export const gradientCss = css`
     /* Gradient text on a light surface — the wordmark. Overridden back to the
        pastel ramp in dark mode, where the pastels are the legible choice. */
     --nc-grad-brand-text: linear-gradient(90deg, ${inkRamp});
+
+    /* The same ramp made periodic, for the wordmark's drift. Sized by
+       --nc-grad-brand-size like every other periodic image here. */
+    --nc-grad-brand-text-cycle: ${inkCycle};
 
     /* Text drawn on the gradient itself. Deliberately not mode-dependent and
        deliberately not --wa-color-text: the ramp above is the same pastel in

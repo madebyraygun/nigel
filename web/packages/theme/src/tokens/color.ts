@@ -1,5 +1,5 @@
 import { css } from 'lit';
-import { brandRamp } from './gradient.js';
+import { brandCycle, brandRamp } from './gradient.js';
 
 /**
  * The brand, danger, success, warning and info entries are darkened
@@ -106,6 +106,7 @@ const darkTokens = css`
      It names the plain ramp rather than --nc-grad-brand, which is periodic and
      sized for the button's hover drift. */
   --nc-grad-brand-text: ${brandRamp};
+  --nc-grad-brand-text-cycle: ${brandCycle};
 `;
 
 /**

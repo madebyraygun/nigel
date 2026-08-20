@@ -1,6 +1,6 @@
 import { signal, computed, Signal } from '../mixins/signal-watcher.js';
 import { ApiError, appLocked, type ApiClient } from '../api/index.js';
-import type { StatusResponse } from '../api/types.js';
+import type { SetupRequest, StatusResponse } from '../api/types.js';
 
 /**
  * Read-only view handed to consumers. Mutation goes through the store's
@@ -21,13 +21,18 @@ export type UnlockOutcome =
  * `starting` — the first `/api/status` has not answered yet.
  * `locked` — the database is encrypted and this process has no key, so the
  * unlock gate is the only thing rendered and no screen exists to fetch data.
+ * `needs-setup` — there is no database yet, so the setup gate collects the
+ * four answers a set of books is created from.
  * `failed` — status could not be read at all.
  * `ready` — the app proper.
  */
-export type BootPhase = 'starting' | 'locked' | 'failed' | 'ready';
+export type BootPhase = 'starting' | 'locked' | 'needs-setup' | 'failed' | 'ready';
 
 /** What a data-directory switch reported. */
 export type SwitchOutcome = { ok: true } | { ok: false; message: string };
+
+/** What a setup attempt reported. */
+export type SetupOutcome = { ok: true } | { ok: false; message: string };
 
 export interface AppStore {
   status: ReadonlySignal<StatusResponse | null>;
@@ -42,6 +47,7 @@ export interface AppStore {
 
   refreshStatus(): Promise<void>;
   unlock(password: string): Promise<UnlockOutcome>;
+  runSetup(input: SetupRequest): Promise<SetupOutcome>;
   switchDataDir(path: string): Promise<SwitchOutcome>;
 }
 
@@ -109,6 +115,22 @@ export function initializeAppStore(
     }
   };
 
+  const runSetup = async (input: SetupRequest): Promise<SetupOutcome> => {
+    try {
+      _status.set(await client.setup(input));
+      _statusError.set(null);
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof ApiError ? error.message : String(error),
+      };
+    }
+    // The route answers the fresh status, so the phase moves without a second
+    // round trip; the refresh is what picks up the background update check.
+    await refreshStatus();
+    return { ok: true };
+  };
+
   const switchDataDir = async (path: string): Promise<SwitchOutcome> => {
     try {
       await client.setDataDir(path);
@@ -136,9 +158,13 @@ export function initializeAppStore(
     // app back to the gate without a bespoke code path.
     boot: computed((): BootPhase => {
       const locked = (_status.get()?.locked ?? false) || appLocked.get();
+      // Locked wins: an encrypted file is somebody's books, and offering to
+      // set up over it would be offering to replace them.
       if (locked) return 'locked';
+      const status = _status.get();
+      if (status && !status.initialized) return 'needs-setup';
       if (_statusError.get()) return 'failed';
-      if (!_status.get()) return 'starting';
+      if (!status) return 'starting';
       return 'ready';
     }),
     initialized: computed(() => _status.get()?.initialized ?? false),
@@ -147,6 +173,7 @@ export function initializeAppStore(
 
     refreshStatus,
     unlock,
+    runSetup,
     switchDataDir,
   };
 

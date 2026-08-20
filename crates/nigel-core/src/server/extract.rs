@@ -5,8 +5,9 @@
 //! every other failure. These wrappers are the same extractors with the
 //! rejection translated.
 //!
-//! `POST /api/unlock` deliberately does not use `ApiJson`: its rejection text
-//! would quote the offending value, and that value is a password.
+//! `POST /api/unlock` and `POST /api/setup` deliberately do not use `ApiJson`:
+//! its rejection text would quote the offending value, and both of those
+//! bodies carry a password.
 
 use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::extract::{FromRequest, FromRequestParts, Path, Request};

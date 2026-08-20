@@ -31,8 +31,12 @@ const ALL: ScreenId[] = [
   'reconcile',
   'undo',
   'settings',
+  'setup',
   'unlock',
 ];
+
+/** Screens the boot phase reaches, which the sidebar never offers. */
+const GATES: ScreenId[] = ['setup', 'unlock'];
 
 describe('screen registry', () => {
   it('covers every screen the epic plans', () => {
@@ -78,13 +82,15 @@ describe('screen registry', () => {
   });
 
   describe('navItems', () => {
-    it('keeps unlock out of the sidebar', () => {
-      // Unlock is reached through the locked gate, never by choice.
-      expect(navItems().map((i) => i.id)).not.toContain('unlock');
+    it('keeps the gates out of the sidebar', () => {
+      // Both are reached by boot phase, never by choice.
+      const ids = navItems().map((i) => i.id);
+      expect(ids).not.toContain('unlock');
+      expect(ids).not.toContain('setup');
     });
 
-    it('lists every screen but the unlock gate, in registry order', () => {
-      expect(navItems().map((i) => i.id)).toEqual(ALL.filter((id) => id !== 'unlock'));
+    it('lists every screen but the gates, in registry order', () => {
+      expect(navItems().map((i) => i.id)).toEqual(ALL.filter((id) => !GATES.includes(id)));
     });
 
     it('carries the label and icon from the registry', () => {

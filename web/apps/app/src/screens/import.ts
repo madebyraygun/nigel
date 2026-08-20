@@ -4,6 +4,7 @@ import '@nigel/ui';
 import {
   dispatchNcToast,
   EMPTY_IMPORT_FORM,
+  unsupportedFileMessage,
   type ImportAccountOption,
   type ImportFormValue,
   type NcFileErrorDetail,
@@ -11,12 +12,18 @@ import {
   type NcImportChangeDetail,
 } from '@nigel/ui';
 
-import { ApiError, type ApiClient } from '../api/index.js';
+import {
+  ApiError,
+  type ApiClient,
+  type DragDropEvent,
+  type ImportSource,
+} from '../api/index.js';
 import type {
   CsvProfile,
   ImportConfirmation,
   ImporterFormat,
   ImportPreview,
+  StagedUpload,
 } from '../api/types.js';
 import {
   confirmRequestBody,
@@ -27,11 +34,27 @@ import {
   resultCounts,
   routeImportError,
   sameImportForm,
+  supportedDrop,
 } from './import-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
-type Busy = 'upload' | 'preview' | 'confirm' | null;
+type Busy = 'picking' | 'upload' | 'preview' | 'confirm' | null;
+
+/**
+ * What the spinner says the screen is doing. `picking` waits on the shell's own
+ * dialog, where no file has been chosen yet and nothing is being read.
+ */
+function busyLabel(busy: Busy): string {
+  switch (busy) {
+    case 'confirm':
+      return 'Importing';
+    case 'picking':
+      return 'Waiting for the file dialog';
+    default:
+      return 'Reading the file';
+  }
+}
 
 /**
  * The browser's import flow: choose, preview, confirm — one screen, three
@@ -158,6 +181,17 @@ export class NigelImportScreen extends LitElement {
   @state() private filename = '';
   @state() private filesize = 0;
 
+  /** Driven by the shell's drag events; the dropzone renders the treatment. */
+  @state() private highlight = false;
+
+  /** The file the shell has spooled, in native mode. */
+  private staged: StagedUpload | null = null;
+
+  /** Fixed for the screen's life: one client, one answer. */
+  @state() private source: ImportSource = { kind: 'browser' };
+
+  private unsubscribeDragDrop: (() => void) | null = null;
+
   @state() private preview: ImportPreview | null = null;
   @state() private result: ImportConfirmation | null = null;
   @state() private busy: Busy = null;
@@ -176,8 +210,38 @@ export class NigelImportScreen extends LitElement {
   /** Toast text already shown, so a repeated failure does not stack up. */
   private toasted = new Set<string>();
 
+  willUpdate(): void {
+    // Before the first render rather than after it: `source` decides how the
+    // dropzone paints, and setting reactive state once the update has
+    // completed would cost a second one.
+    if (!this.hasUpdated) this.source = this.client.importSource();
+  }
+
   firstUpdated(): void {
+    this.listenForDrops();
     void this.load();
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    // The first connect happens before `client` is set, so `firstUpdated` owns
+    // the first subscription; this one is for a screen that comes back.
+    if (this.hasUpdated) this.listenForDrops();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.unsubscribeDragDrop?.();
+    this.unsubscribeDragDrop = null;
+    this.highlight = false;
+  }
+
+  private listenForDrops(): void {
+    if (this.source.kind !== 'native' || this.unsubscribeDragDrop !== null) return;
+    const source = this.source;
+    this.unsubscribeDragDrop = source.onDragDrop((event) => {
+      void this.handleDragDrop(event);
+    });
   }
 
   // -- loading --------------------------------------------------------------
@@ -253,6 +317,7 @@ export class NigelImportScreen extends LitElement {
     // A new file invalidates everything downstream of it, including the copy
     // the server is holding.
     this.uploadId = null;
+    this.staged = null;
     this.preview = null;
     this.result = null;
     this.clearErrors();
@@ -265,6 +330,65 @@ export class NigelImportScreen extends LitElement {
   private handleFileClear = (): void => {
     this.discard();
   };
+
+  private handlePickRequest = async (): Promise<void> => {
+    if (this.source.kind !== 'native' || this.busy !== null) return;
+    // Busy so a second request cannot open a second dialog: the webview keeps
+    // running while the shell's dialog is open.
+    this.busy = 'picking';
+    try {
+      const staged = await this.source.pick();
+      if (staged !== null) this.adopt(staged);
+    } catch (error) {
+      this.refuse(error);
+    } finally {
+      this.busy = null;
+    }
+  };
+
+  /**
+   * Tauri's drag events are window-level, so a drop anywhere on the window
+   * lands here while this screen is the one showing.
+   */
+  private async handleDragDrop(event: DragDropEvent): Promise<void> {
+    if (event.type !== 'drop') {
+      this.highlight = event.type === 'over';
+      return;
+    }
+
+    this.highlight = false;
+    if (this.busy !== null) return;
+    const path = supportedDrop(event.paths);
+    if (path === null) {
+      this.dropzoneError = unsupportedFileMessage();
+      return;
+    }
+    await this.stage(path);
+  }
+
+  private async stage(path: string): Promise<void> {
+    if (this.source.kind !== 'native') return;
+    this.busy = 'upload';
+    try {
+      this.adopt(await this.source.stagePath(path));
+    } catch (error) {
+      this.refuse(error);
+    } finally {
+      this.busy = null;
+    }
+  }
+
+  /** A staged file replaces everything the previous choice implied. */
+  private adopt(staged: StagedUpload): void {
+    this.staged = staged;
+    this.file = null;
+    this.filename = staged.filename;
+    this.filesize = staged.size;
+    this.uploadId = staged.uploadId;
+    this.preview = null;
+    this.result = null;
+    this.clearErrors();
+  }
 
   private handleFormChange = (event: Event): void => {
     this.form = (event as CustomEvent<NcImportChangeDetail>).detail.value;
@@ -280,8 +404,13 @@ export class NigelImportScreen extends LitElement {
     this.mappingError = '';
   }
 
+  /** A file has been chosen, however this client chooses one. */
+  private get chosen(): boolean {
+    return this.file !== null || this.staged !== null;
+  }
+
   private get ready(): boolean {
-    return this.file !== null && this.form.account !== '' && this.busy === null;
+    return this.chosen && this.form.account !== '' && this.busy === null;
   }
 
   /**
@@ -293,7 +422,7 @@ export class NigelImportScreen extends LitElement {
    */
   private get dirty(): boolean {
     return (
-      this.file !== null ||
+      this.chosen ||
       this.preview !== null ||
       this.dropzoneError !== '' ||
       !sameImportForm(this.form, this.baseline)
@@ -319,8 +448,19 @@ export class NigelImportScreen extends LitElement {
   /** The server's copy of the chosen file, uploading it if it has none. */
   private async ensureUpload(): Promise<string> {
     if (this.uploadId !== null) return this.uploadId;
-    if (this.file === null) throw new Error('no file chosen');
 
+    if (this.source.kind === 'native') {
+      if (this.staged === null) throw new Error('no file chosen');
+      this.busy = 'upload';
+      // The retained path is why an expired spool costs nothing here: the file
+      // never left the disk.
+      const staged = await this.source.stagePath(this.staged.path);
+      this.staged = staged;
+      this.uploadId = staged.uploadId;
+      return staged.uploadId;
+    }
+
+    if (this.file === null) throw new Error('no file chosen');
     this.busy = 'upload';
     const upload = await this.client.uploadImport(this.file);
     this.uploadId = upload.uploadId;
@@ -423,9 +563,24 @@ export class NigelImportScreen extends LitElement {
     if (routed.toast) this.toast(routed.message);
   }
 
+  /**
+   * A staging failure, which the shell reports as a bare string.
+   *
+   * Tauri rejects a `Result<_, String>` with the string itself, so the size
+   * refusal and the unreadable-file message are not `ApiError`s and would
+   * reach `surface` as an unrecognized throw and be flattened to the generic
+   * toast. They are already the sentence to show, under the well.
+   */
+  private refuse(error: unknown): void {
+    if (typeof error === 'string') this.dropzoneError = error;
+    else this.surface(error);
+  }
+
   /** Everything about the current file, gone. */
   private discard(): void {
     this.file = null;
+    this.staged = null;
+    this.highlight = false;
     this.filename = '';
     this.filesize = 0;
     this.uploadId = null;
@@ -479,10 +634,13 @@ export class NigelImportScreen extends LitElement {
             ? html`<p class="load-error" role="alert">${this.loadError}</p>`
             : nothing}
           <wc-dropzone
+            ?native=${this.source.kind === 'native'}
+            ?highlight=${this.highlight}
             filename=${this.filename}
             .size=${this.filesize}
             error=${this.dropzoneError}
             ?busy=${busyNow}
+            @nc-pick-request=${this.handlePickRequest}
             @nc-file-select=${this.handleFileSelect}
             @nc-file-error=${this.handleFileError}
             @nc-file-clear=${this.handleFileClear}
@@ -501,10 +659,7 @@ export class NigelImportScreen extends LitElement {
           ></wc-import-form>
 
           ${busyNow
-            ? html`<wc-spinner
-                show-label
-                label=${this.busy === 'confirm' ? 'Importing' : 'Reading the file'}
-              ></wc-spinner>`
+            ? html`<wc-spinner show-label label=${busyLabel(this.busy)}></wc-spinner>`
             : nothing}
         </div>
 

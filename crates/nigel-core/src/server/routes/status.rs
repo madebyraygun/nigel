@@ -73,6 +73,14 @@ pub(crate) struct StatusResponse {
     invoicing: Option<crate::settings::InvoicingStatus>,
 }
 
+/// Whether there are books here: the file exists **and** has been written to.
+///
+/// A zero-byte file is what a stray connection leaves behind. Reading it as
+/// initialized is what puts a first run in front of a dashboard over nothing.
+pub(crate) fn initialized(db_path: &Path) -> bool {
+    std::fs::metadata(db_path).is_ok_and(|meta| meta.len() > 0)
+}
+
 /// Everything `GET /api/status` reports, computed fresh.
 ///
 /// Shared with the data-directory switch, which answers with the status of the
@@ -84,7 +92,7 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
     // otherwise report one database's name under another's path.
     let _gate = state.db_gate.read().await;
     let db_path = state.db_path();
-    let initialized = db_path.exists();
+    let initialized = initialized(&db_path);
     let encrypted = db::is_encrypted(&db_path)?;
     let locked = encrypted && db::get_db_password().is_none();
 
@@ -301,5 +309,41 @@ mod tests {
         let rendered = format!("{request:?}");
         assert!(!rendered.contains("hunter2"), "leaked in {rendered}");
         assert!(rendered.contains("<redacted>"), "got {rendered}");
+    }
+
+    #[tokio::test]
+    async fn a_zero_byte_file_is_not_initialized() {
+        // A stray connection leaves a zero-byte file behind. It is not books,
+        // and calling it initialized is what strands a first run on a broken
+        // dashboard instead of sending it to setup.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("nigel.db");
+        std::fs::write(&db_path, b"").expect("touch");
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/status", &token).await;
+
+        assert_eq!(body["initialized"], false);
+    }
+
+    #[tokio::test]
+    async fn an_absent_file_is_not_initialized() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (app, token) = app_for(&dir.path().join("nigel.db"));
+
+        let body = ok_json(&app, "/api/status", &token).await;
+
+        assert_eq!(body["initialized"], false);
+        assert_eq!(body["locked"], false, "an absent database cannot be locked");
+    }
+
+    #[tokio::test]
+    async fn a_seeded_database_is_initialized() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/status", &token).await;
+
+        assert_eq!(body["initialized"], true);
     }
 }

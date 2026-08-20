@@ -460,6 +460,23 @@ mod tests {
     }
 
     #[test]
+    fn migration_versions_are_contiguous_from_one() {
+        // `apply_migrations` runs what is numbered above the database's stamp, so
+        // a duplicate number is skipped and a gap swallows whatever later fills
+        // it — both silently, and both are what two branches numbering their
+        // migrations in parallel produce. Contiguity is the invariant that turns
+        // either into a failing test instead of a database missing a migration.
+        for (index, migration) in MIGRATIONS.iter().enumerate() {
+            let expected = index as u32 + 1;
+            assert_eq!(
+                migration.version, expected,
+                "migration {:?} is v{} at index {index}, where v{expected} belongs",
+                migration.description, migration.version
+            );
+        }
+    }
+
+    #[test]
     fn test_v0_upgrade() {
         let dir = tempfile::tempdir().unwrap();
         let conn = get_connection(&dir.path().join("test.db")).unwrap();
