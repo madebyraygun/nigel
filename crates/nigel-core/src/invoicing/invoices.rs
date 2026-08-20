@@ -309,6 +309,60 @@ fn is_overdue(due_date: Option<&str>, today: &str) -> bool {
     }
 }
 
+/// The status a reader sees on `today`, over the stored one.
+///
+/// The column is the event-driven record and stays that way: `refresh_status`
+/// writes it when something happens to the invoice, and nothing happens the day
+/// a due date passes. So the read overlays `overdue` onto a `sent` or `partial`
+/// invoice that owes money past its due date, and leaves every other status
+/// exactly as stored — a paid, void or draft invoice is none of the reader's
+/// business here. `sent` and `partial` are the only two the overlay can widen,
+/// which is why every `status IN ('sent','partial','overdue')` query already
+/// selects the rows it applies to.
+pub fn effective_status<'a>(
+    status: &'a str,
+    due_date: Option<&str>,
+    amount_owing: f64,
+    today: &str,
+) -> &'a str {
+    let owing_and_open = amount_owing > 0.0
+        && (status == InvoiceStatus::Sent.as_str() || status == InvoiceStatus::Partial.as_str());
+    if owing_and_open && is_overdue(due_date, today) {
+        return InvoiceStatus::Overdue.as_str();
+    }
+    status
+}
+
+/// One loaded invoice as a reader sees it on `today`.
+///
+/// Takes `paid` rather than reading it, because every caller has already asked
+/// for it to render a balance.
+pub fn with_effective_status(mut invoice: Invoice, paid: f64, today: &str) -> Invoice {
+    let effective = effective_status(
+        &invoice.status,
+        invoice.due_date.as_deref(),
+        invoice.total - paid,
+        today,
+    )
+    .to_string();
+    invoice.status = effective;
+    invoice
+}
+
+/// [`get_invoice`] for a screen: the same row, read on `today`.
+pub fn get_invoice_as_of(conn: &Connection, id: i64, today: &str) -> Result<Invoice> {
+    let invoice = get_invoice(conn, id)?;
+    let paid = paid_amount(conn, invoice.id)?;
+    Ok(with_effective_status(invoice, paid, today))
+}
+
+/// [`get_invoice_by_number`] for a screen: the same row, read on `today`.
+pub fn get_invoice_by_number_as_of(conn: &Connection, number: i64, today: &str) -> Result<Invoice> {
+    let invoice = get_invoice_by_number(conn, number)?;
+    let paid = paid_amount(conn, invoice.id)?;
+    Ok(with_effective_status(invoice, paid, today))
+}
+
 /// The one date rule every invoicing writer applies: a real calendar day written
 /// `YYYY-MM-DD` with a four-digit year.
 ///
@@ -794,6 +848,18 @@ pub fn validate_payment_method(method: &str) -> Result<()> {
     )))
 }
 
+/// The stored statuses that could present as `filter` on any day.
+///
+/// `overdue` is the only word that widens: an invoice a reader sees as overdue
+/// is stored `sent` or `partial` until the next event touches it, so the query
+/// has to select all three and let the derivation decide.
+fn stored_candidates(filter: &str) -> Result<Vec<&'static str>> {
+    if filter == InvoiceStatus::Overdue.as_str() {
+        return Ok(OPEN_STATUSES.to_vec());
+    }
+    statuses_for(filter)
+}
+
 /// Expand a `status` filter to the statuses it selects.
 fn statuses_for(filter: &str) -> Result<Vec<&'static str>> {
     if filter == "open" {
@@ -820,9 +886,10 @@ pub fn list_invoices(
     conn: &Connection,
     status: Option<&str>,
     client_id: Option<i64>,
+    today: &str,
 ) -> Result<Vec<InvoiceListRow>> {
     let statuses = match status {
-        Some(filter) => Some(statuses_for(filter)?),
+        Some(filter) => Some(stored_candidates(filter)?),
         None => None,
     };
 
@@ -860,7 +927,7 @@ pub fn list_invoices(
     );
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt
+    let mut rows = stmt
         .query_map(param_refs.as_slice(), |r| {
             let total: f64 = r.get(8)?;
             let paid: f64 = r.get(9)?;
@@ -879,6 +946,19 @@ pub fn list_invoices(
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    for row in &mut rows {
+        let effective =
+            effective_status(&row.status, row.due_date.as_deref(), row.balance, today).to_string();
+        row.status = effective;
+    }
+    // The filter answers in the vocabulary the rows are rendered in. `open` is
+    // closed under the overlay — all three of its words stay inside the set —
+    // so it needs no second pass.
+    if let Some(filter) = status {
+        if filter != "open" {
+            rows.retain(|row| row.status == filter);
+        }
+    }
     Ok(rows)
 }
 
@@ -1416,7 +1496,9 @@ mod tests {
             .is_none());
         delete_invoice(&conn, id).unwrap();
 
-        assert!(list_invoices(&conn, None, None).unwrap().is_empty());
+        assert!(list_invoices(&conn, None, None, "2026-08-10")
+            .unwrap()
+            .is_empty());
         assert!(matches!(
             get_invoice(&conn, id),
             Err(NigelError::NotFound(_))
@@ -1649,7 +1731,9 @@ mod tests {
         assert_eq!(conflict_code(&err), "client_archived");
         assert!(err.to_string().contains("Acme Co"), "got: {err}");
         assert_eq!(
-            list_invoices(&conn, None, None).unwrap().len(),
+            list_invoices(&conn, None, None, "2026-08-12")
+                .unwrap()
+                .len(),
             0,
             "nothing was written"
         );
@@ -1670,7 +1754,12 @@ mod tests {
             unit_amount: 100.0,
         }];
         create_invoice(&conn, cid, "2026-08-12", None, "USD", &items, None, None).unwrap();
-        assert_eq!(list_invoices(&conn, None, None).unwrap().len(), 1);
+        assert_eq!(
+            list_invoices(&conn, None, None, "2026-08-12")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     /// AC #3: archive changes no query that lists or ages an invoice.
@@ -1702,7 +1791,7 @@ mod tests {
         }
         archive_client(&conn, cid, "2026-08-11").unwrap();
 
-        let rows = list_invoices(&conn, None, None).unwrap();
+        let rows = list_invoices(&conn, None, None, "2026-08-11").unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows
             .iter()
@@ -2794,7 +2883,7 @@ mod tests {
         let (_cid, ids) = seed_three(&conn);
         record_payment(&conn, ids[1], 50.0, "2026-08-05", "ach", None, "2026-08-05").unwrap();
 
-        let rows = list_invoices(&conn, None, None).unwrap();
+        let rows = list_invoices(&conn, None, None, "2026-08-10").unwrap();
         assert_eq!(rows.len(), 3);
 
         let numbers: Vec<i64> = rows.iter().map(|r| r.number).collect();
@@ -2848,7 +2937,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = list_invoices(&conn, None, None).unwrap();
+        let rows = list_invoices(&conn, None, None, "2026-08-10").unwrap();
         let paid = |id: i64| rows.iter().find(|r| r.id == id).unwrap().paid;
         assert_eq!(paid(ids[0]), 50.0);
         assert_eq!(paid(ids[1]), 100.0);
@@ -2865,7 +2954,7 @@ mod tests {
             .unwrap();
 
         // A list that hides invoices is worse than one that shows a dash.
-        let rows = list_invoices(&conn, None, None).unwrap();
+        let rows = list_invoices(&conn, None, None, "2026-08-10").unwrap();
         assert_eq!(rows.len(), ids.len());
         assert!(rows.iter().all(|r| r.client_name.is_none()), "{rows:?}");
     }
@@ -2879,7 +2968,7 @@ mod tests {
         record_payment(&conn, ids[1], 50.0, "2026-08-06", "ach", None, "2026-08-06").unwrap();
 
         let numbers = |status: &str| -> Vec<i64> {
-            let mut ids: Vec<i64> = list_invoices(&conn, Some(status), None)
+            let mut ids: Vec<i64> = list_invoices(&conn, Some(status), None, "2026-08-10")
                 .unwrap()
                 .iter()
                 .map(|r| r.id)
@@ -2897,7 +2986,7 @@ mod tests {
     #[test]
     fn an_unknown_status_filter_is_invalid_and_names_the_legal_set() {
         let (_d, conn) = test_conn();
-        let err = list_invoices(&conn, Some("archived"), None).unwrap_err();
+        let err = list_invoices(&conn, Some("archived"), None, "2026-08-10").unwrap_err();
         assert!(matches!(err, NigelError::Invalid(_)), "got: {err:?}");
         let text = err.to_string();
         for word in ["draft", "overdue", "open"] {
@@ -2911,7 +3000,7 @@ mod tests {
         let (cid, ids) = seed_three(&conn);
         let other = open_invoice(&conn, "Globex", "2026-01-05", None, 100.0);
 
-        let mine: Vec<i64> = list_invoices(&conn, None, Some(cid))
+        let mine: Vec<i64> = list_invoices(&conn, None, Some(cid), "2026-08-10")
             .unwrap()
             .iter()
             .map(|r| r.id)
@@ -2926,7 +3015,7 @@ mod tests {
         open_invoice(&conn, "Acme", "2026-01-05", Some("2026-02-05"), 100.0);
         open_invoice(&conn, "Globex", "2026-01-05", None, 100.0);
 
-        let rows = list_invoices(&conn, None, None).unwrap();
+        let rows = list_invoices(&conn, None, None, "2026-08-10").unwrap();
         let dues: Vec<Option<String>> = rows.iter().map(|r| r.due_date.clone()).collect();
         assert!(dues.contains(&Some("2026-02-05".to_string())), "{dues:?}");
         assert!(dues.contains(&None), "{dues:?}");
@@ -2935,7 +3024,9 @@ mod tests {
     #[test]
     fn list_invoices_on_an_empty_book_is_empty() {
         let (_d, conn) = test_conn();
-        assert!(list_invoices(&conn, None, None).unwrap().is_empty());
+        assert!(list_invoices(&conn, None, None, "2026-08-10")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -3353,5 +3444,157 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("reference"), "got: {err}");
+    }
+
+    /// The overlay is a display rule over three facts, so it is tested as one.
+    #[test]
+    fn effective_status_overlays_overdue_only_where_money_is_owed_past_a_due_date() {
+        let due = Some("2026-08-10");
+
+        assert_eq!(
+            effective_status("sent", due, 100.0, "2026-08-11"),
+            "overdue"
+        );
+        assert_eq!(
+            effective_status("partial", due, 60.0, "2026-08-11"),
+            "overdue"
+        );
+        // On the due date itself, nothing is late.
+        assert_eq!(effective_status("sent", due, 100.0, "2026-08-10"), "sent");
+        // Nothing owed, nothing overdue.
+        assert_eq!(effective_status("sent", due, 0.0, "2026-08-11"), "sent");
+        // No due date is never overdue, however old the invoice is.
+        assert_eq!(effective_status("sent", None, 100.0, "2030-01-01"), "sent");
+        // A settled or cancelled invoice is neither.
+        assert_eq!(effective_status("paid", due, 0.0, "2026-08-11"), "paid");
+        assert_eq!(effective_status("void", due, 100.0, "2026-08-11"), "void");
+        assert_eq!(effective_status("draft", due, 100.0, "2026-08-11"), "draft");
+    }
+
+    /// The read agrees with the aging report on the same day — the disagreement
+    /// TASK-35 is about — and the stored column is not touched by looking.
+    #[test]
+    fn a_past_due_invoice_reads_overdue_from_the_list_and_from_the_report() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Globex", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Site build".into(),
+            quantity: 1.0,
+            unit_amount: 960.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-06-01",
+            Some("2026-07-01"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, id, "2026-06-01").unwrap();
+        // Published before the due date, and nothing has touched it since.
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "sent");
+
+        let rows = list_invoices(&conn, None, None, "2026-07-15").unwrap();
+        assert_eq!(rows[0].status, "overdue", "{rows:?}");
+
+        let report = ar_aging_detail(&conn, "2026-07-15").unwrap();
+        assert_eq!(report.invoices[0].number, rows[0].number);
+        assert_eq!(report.invoices[0].bucket, "1-30");
+
+        // A read never writes: the column is still the event-driven record.
+        let stored: String = conn
+            .query_row("SELECT status FROM invoices WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, "sent");
+    }
+
+    /// An invoice with no due date ages on the report from its issue date, but
+    /// it is never overdue — the report is a cash-flow view, the status is a
+    /// promise about a date nobody made.
+    #[test]
+    fn an_invoice_with_no_due_date_ages_on_the_report_but_never_reads_overdue() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Initech", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Audit".into(),
+            quantity: 1.0,
+            unit_amount: 500.0,
+        }];
+        let id = create_invoice(&conn, cid, "2026-06-01", None, "USD", &items, None, None).unwrap();
+        mark_published(&conn, id, "2026-06-01").unwrap();
+
+        let rows = list_invoices(&conn, None, None, "2026-07-15").unwrap();
+        assert_eq!(rows[0].status, "sent", "{rows:?}");
+        assert_eq!(
+            get_invoice_as_of(&conn, id, "2026-07-15").unwrap().status,
+            "sent"
+        );
+
+        let report = ar_aging_detail(&conn, "2026-07-15").unwrap();
+        assert_eq!(report.invoices[0].days_past_due, 44);
+    }
+
+    /// The filter answers in the same vocabulary the rows are rendered in.
+    #[test]
+    fn the_status_filter_selects_on_what_a_reader_sees() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let late = create_invoice(
+            &conn,
+            cid,
+            "2026-06-01",
+            Some("2026-07-01"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, late, "2026-06-01").unwrap();
+        let current = create_invoice(
+            &conn,
+            cid,
+            "2026-07-01",
+            Some("2026-08-01"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, current, "2026-07-01").unwrap();
+
+        let overdue: Vec<i64> = list_invoices(&conn, Some("overdue"), None, "2026-07-15")
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(overdue, vec![late]);
+
+        let sent: Vec<i64> = list_invoices(&conn, Some("sent"), None, "2026-07-15")
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(sent, vec![current]);
+
+        // `open` selects both either way: the overlay moves a row between the
+        // words inside that set, never out of it.
+        assert_eq!(
+            list_invoices(&conn, Some("open"), None, "2026-07-15")
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

@@ -319,7 +319,7 @@ pub fn list() -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     println!(
         "{}",
-        format_invoice_list(&list_invoices(&conn, None, None)?)
+        format_invoice_list(&list_invoices(&conn, None, None, &crate::cli::today())?)
     );
     Ok(())
 }

@@ -287,7 +287,7 @@ async fn capture_web_invoicing_fixtures() {
     let texts = [
         (
             "invoices",
-            format_invoice_list(&inv::list_invoices(&conn, None, None).expect("list")),
+            format_invoice_list(&inv::list_invoices(&conn, None, None, AS_OF).expect("list")),
         ),
         (
             "invoice-1250",

@@ -430,7 +430,7 @@ pub struct InvoiceManager {
 impl InvoiceManager {
     pub fn new(conn: &Connection, greeting: &str) -> Self {
         Self {
-            rows: list_invoices(conn, None, None).unwrap_or_default(),
+            rows: list_invoices(conn, None, None, &crate::cli::today()).unwrap_or_default(),
             selection: 0,
             scroll_offset: 0,
             last_visible_rows: 20,
@@ -444,7 +444,7 @@ impl InvoiceManager {
     }
 
     fn reload_list(&mut self, conn: &Connection) {
-        self.rows = list_invoices(conn, None, None).unwrap_or_default();
+        self.rows = list_invoices(conn, None, None, &crate::cli::today()).unwrap_or_default();
         if self.rows.is_empty() {
             self.selection = 0;
         } else {
@@ -2649,7 +2649,11 @@ mod tests {
         // the rule is the CLI's, so the screen cannot disagree about it.
         let (_d, conn) = test_conn();
         seed_invoice(&conn, "Cedar Systems", 100.0);
-        let invoice = get_invoice(&conn, list_invoices(&conn, None, None).unwrap()[0].id).unwrap();
+        let invoice = get_invoice(
+            &conn,
+            list_invoices(&conn, None, None, &crate::cli::today()).unwrap()[0].id,
+        )
+        .unwrap();
 
         for amount in [-25.0, f64::NAN, f64::INFINITY] {
             let message = field_wording(
@@ -3672,6 +3676,16 @@ mod tests {
         fn a_successful_send_publishes_emails_and_shows_the_url() {
             let (_d, conn) = test_conn();
             let id = seed_invoice(&conn, "Cedar Systems", 100.0);
+            // Due ahead of whatever day this runs on: the subject is the
+            // reload, and a screen reads the wall clock.
+            let not_yet_due = (chrono::Local::now() + chrono::Duration::days(30))
+                .format("%Y-%m-%d")
+                .to_string();
+            conn.execute(
+                "UPDATE invoices SET due_date = ?1 WHERE id = ?2",
+                rusqlite::params![not_yet_due, id],
+            )
+            .unwrap();
             let mut mgr = manager(&conn);
             mgr.handle_key(KeyCode::Enter, &conn);
             let mail = FakeMail::default();
@@ -3856,7 +3870,10 @@ mod tests {
     }
 
     fn row_of(conn: &Connection) -> InvoiceListRow {
-        list_invoices(conn, None, None).unwrap().pop().unwrap()
+        list_invoices(conn, None, None, &crate::cli::today())
+            .unwrap()
+            .pop()
+            .unwrap()
     }
 
     #[test]

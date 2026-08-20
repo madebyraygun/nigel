@@ -198,6 +198,7 @@ async fn list(
             conn,
             query.status.as_deref(),
             client_id,
+            &crate::clock::today(),
         )?)
     })
     .await?;

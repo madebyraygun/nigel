@@ -1057,7 +1057,7 @@ mod tests {
         assert_eq!(after.outstanding, before.outstanding);
         assert_eq!(after.invoices.len(), before.invoices.len());
         assert_eq!(
-            crate::invoicing::invoices::list_invoices(&conn, None, None)
+            crate::invoicing::invoices::list_invoices(&conn, None, None, "2026-08-10")
                 .unwrap()
                 .len(),
             2
