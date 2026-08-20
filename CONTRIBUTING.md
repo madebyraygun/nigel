@@ -85,9 +85,8 @@ External contributions require a one-time CLA signature — a single comment on 
 first pull request, prompted automatically by a bot. The agreement is short and worth
 reading: [.github/cla/CLA.md](.github/cla/CLA.md).
 
-The honest reason an MIT project asks for this: Nigel sells signed desktop builds and
-may offer commercial licensing, and the CLA preserves the maintainer's ability to do
-that with a clean chain of title. You keep ownership of your work, and your
-contribution stays MIT-licensed in this repository, always — the agreement changes who
-may *relicense*, never what you or any user receives. The full reasoning lives in
-`backlog/decisions/` (decision-2).
+Nigel sells signed desktop builds and may offer commercial licensing, and the CLA
+preserves the maintainer's ability to do so with a clean chain of title. You keep
+ownership of your work, and your contribution stays MIT-licensed in this repository,
+forever — the agreement changes who may *relicense*, never what you or any user
+receives.

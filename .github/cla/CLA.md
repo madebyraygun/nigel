@@ -1,59 +1,59 @@
-# Nigel Individual Contributor License Agreement
+# Nigel Contributor License Agreement
 
-Thank you for contributing to Nigel. This agreement clarifies the rights you grant
-Bluepeak Design, LLC ("we", "us") when you contribute, and what you keep. It is a
-license grant, not a copyright assignment: **you keep ownership of your work, and your
-contribution stays MIT-licensed in this repository.** What the agreement adds is our
-right to also offer Nigel — including your contribution — under other license terms,
-which is what lets us sell signed builds and offer commercial licensing while the
-source stays open. The reasoning is recorded in
-`backlog/decisions/decision-2 - Licensing-stay-MIT-with-guardrails-—-Fair-Source-evaluated-and-deferred.md`.
+Thank you for contributing to Nigel. This agreement sets out what rights you give
+Raygun Design, LLC ("we", "us") when you contribute, and what you keep.
 
-By commenting that you sign this agreement on a pull request, you accept the terms
-below for that contribution and all your future contributions to this repository.
+**You keep ownership of your work.** This is a license, not a transfer of copyright,
+and your contribution stays MIT-licensed in this repository. What the agreement adds
+is our permission to also offer Nigel — your contribution included — under other
+license terms, which is what lets us offer commercial licensing while the source
+stays open.
 
-## 1. Definitions
+Comment on a pull request that you sign this agreement and it applies to that
+contribution and to every contribution you make to this repository afterwards.
 
-"Contribution" means any original work of authorship you intentionally submit to this
-repository for inclusion in Nigel — code, documentation, fixtures, or configuration —
-in any form (pull request, patch, issue attachment).
+## 1. What counts as a contribution
 
-"You" means the copyright owner making the Contribution: you individually, or, if your
-employer owns the rights in your work, you confirm in section 4 that you are authorized
-to make the Contribution on its behalf.
+Anything you deliberately submit to this repository for inclusion in Nigel — code,
+documentation, fixtures, configuration — in any form.
 
-## 2. Copyright license
+"You" means whoever owns the copyright in that work: you, or your employer if it owns
+the rights in what you write. If it is your employer, section 4 is where you confirm
+you may act on its behalf.
 
-You grant us a perpetual, worldwide, non-exclusive, royalty-free, irrevocable copyright
-license to use, reproduce, modify, prepare derivative works of, publicly display,
-publicly perform, distribute, and sublicense your Contribution and derivative works of
-it — including the right to distribute it under license terms of our choosing, open or
-commercial. This grant is in addition to, and does not replace, the MIT license under
-which your Contribution is published in this repository.
+## 2. Copyright
 
-## 3. Patent license
+You give us permission to use, change, distribute and sublicense your contribution and
+anything derived from it, including under license terms of our choosing, open source or
+commercial. That permission is worldwide, free of charge, non-exclusive, and permanent —
+once given, it cannot be withdrawn.
 
-You grant us and all recipients of Nigel a perpetual, worldwide, non-exclusive,
-royalty-free, irrevocable patent license to make, use, sell, offer for sale, import,
-and otherwise transfer your Contribution, alone and in combination with Nigel, covering
-only those of your patent claims that are necessarily infringed by your Contribution.
-If anyone institutes patent litigation alleging that your Contribution infringes a
-patent, the patent licenses granted to that party under this agreement terminate.
+It sits alongside the MIT license your contribution is published under here. It does not
+replace it.
 
-## 4. Your representations
+## 3. Patents
 
-You represent that:
+If you hold a patent that your contribution necessarily infringes, you license it — to us
+and to everyone who receives Nigel — to make, use, sell, offer for sale, import and
+otherwise transfer that contribution, on its own or as part of Nigel. Same terms as
+above: worldwide, free, non-exclusive, permanent.
 
-- each Contribution is your original creation, or you have identified the parts that
-  are not and their license terms when submitting;
-- you are legally entitled to grant these licenses — in particular, if an employer has
-  rights in your work, you have its permission or it has waived those rights;
-- your Contribution includes no material you are obligated to keep confidential.
+This covers only the patent claims your own contribution infringes, not your patents
+generally. If anyone brings patent litigation claiming that your contribution infringes a
+patent, the patent license this agreement gave that party ends.
 
-You are not required to provide support for your Contribution. Except for these
-representations, your Contribution is provided "as is", without warranties of any kind.
+## 4. What you are promising
 
-## 5. Scope
+- The work is your own. If part of it is not, you identified that part and its license
+  terms when you submitted it.
+- You are allowed to grant these licenses. If an employer has rights in your work, you
+  have its permission or it has waived those rights.
+- Nothing in your contribution is material you are obliged to keep confidential.
 
-This agreement covers your Contributions to this repository only. It does not change
-your rights to use your own work for any other purpose.
+You are not expected to support your contribution or to fix it later. Beyond the three
+promises above, you provide it "as is", with no warranties of any kind.
+
+## 5. What this does not cover
+
+Only your contributions to this repository are covered. Your work remains yours to use
+anywhere else, for any purpose.

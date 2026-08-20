@@ -34,7 +34,9 @@ status=0
 gate='Raygun|RAYGUN|\bDalton\b|\bRooney\b|(^|[^.a-z])rygn\.io|/Users/[a-z]|P\.O\. Box'
 # Fixture and placeholder values are allowed; anything else shaped like them is not.
 # Stated as an allowlist so the real values never have to appear in this file.
-allow='P\.O\. Box 1234|/Users/(sam|you|<|\$)'
+# The licensing entity's legal name is org metadata in the sense described above: the
+# CLA has no force unless it names the actual licensor.
+allow='P\.O\. Box 1234|/Users/(sam|you|<|\$)|Raygun Design, LLC'
 
 # Real book figures are large and oddly precise; statutory and fixture amounts are
 # neither. Prose only — Rust test constants are not where this leaks. Advisory.

@@ -5,11 +5,11 @@ body:
   - type: markdown
     attributes:
       value: >-
-        **Before you paste anything:** this is a public tracker and Nigel holds books.
-        Replace real amounts, payees, account names and reference numbers with invented
-        ones (the codebase uses a fictional cast — Acme, Cedar Systems, Globex — feel
-        free to borrow it). A bug report almost never needs your real numbers to be
-        reproducible.
+        **Before you paste anything:** this is a public repository and Nigel holds
+        financial information. Replace real amounts, payees, account names and reference
+        numbers with invented ones (the codebase uses a fictional cast — Acme, Cedar
+        Systems, Globex — feel free to borrow it). A bug report almost never needs your
+        real numbers to be reproducible.
   - type: checkboxes
     id: no-real-data
     attributes:
