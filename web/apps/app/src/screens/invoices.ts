@@ -535,6 +535,29 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     }
   };
 
+  private handleDuplicate = async (): Promise<void> => {
+    const detail = this.detail;
+    if (!detail) return;
+
+    this.busy = true;
+    try {
+      const created = await this.client.duplicateInvoice(detail.number);
+      // The route change reloads, so the toast is what survives to say the
+      // copy happened — dispatched while this element is still in the tree.
+      dispatchNcToast(this, {
+        variant: 'success',
+        message: `Duplicated invoice #${detail.number} as draft #${created.number}.`,
+      });
+      this.actionError = null;
+      this.go({ number: String(created.number), edit: null });
+    } catch (error) {
+      this.actionError = invoicingGuardrailMessage(error, 'invoice');
+      await this.refresh(true);
+    } finally {
+      this.busy = false;
+    }
+  };
+
   private handleDelete = async (): Promise<void> => {
     const detail = this.detail;
     if (!detail) return;
@@ -892,6 +915,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           @click=${() => this.go({ edit: '1' })}
         >
           Edit
+        </wa-button>
+        <wa-button
+          data-duplicate
+          appearance="outlined"
+          ?disabled=${this.busy}
+          @click=${this.handleDuplicate}
+        >
+          Duplicate
         </wa-button>
         <wa-button
           data-void

@@ -985,6 +985,7 @@ export class FakeApiClient implements ApiClient {
   nextNumberError: Error | null = null;
   createInvoiceError: Error | null = null;
   updateInvoiceError: Error | null = null;
+  duplicateInvoiceError: Error | null = null;
   voidInvoiceError: Error | null = null;
   deleteInvoiceError: Error | null = null;
   /** What a void could not take down, as the route reports it. */
@@ -1291,6 +1292,35 @@ export class FakeApiClient implements ApiClient {
     };
     this.invoiceDetails[number] = updated;
     return { ...updated, ...this.voidTeardown };
+  }
+
+  async duplicateInvoice(number: number): Promise<InvoiceDetail> {
+    this.calls.push(`duplicateInvoice:${number}`);
+    if (this.duplicateInvoiceError) throw this.duplicateInvoiceError;
+
+    const source = this.detail(number);
+    const created: InvoiceDetail = {
+      ...source,
+      id: this.nextInvoiceNumber,
+      number: this.nextInvoiceNumber,
+      status: 'draft',
+      publishedAt: null,
+      voidedAt: null,
+      stripePaymentLinkId: null,
+      stripePaymentLinkUrl: null,
+      publicUrl: null,
+      payments: [],
+      paid: 0,
+      balance: source.total,
+      canEdit: true,
+      canSend: source.client?.email != null,
+      canVoid: true,
+      canPay: true,
+      canDelete: true,
+    };
+    this.nextInvoiceNumber += 1;
+    this.invoiceDetails[created.number] = created;
+    return created;
   }
 
   async deleteInvoice(number: number): Promise<Deleted> {
