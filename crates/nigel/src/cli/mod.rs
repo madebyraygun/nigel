@@ -18,6 +18,7 @@ pub mod import_manager;
 pub mod init;
 pub mod invoice;
 pub mod invoice_manager;
+pub mod invoice_schedule;
 pub mod load;
 pub mod load_manager;
 pub mod onboarding;
@@ -517,6 +518,11 @@ pub enum InvoiceCommands {
         #[command(subcommand)]
         command: InvoiceTemplateCommands,
     },
+    /// Manage recurring invoice schedules.
+    Schedule {
+        #[command(subcommand)]
+        command: InvoiceScheduleCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -532,6 +538,108 @@ pub enum InvoiceTemplateCommands {
     },
     /// Show where Nigel looks for a custom invoice template.
     Path,
+}
+
+#[derive(Subcommand)]
+pub enum InvoiceScheduleCommands {
+    /// Create a schedule. Line items as "desc:qty:unit", repeatable, or seed
+    /// them from an existing invoice with --from.
+    Add {
+        /// Client ID (shown in `nigel client list`)
+        #[arg(long)]
+        client: i64,
+        /// Cadence: monthly, quarterly, or yearly
+        #[arg(long)]
+        cadence: String,
+        /// First period's issue date: YYYY-MM-DD
+        #[arg(long)]
+        start: String,
+        /// Day of the month to bill on, clamped in short months (default: the start date's day)
+        #[arg(long = "anchor-day")]
+        anchor_day: Option<u32>,
+        /// Days from issue to due on each generated invoice
+        #[arg(long = "net-days")]
+        net_days: Option<i64>,
+        /// Currency code
+        #[arg(long, default_value = "USD")]
+        currency: String,
+        /// Line item as "desc:qty:unit" (repeatable)
+        #[arg(long = "item")]
+        items: Vec<String>,
+        /// Seed the items, currency, notes and terms from this invoice number
+        #[arg(long = "from", conflicts_with = "items")]
+        from: Option<i64>,
+        /// Notes rendered on every generated invoice
+        #[arg(long)]
+        notes: Option<String>,
+        /// Payment terms rendered on every generated invoice
+        #[arg(long)]
+        terms: Option<String>,
+        /// Send each generated invoice instead of leaving it a draft
+        #[arg(long)]
+        autosend: bool,
+    },
+    /// List schedules.
+    List {
+        /// Include paused and ended schedules
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show one schedule, its items, and what it has generated.
+    Show {
+        /// Schedule ID (shown in `nigel invoice schedule list`)
+        id: i64,
+    },
+    /// Edit a schedule. Changes apply to future invoices, never past ones.
+    Edit {
+        /// Schedule ID
+        id: i64,
+        /// New anchor day
+        #[arg(long = "anchor-day")]
+        anchor_day: Option<u32>,
+        /// New net days
+        #[arg(long = "net-days")]
+        net_days: Option<i64>,
+        /// Drop the net days, so generated invoices carry no due date
+        #[arg(long = "clear-net-days", conflicts_with = "net_days")]
+        clear_net_days: bool,
+        /// New currency code
+        #[arg(long)]
+        currency: Option<String>,
+        /// Replace the notes
+        #[arg(long)]
+        notes: Option<String>,
+        /// Replace the payment terms
+        #[arg(long)]
+        terms: Option<String>,
+        /// Line item as "desc:qty:unit" (repeatable); replaces every existing line
+        #[arg(long = "item")]
+        items: Vec<String>,
+        /// Send each generated invoice from now on
+        #[arg(long)]
+        autosend: bool,
+        /// Leave each generated invoice a draft from now on
+        #[arg(long = "no-autosend", conflicts_with = "autosend")]
+        no_autosend: bool,
+    },
+    /// Stop generating from a schedule without ending it.
+    Pause {
+        /// Schedule ID
+        id: i64,
+    },
+    /// Start generating from a paused schedule again.
+    Resume {
+        /// Schedule ID
+        id: i64,
+    },
+    /// End a schedule for good. Its history is kept.
+    End {
+        /// Schedule ID
+        id: i64,
+    },
+    /// Generate every invoice currently due. Built for cron and launchd — it
+    /// never prompts.
+    Run,
 }
 
 #[derive(Subcommand)]

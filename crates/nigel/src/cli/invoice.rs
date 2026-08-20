@@ -43,7 +43,7 @@ fn parse_item(s: &str) -> Result<NewLineItem> {
     })
 }
 
-fn parse_items(items: &[String]) -> Result<Vec<NewLineItem>> {
+pub(crate) fn parse_items(items: &[String]) -> Result<Vec<NewLineItem>> {
     if items.is_empty() {
         return Err(NigelError::Other(
             "an invoice needs at least one --item \"desc:qty:unit\"".into(),
