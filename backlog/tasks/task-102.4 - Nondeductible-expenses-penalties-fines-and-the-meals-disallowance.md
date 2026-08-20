@@ -4,6 +4,7 @@ title: 'Nondeductible expenses: penalties, fines and the meals disallowance'
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
+updated_date: '2026-08-19 16:11'
 labels:
   - tax
   - reports
@@ -48,3 +49,9 @@ Relevant code: `src/db.rs` (categories schema + seed + migration), `src/models.r
 - [ ] #8 All linting checks pass
 - [ ] #9 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- TASK-9.9 (splits, on the v1 milestone) supersedes the split-the-payment workflow that AC #5 documents: once splits land, a mixed payment — deductible tax, deductible interest, nondeductible penalty in one bank entry — is a single transaction with one category leg per part, matching the statement line for line. If this task lands before TASK-9.9, document the separate-transactions workflow as written; TASK-9.9 carries an AC to update that documentation to point at splits.
+<!-- SECTION:NOTES:END -->

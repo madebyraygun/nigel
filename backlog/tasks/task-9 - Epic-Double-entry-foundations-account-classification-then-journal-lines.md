@@ -1,10 +1,10 @@
 ---
 id: TASK-9
-title: 'Epic: double-entry foundations — account classification, then journal lines'
+title: 'Epic: cash-basis double entry on the v1 milestone'
 status: To Do
 assignee: []
 created_date: '2026-04-25 18:06'
-updated_date: '2026-08-13 15:45'
+updated_date: '2026-08-20 14:01'
 labels:
   - epic
   - architecture
@@ -17,28 +17,33 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Formerly a single task ("Journal entry layer (lightweight double-entry)"). Split into two, because the tax-package work in TASK-102 needs one half of it urgently and the other half not at all.
+Nigel is adding double-entry bookkeeping underneath its single-entry surface, targeted at the **v1 milestone**. The point is credibility and structural correctness — a trial balance and a balance sheet that are read off a ledger rather than derived and separately proven — **without changing what a cash-basis user does or sees**. Two decisions govern every subtask: decision-5 (cash basis is a reporting concern and the second leg is always derived — both permanent invariants, recorded in `docs/design-constraints.md`) and decision-6 (invoicing stays off the ledger in v1 — no A/R account; recognition is the bank deposit, and the payment–deposit link is reconciliation, not posting).
 
-## Why the split
+## Scope
 
-The original task bundled two changes of very different size and risk:
+v1 is cash-basis double entry. Accounts payable, vendor bills, inventory and multi-currency are **deferred beyond v1, not rejected**, and the design keeps each cheap to add later: A/P is just another liability account on the TASK-9.1 classification when it comes; accrual is posting rules plus a report-basis toggle; multi-currency has its one hook (the `currency` column on journal lines, TASK-9.4); inventory deliberately gets no hook, because lots and cost basis are their own model and speculative schema is worse than none.
 
-- **Account classification** (TASK-9.1) — every account and category carries an accounting class: asset, liability, equity, revenue, expense. This is what makes equity a first-class thing rather than an expense category with a "not deductible" note, and it is what TASK-102.2 (owner distributions) and TASK-102.1 (Schedule L) actually need. Additive, migratable, no change to how anyone imports a CSV.
-- **Journal lines** (TASK-9.2) — every transaction generates balanced debit/credit pairs over a merged chart of accounts. This is the real general ledger, and it is a rewrite of the data layer touching `models.rs`, `migrations.rs`, `cli/mod.rs`, `main.rs`, every report, the TUI and the web API — on live books.
+## Why now — the calculus changed
 
-Three of the four benefits the original task claimed (trial balance, a real balance sheet, structurally correct equity) come from classification, not from journal lines. Journal lines buy structural *guarantee* — the books cannot silently fail to tie — which is worth having, but is not what the 1120-S is waiting on.
+An earlier version of this epic kept TASK-9.2 deferred with no date and off the tax-season path. Two things changed that: invoicing shipped a second source of truth for client payments (`invoices`/`invoice_payments`, with no link to the register — the gap decision-6 closes), and every table added since — the asset register in TASK-102.5, the shareholders table in TASK-102.2 — raises the eventual migration cost. The work gets more expensive the longer it waits; v1 is the window.
 
-TASK-9.2 also still carries an unresolved design question (how `invoice_payments` maps to bank transactions) that its own text calls a prerequisite rather than an implementation detail. Sequencing a filing deadline behind an open architectural question is how March arrives with neither.
+## Order of work (the v1 milestone, in dependency order)
 
-## Sequencing
+1. **TASK-59** — money to integer minor units (not started — first on this milestone). The money type is fixed before the ledger is built on it: double-entry books kept in floating point still fail to balance.
+2. **TASK-50 / TASK-51 / TASK-52** — import integrity (in flight). The pipeline that feeds the ledger must not spend checksums, half-commit, or drop rows silently.
+3. **TASK-9.1** — account classification (in flight). The class vocabulary the chart merge carries forward.
+4. **TASK-9.5** — the Beancount exporter, **before** the migration it verifies: export, migrate, export again, load both in Beancount, compare reports. Identical output is machine-verified proof the backfill preserved the books.
+5. The ledger proper, in dependency order: **TASK-9.3** (chart merge) → **TASK-9.4** (journal schema) → **TASK-9.6** (backfill) → **TASK-9.7** (invoicing reconciliation link) → **TASK-9.8** (reports read lines) → **TASK-9.9** (splits), **TASK-9.10** (transfers as one entry), **TASK-9.11** (trial balance). TASK-9.7 touches only the invoicing tables and is technically independent of the ledger; it is sequenced after the schema work deliberately, so the reconciliation surface and the invoice-bearing parity fixture land together.
 
-TASK-9.1 lands inside the TASK-102 push, ahead of TASK-102.2. TASK-9.2 stays deferred with no date, and should be picked up when the invoicing reconciliation question is settled on its own merits — not as tax-season work.
+TASK-9.2 is superseded: its work is decomposed into TASK-9.3 through TASK-9.11, and the design question it flagged as a prerequisite is settled in decision-6.
 
-The classification introduced in TASK-9.1 is designed to survive TASK-9.2 intact: when the tables merge, the classes come with them.
+The classification introduced in TASK-9.1 survives the merger intact: when the tables merge in TASK-9.3, the classes come with them.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 TASK-9.1 is Done and TASK-102.2 is built on it rather than on a parallel category-type mechanism
-- [ ] #2 TASK-9.2 remains open with its design question stated, and nothing in TASK-102 depends on it
+- [ ] #2 TASK-9.3 through TASK-9.11 are Done in dependency order, with TASK-59, TASK-50, TASK-51 and TASK-52 landed first
+- [ ] #3 The export-verify step ran: books exported before and after the backfill load in Beancount with identical reports — checked locally against the live books with no figure recorded in the repository, and pinned in-repo by the same check on a fixture
+- [ ] #4 A cash-basis user's workflow is unchanged end to end: import, pick a category, reports default to cash basis, and no surface asks for two accounts or a direction
 <!-- AC:END -->

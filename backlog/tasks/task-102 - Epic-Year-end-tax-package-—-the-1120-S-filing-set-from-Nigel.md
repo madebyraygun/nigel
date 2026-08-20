@@ -4,7 +4,7 @@ title: 'Epic: year-end tax package — the 1120-S filing set from Nigel'
 status: To Do
 assignee: []
 created_date: '2026-08-13 15:20'
-updated_date: '2026-08-13 19:49'
+updated_date: '2026-08-19 16:39'
 labels:
   - epic
   - tax
@@ -58,3 +58,9 @@ The reasoning in short: a journal layer produces no tax output. Grant a perfect 
 - [ ] #5 Where the epic's scope stops is stated explicitly: which schedules are covered, whether the California 100S is in or out, and how each report behaves on the `personal` profile and for a Schedule C filer
 - [ ] #6 **IMPORTANT**: Any PRs created from this epic must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+TASK-27 (trial balance) is closed as superseded by TASK-9.11 on the v1 milestone; the related-tasks bullet about TASK-27 overlap now reads onto TASK-9.11.
+<!-- SECTION:NOTES:END -->

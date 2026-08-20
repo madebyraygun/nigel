@@ -1,13 +1,16 @@
 ---
 id: TASK-51
 title: The import sequence is not atomic
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 14:12'
+updated_date: '2026-08-19 19:58'
 labels:
   - bug
   - importer
   - data-integrity
+milestone: m-0
 dependencies: []
 priority: high
 ---

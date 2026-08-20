@@ -8,6 +8,7 @@ updated_date: '2026-08-18 02:03'
 labels:
   - tauri
   - ci
+milestone: m-0
 dependencies:
   - TASK-33.5
 parent_task_id: TASK-33

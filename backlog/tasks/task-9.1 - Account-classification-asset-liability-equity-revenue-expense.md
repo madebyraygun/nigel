@@ -1,13 +1,15 @@
 ---
 id: TASK-9.1
 title: 'Account classification: asset, liability, equity, revenue, expense'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-13 15:45'
-updated_date: '2026-08-19 17:03'
+updated_date: '2026-08-19 19:58'
 labels:
   - architecture
   - tax
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-9
 priority: high
