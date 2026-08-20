@@ -17,6 +17,7 @@ pub mod reports;
 pub mod review;
 pub mod rules;
 pub mod settings;
+pub mod setup;
 pub mod status;
 pub mod transactions;
 
@@ -54,6 +55,7 @@ fn data_router() -> Router<AppState> {
         .merge(review::routes())
         .merge(reconcile::routes())
         .merge(settings::routes())
+        .merge(setup::routes())
         .merge(clients::routes())
         .merge(invoices::routes());
 

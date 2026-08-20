@@ -64,6 +64,7 @@ import {
   type RuleTestResult,
   type SendResult,
   type SetPasswordRequest,
+  type SetupRequest,
   type StagedUpload,
   type StatusResponse,
   type SyncResult,
@@ -261,6 +262,9 @@ export interface ApiClient {
   ping(): Promise<PingResponse>;
   getStatus(): Promise<StatusResponse>;
   unlock(password: string): Promise<UnlockResponse>;
+
+  /** Create the books. Answers with the status of what it created. */
+  setup(input: SetupRequest): Promise<StatusResponse>;
 
   getPnl(params?: ReportDateParams): Promise<ReportEnvelope<PnlReport>>;
   getBalance(): Promise<ReportEnvelope<BalanceReport>>;
@@ -516,6 +520,14 @@ export class FetchApiClient implements ApiClient {
 
   unlock(password: string): Promise<UnlockResponse> {
     return this.request<UnlockResponse>('POST', '/unlock', { password });
+  }
+
+  async setup(input: SetupRequest): Promise<StatusResponse> {
+    const status = await this.request<StatusResponse>('POST', '/setup', input);
+    // A password in the plan encrypts the database; this answer is the
+    // authority on the resulting lock state the same way getStatus is.
+    appLocked.set(status.locked);
+    return status;
   }
 
   getAppSettings(): Promise<AppSettings> {

@@ -340,6 +340,19 @@ export interface UnlockResponse {
   locked: boolean;
 }
 
+/** `POST /api/setup` — what to do once the books exist. */
+export type SetupAction = 'fresh' | 'demo';
+
+/** `POST /api/setup` */
+export interface SetupRequest {
+  userName: string;
+  companyName: string;
+  profile: BooksProfile;
+  /** Absent or empty leaves the database unencrypted. */
+  password?: string;
+  action: SetupAction;
+}
+
 /** `GET /api/settings/app`, and the body of a successful `PUT`. */
 export interface AppSettings {
   userName: string;
