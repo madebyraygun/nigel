@@ -1,11 +1,11 @@
 ---
 id: TASK-44
 title: Add --category filter to the register report and browser
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06 22:10'
-updated_date: '2026-08-07 00:51'
+updated_date: '2026-08-20 14:23'
 labels:
   - enhancement
 dependencies: []

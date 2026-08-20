@@ -1,11 +1,11 @@
 ---
 id: TASK-99
 title: 'Web UI: Snake easter egg'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-12 22:51'
-updated_date: '2026-08-14 18:14'
+updated_date: '2026-08-20 14:23'
 labels:
   - web
   - ui

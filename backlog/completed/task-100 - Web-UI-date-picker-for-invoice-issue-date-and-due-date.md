@@ -1,10 +1,10 @@
 ---
 id: TASK-100
 title: 'Web UI: date picker for invoice issue date and due date'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-12 23:45'
-updated_date: '2026-08-14 17:46'
+updated_date: '2026-08-20 14:23'
 labels:
   - web
   - ui
