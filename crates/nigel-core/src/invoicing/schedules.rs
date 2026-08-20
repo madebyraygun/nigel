@@ -386,10 +386,23 @@ pub fn schedule_runs(conn: &Connection, schedule_id: i64) -> Result<Vec<Schedule
 }
 
 /// Clamp a day to the last valid day of the given year and month.
+///
+/// `month` is 1-12 and `year` inside chrono's range; anything else is a caller
+/// bug and panics rather than answering. The rollover below is December's
+/// alone — applied to any out-of-range month it would answer 31 for a month
+/// that does not exist, which is a wrong figure on an invoice instead of a
+/// stopped run.
 pub fn clamp_day(year: i32, month: u32, day: u32) -> u32 {
-    let first_of_next = NaiveDate::from_ymd_opt(year, month + 1, 1)
-        .or_else(|| NaiveDate::from_ymd_opt(year + 1, 1, 1))
-        .expect("valid year for date arithmetic");
+    assert!(
+        (1..=12).contains(&month),
+        "clamp_day: month {month} is outside 1-12"
+    );
+    let first_of_next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .expect("valid year for date arithmetic");
     let last_day = first_of_next
         .pred_opt()
         .expect("predecessor of first-of-month is valid")
@@ -824,6 +837,17 @@ mod tests {
         assert_eq!(clamp_day(2026, 4, 31), 30);
         assert_eq!(clamp_day(2026, 12, 31), 31);
         assert_eq!(clamp_day(2026, 1, 15), 15);
+        // December rolls into the next January rather than off the end of the
+        // year, and every month before it stays inside its own.
+        assert_eq!(clamp_day(2026, 11, 31), 30);
+    }
+
+    /// The rollover is December's, so a month outside 1-12 is refused rather
+    /// than answered with the 31 that fallback used to produce.
+    #[test]
+    #[should_panic(expected = "month 13 is outside 1-12")]
+    fn clamp_day_refuses_a_month_that_is_not_a_month() {
+        clamp_day(2026, 13, 31);
     }
 
     #[test]
@@ -988,6 +1012,16 @@ mod tests {
         let first = draft_due_schedules(&conn, "2026-02-15").unwrap();
         assert_eq!(numbers(&first), [1248, 1249]);
 
+        // Rewound to the first period so the second run really walks the two
+        // cycles it already billed. Left where the first run put it,
+        // `next_period` is already past `today` and the loop body never runs —
+        // the run-row check this test is about would never be consulted.
+        conn.execute(
+            "UPDATE invoice_schedules SET next_period = '2026-01-01' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
         let second = draft_due_schedules(&conn, "2026-02-15").unwrap();
         assert!(second.generated.is_empty(), "{:?}", second.generated);
 
@@ -1002,6 +1036,11 @@ mod tests {
         assert_eq!(runs[0].number, 1248);
         assert_eq!(runs[1].period, "2026-02-01");
         assert_eq!(runs[1].generated_at, "2026-02-15");
+        assert_eq!(
+            get_schedule(&conn, id).unwrap().next_period,
+            "2026-03-01",
+            "the rewound cycle is walked back to where the first run left it"
+        );
     }
 
     #[test]
