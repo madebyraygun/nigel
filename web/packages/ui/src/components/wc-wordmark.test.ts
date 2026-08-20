@@ -75,8 +75,20 @@ describe('wc-wordmark', () => {
 
   it('renders one span per character of the art', async () => {
     const el = await mount();
-    const expected = WORDMARK_ART.reduce((total, line) => total + line.length, 0);
-    expect(chars(el)).toHaveLength(expected);
+    const width = Math.max(...WORDMARK_ART.map((line) => line.length));
+    expect(chars(el)).toHaveLength(WORDMARK_ART.length * width);
+  });
+
+  it('gives every line one width, so a centred surface cannot shift the tail', async () => {
+    // The descender rows are a third the width of the wordmark. Left short,
+    // an inherited `text-align: center` slides them right and the `g` reads
+    // as a `q` — which is what the setup screen was doing.
+    const el = await mount();
+    const lines = [...(el.shadowRoot?.querySelectorAll('.line') ?? [])];
+    const widths = new Set(lines.map((line) => line.querySelectorAll('.char').length));
+
+    expect(lines).toHaveLength(WORDMARK_ART.length);
+    expect([...widths]).toEqual([Math.max(...WORDMARK_ART.map((line) => line.length))]);
   });
 
   it('names itself for a screen reader instead of reading the ascii aloud', async () => {

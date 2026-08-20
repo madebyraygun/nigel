@@ -25,11 +25,24 @@ export const WORDMARK_ART: readonly string[] = [
   '                \\______/',
 ] as const;
 
+/**
+ * The art with every line padded to the width of the longest.
+ *
+ * The descender rows are barely a third the width of the wordmark, and a line
+ * box shorter than its container is placed by the inherited `text-align` — so
+ * on a centred surface the tail slides right and the `g` reads as a `q`. Equal
+ * widths make the alignment moot, which is what the marketing page relies on.
+ */
+const ART_LINES: readonly string[] = (() => {
+  const width = Math.max(...WORDMARK_ART.map((line) => line.length));
+  return WORDMARK_ART.map((line) => line.padEnd(width));
+})();
+
 /** Every drawable position, row-major — spaces carry no colour and no reveal. */
 function drawablePositions(): number[] {
   const positions: number[] = [];
   let index = 0;
-  for (const line of WORDMARK_ART) {
+  for (const line of ART_LINES) {
     for (const char of line) {
       if (char !== ' ') positions.push(index);
       index += 1;
@@ -171,7 +184,7 @@ export class WcWordmark extends LitElement {
     let index = -1;
 
     return html`
-      <pre class="art" role="img" aria-label=${this.label}>${WORDMARK_ART.map(
+      <pre class="art" role="img" aria-label=${this.label}>${ART_LINES.map(
         (line, row) =>
           html`<span class="line"
               >${[...line].map((char, col) => {
@@ -184,7 +197,7 @@ export class WcWordmark extends LitElement {
                   >${char === ' ' ? '\u00a0' : char}</span
                 >`;
               })}</span
-            >${row < WORDMARK_ART.length - 1 ? '\n' : ''}`,
+            >${row < ART_LINES.length - 1 ? '\n' : ''}`,
       )}</pre>
     `;
   }
