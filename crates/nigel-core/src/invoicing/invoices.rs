@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{get_metadata, set_metadata};
@@ -754,7 +754,29 @@ pub fn delete_blocker(conn: &Connection, invoice: &Invoice) -> Result<Option<Del
         || invoice.published_at.is_some()
         || invoice.status != InvoiceStatus::Draft.as_str()
         || has_payments(conn, invoice.id)?;
-    Ok(blocked.then(|| DeleteBlock::not_deletable("invoice")))
+    if blocked {
+        return Ok(Some(DeleteBlock::not_deletable("invoice")));
+    }
+    Ok(generating_schedule(conn, invoice.id)?
+        .map(|schedule_id| DeleteBlock::from_schedule("invoice", schedule_id)))
+}
+
+/// The schedule that generated this invoice, if one did.
+///
+/// A generated draft passes every other check here — never sent, never paid,
+/// still a draft — but `invoice_schedule_runs.invoice_id` references it and the
+/// connection runs with `PRAGMA foreign_keys = ON`, so the `DELETE` would come
+/// back as a foreign-key error from SQLite. Asking here instead is the same
+/// argument [`has_payments`] makes: a screen must not offer an action the write
+/// rejects, and the run row is the record of what that period billed.
+fn generating_schedule(conn: &Connection, invoice_id: i64) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT schedule_id FROM invoice_schedule_runs WHERE invoice_id = ?1",
+            [invoice_id],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// Whether any payment row names this invoice — **existence, not a sum**.
@@ -796,6 +818,10 @@ pub fn delete_invoice(conn: &Connection, invoice_id: i64) -> Result<()> {
     debug_assert!(
         !has_payments(&tx, invoice_id)?,
         "delete_blocker allowed an invoice with payment rows"
+    );
+    debug_assert!(
+        generating_schedule(&tx, invoice_id)?.is_none(),
+        "delete_blocker allowed an invoice a schedule generated"
     );
     tx.execute(
         "DELETE FROM invoice_line_items WHERE invoice_id = ?1",
@@ -1599,6 +1625,83 @@ mod tests {
         let err = delete_invoice(&conn, id).unwrap_err();
         assert_eq!(block_code(&err), "not_deletable");
         assert_eq!(get_invoice(&conn, id).unwrap().status, "void");
+    }
+
+    /// A monthly schedule for Acme, billing one line from January.
+    fn seed_schedule(conn: &Connection) -> i64 {
+        use crate::invoicing::schedules::{add_schedule, Cadence, NewSchedule};
+        add_schedule(
+            conn,
+            &NewSchedule {
+                client_id: client_id(conn, "Acme"),
+                cadence: Cadence::Monthly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: Some(30),
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: false,
+                items: vec![NewLineItem {
+                    description: "Hosting".into(),
+                    quantity: 1.0,
+                    unit_amount: 450.0,
+                }],
+            },
+        )
+        .unwrap()
+    }
+
+    /// A generated draft passes every other check: never sent, never paid,
+    /// still a draft. The run row recording its period is the whole refusal,
+    /// and the message has to name the schedule so the reader knows where the
+    /// invoice came from.
+    #[test]
+    fn a_schedule_generated_draft_refuses_deletion_and_names_its_schedule() {
+        let (_d, conn) = test_conn();
+        let schedule_id = seed_schedule(&conn);
+        let report = crate::invoicing::schedules::draft_due_schedules(&conn, "2026-01-15").unwrap();
+        let invoice_id = report.generated[0].invoice_id;
+
+        let invoice = get_invoice(&conn, invoice_id).unwrap();
+        assert_eq!(invoice.status, "draft");
+        assert!(invoice.published_at.is_none());
+
+        let block = delete_blocker(&conn, &invoice)
+            .unwrap()
+            .expect("a generated draft is not deletable");
+        assert_eq!(block.reason_code(), "from_schedule");
+        assert!(
+            block
+                .to_string()
+                .contains(&format!("schedule {schedule_id}")),
+            "the sentence names the schedule: {block}"
+        );
+    }
+
+    /// Without the guard this is `FOREIGN KEY constraint failed` wrapped as a
+    /// database error — an internal 500 in the browser and a raw SQLite string
+    /// in the terminal. The first assertion pins that the constraint really is
+    /// live, so the test cannot pass by the run row having quietly gone away.
+    #[test]
+    fn deleting_a_schedule_generated_draft_is_blocked_rather_than_a_foreign_key_error() {
+        let (_d, conn) = test_conn();
+        seed_schedule(&conn);
+        let report = crate::invoicing::schedules::draft_due_schedules(&conn, "2026-01-15").unwrap();
+        let invoice_id = report.generated[0].invoice_id;
+
+        assert!(
+            conn.execute("DELETE FROM invoices WHERE id = ?1", [invoice_id])
+                .is_err(),
+            "the run row's foreign key is what the guard stands in front of"
+        );
+
+        let err = delete_invoice(&conn, invoice_id).unwrap_err();
+        assert_eq!(block_code(&err), "from_schedule");
+        assert!(
+            get_invoice(&conn, invoice_id).is_ok(),
+            "nothing was removed"
+        );
     }
 
     /// The pre-flight and the delete ask the same question, so a screen can
