@@ -26,6 +26,7 @@ import {
   resultCounts,
   routeImportError,
   sameImportForm,
+  supportedDrop,
   usesMapping,
 } from './import-data.js';
 
@@ -358,5 +359,31 @@ describe('routeImportError', () => {
     expect(routed.field).toBe('none');
     expect(routed.toast).toBe(true);
     expect(routed.message).not.toContain('kaboom');
+  });
+});
+
+describe('supportedDrop', () => {
+  it('takes the first path an importer could read', () => {
+    expect(
+      supportedDrop([
+        '/home/books/notes.txt',
+        '/home/books/cedar-april-2025.csv',
+        '/home/books/juniper-may-2025.xlsx',
+      ]),
+    ).toBe('/home/books/cedar-april-2025.csv');
+  });
+
+  it('matches the extension regardless of case', () => {
+    expect(supportedDrop(['/home/books/JUNIPER-MAY-2025.XLSX'])).toBe(
+      '/home/books/JUNIPER-MAY-2025.XLSX',
+    );
+  });
+
+  it('answers null when nothing dropped is readable', () => {
+    expect(supportedDrop(['/home/books/receipt.pdf', '/home/books'])).toBeNull();
+  });
+
+  it('answers null for a drop of nothing', () => {
+    expect(supportedDrop([])).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './wc-dropzone.js';
+import { unsupportedFileMessage } from './wc-dropzone.js';
 import type { WcDropzone } from './wc-dropzone.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-dropzone.preview.js';
@@ -173,6 +174,98 @@ describe('wc-dropzone', () => {
     const error = el.shadowRoot?.querySelector('.error');
     expect(error?.getAttribute('role')).toBe('alert');
     expect(error?.textContent).toContain('25 MB');
+  });
+});
+
+describe('wc-dropzone in native mode', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('asks its owner for a pick instead of opening the browser picker', async () => {
+    const el = await mount({ native: true });
+    const input = el.shadowRoot?.querySelector('input[type="file"]');
+    const asked = vi.fn();
+    el.addEventListener('nc-pick-request', asked);
+
+    (el.shadowRoot?.querySelector('.well') as HTMLButtonElement).click();
+
+    expect(asked).toHaveBeenCalledOnce();
+    // There is nothing to click: the shell owns the dialog.
+    expect(input).toBeNull();
+  });
+
+  it('asks for a pick from the replace button too', async () => {
+    const el = await mount({
+      native: true,
+      filename: 'cedar-april-2025.csv',
+      size: 8214,
+    });
+    const asked = vi.fn();
+    el.addEventListener('nc-pick-request', asked);
+
+    const buttons = [...(el.shadowRoot?.querySelectorAll('.replace') ?? [])];
+    (buttons[0] as HTMLButtonElement).click();
+
+    expect(asked).toHaveBeenCalledOnce();
+  });
+
+  it('ignores an HTML5 drop, which the shell never lets through anyway', async () => {
+    const el = await mount({ native: true });
+    const selected = vi.fn();
+    const failed = vi.fn();
+    el.addEventListener('nc-file-select', selected);
+    el.addEventListener('nc-file-error', failed);
+
+    drop(el, [file('cedar-april-2025.csv')]);
+
+    expect(selected).not.toHaveBeenCalled();
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it('takes its drag treatment from highlight rather than from dragover', async () => {
+    const el = await mount({ native: true });
+
+    dragOver(el);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.zone')?.classList.contains('dragover')).toBe(
+      false,
+    );
+
+    el.highlight = true;
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.zone')?.classList.contains('dragover')).toBe(
+      true,
+    );
+  });
+
+  it('still emits nc-file-clear from Remove', async () => {
+    const el = await mount({
+      native: true,
+      filename: 'cedar-april-2025.csv',
+      size: 8214,
+    });
+    const cleared = vi.fn();
+    el.addEventListener('nc-file-clear', cleared);
+
+    const buttons = [...(el.shadowRoot?.querySelectorAll('.replace') ?? [])];
+    (buttons.at(-1) as HTMLButtonElement).click();
+
+    expect(cleared).toHaveBeenCalledOnce();
+  });
+});
+
+describe('unsupportedFileMessage', () => {
+  it('is the message the well itself produces for a file it cannot read', async () => {
+    const el = await mount();
+    const failed = vi.fn();
+    el.addEventListener('nc-file-error', (e) =>
+      failed((e as CustomEvent).detail.message),
+    );
+
+    drop(el, [file('notes.txt')]);
+
+    expect(failed.mock.calls[0][0]).toBe(unsupportedFileMessage());
   });
 });
 

@@ -4,6 +4,7 @@ import type {
   CashflowParams,
   ExpenseParams,
   ExportTarget,
+  ImportSource,
   ReconciliationParams,
   RegisterParams,
   ReportDateParams,
@@ -366,6 +367,13 @@ export class FakeApiClient implements ApiClient {
     params: ExportParams = {},
   ): ExportTarget {
     return { kind: 'href', href: this.exportUrl(report, format, params) };
+  }
+
+  /** A browser by default; the native-mode screen tests swap this. */
+  importSourceValue: ImportSource = { kind: 'browser' };
+
+  importSource(): ImportSource {
+    return this.importSourceValue;
   }
 
   // -- register -------------------------------------------------------------

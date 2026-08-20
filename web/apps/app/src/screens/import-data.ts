@@ -1,4 +1,5 @@
 import {
+  DEFAULT_EXTENSIONS,
   EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
   type CountItem,
@@ -213,4 +214,21 @@ export function routeImportError(error: unknown, form: ImportFormValue): RoutedE
     default:
       return { field: 'none', message: error.message, toast: true };
   }
+}
+
+/**
+ * The first dropped path an importer could read, or null.
+ *
+ * A native drop is a list — a window drop can carry several files and a
+ * directory — and the screen imports one statement at a time.
+ */
+export function supportedDrop(
+  paths: string[],
+  extensions: readonly string[] = DEFAULT_EXTENSIONS,
+): string | null {
+  const found = paths.find((path) => {
+    const lower = path.toLowerCase();
+    return extensions.some((extension) => lower.endsWith(extension));
+  });
+  return found ?? null;
 }
