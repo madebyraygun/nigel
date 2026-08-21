@@ -11,6 +11,7 @@ import {
   initializeAppStore,
   type AppStore,
 } from '../state/app-store.js';
+import { wireShellChrome } from '../chrome-bridge.js';
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
 import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
 import type { ScreenContext } from '../screens/context.js';
@@ -83,10 +84,13 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private store: AppStore | null = null;
   private reportedError: string | null = null;
   private focusBeforeSnake: HTMLElement | null = null;
+  private unwireChrome: (() => void) | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
     this.store = initializeAppStore(this.client);
+    const chrome = this.client.shellChrome();
+    if (chrome) this.unwireChrome = wireShellChrome(chrome);
     window.addEventListener('hashchange', this.handleHashChange);
     window.addEventListener('keydown', this.handleGlobalKeydown);
     this.syncRouteFromHash();
@@ -94,6 +98,8 @@ export class NigelApp extends SignalWatcher(LitElement) {
   }
 
   disconnectedCallback(): void {
+    this.unwireChrome?.();
+    this.unwireChrome = null;
     window.removeEventListener('hashchange', this.handleHashChange);
     window.removeEventListener('keydown', this.handleGlobalKeydown);
     super.disconnectedCallback();

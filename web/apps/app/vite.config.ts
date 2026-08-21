@@ -54,6 +54,7 @@ export default defineConfig({
       // Cross-screen tests drive the whole app and need a DOM; the guard tests
       // beside them only read source text, and node is enough for those.
       ['**/__tests__/screen-freshness.test.ts', 'jsdom'],
+      ['**/chrome-bridge.test.ts', 'jsdom'],
     ],
     deps: {
       optimizer: {

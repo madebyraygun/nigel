@@ -247,6 +247,19 @@ export type DragDropEvent =
  * another machine cannot see this disk, so path staging must not be offered
  * there.
  */
+/**
+ * The native window chrome this client sits inside, if any.
+ *
+ * `ready` tells the shell the first frame exists, so the hidden native
+ * window can show already painted. `background` keeps the window's own
+ * color on the SPA's resolved palette, so a fast resize shows theme
+ * background at the edges rather than the webview's default white.
+ */
+export interface ShellChrome {
+  ready(): void;
+  background(mode: 'light' | 'dark'): void;
+}
+
 export type ImportSource =
   | { kind: 'browser' }
   | {
@@ -349,6 +362,11 @@ export interface ApiClient {
    * and never ask which shell they are in.
    */
   importSource(): ImportSource;
+  /**
+   * The window chrome to drive, or `null` where the browser owns the window.
+   * Answered by the client rather than sniffed, for `importSource`'s reason.
+   */
+  shellChrome(): ShellChrome | null;
   /** A dry run: reports what an import would do, having written nothing. */
   previewImport(input: ImportRequest): Promise<ImportPreview>;
   /** Snapshot, import, categorize — the sequence the TUI has always used. */
@@ -711,6 +729,10 @@ export class FetchApiClient implements ApiClient {
 
   importSource(): ImportSource {
     return { kind: 'browser' };
+  }
+
+  shellChrome(): ShellChrome | null {
+    return null;
   }
 
   previewImport(input: ImportRequest): Promise<ImportPreview> {

@@ -114,6 +114,19 @@ arithmetic. The file is a convenience: absent, corrupt, or unwritable all
 degrade silently to the 1200×820 default, and the next clean close rewrites
 it.
 
+## Launch paint
+
+The window is built hidden and shows when the SPA reports its first frame
+through the `frontend_ready` command, so first paint is the app rather than a
+white sheet; a four-second fallback in setup shows the window regardless, so
+a wedged frontend never leaves an invisible process. The window's own
+background — what shows at the edges when a resize outruns the webview — is
+set from the OS theme at build (`src/chrome.rs`, whose canvas constants are
+pinned against `@nigel/theme`'s color tokens by `tests/chrome.rs`) and then
+kept on the SPA's actually-resolved palette by the `set_chrome_background`
+command, which `web/apps/app/src/chrome-bridge.ts` drives at boot and on
+every color-mode change.
+
 ## Exports
 
 A webview serving the app from a custom URI scheme cannot download the way a

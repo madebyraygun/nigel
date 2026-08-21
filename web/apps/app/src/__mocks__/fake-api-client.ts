@@ -7,6 +7,7 @@ import type {
   ImportSource,
   ReconciliationParams,
   RegisterParams,
+  ShellChrome,
   ReportDateParams,
   YearParams,
 } from '../api/client.js';
@@ -396,6 +397,13 @@ export class FakeApiClient implements ApiClient {
 
   importSource(): ImportSource {
     return this.importSourceValue;
+  }
+
+  /** No chrome by default; the chrome-bridge tests hand in a recorder. */
+  shellChromeValue: ShellChrome | null = null;
+
+  shellChrome(): ShellChrome | null {
+    return this.shellChromeValue;
   }
 
   // -- register -------------------------------------------------------------
