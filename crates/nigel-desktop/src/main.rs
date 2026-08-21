@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use nigel_desktop::{db, imports, save, scheme_url, transport, window_state, SCHEME};
 
@@ -83,28 +85,26 @@ fn main() {
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen {
-                    has_visible_windows,
+                    has_visible_windows: false,
                     ..
                 } => {
-                    if !has_visible_windows {
-                        match app.get_webview_window("main") {
-                            Some(window) => {
-                                // A hidden window shows; a minimized one
-                                // ignores show and focus until it is
-                                // deminiaturized.
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                            // The window is genuinely gone (a webview
-                            // crash), not hidden: rebuild it. A windowless
-                            // app that cannot rebuild would strand the
-                            // user, so that failure exits.
-                            None => {
-                                if let Err(error) = build_main_window(app) {
-                                    eprintln!("nigel: could not rebuild the main window: {error}");
-                                    app.exit(1);
-                                }
+                    match app.get_webview_window("main") {
+                        Some(window) => {
+                            // A hidden window shows; a minimized one
+                            // ignores show and focus until it is
+                            // deminiaturized.
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                        // The window is genuinely gone (a webview
+                        // crash), not hidden: rebuild it. A windowless
+                        // app that cannot rebuild would strand the
+                        // user, so that failure exits.
+                        None => {
+                            if let Err(error) = build_main_window(app) {
+                                eprintln!("nigel: could not rebuild the main window: {error}");
+                                app.exit(1);
                             }
                         }
                     }
