@@ -1104,4 +1104,35 @@ describe('the pick-import menu intent', () => {
     await settle(el);
     expect(dropzone(el)).toBeTruthy();
   });
+
+  it('parks the intent while the screen is busy and opens the dialog after', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const pick = source.pick;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.pick = async () => {
+      await gate;
+      return pick();
+    };
+
+    // The first intent holds the screen busy on the gated dialog; the second
+    // arrives while it is and must wait rather than die against the guard.
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+    expect(shell.staged).toHaveLength(0);
+
+    release();
+    await settle(el);
+    expect(shell.staged).toHaveLength(2);
+  });
 });

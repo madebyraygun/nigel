@@ -123,18 +123,24 @@ export class NigelApp extends SignalWatcher(LitElement) {
    * screen consumes — a route parameter could not re-fire on a repeated chord.
    */
   private handleMenuCommand = (command: MenuCommand): void => {
+    // The gates and the boot screen render without the shell: no sidebar to
+    // toggle, no screen to receive an intent, and the untouched hash is what
+    // returns the user where they were headed once the app is up. A selection
+    // before then is dropped whole — an intent stored now would fire on
+    // whatever screen mounts after unlock.
+    if ((this.store ?? getAppStore()).boot.get() !== 'ready') return;
+
     switch (command.kind) {
       case 'navigate':
         if (isScreenId(command.screen)) this.navigate(command.screen);
-        return;
-      case 'settings':
-        this.navigate('settings');
         return;
       case 'new-invoice':
         this.navigate('invoices', new URLSearchParams({ new: '1' }));
         return;
       case 'find':
-        this.navigate('register');
+        // Focusing search must not cost a filtered register its filters: the
+        // bare-hash navigate is only for arriving from somewhere else.
+        if (this.route.screen !== 'register') this.navigate('register');
         requestMenuIntent('find');
         return;
       case 'import':
@@ -143,6 +149,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
         return;
       case 'toggle-sidebar':
         this.sidebarCollapsed = !this.sidebarCollapsed;
+        return;
+      default:
+        command satisfies never;
     }
   };
 

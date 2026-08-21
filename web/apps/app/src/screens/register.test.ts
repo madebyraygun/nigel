@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './register.js';
 import type { NigelRegisterScreen } from './register.js';
-import { REGISTER_SHORTCUTS, type WcRegisterTable, type WcShortcutHelp } from '@nigel/ui';
+import {
+  REGISTER_SHORTCUTS,
+  WcRegisterToolbar,
+  type WcRegisterTable,
+  type WcShortcutHelp,
+} from '@nigel/ui';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
 import { requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
@@ -469,26 +474,41 @@ describe('the find menu intent', () => {
     return toolbar;
   }
 
+  /**
+   * A prototype spy that records whether the search input existed at call
+   * time: `focusSearch` on a toolbar that has not rendered is a silent no-op,
+   * so counting calls alone would pass on focus requests that went nowhere.
+   */
+  function spyOnFocusSearch() {
+    const inputExisted: boolean[] = [];
+    vi.spyOn(WcRegisterToolbar.prototype, 'focusSearch').mockImplementation(function (
+      this: WcRegisterToolbar,
+    ) {
+      inputExisted.push(this.shadowRoot?.querySelector('.search') != null);
+    });
+    return inputExisted;
+  }
+
   it('focuses the search box when the intent was requested before arriving', async () => {
+    const focused = spyOnFocusSearch();
     requestMenuIntent('find');
+
     const { el } = await mount();
-    const focus = vi.spyOn(toolbarOf(el), 'focusSearch');
-    // The mount consumed the intent; a second request proves the wiring end
-    // to end on an already-rendered screen where the spy can exist first.
-    requestMenuIntent('find');
+    await toolbarOf(el).updateComplete;
     await settle(el);
-    expect(focus).toHaveBeenCalledTimes(1);
+
+    expect(focused).toEqual([true]);
   });
 
   it('re-fires: the chord pressed again while already here focuses again', async () => {
     const { el } = await mount();
-    const focus = vi.spyOn(toolbarOf(el), 'focusSearch');
+    const focused = spyOnFocusSearch();
 
     requestMenuIntent('find');
     await settle(el);
     requestMenuIntent('find');
     await settle(el);
 
-    expect(focus).toHaveBeenCalledTimes(2);
+    expect(focused).toEqual([true, true]);
   });
 });
