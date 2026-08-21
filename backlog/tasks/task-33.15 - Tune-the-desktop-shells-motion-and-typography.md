@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-18 01:56'
-updated_date: '2026-08-21 01:02'
+updated_date: '2026-08-21 02:00'
 labels:
   - tauri
   - ui
@@ -41,8 +41,6 @@ Two notes from a later read of the code. wc-app-shell already renders the nav to
 - [ ] #4 The change is made in @nigel/theme tokens; no component names a font stack directly
 - [ ] #5 Money columns still align digit for digit, and the mono-glyph coverage test still passes
 <!-- AC:END -->
-
-
 
 ## Implementation Plan
 
@@ -92,4 +90,26 @@ Verification beyond the suites. Both the preview harness and the real app (this 
 Gates from web/: typecheck, lint, test (931 app tests, 163 files, zero failures) and build all pass; check-no-real-data.sh --staged exits 0.
 
 font-faces.ts needed no change — the woff2 subsets and the three @font-face declarations are unaffected by Plex's role narrowing. Two things stay deliberately undone: the 13px chrome size the description floats (no AC covers it, and it ripples through spacing and the contrast suite) and dropping the Plex 500 subset, which may now have no consumer but would change the measured byte table in web/README.md.
+
+Second pass, after an independent review of PR #41 raised 15 findings (commit fe2613b). The rule was stated correctly the first time and applied unevenly, which is the failure mode a rule like this has: every surface it misses still renders, just in the wrong face.
+
+Under-applied, now fixed: the report table's percent and count columns, wc-payment-list's paid date, wc-invoice-table's due date, wc-reconciliation-history's reconciled-at, wc-invoice-summary's dates and currency, wc-line-items' read-only quantity, and the code-shaped fields the docs already claimed were covered — wc-rule-form's pattern, wc-account-form's last four, wc-import-form's strftime pattern and column indices, wc-dropzone's filename. wc-unlock-card's heading takes the brand face: it shows the same company name the sidebar does, and the gate is the first thing anyone sees.
+
+Over-applied, now scoped: wc-manager-table and wc-sample-table were pulling their column headings into Plex, wc-reconcile-result's blanket dd rule was setting an account name in it, and wc-count-grid's hint sentence had been dragged along by its dd. Headings and prose are words.
+
+Reclassified: an invoice number is an identifier, not a quantity, so it reads --wa-font-family-mono rather than --nc-font-figures. Both resolve to the same stack today; the distinction is what a later change would need to tell them apart by.
+
+Two real bugs the review caught that were not about which face:
+
+ch budgets. wc-period-nav's label reserves 12ch and wc-balance-list's amount column reserves 12ch, and ch is the width of the element's own zero. Both were reserving in the system face while Plex filled them, so the reservation no longer matched the content it was sizing for.
+
+Print determinism. A system face is by definition whatever the machine has, so two people printing the same report would get different line breaks and column widths. printCss now resets --wa-font-family-sans to the bundled stack inside the block that already flattens the palette. This is one declaration and is reversible if the operator would rather have the system face on paper.
+
+Also corrected: the claim that Web Awesome reads --wa-font-family-sans, which was false and repeated in the token comment and three docs. WA reads --wa-font-family-body, -heading, -longform and -code, all as bare var()s, so wa-contract.ts defines those four and wa-contract.test.ts fails if upstream renames them.
+
+Motion: the width transition is cancelled below 48rem, where wc-app-shell's ::slotted transform rule wins from the outer tree anyway and where leaving it on made dragging a window across the breakpoint play a slide nobody asked for. Labels clip to an ellipsis and carry their full text as a title in both states.
+
+The stack guard was weaker than it read: startsWith('var(') accepted a token with a real family appended after it and a token whose name was a typo. It now matches the whole value against a whitelist, permits only generic fallbacks, reads the font shorthand, and fails loudly if a scanned tree moves. A drift test pins the shell's pre-theme stack to the token's own.
+
+Re-verified: full gate green, and a 30-check browser sweep over every changed component passed 30/30.
 <!-- SECTION:NOTES:END -->
