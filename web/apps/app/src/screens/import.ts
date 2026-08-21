@@ -36,6 +36,8 @@ import {
   sameImportForm,
   supportedDrop,
 } from './import-data.js';
+import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { consumeMenuIntent } from '../state/menu-intent.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -81,7 +83,7 @@ function busyLabel(busy: Busy): string {
  * delete call would only ever cover the case where someone stayed to click.
  */
 @customElement('nigel-import-screen')
-export class NigelImportScreen extends LitElement {
+export class NigelImportScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
       display: flex;
@@ -210,16 +212,27 @@ export class NigelImportScreen extends LitElement {
   /** Toast text already shown, so a repeated failure does not stack up. */
   private toasted = new Set<string>();
 
+  /** A menu selection asked for the picker; opened once this update lands. */
+  private pickOnUpdate = false;
+
   willUpdate(): void {
     // Before the first render rather than after it: `source` decides how the
     // dropzone paints, and setting reactive state once the update has
     // completed would cost a second one.
     if (!this.hasUpdated) this.source = this.client.importSource();
+    if (consumeMenuIntent('pick-import')) this.pickOnUpdate = true;
   }
 
   firstUpdated(): void {
     this.listenForDrops();
     void this.load();
+  }
+
+  updated(): void {
+    if (this.pickOnUpdate) {
+      this.pickOnUpdate = false;
+      void this.handlePickRequest();
+    }
   }
 
   connectedCallback(): void {

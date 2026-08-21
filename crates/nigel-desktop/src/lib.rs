@@ -5,6 +5,7 @@
 pub mod chrome;
 pub mod db;
 pub mod imports;
+pub mod menu;
 pub mod save;
 pub mod transport;
 pub mod window_state;

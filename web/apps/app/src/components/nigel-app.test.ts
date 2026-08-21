@@ -3,6 +3,8 @@ import './nigel-app.js';
 import type { NigelApp } from './nigel-app.js';
 import { appLocked, appUnauthorized, ApiError } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
+import { consumeMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
+import type { MenuCommand } from '../api/index.js';
 import {
   FakeApiClient,
   LOCKED_STATUS,
@@ -524,5 +526,93 @@ describe('nigel-app', () => {
 
       expect(sidebar(el)?.hasAttribute('collapsed')).toBe(false);
     });
+  });
+});
+
+describe('the menu bar', () => {
+  let send: (command: MenuCommand) => void;
+  let unsubscribed: number;
+
+  function shellClient(): FakeApiClient {
+    const fake = new FakeApiClient();
+    unsubscribed = 0;
+    fake.menuSourceValue = {
+      kind: 'native',
+      onCommand: (handler) => {
+        send = handler;
+        return () => {
+          unsubscribed += 1;
+        };
+      },
+    };
+    return fake;
+  }
+
+  async function settled(el: NigelApp): Promise<void> {
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+  }
+
+  beforeEach(() => {
+    resetMenuIntent();
+    window.location.hash = '#/dashboard';
+  });
+
+  it('navigates on a navigate command and drops a screen it has never heard of', async () => {
+    const el = await mount(shellClient());
+
+    send({ kind: 'navigate', screen: 'register' });
+    await settled(el);
+    expect(window.location.hash).toBe('#/register');
+
+    send({ kind: 'navigate', screen: 'a-screen-from-the-future' });
+    await settled(el);
+    expect(window.location.hash).toBe('#/register');
+  });
+
+  it('opens the new-invoice view, the settings route, and flips the sidebar', async () => {
+    widescreen();
+    const el = await mount(shellClient());
+
+    send({ kind: 'new-invoice' });
+    await settled(el);
+    expect(window.location.hash).toBe('#/invoices?new=1');
+
+    send({ kind: 'settings' });
+    await settled(el);
+    expect(window.location.hash).toBe('#/settings');
+
+    expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(false);
+    send({ kind: 'toggle-sidebar' });
+    await settled(el);
+    expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+  });
+
+  it('lands find and import on their screens as one-shot intents', async () => {
+    const el = await mount(shellClient());
+
+    // Consumed synchronously here, before the screen can: this test owns the
+    // translation; the register and import screen tests own the delivery.
+    send({ kind: 'find' });
+    expect(consumeMenuIntent('find')).toBe(true);
+    await settled(el);
+    expect(window.location.hash).toBe('#/register');
+
+    send({ kind: 'import' });
+    expect(consumeMenuIntent('pick-import')).toBe(true);
+    await settled(el);
+    expect(window.location.hash).toBe('#/import');
+  });
+
+  it('unsubscribes when it leaves the page', async () => {
+    const el = await mount(shellClient());
+    el.remove();
+    expect(unsubscribed).toBe(1);
+  });
+
+  it('binds nothing in a browser', async () => {
+    const fake = new FakeApiClient();
+    await mount(fake);
+    expect(fake.menuSourceValue.kind).toBe('none');
   });
 });

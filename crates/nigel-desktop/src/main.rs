@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{chrome, db, imports, save, scheme_url, transport, window_state, SCHEME};
+use nigel_desktop::{
+    chrome, db, imports, menu, save, scheme_url, transport, window_state, SCHEME,
+};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
@@ -24,6 +26,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .menu(menu::build)
+        .on_menu_event(menu::forward)
         .invoke_handler(tauri::generate_handler![
             save::save_export,
             imports::stage_import,
