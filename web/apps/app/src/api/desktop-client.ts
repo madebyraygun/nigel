@@ -1,5 +1,6 @@
 import {
   FetchApiClient,
+  MENU_COMMAND_IDS,
   type FetchApiClientOptions,
   type ApiClient,
   type DragDropEvent,
@@ -40,13 +41,10 @@ const DRAG_EVENTS = {
 /** The shell's menu bridge: one event, the command id as its payload. */
 const MENU_EVENT = 'menu-command';
 
-/** The ids the shell emits that are not navigation. */
-const MENU_COMMANDS = ['find', 'import', 'new-invoice', 'settings', 'toggle-sidebar'] as const;
-
-type MenuCommandId = (typeof MENU_COMMANDS)[number];
+type MenuCommandId = (typeof MENU_COMMAND_IDS)[number];
 
 function isMenuCommandId(value: string): value is MenuCommandId {
-  return (MENU_COMMANDS as readonly string[]).includes(value);
+  return (MENU_COMMAND_IDS as readonly string[]).includes(value);
 }
 
 /**
@@ -119,54 +117,52 @@ export class DesktopApiClient extends FetchApiClient {
   }
 
   private subscribeMenu(handler: (command: MenuCommand) => void): () => void {
+    return this.guardedListen(MENU_EVENT, (payload) => {
+      const command = menuCommandOf(payload);
+      if (command) handler(command);
+    });
+  }
+
+  private subscribeDragDrop(handler: (event: DragDropEvent) => void): () => void {
+    const off = [
+      this.guardedListen(DRAG_EVENTS.enter, () => handler({ type: 'over' })),
+      this.guardedListen(DRAG_EVENTS.over, () => handler({ type: 'over' })),
+      this.guardedListen(DRAG_EVENTS.drop, (payload) =>
+        handler({ type: 'drop', paths: pathsOf(payload) }),
+      ),
+      this.guardedListen(DRAG_EVENTS.leave, () => handler({ type: 'leave' })),
+    ];
+    return () => {
+      for (const unlisten of off) unlisten();
+    };
+  }
+
+  /**
+   * `listen`, returning its unsubscribe synchronously the way screens need it.
+   *
+   * The guard covers the gap that `listen` being async opens: an unsubscribe
+   * that lands before the listener resolves flips `cancelled`, and the
+   * resolution handler sees it and detaches immediately. An ACL-denied
+   * `listen` leaves the surface inert rather than broken — a rejection thrown
+   * from here would only be unhandled.
+   */
+  private guardedListen(event: string, onPayload: (payload: unknown) => void): () => void {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
 
-    void this.listen(MENU_EVENT, (event) => {
-      if (cancelled) return;
-      const command = menuCommandOf(event.payload);
-      if (command) handler(command);
+    void this.listen(event, (received) => {
+      if (!cancelled) onPayload(received.payload);
     })
       .then((off) => {
         if (cancelled) off();
         else unlisten = off;
       })
-      // An ACL-denied `listen` leaves the menu inert, which the platform's own
-      // items survive; a rejection thrown from here would only be unhandled.
       .catch(() => {});
 
     return () => {
       cancelled = true;
       unlisten?.();
       unlisten = null;
-    };
-  }
-
-  private subscribeDragDrop(handler: (event: DragDropEvent) => void): () => void {
-    const off: Array<() => void> = [];
-    let cancelled = false;
-
-    const subscribe = (name: string, toEvent: (payload: unknown) => DragDropEvent) => {
-      void this.listen(name, (event) => {
-        if (!cancelled) handler(toEvent(event.payload));
-      })
-        .then((unlisten) => {
-          if (cancelled) unlisten();
-          else off.push(unlisten);
-        })
-        // An ACL-denied `listen` leaves the picker as the only way in, which
-        // works; a rejection thrown from here would only be unhandled.
-        .catch(() => {});
-    };
-
-    subscribe(DRAG_EVENTS.enter, () => ({ type: 'over' }));
-    subscribe(DRAG_EVENTS.over, () => ({ type: 'over' }));
-    subscribe(DRAG_EVENTS.drop, (payload) => ({ type: 'drop', paths: pathsOf(payload) }));
-    subscribe(DRAG_EVENTS.leave, () => ({ type: 'leave' }));
-
-    return () => {
-      cancelled = true;
-      for (const unlisten of off.splice(0)) unlisten();
     };
   }
 

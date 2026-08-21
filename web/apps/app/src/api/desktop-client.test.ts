@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { FetchApiClient, type DragDropEvent } from './client.js';
+import { FetchApiClient, MENU_COMMAND_IDS, type DragDropEvent } from './client.js';
 import { DesktopApiClient, createApiClient } from './desktop-client.js';
 
 describe('DesktopApiClient', () => {
@@ -280,20 +280,14 @@ describe('the menu source', () => {
     source.onCommand((command) => seen.push(command));
     await Promise.resolve();
 
-    for (const id of ['find', 'import', 'new-invoice', 'settings', 'toggle-sidebar']) {
+    for (const id of MENU_COMMAND_IDS) {
       bus.emit('menu-command', id);
     }
     bus.emit('menu-command', 'navigate:');
     bus.emit('menu-command', 'a-menu-item-from-the-future');
     bus.emit('menu-command', { id: 'find' });
 
-    expect(seen).toEqual([
-      { kind: 'find' },
-      { kind: 'import' },
-      { kind: 'new-invoice' },
-      { kind: 'settings' },
-      { kind: 'toggle-sidebar' },
-    ]);
+    expect(seen).toEqual(MENU_COMMAND_IDS.map((kind) => ({ kind })));
   });
 
   it('stops delivering once unsubscribed', async () => {

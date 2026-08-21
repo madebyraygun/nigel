@@ -259,6 +259,13 @@ export type ImportSource =
     };
 
 /**
+ * The non-navigation ids the shell's menu emits, mirrored from the desktop
+ * crate's `menu::COMMANDS` — its `tests/menu_bar.rs` fails the build when the
+ * two drift, so the list stays single-line for that test to read.
+ */
+export const MENU_COMMAND_IDS = ['import', 'new-invoice', 'find', 'toggle-sidebar'] as const;
+
+/**
  * A selection from the shell's menu bar, mapped to what it asks of the app.
  *
  * `screen` stays a plain string here: the api layer does not know the screen
@@ -268,11 +275,7 @@ export type ImportSource =
  */
 export type MenuCommand =
   | { kind: 'navigate'; screen: string }
-  | { kind: 'find' }
-  | { kind: 'import' }
-  | { kind: 'new-invoice' }
-  | { kind: 'settings' }
-  | { kind: 'toggle-sidebar' };
+  | { kind: (typeof MENU_COMMAND_IDS)[number] };
 
 /**
  * Whether this client comes with a menu bar, in the shape of `ImportSource`:
