@@ -1,1 +1,1 @@
-{"granularity":"none","report":{"accounts":[{"name":"BofA Checking","accountType":"checking","balance":7368.02},{"name":"BofA Credit Card","accountType":"credit_card","balance":909.51}],"total":8277.53,"ytdNetIncome":0.0}}
+{"granularity":"none","report":{"accounts":[{"name":"BofA Checking","accountType":"checking","class":"asset","balance":7368.02,"naturalBalance":7368.02},{"name":"BofA Credit Card","accountType":"credit_card","class":"liability","balance":909.51,"naturalBalance":-909.51}],"total":8277.53,"ytdNetIncome":0.0,"uncategorizedTotal":0.0,"uncategorizedCount":0}}
