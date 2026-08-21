@@ -933,8 +933,8 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
     let (ytd_net_income, uncategorized_total, uncategorized_count) = conn.query_row(
         &format!(
             "SELECT COALESCE(SUM(t.amount), 0), \
-                    COALESCE(SUM(CASE WHEN t.category_id IS NULL THEN t.amount END), 0), \
-                    COUNT(CASE WHEN t.category_id IS NULL THEN 1 END) \
+                    COALESCE(SUM(CASE WHEN c.class IS NULL THEN t.amount END), 0), \
+                    COUNT(CASE WHEN c.class IS NULL THEN 1 END) \
              FROM transactions t LEFT JOIN categories c ON t.category_id = c.id \
              WHERE t.date LIKE ?1 \
                AND (c.class IS NULL OR c.class IN ('revenue', 'expense')) \
