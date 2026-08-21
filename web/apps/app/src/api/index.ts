@@ -9,6 +9,8 @@ export {
   type DragDropEvent,
   type FetchApiClientOptions,
   type ImportSource,
+  type MenuCommand,
+  type MenuSource,
   type RegisterParams,
   type ReportDateParams,
 } from './client.js';

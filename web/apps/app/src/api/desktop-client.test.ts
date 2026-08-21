@@ -245,3 +245,74 @@ describe('createApiClient', () => {
     }
   });
 });
+
+describe('the menu source', () => {
+  function menuClient() {
+    const bus = eventBus();
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: bus.listen,
+      invoke: async () => null,
+    });
+    return { bus, client };
+  }
+
+  it('is native, and maps navigation ids to navigate commands', async () => {
+    const { bus, client } = menuClient();
+    const source = client.menuSource();
+    expect(source.kind).toBe('native');
+    if (source.kind !== 'native') return;
+
+    const seen: unknown[] = [];
+    source.onCommand((command) => seen.push(command));
+    await Promise.resolve();
+
+    bus.emit('menu-command', 'navigate:register');
+    expect(seen).toEqual([{ kind: 'navigate', screen: 'register' }]);
+  });
+
+  it('maps the command ids and drops what this build does not know', async () => {
+    const { bus, client } = menuClient();
+    const source = client.menuSource();
+    if (source.kind !== 'native') throw new Error('expected a native menu');
+
+    const seen: unknown[] = [];
+    source.onCommand((command) => seen.push(command));
+    await Promise.resolve();
+
+    for (const id of ['find', 'import', 'new-invoice', 'settings', 'toggle-sidebar']) {
+      bus.emit('menu-command', id);
+    }
+    bus.emit('menu-command', 'navigate:');
+    bus.emit('menu-command', 'a-menu-item-from-the-future');
+    bus.emit('menu-command', { id: 'find' });
+
+    expect(seen).toEqual([
+      { kind: 'find' },
+      { kind: 'import' },
+      { kind: 'new-invoice' },
+      { kind: 'settings' },
+      { kind: 'toggle-sidebar' },
+    ]);
+  });
+
+  it('stops delivering once unsubscribed', async () => {
+    const { bus, client } = menuClient();
+    const source = client.menuSource();
+    if (source.kind !== 'native') throw new Error('expected a native menu');
+
+    const seen: unknown[] = [];
+    const off = source.onCommand((command) => seen.push(command));
+    await Promise.resolve();
+
+    off();
+    bus.emit('menu-command', 'find');
+    expect(seen).toEqual([]);
+  });
+});
+
+describe('the browser client has no menu bar', () => {
+  it('answers none', () => {
+    expect(new FetchApiClient().menuSource()).toEqual({ kind: 'none' });
+  });
+});

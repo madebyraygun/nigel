@@ -29,6 +29,8 @@ import {
   replaceRow,
   todayIso,
 } from './register-data.js';
+import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { consumeMenuIntent } from '../state/menu-intent.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 import { controlsCss } from '@nigel/theme';
@@ -48,7 +50,7 @@ import { controlsCss } from '@nigel/theme';
  * between the user and the previous screen.
  */
 @customElement('nigel-register-screen')
-export class NigelRegisterScreen extends LitElement {
+export class NigelRegisterScreen extends SignalWatcher(LitElement) {
   static styles = [
     controlsCss,
     css`
@@ -120,7 +122,11 @@ export class NigelRegisterScreen extends LitElement {
   private loadSeq = 0;
   private seededSearch = false;
 
+  /** A menu selection asked for the search box; focused once this update lands. */
+  private focusSearchOnUpdate = false;
+
   willUpdate(changed: PropertyValues<this>): void {
+    if (consumeMenuIntent('find')) this.focusSearchOnUpdate = true;
     if (!changed.has('params')) return;
 
     if (!this.seededSearch) {
@@ -131,6 +137,13 @@ export class NigelRegisterScreen extends LitElement {
     const request = registerParamsFrom(this.params);
     if (JSON.stringify(request) === this.loadedKey) return;
     void this.load(request);
+  }
+
+  updated(): void {
+    if (this.focusSearchOnUpdate) {
+      this.focusSearchOnUpdate = false;
+      this.toolbar?.focusSearch();
+    }
   }
 
   // -- loading --------------------------------------------------------------

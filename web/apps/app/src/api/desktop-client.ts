@@ -5,6 +5,8 @@ import {
   type DragDropEvent,
   type ExportTarget,
   type ImportSource,
+  type MenuCommand,
+  type MenuSource,
 } from './client.js';
 import type { ExportFormat, ExportParams, ReportSlug, StagedUpload } from './types.js';
 
@@ -34,6 +36,32 @@ const DRAG_EVENTS = {
   drop: 'tauri://drag-drop',
   leave: 'tauri://drag-leave',
 } as const;
+
+/** The shell's menu bridge: one event, the command id as its payload. */
+const MENU_EVENT = 'menu-command';
+
+/** The ids the shell emits that are not navigation. */
+const MENU_COMMANDS = ['find', 'import', 'new-invoice', 'settings', 'toggle-sidebar'] as const;
+
+type MenuCommandId = (typeof MENU_COMMANDS)[number];
+
+function isMenuCommandId(value: string): value is MenuCommandId {
+  return (MENU_COMMANDS as readonly string[]).includes(value);
+}
+
+/**
+ * The command a payload carries, or `null` for one this build does not know —
+ * dropped rather than thrown, so a newer shell can add items before the SPA
+ * learns them.
+ */
+function menuCommandOf(payload: unknown): MenuCommand | null {
+  if (typeof payload !== 'string') return null;
+  if (payload.startsWith('navigate:')) {
+    const screen = payload.slice('navigate:'.length);
+    return screen ? { kind: 'navigate', screen } : null;
+  }
+  return isMenuCommandId(payload) ? { kind: payload } : null;
+}
 
 /**
  * The api client the desktop shell runs.
@@ -80,6 +108,37 @@ export class DesktopApiClient extends FetchApiClient {
       stagePath: async (path: string) =>
         (await this.invoke('stage_import', { path })) as StagedUpload,
       onDragDrop: (handler) => this.subscribeDragDrop(handler),
+    };
+  }
+
+  override menuSource(): MenuSource {
+    return {
+      kind: 'native',
+      onCommand: (handler) => this.subscribeMenu(handler),
+    };
+  }
+
+  private subscribeMenu(handler: (command: MenuCommand) => void): () => void {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void this.listen(MENU_EVENT, (event) => {
+      if (cancelled) return;
+      const command = menuCommandOf(event.payload);
+      if (command) handler(command);
+    })
+      .then((off) => {
+        if (cancelled) off();
+        else unlisten = off;
+      })
+      // An ACL-denied `listen` leaves the menu inert, which the platform's own
+      // items survive; a rejection thrown from here would only be unhandled.
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      unlisten = null;
     };
   }
 

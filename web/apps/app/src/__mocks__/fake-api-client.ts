@@ -5,6 +5,7 @@ import type {
   ExpenseParams,
   ExportTarget,
   ImportSource,
+  MenuSource,
   ReconciliationParams,
   RegisterParams,
   ReportDateParams,
@@ -396,6 +397,13 @@ export class FakeApiClient implements ApiClient {
 
   importSource(): ImportSource {
     return this.importSourceValue;
+  }
+
+  /** No menu bar by default; the shell-mode tests swap this. */
+  menuSourceValue: MenuSource = { kind: 'none' };
+
+  menuSource(): MenuSource {
+    return this.menuSourceValue;
   }
 
   // -- register -------------------------------------------------------------

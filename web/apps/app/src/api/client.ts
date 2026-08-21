@@ -258,6 +258,35 @@ export type ImportSource =
       onDragDrop(handler: (event: DragDropEvent) => void): () => void;
     };
 
+/**
+ * A selection from the shell's menu bar, mapped to what it asks of the app.
+ *
+ * `screen` stays a plain string here: the api layer does not know the screen
+ * registry, so the consumer validates the id before navigating and drops what
+ * it does not recognize — the same forward-compatibility the shell gets by
+ * emitting ids it may learn before the SPA does.
+ */
+export type MenuCommand =
+  | { kind: 'navigate'; screen: string }
+  | { kind: 'find' }
+  | { kind: 'import' }
+  | { kind: 'new-invoice' }
+  | { kind: 'settings' }
+  | { kind: 'toggle-sidebar' };
+
+/**
+ * Whether this client comes with a menu bar, in the shape of `ImportSource`:
+ * a discriminant plus what the platform can do. A browser has no menu bar to
+ * offer, so it answers `none` and the app binds nothing.
+ */
+export type MenuSource =
+  | { kind: 'none' }
+  | {
+      kind: 'native';
+      /** Returns its unsubscribe synchronously; the app disconnects synchronously. */
+      onCommand(handler: (command: MenuCommand) => void): () => void;
+    };
+
 export interface ApiClient {
   ping(): Promise<PingResponse>;
   getStatus(): Promise<StatusResponse>;
@@ -349,6 +378,11 @@ export interface ApiClient {
    * and never ask which shell they are in.
    */
   importSource(): ImportSource;
+  /**
+   * The menu bar this client runs under, if any. The root container binds it
+   * once; screens never see it.
+   */
+  menuSource(): MenuSource;
   /** A dry run: reports what an import would do, having written nothing. */
   previewImport(input: ImportRequest): Promise<ImportPreview>;
   /** Snapshot, import, categorize — the sequence the TUI has always used. */
@@ -711,6 +745,10 @@ export class FetchApiClient implements ApiClient {
 
   importSource(): ImportSource {
     return { kind: 'browser' };
+  }
+
+  menuSource(): MenuSource {
+    return { kind: 'none' };
   }
 
   previewImport(input: ImportRequest): Promise<ImportPreview> {

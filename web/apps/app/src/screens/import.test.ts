@@ -21,6 +21,7 @@ import {
   EMPTY_IMPORT_PREVIEW,
   FakeApiClient,
 } from '../__mocks__/fake-api-client.js';
+import { requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
 
 /**
  * 423 and 401 are deliberately untested here. The shell gates both before a
@@ -1073,5 +1074,34 @@ describe('the import screen in native mode', () => {
     await settle(el);
 
     expect(dropzone(el).error).toBe("Couldn't read /home/books/cedar-april-2025.csv");
+  });
+});
+
+describe('the pick-import menu intent', () => {
+  afterEach(() => {
+    resetMenuIntent();
+    // Two mounted import screens would race for one intent; the app never has
+    // two, so neither may a test.
+    document.body.innerHTML = '';
+  });
+
+  it('opens the native dialog when the intent was requested before arriving', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+
+    expect(shell.staged).toHaveLength(1);
+    expect(shell.staged[0].filename).toBe('acme-checking.csv');
+  });
+
+  it('does nothing in a browser, where there is no dialog to open', async () => {
+    requestMenuIntent('pick-import');
+    const { el } = await mount();
+    await settle(el);
+    expect(dropzone(el)).toBeTruthy();
   });
 });

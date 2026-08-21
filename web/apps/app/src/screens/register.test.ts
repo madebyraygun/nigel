@@ -4,6 +4,7 @@ import type { NigelRegisterScreen } from './register.js';
 import { REGISTER_SHORTCUTS, type WcRegisterTable, type WcShortcutHelp } from '@nigel/ui';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
+import { requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
 import type { Account, CategoryRow, RegisterRow } from '../api/types.js';
 import { todayIso } from './register-data.js';
@@ -445,5 +446,49 @@ describe('register screen', () => {
   it('hands the table the height left under the toolbar', async () => {
     const { el } = await mount();
     expect(table(el).fill).toBe(true);
+  });
+});
+
+describe('the find menu intent', () => {
+  beforeEach(() => {
+    resetAppStore();
+    appLocked.set(false);
+    resetMenuIntent();
+  });
+
+  afterEach(() => {
+    // Two mounted registers would race for one intent; the app never has two,
+    // so neither may a test.
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  function toolbarOf(el: NigelRegisterScreen) {
+    const toolbar = el.shadowRoot?.querySelector('wc-register-toolbar');
+    if (!toolbar) throw new Error('no toolbar rendered');
+    return toolbar;
+  }
+
+  it('focuses the search box when the intent was requested before arriving', async () => {
+    requestMenuIntent('find');
+    const { el } = await mount();
+    const focus = vi.spyOn(toolbarOf(el), 'focusSearch');
+    // The mount consumed the intent; a second request proves the wiring end
+    // to end on an already-rendered screen where the spy can exist first.
+    requestMenuIntent('find');
+    await settle(el);
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fires: the chord pressed again while already here focuses again', async () => {
+    const { el } = await mount();
+    const focus = vi.spyOn(toolbarOf(el), 'focusSearch');
+
+    requestMenuIntent('find');
+    await settle(el);
+    requestMenuIntent('find');
+    await settle(el);
+
+    expect(focus).toHaveBeenCalledTimes(2);
   });
 });
