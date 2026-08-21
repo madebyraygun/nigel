@@ -47,7 +47,9 @@ describe('nigelTheme', () => {
     '--nc-grad-brand',
     '--nc-grad-brand-size',
     '--nc-grad-brand-soft',
+    '--nc-font-figures',
     '--nc-font-money',
+    '--nc-font-brand',
     '--nc-icon-size',
     '--nc-sidebar-width',
     '--nc-sidebar-collapsed-width',
@@ -59,15 +61,45 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
-  it('makes the bundled mono the primary face', () => {
-    expect(text).toMatch(/--wa-font-family-sans:\s*'IBM Plex Mono'/);
+  it('makes the system face the primary one', () => {
+    // Chrome, labels and prose are drawn in whatever the person already reads
+    // every menu and dialog in; that is most of what makes an app look like it
+    // belongs on the machine rather than in a tab.
+    expect(text).toMatch(/--wa-font-family-sans:\s*system-ui/);
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*sans-serif;/);
   });
 
-  it('keeps a system mono behind it, so a missing face still aligns columns', () => {
-    // The fallback is deliberately mono rather than the old sans stack: if the
-    // bundled face fails, money columns should still line up.
-    expect(text).toMatch(/--wa-font-family-sans:[^;]*ui-monospace/);
-    expect(text).toMatch(/--wa-font-family-sans:[^;]*monospace;/);
+  it('keeps the bundled face out of the primary stack', () => {
+    // The whole of the split is that chrome no longer reaches for Plex. A
+    // stack that still named it would fall back to it on the one engine that
+    // does not answer system-ui, which is the case this guards.
+    const sans = text.slice(text.indexOf('--wa-font-family-sans'));
+    expect(sans.slice(0, sans.indexOf(';'))).not.toContain('IBM Plex Mono');
+  });
+
+  it('keeps a system mono behind the bundled one, so a missing face still aligns columns', () => {
+    // Every fallback here is mono: if the bundled face fails to load, money
+    // columns should still line up rather than fall to a proportional face.
+    expect(text).toMatch(/--wa-font-family-mono:\s*'IBM Plex Mono'/);
+    expect(text).toMatch(/--wa-font-family-mono:[^;]*ui-monospace/);
+    expect(text).toMatch(/--wa-font-family-mono:[^;]*monospace;/);
+  });
+
+  it('lands every figures and brand token on the bundled face', () => {
+    // Each is written as an indirection so a component can say why it wants
+    // the face rather than which face it wants. Following the chain is what
+    // proves the indirection still arrives somewhere.
+    const follow = (token: string): string => {
+      const declared = declarationsOf(token);
+      expect(declared, `${token} is not declared`).not.toHaveLength(0);
+      const value = declared[0];
+      const reference = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i.exec(value);
+      return reference ? follow(reference[1]) : value;
+    };
+
+    for (const token of ['--nc-font-figures', '--nc-font-money', '--nc-font-brand']) {
+      expect(follow(token), token).toContain("'IBM Plex Mono'");
+    }
   });
 
   it('pins color-scheme when a mode is forced, so native widgets follow', () => {

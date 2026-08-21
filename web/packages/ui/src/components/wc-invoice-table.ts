@@ -87,6 +87,7 @@ export class WcInvoiceTable extends LitElement {
     }
 
     td.number {
+      font-family: var(--nc-font-figures);
       font-variant-numeric: tabular-nums;
     }
 

@@ -97,10 +97,19 @@ and it applies to app screens as well as to `wc-*` components.
 
 ## Typefaces
 
-**IBM Plex Mono, everywhere in the app, bundled into the binary.** The browser
-is meant to read as the same product as the CLI, and the app has almost no
-prose to lose by it — the longest strings anywhere are two-sentence guardrail
-explanations and empty states.
+**Two faces, split by job.** Chrome, labels and prose read
+`--wa-font-family-sans`, a `system-ui` stack, so the app is drawn in whatever
+the person already reads every menu and dialog in — that is most of what makes
+the desktop shell look like it belongs on the machine. **IBM Plex Mono is
+bundled into the binary** and keeps the places it earns: `--nc-font-figures`
+(and its `--nc-font-money` alias) for columns whose digits have to land above
+each other, `--nc-font-brand` for the wordmark and the company name, and
+`--wa-font-family-mono` for code-shaped fields — a pattern, an account code, a
+filename, a keyboard hint.
+
+Every one of those is a token. A component asks for the job, never for the
+family, and `packages/ui/src/__tests__/font-stack-guard.test.ts` fails the
+build on a `font-family` that names a stack instead of resolving through one.
 
 Weights **400 / 500 / 600**, matching `--wa-font-weight-normal` / `-medium` /
 `-bold` exactly. That match is why Plex Mono and not Fira Mono, which has no

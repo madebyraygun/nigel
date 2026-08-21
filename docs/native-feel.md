@@ -67,6 +67,44 @@ all — the user agent already shows the pointer on anchors — so the only
 components that carry a `cursor` declaration are the ones whose element is
 not a link.
 
+## The face the machine already uses
+
+A native app draws its chrome in the system face, and using anything else is
+the loudest of the remaining tells — louder than a cursor or a scrollbar,
+because every label on screen carries it. `--wa-font-family-sans` is a
+`system-ui` stack for exactly that reason, and it is what a component gets by
+asking for nothing.
+
+IBM Plex Mono is still bundled, and still the brand's own character; what
+changed is that it is asked for by job rather than inherited by everything.
+`--nc-font-figures` (aliased `--nc-font-money`) is for a column of digits that
+has to land above the column below it — an amount, a count, a date in a table.
+`tabular-nums` gets a proportional face most of the way, but only a mono keeps
+the separators and the currency symbol aligned too. `--nc-font-brand` is the
+wordmark and the company name. `--wa-font-family-mono` is for the code-shaped
+fields: a pattern, an account code, a filename, a keyboard hint.
+
+No component names a family. `packages/ui/src/__tests__/font-stack-guard.test.ts`
+fails the build on a `font-family` that does not resolve through a token,
+because a hardcoded stack renders perfectly well and would keep its old face
+through a change made everywhere else.
+
+## Chrome that moves has to move
+
+Putting the sidebar away is a change of shape, and a native window animates it
+rather than cutting to the result. `wc-nav-sidebar` transitions its own `width`
+between the 232px column and the 56px rail over `--nc-transition-base`; below
+48rem the sidebar is a drawer instead, and `wc-app-shell` slides it off-canvas
+with `transform` over the same token. The rows hold their line
+(`white-space: nowrap`) and the host clips (`overflow-x: hidden`), so a label
+drawn at full width inside a 56px box is wiped in rather than reflowed.
+
+Reduced motion is answered in `@nigel/theme`: every `--nc-transition-*` and
+`--nc-duration-*` collapses to zero under `prefers-reduced-motion: reduce`, so
+a component that reads a token gets the preference without asking. Both
+sliding surfaces additionally cancel their transition in a media query of their
+own, where a reader of the component will see it.
+
 ## Spellcheck on data fields
 
 A red squiggle under an account code, a regex pattern or a currency code is

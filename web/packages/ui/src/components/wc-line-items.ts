@@ -163,6 +163,7 @@ export class WcLineItems extends LitElement {
 
       td.figure input {
         text-align: end;
+        font-family: var(--nc-font-figures);
         font-variant-numeric: tabular-nums;
       }
 

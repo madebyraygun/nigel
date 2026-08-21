@@ -43,6 +43,7 @@ export class WcReconcileResult extends LitElement {
     dd {
       margin: 0;
       justify-self: end;
+      font-family: var(--nc-font-figures);
       font-variant-numeric: tabular-nums;
       user-select: text;
     }

@@ -62,7 +62,7 @@ export class WcSampleTable extends LitElement {
     }
 
     .date {
-      font-family: var(--wa-font-family-mono);
+      font-family: var(--nc-font-figures);
       white-space: nowrap;
       width: 1%;
     }

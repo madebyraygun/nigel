@@ -29,6 +29,22 @@ const preview: Preview = {
         ></wc-nav-sidebar>`,
     },
     {
+      // The rail slides between the two states above, and a still frame
+      // cannot show that. This one is here to be clicked.
+      name: 'toggling',
+      render: () => {
+        const flip = (event: Event) => {
+          const sidebar = (event.currentTarget as HTMLElement)
+            .previousElementSibling as HTMLElement & { collapsed: boolean };
+          sidebar.collapsed = !sidebar.collapsed;
+        };
+        return html`
+          <wc-nav-sidebar .items=${NAV_ITEMS} active="register"></wc-nav-sidebar>
+          <button type="button" @click=${flip}>Collapse and expand the rail</button>
+        `;
+      },
+    },
+    {
       name: 'with-disabled',
       render: () =>
         html`<wc-nav-sidebar

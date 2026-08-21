@@ -78,6 +78,7 @@ export class WcReconciliationHistory extends LitElement {
     }
 
     td.month {
+      font-family: var(--nc-font-figures);
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }

@@ -26,10 +26,37 @@ export class WcNavSidebar extends LitElement {
       border-right: 1px solid var(--wa-color-border);
       font-family: var(--wa-font-family-sans);
       overflow-y: auto;
+      /* Clipped rather than scrolled sideways: a label is drawn at its full
+         width from the first frame of an expansion, and the rail is 56px
+         wide for most of that frame's life. overflow-y: auto alone would
+         compute overflow-x to auto and flash a scrollbar through the whole
+         transition. */
+      overflow-x: hidden;
+      /* The rail is the wide-viewport half of "put the sidebar away", and
+         the width is the only thing that changes between the two states, so
+         it is the only thing to animate. --nc-transition-base is already
+         0ms under a reduced-motion preference; the media query below says
+         so a second time where a reader of this file will see it. */
+      transition: width var(--nc-transition-base, 200ms ease);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      :host {
+        transition: none;
+      }
     }
 
     :host([collapsed]) {
       width: var(--nc-sidebar-collapsed-width, 56px);
+    }
+
+    /* Both rows hold their line while the width animates. Without this the
+       company name and the nav labels reflow onto second lines on their way
+       through 56px, and the rail appears to grow taller before it grows
+       wider. */
+    .brand,
+    button {
+      white-space: nowrap;
     }
 
     .brand {
@@ -43,6 +70,7 @@ export class WcNavSidebar extends LitElement {
     }
 
     .brand-name {
+      font-family: var(--nc-font-brand);
       font-weight: var(--wa-font-weight-bold, 600);
       font-size: var(--wa-font-size-lg, 16px);
       background: var(--nc-grad-brand-text, var(--nc-grad-brand));

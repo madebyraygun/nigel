@@ -102,6 +102,31 @@ describePreviewA11y(preview);
 
 describePrintHiding(WcNavSidebar, ':host');
 
+describe('the rail', () => {
+  const text = styleText(WcNavSidebar);
+
+  it('slides between the column and the rail rather than snapping', () => {
+    // Width is the only thing that differs between the two states, so it is
+    // the only thing there is to animate.
+    expect(text).toMatch(/:host\s*{[^}]*transition:\s*width\s*var\(--nc-transition-base/);
+  });
+
+  it('stops sliding for anyone who asked motion to stop', () => {
+    // --nc-transition-base is already 0ms under the same preference; this
+    // says so where someone reading the component will see it.
+    expect(text).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*:host[^{]*{[^}]*transition:\s*none/,
+    );
+  });
+
+  it('clips the labels rather than reflowing them on the way through', () => {
+    // A label is drawn at its full width from the first frame of an
+    // expansion, and the rail is 56px wide for most of that frame's life.
+    expect(text).toMatch(/:host\s*{[^}]*overflow-x:\s*hidden/);
+    expect(text).toMatch(/\.brand,\s*button\s*{[^}]*white-space:\s*nowrap/);
+  });
+});
+
 describe('wc-nav-sidebar on a phone', () => {
   // jsdom has no layout engine, so the rules are read the way the register's
   // fill rules are.

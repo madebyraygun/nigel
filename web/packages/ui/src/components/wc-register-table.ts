@@ -274,6 +274,7 @@ export class WcRegisterTable extends LitElement {
 
       td.date {
         white-space: nowrap;
+        font-family: var(--nc-font-figures);
         font-variant-numeric: tabular-nums;
       }
 
