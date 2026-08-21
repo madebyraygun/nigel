@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-18 01:56'
-updated_date: '2026-08-21 00:48'
+updated_date: '2026-08-21 01:02'
 labels:
   - tauri
   - ui
@@ -36,11 +36,13 @@ Two notes from a later read of the code. wc-app-shell already renders the nav to
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The sidebar toggle animates, and does not animate under prefers-reduced-motion
-- [ ] #2 The menu control sits at the far left of the header, before the company name
+- [x] #2 The menu control sits at the far left of the header, before the company name
 - [ ] #3 Chrome, labels and prose render in the system face; figures and the brand keep IBM Plex Mono
 - [ ] #4 The change is made in @nigel/theme tokens; no component names a font stack directly
 - [ ] #5 Money columns still align digit for digit, and the mono-glyph coverage test still passes
 <!-- AC:END -->
+
+
 
 ## Implementation Plan
 
