@@ -863,7 +863,33 @@ pub struct AccountBalance {
 pub struct BalanceReport {
     pub accounts: Vec<AccountBalance>,
     pub total: f64,
+    /// This year's revenue and spending, plus every transaction still waiting
+    /// for a category. Equity moves and transfers stay out of it.
     pub ytd_net_income: f64,
+    /// The part of `ytd_net_income` that has no category yet.
+    pub uncategorized_total: f64,
+    /// How many transactions that part came from.
+    pub uncategorized_count: i64,
+}
+
+impl BalanceReport {
+    /// The footnote that keeps the headline honest, or `None` when every
+    /// transaction this year already has a category.
+    pub fn uncategorized_note(&self) -> Option<String> {
+        if self.uncategorized_count == 0 {
+            return None;
+        }
+        let (noun, pronoun) = if self.uncategorized_count == 1 {
+            ("transaction", "it")
+        } else {
+            ("transactions", "them")
+        };
+        Some(format!(
+            "Includes {} across {} uncategorized {noun} \u{2014} run `nigel review` to sort {pronoun}.",
+            crate::fmt::money(self.uncategorized_total),
+            self.uncategorized_count
+        ))
+    }
 }
 
 pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
@@ -898,21 +924,32 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
 
     let total: f64 = accounts.iter().map(|a| a.balance).sum();
 
+    // Revenue and spending, plus anything not yet categorized: a review
+    // backlog belongs in the headline figure, not hidden behind it. Equity
+    // (an owner draw is not a loss) and transfers stay out. The join is a LEFT
+    // JOIN so an uncategorized row survives it, and `EXCLUDE_TRANSFERS` is
+    // NULL-safe, so those rows pass the transfer filter too.
     let current_year = chrono::Local::now().year();
-    let ytd_net_income: f64 = conn.query_row(
+    let (ytd_net_income, uncategorized_total, uncategorized_count) = conn.query_row(
         &format!(
-            "SELECT COALESCE(SUM(t.amount), 0) as net \
-             FROM transactions t JOIN categories c ON t.category_id = c.id \
-             WHERE t.date LIKE ?1 AND c.class IN ('revenue', 'expense') AND {EXCLUDE_TRANSFERS}"
+            "SELECT COALESCE(SUM(t.amount), 0), \
+                    COALESCE(SUM(CASE WHEN t.category_id IS NULL THEN t.amount END), 0), \
+                    COUNT(CASE WHEN t.category_id IS NULL THEN 1 END) \
+             FROM transactions t LEFT JOIN categories c ON t.category_id = c.id \
+             WHERE t.date LIKE ?1 \
+               AND (c.class IS NULL OR c.class IN ('revenue', 'expense')) \
+               AND {EXCLUDE_TRANSFERS}"
         ),
         [format!("{current_year}%")],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
 
     Ok(BalanceReport {
         accounts,
         total,
         ytd_net_income,
+        uncategorized_total,
+        uncategorized_count,
     })
 }
 
@@ -2456,6 +2493,89 @@ mod tests {
         assert_eq!(report.ytd_net_income, 7_700.0, "a draw is not a loss");
         // The cash position still counts every dollar that moved.
         assert_eq!(report.total, 5_700.0);
+        // Nothing is waiting on review, so there is no backlog to footnote.
+        assert_eq!(report.uncategorized_total, 0.0);
+        assert_eq!(report.uncategorized_count, 0);
+    }
+
+    #[test]
+    fn ytd_net_income_counts_money_that_has_no_category_yet() {
+        let (_dir, conn) = test_db();
+        let this_year = Datelike::year(&chrono::Local::now());
+        conn.execute(
+            "INSERT INTO accounts (name, account_type, class) \
+             VALUES ('Cedar Checking', 'checking', 'asset')",
+            [],
+        )
+        .unwrap();
+        let account = conn.last_insert_rowid();
+        let cat = |name: &str| -> i64 {
+            conn.query_row("SELECT id FROM categories WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        for (day, amount, category) in [
+            ("01-10", 8_000.0, Some(cat("Client Services"))),
+            ("02-05", -300.0, Some(cat("Software & Subscriptions"))),
+            ("03-01", -2_000.0, Some(cat("Owner Draw / Distribution"))),
+            ("04-02", -1_000.0, Some(cat("Transfer"))),
+            // The review backlog: real money, no category on it yet.
+            ("05-04", -450.0, None),
+            ("06-11", 120.0, None),
+        ] {
+            conn.execute(
+                "INSERT INTO transactions (account_id, date, description, amount, category_id) \
+                 VALUES (?1, ?2, 'x', ?3, ?4)",
+                rusqlite::params![account, format!("{this_year}-{day}"), amount, category],
+            )
+            .unwrap();
+        }
+
+        let report = get_balance(&conn).unwrap();
+        // 7,700 of categorized income and spending, plus the two rows nobody
+        // has sorted yet. The draw and the transfer stay out of it.
+        assert_eq!(report.ytd_net_income, 7_700.0 - 450.0 + 120.0);
+        assert_eq!(report.uncategorized_total, -330.0);
+        assert_eq!(report.uncategorized_count, 2);
+    }
+
+    #[test]
+    fn the_uncategorized_backlog_is_this_years_and_skips_transfers() {
+        let (_dir, conn) = test_db();
+        let this_year = Datelike::year(&chrono::Local::now());
+        let last_year = this_year - 1;
+        conn.execute(
+            "INSERT INTO accounts (name, account_type, class) \
+             VALUES ('Cedar Checking', 'checking', 'asset')",
+            [],
+        )
+        .unwrap();
+        let account = conn.last_insert_rowid();
+        let transfer: i64 = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = 'Transfer'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        for (date, amount, category) in [
+            (format!("{this_year}-02-02"), -200.0, None),
+            (format!("{last_year}-02-02"), -900.0, None),
+            (format!("{this_year}-03-03"), -700.0, Some(transfer)),
+        ] {
+            conn.execute(
+                "INSERT INTO transactions (account_id, date, description, amount, category_id) \
+                 VALUES (?1, ?2, 'x', ?3, ?4)",
+                rusqlite::params![account, date, amount, category],
+            )
+            .unwrap();
+        }
+
+        let report = get_balance(&conn).unwrap();
+        assert_eq!(report.ytd_net_income, -200.0, "last year is not this year");
+        assert_eq!(report.uncategorized_total, -200.0);
+        assert_eq!(report.uncategorized_count, 1);
     }
 
     #[test]
