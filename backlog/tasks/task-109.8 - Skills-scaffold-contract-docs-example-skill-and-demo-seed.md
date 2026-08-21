@@ -4,11 +4,12 @@ title: 'Skills scaffold: contract docs, example skill and demo seed'
 status: To Do
 assignee: []
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-17 04:57'
+updated_date: '2026-08-21 00:21'
 labels:
   - documents
   - skills
   - docs
+milestone: m-1
 dependencies: []
 parent_task_id: TASK-109
 priority: medium

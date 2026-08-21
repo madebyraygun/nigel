@@ -4,9 +4,11 @@ title: Silence the webview's context menu and the keystroke beep
 status: To Do
 assignee: []
 created_date: '2026-08-20 23:48'
+updated_date: '2026-08-21 00:21'
 labels:
   - tauri
   - ui
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-33
 priority: low

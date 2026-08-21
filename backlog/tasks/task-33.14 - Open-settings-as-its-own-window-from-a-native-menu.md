@@ -4,10 +4,11 @@ title: Open settings as its own window from a native menu
 status: To Do
 assignee: []
 created_date: '2026-08-18 01:33'
-updated_date: '2026-08-20 23:50'
+updated_date: '2026-08-21 00:21'
 labels:
   - tauri
   - ui
+milestone: m-0
 dependencies:
   - TASK-33.22
 parent_task_id: TASK-33

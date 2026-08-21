@@ -4,9 +4,11 @@ title: Use a native directory chooser for Data Directory settings
 status: To Do
 assignee: []
 created_date: '2026-08-20 19:01'
+updated_date: '2026-08-21 00:21'
 labels:
   - tauri
   - ui
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-33
 priority: medium

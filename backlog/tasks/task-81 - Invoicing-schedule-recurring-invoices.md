@@ -5,11 +5,12 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-10 21:49'
-updated_date: '2026-08-20 14:36'
+updated_date: '2026-08-21 00:21'
 labels:
   - enhancement
   - invoicing
   - schema
+milestone: m-0
 dependencies: []
 priority: medium
 ---

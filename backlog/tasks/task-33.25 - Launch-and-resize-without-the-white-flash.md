@@ -4,9 +4,11 @@ title: Launch and resize without the white flash
 status: To Do
 assignee: []
 created_date: '2026-08-20 23:49'
+updated_date: '2026-08-21 00:21'
 labels:
   - tauri
   - macos
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-33
 priority: low
