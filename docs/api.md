@@ -343,6 +343,13 @@ imported with, which is what `total` adds up; `naturalBalance` is the same
 figure stated so that more of what the class is reads positive — a liability
 with money owed reports positive.
 
+`ytdNetIncome` is this calendar year's revenue and spending plus every
+transaction that still has no category; equity moves and transfers stay out of
+it. `uncategorizedTotal` and `uncategorizedCount` are the share of that figure
+nobody has sorted yet and how many transactions it came from, for the same year
+and the same transfer exclusion. They are `0` on a book with nothing waiting,
+and every surface that prints the figure footnotes them when they are not.
+
 The tax summary's line items each carry `class` as well, and it is what they
 are ordered by: revenue first, then equity, then expense, then the two
 balance-sheet classes a category should not be on at all. `categoryType` is
