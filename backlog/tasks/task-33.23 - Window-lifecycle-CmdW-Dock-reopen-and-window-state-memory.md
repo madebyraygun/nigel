@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:48'
-updated_date: '2026-08-21 14:34'
+updated_date: '2026-08-21 14:54'
 labels:
   - tauri
   - macos
@@ -45,3 +45,9 @@ tauri-plugin-window-state would do the third piece but carries open macOS bugs â
 7. Tests: clamp_restore units against fake monitor rects (offscreen, shrunken monitor, negative coords, multi-monitor); state-file round-trip and corrupt-file fallback under a temp dir; source-text tests pinning prevent_exit and the close-hides block inside cfg(target_os = macos). Gates: cargo fmt --check and cargo test in crates/nigel-desktop, plus nigel-core tests for the new pub fn.
 8. Verifiable on Linux: persistence round-trip and clamp behavior. macOS-only list for the operator: keep-alive after last close, Dock reopen, Cmd+W once 33.22 lands.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/desktop-lifecycle, PR 42. Close hides on macOS (recorded in docs/desktop.md's Window lifecycle section); keep-alive via ExitRequested/prevent_exit with explicit quits carrying a code; Reopen shows or rebuilds. Geometry in logical units at config_dir()/window-state.json, clamp_restore pure and unit-tested (offscreen, shrunken, multi-monitor, sub-minimum screens); silent fallback on any state-file failure. nigel-core's config_dir() went pub as the single accessor, per TASK-33.10's cross-crate-caller rule. macOS behaviors need operator verification per the PR checklist.
+<!-- SECTION:NOTES:END -->

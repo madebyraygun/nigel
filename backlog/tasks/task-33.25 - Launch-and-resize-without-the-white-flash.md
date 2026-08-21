@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:49'
-updated_date: '2026-08-21 14:34'
+updated_date: '2026-08-21 14:54'
 labels:
   - tauri
   - macos
@@ -42,3 +42,9 @@ Two shell-side changes. Give the window a background color matching the theme bg
 6. Verifiable on Linux: resize-edge background and show-on-ready timing. macOS list: dark-mode launch color, and the title-bar region once 33.20 lands.
 7. Merge points, flagged: the menu lane (33.22) also adds builder-chain and invoke-handler lines in main.rs (additive, low risk); PRs 38 and 40 touch web/apps/app/src/api/client.ts, where this adds one interface method (additive, low risk).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/desktop-launch-paint, PR 43, stacked on PR 42. Hidden window shows on frontend_ready (double rAF) with a 4s fallback; window background starts on the OS theme and follows the SPA's resolved palette via set_chrome_background, driven by apps/app/src/chrome-bridge.ts through the new ApiClient.shellChrome() seam (fetch client answers null). Canvas constants drift-pinned to color.ts; index.html's stale #fdfcfb fallback corrected to #f3f2f7. Dark-launch and resize-edge color need operator verification on macOS per the PR checklist.
+<!-- SECTION:NOTES:END -->
