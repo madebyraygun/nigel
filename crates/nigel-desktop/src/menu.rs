@@ -38,13 +38,10 @@ pub const NAV_SCREENS: [(&str, &str); 13] = [
 pub const ACCELERATED: usize = 9;
 
 /// The non-navigation command ids the menu emits.
-pub const COMMANDS: [&str; 5] = [
-    "settings",
-    "import",
-    "new-invoice",
-    "find",
-    "toggle-sidebar",
-];
+///
+/// `web/apps/app/src/api/client.ts` mirrors this list as `MENU_COMMAND_IDS`;
+/// `tests/menu_bar.rs` fails the build when the two drift.
+pub const COMMANDS: [&str; 4] = ["import", "new-invoice", "find", "toggle-sidebar"];
 
 /// The command id a menu selection carries to the SPA, if it is ours.
 ///
@@ -145,27 +142,29 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let view = view.separator().fullscreen();
     menu.append(&view.build()?)?;
 
-    let window = SubmenuBuilder::new(app, "Window")
+    // The well-known ids matter: tauri hands submenus carrying them to AppKit
+    // (`set_as_windows_menu_for_nsapp` / `set_as_help_menu_for_nsapp`) after it
+    // installs the bar into NSApp. Calling those methods here would be too
+    // early — NSApp has no main menu yet, so muda cannot find the NSMenu and
+    // returns without doing anything.
+    let window = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
         .minimize()
         .maximize()
         .build()?;
-    #[cfg(target_os = "macos")]
-    window.set_as_windows_menu_for_nsapp()?;
     menu.append(&window)?;
 
-    let help = SubmenuBuilder::new(app, "Help");
+    let help = SubmenuBuilder::with_id(app, tauri::menu::HELP_SUBMENU_ID, "Help");
     #[cfg(not(target_os = "macos"))]
     let help = help.about(Some(about_metadata()));
-    let help = help.build()?;
-    #[cfg(target_os = "macos")]
-    help.set_as_help_menu_for_nsapp()?;
-    menu.append(&help)?;
+    menu.append(&help.build()?)?;
 
     Ok(menu)
 }
 
 fn settings_item<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<MenuItem<R>> {
-    item(app, "settings", "Settings…", "CmdOrCtrl+,")
+    // The navigation id, not a command of its own: opening Settings is exactly
+    // what a View-menu selection of it does, so it rides the same path.
+    item(app, "navigate:settings", "Settings…", "CmdOrCtrl+,")
 }
 
 fn item<R: Runtime>(
