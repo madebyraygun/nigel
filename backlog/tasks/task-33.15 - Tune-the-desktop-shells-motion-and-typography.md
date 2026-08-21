@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-18 01:56'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-08-21 00:48'
 labels:
   - tauri
   - ui
@@ -69,3 +69,25 @@ Two notes from a later read of the code. wc-app-shell already renders the nav to
 
 12. Out of scope, flagged not silently taken: the description's 13px chrome-size suggestion (no AC covers it, and it ripples through spacing and the contrast suite) and dropping the now possibly unused Plex 500 subset (would change README's measured byte table). Neither is done here. font-faces.ts itself needs no change: the woff2 subsets and the three @font-face declarations are unaffected by Plex's role narrowing.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented on feat/shell-typography; PR #41.
+
+The token split. --wa-font-family-sans is a system-ui stack (with -apple-system, BlinkMacSystemFont, Segoe UI, Roboto and a sans-serif tail, because WebKitGTK and older WKWebView are both shells nigel ships in and neither reliably answers system-ui alone). --wa-font-family-mono is unchanged. Three semantic tokens carry Plex's remaining jobs: --nc-font-figures for columns of digits, --nc-font-money aliased to it where wc-money and wc-reconcile-form already read one, --nc-font-brand for the wordmark and the company name. Naming the job rather than the family is what lets a component ask for alignment without knowing which face provides it.
+
+Eight figure and date columns were getting Plex only by inheritance and now ask for it: wc-register-table td.date, wc-reconciliation-history td.month, wc-invoice-table td.number, wc-manager-table td.end, wc-count-grid dd, wc-reconcile-result dd, wc-line-items td.figure input, wc-sample-table .date. wc-import-history td.count matches the same rule and was skipped to avoid conflicting with PR #37 — TASK-33.28.
+
+The rail. wc-nav-sidebar transitions its own width over --nc-transition-base, which the theme already zeroes under prefers-reduced-motion; the component repeats the cancel in a media query so a reader of the file sees it. overflow-x: hidden and white-space: nowrap on the two rows stop a full-width label reflowing inside the 56px box during the slide. Nothing changed below 48rem, where wc-app-shell already slid the drawer with transform.
+
+AC #2 needed no code. wc-app-shell already renders .nav-toggle as the header's first child before the screen title, and no company name is in the header — nigel-app feeds it to wc-nav-sidebar as app-name. A test pins the order. Measured in the running app, the brand row sits at x=12 and the toggle at x=249, so the window's top band still reads company name then toggle; that is a design decision rather than an ordering bug and is TASK-33.27.
+
+New guard. packages/ui/src/__tests__/font-stack-guard.test.ts fails the build on any font-family in packages/ui/{src,preview}, apps/app/src or apps/app/index.html whose value does not resolve through a token. Verified to bite by planting a hardcoded stack. This is AC #4 made enforceable rather than assumed.
+
+Verification beyond the suites. Both the preview harness and the real app (this branch's binary, an isolated fixture book on a spare port, never the operator's instance on 5731) were driven in Chromium and measured: 21/21 harness checks and 11/11 app checks. The rail was caught genuinely mid-slide one frame after the real toggle is pressed (233px to 220px to 57px over 0.2s) and lands at once under reduced motion (233px to 57px, 0s).
+
+Gates from web/: typecheck, lint, test (931 app tests, 163 files, zero failures) and build all pass; check-no-real-data.sh --staged exits 0.
+
+font-faces.ts needed no change — the woff2 subsets and the three @font-face declarations are unaffected by Plex's role narrowing. Two things stay deliberately undone: the 13px chrome size the description floats (no AC covers it, and it ripples through spacing and the contrast suite) and dropping the Plex 500 subset, which may now have no consumer but would change the measured byte table in web/README.md.
+<!-- SECTION:NOTES:END -->
