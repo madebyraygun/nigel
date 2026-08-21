@@ -86,6 +86,24 @@ workspace's run.
 database of its own, so a book edited from the terminal shows up in the
 desktop shell and back.
 
+## Window lifecycle
+
+On macOS the app survives its last window, and **closing the window hides it
+rather than destroying it** — a deliberate choice, not an accident to fix:
+hiding keeps the SPA's state (scroll positions, a half-filled form), and the
+Dock's Reopen shows the same window back instantly. The run loop prevents the
+windowless exit (`ExitRequested` with no code) and answers `Reopen` by showing
+the hidden window, rebuilding it only if the webview is genuinely gone. An
+explicit quit carries an exit code and is never prevented. Windows and Linux
+keep their own convention: closing the window exits the app.
+
+The window's logical size and position are written to
+`config_dir()/window-state.json` (beside `settings.json`) on close and on
+exit, and restored by the builder clamped to a visible monitor and the
+900×700 floor — `src/window_state.rs::clamp_restore` owns the arithmetic. The
+file is a convenience: absent, corrupt, or unwritable all degrade silently to
+the 1200×820 default, and the next clean close rewrites it.
+
 ## Exports
 
 A webview serving the app from a custom URI scheme cannot download the way a
