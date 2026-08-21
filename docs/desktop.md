@@ -116,16 +116,23 @@ it.
 
 ## Launch paint
 
-The window is built hidden and shows when the SPA reports its first frame
-through the `frontend_ready` command, so first paint is the app rather than a
-white sheet; a four-second fallback in setup shows the window regardless, so
-a wedged frontend never leaves an invisible process. The window's own
-background — what shows at the edges when a resize outruns the webview — is
-set from the OS theme at build (`src/chrome.rs`, whose canvas constants are
-pinned against `@nigel/theme`'s color tokens by `tests/chrome.rs`) and then
-kept on the SPA's actually-resolved palette by the `set_chrome_background`
-command, which `web/apps/app/src/chrome-bridge.ts` drives at boot and on
-every color-mode change.
+The window is built hidden and shows when the SPA reports itself ready
+through the `frontend_ready` command, so first paint is the app rather than
+a white sheet. Ready means the root component's first update settled — never
+a `requestAnimationFrame` handshake, because a hidden webview gets no
+rendering opportunities at all and would wait forever for the very show the
+signal triggers. `main.ts` owns the wiring: the app component renders the
+same everywhere, and only the entry point knows it is the page of a window
+that starts hidden. A four-second fallback shows a window that has still
+never been shown — and only such a window, so a fallback outliving a quick
+show-then-close cannot bring a closed window back — armed at setup and again
+when Reopen rebuilds after a webview crash. The window's own background —
+what shows at the edges when a resize outruns the webview — is set from the
+OS theme at build (`src/chrome.rs`, whose canvas constants are pinned
+against `@nigel/theme`'s canvas token by `tests/chrome.rs`) and then kept on
+the SPA's actually-resolved palette by the `set_chrome_background` command,
+which `web/apps/app/src/chrome-bridge.ts` drives from the theme package's
+color-mode contract at boot and on every palette change.
 
 ## Exports
 

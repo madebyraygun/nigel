@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-#[cfg(target_os = "macos")]
-use tauri::Manager;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use nigel_desktop::{chrome, db, imports, save, scheme_url, transport, window_state, SCHEME};
 
@@ -69,18 +67,9 @@ fn main() {
             }
         })
         .setup(|app| {
+            app.manage(chrome::Shown::default());
             build_main_window(app.handle())?;
-            // A wedged frontend must not leave an invisible process: whatever
-            // has not shown four seconds after setup shows as it is.
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(4));
-                if let Some(window) = handle.get_webview_window("main") {
-                    if !window.is_visible().unwrap_or(true) {
-                        let _ = window.show();
-                    }
-                }
-            });
+            spawn_show_fallback(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -122,9 +111,12 @@ fn main() {
                         // app that cannot rebuild would strand the
                         // user, so that failure exits.
                         None => {
+                            app.state::<chrome::Shown>().reset();
                             if let Err(error) = build_main_window(app) {
                                 eprintln!("nigel: could not rebuild the main window: {error}");
                                 app.exit(1);
+                            } else {
+                                spawn_show_fallback(app.clone());
                             }
                         }
                     }
@@ -132,6 +124,23 @@ fn main() {
                 _ => {}
             }
         });
+}
+
+/// A wedged frontend must not leave an invisible process: a window that has
+/// still never been shown four seconds from now shows as it is. One that
+/// HAS shown is left alone — on macOS the user may since have closed
+/// (hidden) it, and a fallback that fired then would bring it back
+/// uninvited. An unreadable visibility is treated as hidden: this fallback
+/// exists to guarantee something shows.
+fn spawn_show_fallback(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if let Some(window) = handle.get_webview_window("main") {
+            if handle.state::<chrome::Shown>().first() && !window.is_visible().unwrap_or(false) {
+                let _ = window.show();
+            }
+        }
+    });
 }
 
 /// The main window, restored to where its last close left it.
