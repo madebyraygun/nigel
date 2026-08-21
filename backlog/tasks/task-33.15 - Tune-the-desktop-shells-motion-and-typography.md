@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-18 01:56'
-updated_date: '2026-08-21 02:00'
+updated_date: '2026-08-21 02:58'
 labels:
   - tauri
   - ui
@@ -112,4 +112,6 @@ Motion: the width transition is cancelled below 48rem, where wc-app-shell's ::sl
 The stack guard was weaker than it read: startsWith('var(') accepted a token with a real family appended after it and a token whose name was a typo. It now matches the whole value against a whitelist, permits only generic fallbacks, reads the font shorthand, and fails loudly if a scanned tree moves. A drift test pins the shell's pre-theme stack to the token's own.
 
 Re-verified: full gate green, and a 30-check browser sweep over every changed component passed 30/30.
+
+Review round three (6ccd217): the thirteen per-component figure declarations consolidated into @nigel/theme's figuresCss (face + tabular-nums in one sheet, cells marked class="figure"); an exhaustive surface sweep closed the remaining misses (report-table percent/count, review-card date, review-queue counts and rule-pattern input, settings data-dir input, invoice-form currency, accounts last-four column, reconcile-form currency prefix, reports select, invoice URLs) while pinning headings as words. The rail transition is gesture-gated behind data-animating so no resize animates in either direction, and collapse wipes symmetrically instead of popping labels. font-stack-guard's shorthand parser, the wa-contract upstream check, the reduced-motion assertion (mutation-tested) and the print-face chain (followVarInPrint) all now fail under the regressions they watch for. wc-import-history stays deferred to TASK-33.28 (PR #37 conflict).
 <!-- SECTION:NOTES:END -->
