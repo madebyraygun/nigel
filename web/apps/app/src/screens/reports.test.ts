@@ -453,6 +453,42 @@ describe('the reports screen', () => {
     });
   });
 
+  describe('the balance view', () => {
+    function withBacklog(total: number, count: number): FakeApiClient {
+      const client = seeded();
+      client.balance = {
+        accounts: [],
+        total: 0,
+        ytdNetIncome: 4670,
+        uncategorizedTotal: total,
+        uncategorizedCount: count,
+      };
+      return client;
+    }
+
+    it('footnotes the uncategorized money inside YTD net income', async () => {
+      const { el } = await mount('report=balance', withBacklog(-330, 2));
+      expect(screenText(el)).toContain(
+        'Includes -$330.00 across 2 uncategorized transactions',
+      );
+      const link = all<HTMLAnchorElement>(el, 'a').find(
+        (a) => a.getAttribute('href') === '#/review',
+      );
+      expect(link, 'the footnote points at the review flow').toBeDefined();
+    });
+
+    it('says transaction, singular, when one row is waiting', async () => {
+      const { el } = await mount('report=balance', withBacklog(-330, 1));
+      expect(screenText(el)).toContain('1 uncategorized transaction —');
+    });
+
+    it('says nothing when every transaction has a category', async () => {
+      const { el } = await mount('report=balance', withBacklog(0, 0));
+      expect(screenText(el)).toContain('YTD Net Income');
+      expect(screenText(el)).not.toContain('uncategorized');
+    });
+  });
+
   describe('the flagged view', () => {
     it('links every row into review by id', async () => {
       const { el } = await mount('report=flagged');

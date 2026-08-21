@@ -36,6 +36,8 @@ const BALANCE: BalanceReport = {
   ],
   total: 4609.52,
   ytdNetIncome: 87780.32,
+  uncategorizedTotal: 0,
+  uncategorizedCount: 0,
 };
 
 const CASHFLOW: CashflowReport = {

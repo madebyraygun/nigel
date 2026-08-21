@@ -114,6 +114,8 @@ export const EMPTY_BALANCE: BalanceReport = {
   accounts: [],
   total: 0,
   ytdNetIncome: 0,
+  uncategorizedTotal: 0,
+  uncategorizedCount: 0,
 };
 
 export const EMPTY_EXPENSES: ExpenseBreakdown = {

@@ -122,7 +122,15 @@ export interface AccountBalance {
 export interface BalanceReport {
   accounts: AccountBalance[];
   total: number;
+  /**
+   * This year's revenue and spending, plus every transaction still waiting for
+   * a category. Equity moves and transfers stay out of it.
+   */
   ytdNetIncome: number;
+  /** The part of `ytdNetIncome` that has no category yet. */
+  uncategorizedTotal: number;
+  /** How many transactions that part came from. */
+  uncategorizedCount: number;
 }
 
 /** One month of cash movement, in `CashflowReport`. */
