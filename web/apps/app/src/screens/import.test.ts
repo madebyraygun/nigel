@@ -1135,4 +1135,43 @@ describe('the pick-import menu intent', () => {
     await settle(el);
     expect(shell.staged).toHaveLength(2);
   });
+
+  it('a parked intent stays parked across navigation and fires on return', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const pick = source.pick;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.pick = async () => {
+      await gate;
+      return pick();
+    };
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+
+    // Navigating away removes the screen; the in-flight dialog then resolves
+    // against the removed element. The parked intent must not fire there — an
+    // OS dialog over whatever screen the user is on now would stage their
+    // pick invisibly.
+    el.remove();
+    release();
+    await settle(el);
+    expect(shell.staged).toHaveLength(1);
+
+    // Same contract as an intent requested before arriving: the next import
+    // screen to mount honors it.
+    const { el: next } = await mount(fake);
+    await settle(next);
+    expect(shell.staged).toHaveLength(2);
+  });
 });

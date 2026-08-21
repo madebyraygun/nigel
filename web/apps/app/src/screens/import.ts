@@ -222,7 +222,13 @@ export class NigelImportScreen extends SignalWatcher(LitElement) {
     // clears it re-runs this read and the dialog opens then. Consuming is a
     // tracked read — that is what subscribes the signal watcher — and the
     // pick waits out the update so its state writes schedule a fresh one.
-    if (this.busy === null && consumeMenuIntent('pick-import')) {
+    //
+    // Connected, because a busy flow finishing after navigation still runs
+    // this update on the removed element: opening the OS dialog over whatever
+    // screen the user is on now would stage their pick invisibly. Parked
+    // instead, the intent keeps the same contract as one requested before
+    // arriving — the next import screen to mount honors it.
+    if (this.isConnected && this.busy === null && consumeMenuIntent('pick-import')) {
       void this.updateComplete.then(() => this.handlePickRequest());
     }
   }
