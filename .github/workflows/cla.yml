@@ -25,7 +25,10 @@ jobs:
           path-to-signatures: 'signatures/cla.json'
           path-to-document: 'https://github.com/madebyraygun/nigel/blob/main/.github/cla/CLA.md'
           branch: 'cla-signatures'
-          allowlist: 'dependabot[bot],*[bot]'
+          # The agreement asks a contributor to grant rights the copyright holder
+          # already has, so the maintainer account is exempt rather than signing
+          # an agreement with itself.
+          allowlist: 'dependabot[bot],*[bot],daltonrooney'
           custom-notsigned-prcomment: >-
             Thanks for the contribution! Before we can merge, we ask every external
             contributor to sign the Nigel CLA (linked below) — a one-time comment on
