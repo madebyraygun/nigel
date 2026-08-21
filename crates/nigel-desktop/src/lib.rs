@@ -2,6 +2,7 @@
 //! and the integration tests under `tests/` link it to drive the same request
 //! path with no window at all.
 
+pub mod chrome;
 pub mod db;
 pub mod imports;
 pub mod save;
