@@ -5,6 +5,7 @@ import {
   type DragDropEvent,
   type ExportTarget,
   type ImportSource,
+  type ShellChrome,
 } from './client.js';
 import type { ExportFormat, ExportParams, ReportSlug, StagedUpload } from './types.js';
 
@@ -70,6 +71,16 @@ export class DesktopApiClient extends FetchApiClient {
 
   override invoicePreviewTarget(number: number): ExportTarget {
     return this.save(this.invoicePreviewUrl(number, 'pdf'), `invoice-${number}.pdf`);
+  }
+
+  override shellChrome(): ShellChrome | null {
+    return {
+      // Fire-and-forget like the drag subscription: a refused invoke leaves
+      // the fallback timer to show the window, which works.
+      ready: () => void Promise.resolve(this.invoke('frontend_ready', {})).catch(() => {}),
+      background: (mode) =>
+        void Promise.resolve(this.invoke('set_chrome_background', { mode })).catch(() => {}),
+    };
   }
 
   override importSource(): ImportSource {
