@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-invoice-status.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * The header of an invoice detail view: who, how much, how much is left, and
@@ -13,17 +14,13 @@ import './wc-invoice-status.js';
  */
 @customElement('wc-invoice-summary')
 export class WcInvoiceSummary extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
-    }
-
-    /* The dates and the currency code, set like the amounts above them. */
-    dd.figure {
-      font-family: var(--nc-font-figures);
-      font-variant-numeric: tabular-nums;
     }
 
     .title {
@@ -78,7 +75,8 @@ export class WcInvoiceSummary extends LitElement {
       align-items: baseline;
       gap: var(--wa-space-2xs, 4px);
     }
-  `;
+    `,
+  ];
 
   @property({ type: Number })
   number = 0;

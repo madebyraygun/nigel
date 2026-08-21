@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { figuresCss } from '@nigel/theme';
 
 export type CountEmphasis = 'default' | 'good' | 'warn';
 
@@ -21,7 +22,9 @@ export interface CountItem {
  */
 @customElement('wc-count-grid')
 export class WcCountGrid extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -50,10 +53,8 @@ export class WcCountGrid extends LitElement {
       margin: 0;
       /* The count itself. The hint below it is a sentence and takes the
          reading face back. */
-      font-family: var(--nc-font-figures);
       font-size: var(--wa-font-size-xl, 20px);
       font-weight: var(--wa-font-weight-semibold, 600);
-      font-variant-numeric: tabular-nums;
       user-select: text;
     }
 
@@ -75,7 +76,8 @@ export class WcCountGrid extends LitElement {
       font-size: var(--wa-font-size-s, 13px);
       font-weight: var(--wa-font-weight-normal, 400);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   items: CountItem[] = [];
@@ -90,7 +92,7 @@ export class WcCountGrid extends LitElement {
           (item) => html`
             <div class="item">
               <dt>${item.label}</dt>
-              <dd class=${item.emphasis ?? 'default'}>
+              <dd class="figure ${item.emphasis ?? 'default'}">
                 ${item.value}
                 ${item.hint ? html`<span class="hint">${item.hint}</span>` : nothing}
               </dd>

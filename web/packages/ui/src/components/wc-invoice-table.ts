@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import './wc-invoice-status.js';
+import { figuresCss } from '@nigel/theme';
 
 /** One invoice as the list shows it. */
 export interface InvoiceTableRow {
@@ -37,7 +38,9 @@ export interface InvoiceTableRow {
  */
 @customElement('wc-invoice-table')
 export class WcInvoiceTable extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -96,7 +99,6 @@ export class WcInvoiceTable extends LitElement {
     }
 
     td.due {
-      font-family: var(--nc-font-figures);
       white-space: nowrap;
     }
 
@@ -127,7 +129,8 @@ export class WcInvoiceTable extends LitElement {
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s, 13px);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   rows: InvoiceTableRow[] = [];
@@ -206,7 +209,7 @@ export class WcInvoiceTable extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td class=${row.dueDate === null ? 'due muted' : 'due'}>${row.dueDate ?? '—'}</td>
+        <td class=${row.dueDate === null ? 'due figure muted' : 'due figure'}>${row.dueDate ?? '—'}</td>
       </tr>
     `;
   }

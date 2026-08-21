@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
+import { figuresCss } from '@nigel/theme';
 
 /** One parsed row, as an import preview reports it. */
 export interface SampleTableRow {
@@ -20,7 +21,9 @@ export interface SampleTableRow {
  */
 @customElement('wc-sample-table')
 export class WcSampleTable extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -66,10 +69,6 @@ export class WcSampleTable extends LitElement {
       width: 1%;
     }
 
-    td.date {
-      font-family: var(--nc-font-figures);
-    }
-
     .description {
       overflow-wrap: anywhere;
     }
@@ -84,7 +83,8 @@ export class WcSampleTable extends LitElement {
       margin: 0;
       color: var(--wa-color-muted);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   rows: SampleTableRow[] = [];
@@ -117,7 +117,7 @@ export class WcSampleTable extends LitElement {
           ${this.rows.map(
             (row) => html`
               <tr>
-                <td class="date">${row.date}</td>
+                <td class="date figure">${row.date}</td>
                 <td class="description">${row.description}</td>
                 <td class="amount">
                   <wc-money .amount=${row.amount} align="end"></wc-money>

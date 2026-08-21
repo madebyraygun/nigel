@@ -7,7 +7,7 @@ import './wc-money.js';
 import './wc-empty-state.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
 import type { ShortcutHint } from './wc-shortcut-help.js';
-import { controlsCss } from '@nigel/theme';
+import { controlsCss, figuresCss } from '@nigel/theme';
 
 export type { CategoryOption };
 
@@ -112,6 +112,7 @@ const VIRTUALIZE_ABOVE = 120;
 export class WcRegisterTable extends LitElement {
   static styles = [
     controlsCss,
+    figuresCss,
     css`
       /* A column filling the screen: with rows that is invisible, and with none
          it is what lets the empty state centre itself where the table was. */
@@ -274,8 +275,6 @@ export class WcRegisterTable extends LitElement {
 
       td.date {
         white-space: nowrap;
-        font-family: var(--nc-font-figures);
-        font-variant-numeric: tabular-nums;
       }
 
       th.flag,
@@ -1285,7 +1284,7 @@ export class WcRegisterTable extends LitElement {
         <td role="gridcell" class="flag">
           ${this.readonly ? this.renderFlagMark(row) : this.renderFlagButton(row)}
         </td>
-        <td role="gridcell" class="date">${row.date}</td>
+        <td role="gridcell" class="date figure">${row.date}</td>
         <td role="gridcell" class="text" title=${row.description}>${row.description}</td>
         ${editing
           ? this.renderEditCells(row)

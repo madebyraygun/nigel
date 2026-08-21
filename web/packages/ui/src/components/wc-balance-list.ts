@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
+import { figuresCss } from '@nigel/theme';
 
 /** One account's cash position. */
 export interface BalanceRow {
@@ -20,7 +21,9 @@ export interface BalanceRow {
  */
 @customElement('wc-balance-list')
 export class WcBalanceList extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -75,7 +78,6 @@ export class WcBalanceList extends LitElement {
        what it has to hold is the wc-money inside it. Same face, or the
        budget is sized against a glyph the column never draws. */
     td.amount {
-      font-family: var(--nc-font-figures);
       text-align: right;
       width: 12ch;
     }
@@ -119,7 +121,8 @@ export class WcBalanceList extends LitElement {
       outline: 2px solid var(--wa-color-focus);
       outline-offset: 2px;
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   items: BalanceRow[] = [];
@@ -187,7 +190,7 @@ export class WcBalanceList extends LitElement {
                       ? html`<span class="type">${item.accountType}</span>`
                       : nothing}
                   </th>
-                  <td class="amount">
+                  <td class="amount figure">
                     <wc-money .amount=${item.balance} align="end"></wc-money>
                   </td>
                 </tr>
@@ -200,7 +203,7 @@ export class WcBalanceList extends LitElement {
                 <tfoot>
                   <tr>
                     <th scope="row">Total</th>
-                    <td class="amount">
+                    <td class="amount figure">
                       <wc-money .amount=${this.total} align="end"></wc-money>
                     </td>
                   </tr>

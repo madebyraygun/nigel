@@ -78,7 +78,7 @@ describe('wc-nav-sidebar', () => {
 
   it('keeps the label reachable when collapsed', async () => {
     const el = await mount({ collapsed: true });
-    // The text is hidden by CSS, so the title attribute is what is left.
+    // The text is cropped by the 56px box, so the title carries it whole.
     expect(button(el, 'register')?.getAttribute('title')).toBe('Register');
   });
 
@@ -105,29 +105,63 @@ describePrintHiding(WcNavSidebar, ':host');
 describe('the rail', () => {
   const text = styleText(WcNavSidebar);
 
+  /** One @media block, so an assertion cannot bridge into a later rule that
+      happens to say the same words for a different reason. */
+  function blockOf(marker: string): string {
+    const at = text.indexOf(marker);
+    expect(at, `${marker} is not in the stylesheet`).toBeGreaterThan(-1);
+    const next = text.indexOf('@media', at + marker.length);
+    return next === -1 ? text.slice(at) : text.slice(at, next);
+  }
+
   afterEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('slides between the column and the rail rather than snapping', () => {
-    // Width is the only thing that differs between the two states, so it is
-    // the only thing there is to animate.
-    expect(text).toMatch(/:host\s*{[^}]*transition:\s*width\s*var\(--nc-transition-base/);
+  it('animates only behind the gesture attribute, never on the bare host', () => {
+    // The transition exists only while a toggle holds data-animating, so a
+    // resize — including one across the breakpoint, in either direction —
+    // moves the width in a single frame.
+    expect(text).toMatch(
+      /:host\(\[data-animating\]\)\s*{[^}]*transition:\s*width\s*var\(--nc-transition-base/,
+    );
+    expect(text).not.toMatch(/:host\s*{[^}]*transition:/);
+  });
+
+  it('sets the gesture attribute on a toggle and clears it after', async () => {
+    const el = await mount();
+    el.collapsed = true;
+    await el.updateComplete;
+    expect(el.hasAttribute('data-animating')).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(el.hasAttribute('data-animating')).toBe(false);
+  });
+
+  it('does not treat the mounted state as a gesture', async () => {
+    const el = await mount({ collapsed: true });
+    expect(el.hasAttribute('data-animating')).toBe(false);
   });
 
   it('stops sliding for anyone who asked motion to stop', () => {
-    expect(text).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*:host[^{]*{[^}]*transition:\s*none/,
+    expect(blockOf('@media (prefers-reduced-motion: reduce)')).toMatch(
+      /:host\(\[data-animating\]\)\s*{[^}]*transition:\s*none/,
     );
   });
 
   it('clips a long label to an ellipsis instead of wrapping it', () => {
-    // The box is 56px wide for most of an expansion's first frame, and a
-    // label that wrapped there would make the rail grow taller before it
-    // grew wider.
     expect(text).toMatch(/:host\s*{[^}]*overflow-x:\s*hidden/);
     expect(text).toMatch(/\.brand,\s*button\s*{[^}]*white-space:\s*nowrap/);
     expect(text).toMatch(/\.label\s*{[^}]*text-overflow:\s*ellipsis/);
+    expect(text).toMatch(/\.brand-name\s*{[^}]*text-overflow:\s*ellipsis/);
+  });
+
+  it('wipes in both directions: no width ever hides a label outright', () => {
+    // Collapse reads as expand run backwards because the label keeps its
+    // layout and the moving edge crops it; a display: none at frame one is
+    // the pop this pins against. The print block hides the host, which is
+    // hiding chrome from paper rather than a label from a state.
+    expect(text).not.toMatch(/\.label[^{]*{[^}]*display:\s*none/);
+    expect(text).not.toMatch(/\.brand-name[^{]*{[^}]*display:\s*none/);
   });
 
   it('keeps the whole label reachable when it is clipped', async () => {
@@ -140,37 +174,18 @@ describe('the rail', () => {
     expect(titles).toEqual(NAV_ITEMS.map((item) => item.label));
   });
 
-  it('leaves the width alone at drawer widths, where the shell decides', () => {
-    // Two rules could animate this element and only one is live at a time.
-    // Below the breakpoint wc-app-shell transitions transform on
-    // ::slotted([slot='sidebar']) from the outer tree, which beats this
-    // tree's :host for the same property whatever the specificity — so the
-    // width transition is cancelled rather than left to lose silently. It
-    // also stops a window dragged across the breakpoint animating 56px out
-    // to 232px.
-    expect(text).toMatch(
-      /@media \(max-width: 48rem\)[\s\S]*:host\s*{[^}]*transition:\s*none/,
-    );
-  });
-});
-
-describe('wc-nav-sidebar on a phone', () => {
-  // jsdom has no layout engine, so the rules are read the way the register's
-  // fill rules are.
-  const text = styleText(WcNavSidebar);
-
-  it('keeps its labels when it is the drawer rather than the rail', () => {
-    // Collapsed means "off-canvas" at this width, not "56px of icons": the
-    // shell slides the whole sidebar away, and what slides back in has room
-    // for the words.
-    expect(text).toMatch(
-      /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\) \.label[^{]*{[^}]*display:\s*revert/,
+  it('leaves motion to the shell at drawer widths', () => {
+    // Below the breakpoint wc-app-shell slides the whole sidebar with
+    // transform from the outer tree, so even a gesture must not also
+    // animate width here.
+    expect(blockOf('@media (max-width: 48rem)')).toMatch(
+      /:host\(\[data-animating\]\)\s*{[^}]*transition:\s*none/,
     );
   });
 
   it('keeps its full width when it is the drawer', () => {
-    expect(text).toMatch(
-      /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\)[^{]*{[^}]*width:\s*var\(--nc-sidebar-width/,
+    expect(blockOf('@media (max-width: 48rem)')).toMatch(
+      /:host\(\[collapsed\]\)\s*{[^}]*width:\s*var\(--nc-sidebar-width/,
     );
   });
 });

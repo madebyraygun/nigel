@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
 import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
-import { declarationsOf, followVar } from './token-resolution.js';
+import { declarationsOf, followVar, followVarInPrint } from './token-resolution.js';
 
 const text = nigelTheme.cssText;
 
@@ -112,8 +112,9 @@ describe('nigelTheme', () => {
   it('prints in the bundled face, so two machines print one document', () => {
     // A system face is whatever the machine has. Paper is the artifact an
     // accountant keeps, and its metrics cannot depend on the OS it came off.
-    const print = text.slice(text.indexOf('@media print'));
-    expect(print).toMatch(/--wa-font-family-sans:\s*var\(--wa-font-family-mono\)/);
+    // Followed print-side, so a print-block redefinition anywhere along the
+    // sans -> mono -> Plex chain fails here rather than printing wrong.
+    expect(followVarInPrint('--wa-font-family-sans')).toContain("'IBM Plex Mono'");
     expect(followVar('--wa-font-family-sans')).not.toContain('IBM Plex Mono');
   });
 

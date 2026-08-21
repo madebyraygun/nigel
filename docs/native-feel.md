@@ -107,19 +107,21 @@ rather than cutting to the result. Which element animates depends on the width,
 and only one of the two rules is live at a time.
 
 Above 48rem the sidebar is a docked column and `wc-nav-sidebar` transitions its
-own `width` between 232px and the 56px rail over `--nc-transition-base`. Rows
-hold their line and the host clips, so a label drawn at full width inside a
-56px box is wiped in and ellipsised rather than wrapped; the full text stays
-reachable as the button's `title`.
+own `width` between 232px and the 56px rail over `--nc-transition-base`. The
+transition exists only while a toggle holds `data-animating` on the host, so a
+window resize — including one dragged across the breakpoint, in either
+direction — changes the width in a single frame; only a gesture slides. Labels
+keep their layout in both states and the moving edge crops them, which is what
+makes collapse read as expand run backwards: rows hold their line, a label is
+ellipsised rather than wrapped, and the full text stays reachable as the
+button's `title`.
 
 Below 48rem there is no rail — the sidebar is a drawer, and `wc-app-shell`
 slides the whole thing off-canvas with `transform`. That rule is written in the
 shell's tree against `::slotted()`, and an outer-tree rule beats the inner
 tree's `:host` for the same property whatever the specificity, so the shell
-decides at this width and the sidebar cancels its own width transition to say
-so. Cancelling it also keeps a window dragged across the breakpoint from
-animating 56px out to 232px, which is a resize rather than a gesture anyone
-made.
+decides at this width and the sidebar cancels even a gesture's width transition
+to say so.
 
 Reduced motion is answered in `@nigel/theme`: every `--nc-transition-*` and
 `--nc-duration-*` collapses to zero under `prefers-reduced-motion: reduce`, so

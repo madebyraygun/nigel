@@ -14,7 +14,8 @@ import { nigelTheme } from '../src/themes/nigel.js';
 export type Mode = 'light' | 'dark';
 
 const HEX = /^#[0-9a-f]{6}$/i;
-const VAR_ONLY = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i;
+/** The module's one var() grammar: `var(--x)` or `var(--x, fallback)`. */
+const VAR_REF = /^var\(\s*(--[a-z0-9-]+)\s*(?:,\s*([\s\S]+))?\)$/i;
 const SRGB_MIX = /^color-mix\(\s*in srgb\s*,\s*(.+?)\s+([\d.]+)%\s*,\s*(.+?)\s*\)$/i;
 
 /**
@@ -45,22 +46,52 @@ export function declarationsOf(name: string): string[] {
  * browser does. A loop throws rather than recursing until the stack ends.
  */
 export function followVar(name: string, mode: Mode = 'light'): string {
+  return follow(name, (token) => {
+    const declared = declarationsOf(token);
+    return declared.length === 0 ? undefined : declarationFor(token, mode);
+  });
+}
+
+/**
+ * Follow a token as the printed page resolves it: a declaration inside the
+ * print block wins over the screen one, and the screen's light value answers
+ * for anything the print block leaves alone — which is how the cascade reads
+ * once `@media print` applies.
+ */
+export function followVarInPrint(name: string): string {
+  const text = nigelTheme.cssText;
+  const printAt = text.indexOf('@media print');
+  const printBlock = printAt === -1 ? '' : text.slice(printAt);
+
+  return follow(name, (token) => {
+    const inPrint = [...printBlock.matchAll(new RegExp(`${token}:\\s*([^;]+);`, 'g'))].map((m) =>
+      m[1].trim().replace(/\s+/g, ' '),
+    );
+    if (inPrint.length > 0) return inPrint[inPrint.length - 1];
+    const onScreen = declarationsOf(token);
+    return onScreen.length === 0 ? undefined : onScreen[0];
+  });
+}
+
+function follow(name: string, lookup: (token: string) => string | undefined): string {
   const step = (value: string, trail: string[]): string => {
-    const reference = /^var\(\s*(--[a-z0-9-]+)\s*(?:,\s*([\s\S]+))?\)$/i.exec(value);
+    const reference = VAR_REF.exec(value);
     if (!reference) return value;
 
     const [, next, fallback] = reference;
     if (trail.includes(next)) throw new Error(`token cycle: ${[...trail, next].join(' -> ')}`);
 
-    const declared = declarationsOf(next);
-    if (declared.length === 0) {
+    const declared = lookup(next);
+    if (declared === undefined) {
       if (fallback === undefined) throw new Error(`${next} is not declared and has no fallback`);
       return step(fallback.trim(), [...trail, next]);
     }
-    return step(declarationFor(next, mode), [...trail, next]);
+    return step(declared, [...trail, next]);
   };
 
-  return step(declarationFor(name, mode), [name]);
+  const first = lookup(name);
+  if (first === undefined) throw new Error(`${name} is not declared`);
+  return step(first, [name]);
 }
 
 /**
@@ -106,10 +137,13 @@ function mixSrgb(a: string, portion: number, b: string): string {
 function resolveValue(value: string, mode: Mode, trail: string[]): string {
   if (HEX.test(value)) return value.toLowerCase();
 
-  const reference = VAR_ONLY.exec(value);
+  const reference = VAR_REF.exec(value);
   if (reference) {
-    const next = reference[1];
+    const [, next, fallback] = reference;
     if (trail.includes(next)) throw new Error(`token cycle: ${[...trail, next].join(' -> ')}`);
+    if (declarationsOf(next).length === 0 && fallback !== undefined) {
+      return resolveValue(fallback.trim(), mode, [...trail, next]);
+    }
     return resolveValue(declarationFor(next, mode), mode, [...trail, next]);
   }
 

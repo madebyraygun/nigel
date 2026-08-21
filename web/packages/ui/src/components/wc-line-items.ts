@@ -3,7 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import './wc-money.js';
-import { controlsCss } from '@nigel/theme';
+import { controlsCss, figuresCss } from '@nigel/theme';
 
 /**
  * One line as it is being edited.
@@ -90,6 +90,7 @@ export function isBlankLineItem(item: LineItemValue): boolean {
 export class WcLineItems extends LitElement {
   static styles = [
     controlsCss,
+    figuresCss,
     css`
       :host {
         display: block;
@@ -164,8 +165,6 @@ export class WcLineItems extends LitElement {
       td.figure input,
       td.figure {
         text-align: end;
-        font-family: var(--nc-font-figures);
-        font-variant-numeric: tabular-nums;
       }
 
       .money-input {

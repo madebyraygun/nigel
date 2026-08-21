@@ -25,7 +25,7 @@ const COLUMNS: ManagerColumn[] = [
   { key: 'name', label: 'Name' },
   { key: 'accountType', label: 'Type' },
   { key: 'institution', label: 'Institution' },
-  { key: 'lastFour', label: 'Last four' },
+  { key: 'lastFour', label: 'Last four', mono: true },
 ];
 
 const ACTIONS: ManagerAction[] = [

@@ -37,13 +37,22 @@ const SCANNED = ['.ts', '.js', '.mjs', '.cjs', '.css', '.html'];
  * family the theme cannot reach, and `var(--wa-font-familly-sans)` resolves to
  * nothing at all and renders in the user agent's default.
  */
-const ALLOWED = [
-  '--wa-font-family-sans',
-  '--wa-font-family-mono',
-  '--nc-font-figures',
-  '--nc-font-money',
-  '--nc-font-brand',
-];
+const MONO_GENERICS = ['ui-monospace', 'monospace'];
+const SANS_GENERICS = ['system-ui', 'ui-sans-serif', 'sans-serif'];
+
+/**
+ * The tokens a component may name, each with the only generic families its
+ * fallback may carry: a proportional fallback on a token whose whole point
+ * is column alignment would hold columns on every machine but the one where
+ * the sheet failed to load.
+ */
+const ALLOWED: Record<string, string[]> = {
+  '--wa-font-family-sans': SANS_GENERICS,
+  '--wa-font-family-mono': MONO_GENERICS,
+  '--nc-font-figures': MONO_GENERICS,
+  '--nc-font-money': MONO_GENERICS,
+  '--nc-font-brand': MONO_GENERICS,
+};
 
 function isScanned(filename: string): boolean {
   return SCANNED.includes(extname(filename)) && !filename.endsWith('.test.ts');
@@ -116,9 +125,19 @@ export function declarationsIn(path: string, text: string): Declaration[] {
 /** The family half of a declaration: everything, or the shorthand's tail. */
 export function familyOf(declaration: Declaration): string {
   if (declaration.property === 'font-family') return declaration.value;
-  // In the shorthand the family is last, after the size (and any /line-height).
-  const size = declaration.value.lastIndexOf(' ');
-  return size === -1 ? declaration.value : declaration.value.slice(size + 1).trim();
+  // In the shorthand everything after the font-size (with its optional
+  // /line-height) is the family list. Splitting on the last space instead
+  // would hand back only the final list item — which blesses a hardcoded
+  // first family and rejects a var() whose fallback contains commas.
+  const sizes = [
+    ...declaration.value.matchAll(
+      /\d[\d.]*(?:px|r?em|ex|ch|%|pt|pc|vw|vh)\b(?:\s*\/\s*[\d.]+[a-z%]*)?/gi,
+    ),
+  ];
+  if (sizes.length === 0) return declaration.value;
+  const size = sizes[sizes.length - 1];
+  const family = declaration.value.slice((size.index ?? 0) + size[0].length).trim();
+  return family || declaration.value;
 }
 
 export function isSanctioned(family: string): boolean {
@@ -126,17 +145,12 @@ export function isSanctioned(family: string): boolean {
   if (!exact) return false;
 
   const [, token, fallback] = exact;
-  if (!ALLOWED.includes(token)) return false;
+  const generics = ALLOWED[token];
+  if (generics === undefined) return false;
   // A fallback is a generic family for the case where the sheet never
   // loaded, not a second chance to name a face the theme does not know.
   if (fallback === undefined) return true;
-  return fallback
-    .split(',')
-    .every((part) =>
-      ['serif', 'sans-serif', 'monospace', 'ui-monospace', 'ui-sans-serif', 'system-ui'].includes(
-        part.trim(),
-      ),
-    );
+  return fallback.split(',').every((part) => generics.includes(part.trim()));
 }
 
 const declarations = sources.flatMap(([path, text]) => declarationsIn(path, text));
@@ -160,6 +174,8 @@ describe('font stacks live in @nigel/theme', () => {
     ['var(--wa-font-family-sans), Helvetica', false],
     ['var(--wa-font-familly-sans)', false],
     ['var(--nc-font-money, Menlo)', false],
+    ['var(--nc-font-money, system-ui)', false],
+    ['var(--wa-font-family-sans, monospace)', false],
     ['var(--some-other-token)', false],
     ["'IBM Plex Mono', monospace", false],
     ['system-ui', false],
@@ -181,6 +197,23 @@ describe('font stacks live in @nigel/theme', () => {
     expect(declarationsIn('x.ts', source)).toHaveLength(count);
   });
 
+  it.each([
+    // The browser uses the FIRST family; a hardcoded face smuggled in ahead
+    // of a trailing token must reach the judge whole.
+    ["font: 14px 'Comic Sans MS', var(--wa-font-family-sans)", "'Comic Sans MS', var(--wa-font-family-sans)"],
+    // A var() fallback contains commas; the family must not be split on them.
+    ['font: 500 14px/1.5 var(--nc-font-money, ui-monospace, monospace)', 'var(--nc-font-money, ui-monospace, monospace)'],
+    ['font: 500 14px/1.5 var(--wa-font-family-sans)', 'var(--wa-font-family-sans)'],
+  ])('extracts the shorthand family from %s', (source, family) => {
+    const [declaration] = declarationsIn('x.ts', source);
+    expect(familyOf(declaration)).toBe(family);
+  });
+
+  it('rejects a hardcoded face smuggled ahead of a token in the shorthand', () => {
+    const [declaration] = declarationsIn('x.ts', "font: 14px 'Comic Sans MS', var(--wa-font-family-sans);");
+    expect(isSanctioned(familyOf(declaration))).toBe(false);
+  });
+
   it('resolves every one of them through a sanctioned token', () => {
     const offenders = declarations
       .filter((declaration) => !isSanctioned(familyOf(declaration)))
@@ -188,7 +221,7 @@ describe('font stacks live in @nigel/theme', () => {
 
     expect(
       offenders,
-      `name a @nigel/theme token — one of ${ALLOWED.join(', ')}:\n${offenders.join('\n')}`,
+      `name a @nigel/theme token — one of ${Object.keys(ALLOWED).join(', ')}:\n${offenders.join('\n')}`,
     ).toEqual([]);
   });
 });

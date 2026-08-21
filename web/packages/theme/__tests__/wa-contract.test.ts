@@ -203,19 +203,20 @@ other button. Define these in tokens/wa-contract.ts:\n${missing.join('\n')}`,
     }
 
     // Guards the guard: if upstream renames these, the list above is wrong
-    // rather than satisfied, and the rename has to be noticed here.
+    // rather than satisfied, and the rename has to be noticed here. Zero
+    // matches means the regex or the path went stale — the exact case the
+    // check exists for — so it fails rather than waving the list through.
     const upstream = new Set(
       [...readFileSync(join(waDist, 'styles', 'themes', 'default.css'), 'utf8')
         .matchAll(/(--wa-font-family-[a-z-]+)\s*:/g)].map((m) => m[1]),
     );
-    if (upstream.size > 0) {
-      expect([...upstream].sort()).toEqual([
-        '--wa-font-family-body',
-        '--wa-font-family-code',
-        '--wa-font-family-heading',
-        '--wa-font-family-longform',
-      ]);
-    }
+    expect(upstream.size, 'no --wa-font-family-* token found in upstream default.css').toBeGreaterThan(0);
+    expect([...upstream].sort()).toEqual([
+      '--wa-font-family-body',
+      '--wa-font-family-code',
+      '--wa-font-family-heading',
+      '--wa-font-family-longform',
+    ]);
   });
 
   it('is defined on screen, not only under @media print', () => {

@@ -91,6 +91,10 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         flex: 1 1 18rem;
       }
 
+      wa-input[data-dir]::part(input) {
+        font-family: var(--wa-font-family-mono, monospace);
+      }
+
       .path {
         font-family: var(--wa-font-family-mono, monospace);
         font-size: var(--wa-font-size-s, 13px);
@@ -581,6 +585,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         <p class="path">${status?.dataDir ?? ''}</p>
         <div class="row">
           <wa-input
+            data-dir
             label="Switch to"
             placeholder="~/Documents/other-books"
             .value=${this.dataDirDraft}
