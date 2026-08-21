@@ -844,6 +844,11 @@ pub fn render_balance(report: &BalanceReport, company: &str) -> Result<Vec<u8>> 
     let ytd_label = format!("YTD Net Income: {ytd}");
     pdf.text(&ytd_label, MARGIN_LEFT, FONT_SIZE, false);
 
+    if let Some(note) = report.uncategorized_note() {
+        pdf.y += 5.0;
+        pdf.text(&note, MARGIN_LEFT, 8.0, false);
+    }
+
     pdf.into_bytes()
 }
 

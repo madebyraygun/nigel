@@ -322,10 +322,14 @@ pub fn format_balance(data: &reports::BalanceReport) -> String {
         Cell::new(""),
         Cell::new(money(data.total)),
     ]);
-    format!(
+    let mut out = format!(
         "Cash Position\n{table}\n\nYTD Net Income: {}",
         money(data.ytd_net_income)
-    )
+    );
+    if let Some(note) = data.uncategorized_note() {
+        out.push_str(&format!("\n{note}"));
+    }
+    out
 }
 
 pub fn format_k1(data: &reports::K1PrepReport) -> String {
@@ -518,9 +522,10 @@ pub fn format_aging(data: &crate::invoicing::invoices::AgingReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_aging, format_k1, format_tax, with_header};
+    use super::{format_aging, format_balance, format_k1, format_tax, with_header};
     use crate::db::AccountClass;
     use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+    use crate::reports::BalanceReport;
 
     fn tax_item(
         name: &str,
@@ -677,6 +682,48 @@ mod tests {
         assert!(out.contains("Mystery Spend"));
         assert!(out.contains("(auto)"));
         assert!(out.contains("Widget Sales"));
+    }
+
+    fn balance_fixture(uncategorized_total: f64, uncategorized_count: i64) -> BalanceReport {
+        BalanceReport {
+            accounts: vec![crate::reports::AccountBalance {
+                name: "Cedar Checking".into(),
+                account_type: "checking".into(),
+                class: AccountClass::Asset,
+                balance: 5_000.0,
+                natural_balance: 5_000.0,
+            }],
+            total: 5_000.0,
+            ytd_net_income: 4_670.0,
+            uncategorized_total,
+            uncategorized_count,
+        }
+    }
+
+    #[test]
+    fn format_balance_footnotes_the_uncategorized_money_in_net_income() {
+        let out = format_balance(&balance_fixture(-330.0, 2));
+        assert!(out.contains("YTD Net Income"));
+        assert!(
+            out.contains("Includes -$330.00 across 2 uncategorized transactions"),
+            "the footnote names the amount and the count: {out}"
+        );
+        assert!(
+            out.contains("nigel review"),
+            "and points at the review flow"
+        );
+        let lower = out.to_lowercase();
+        assert!(!lower.contains("debit") && !lower.contains("credit"));
+    }
+
+    #[test]
+    fn format_balance_says_nothing_when_every_transaction_has_a_category() {
+        let out = format_balance(&balance_fixture(0.0, 0));
+        assert!(out.contains("YTD Net Income"));
+        assert!(
+            !out.contains("uncategorized"),
+            "no backlog, no footnote: {out}"
+        );
     }
 
     #[test]
