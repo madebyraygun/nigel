@@ -66,7 +66,14 @@ fn quoted<'a>(block: &'a str, marker: &str) -> Option<&'a str> {
 /// place fails here until the other follows.
 #[test]
 fn the_view_menu_mirrors_the_screen_registry() {
-    let registry = fs::read_to_string(REGISTRY).expect("read the SPA screen registry");
+    let raw = fs::read_to_string(REGISTRY).expect("read the SPA screen registry");
+    // A commented-out entry still carries its markers; dropping `//` lines
+    // keeps a screen "removed" that way from passing as present.
+    let registry = raw
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let entries = entries(&registry);
     assert!(
         !entries.is_empty(),
