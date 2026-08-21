@@ -89,20 +89,28 @@ desktop shell and back.
 ## Window lifecycle
 
 On macOS the app survives its last window, and **closing the window hides it
-rather than destroying it** — a deliberate choice, not an accident to fix:
-hiding keeps the SPA's state (scroll positions, a half-filled form), and the
-Dock's Reopen shows the same window back instantly. The run loop prevents the
-windowless exit (`ExitRequested` with no code) and answers `Reopen` by showing
-the hidden window, rebuilding it only if the webview is genuinely gone. An
-explicit quit carries an exit code and is never prevented. Windows and Linux
+rather than destroying it**: hiding keeps the SPA's state (scroll positions,
+a half-filled form), and the Dock's Reopen deminiaturizes and shows the same
+window back instantly. The run loop prevents the windowless exit
+(`ExitRequested` with no code) and answers `Reopen` by showing the hidden
+window, rebuilding it only if the webview is genuinely gone — and exiting if
+even the rebuild fails, rather than lingering windowless. Quit itself is
+AppKit's `terminate:`, which raises no tauri event at all. Windows and Linux
 keep their own convention: closing the window exits the app.
 
-The window's logical size and position are written to
-`config_dir()/window-state.json` (beside `settings.json`) on close and on
-exit, and restored by the builder clamped to a visible monitor and the
-900×700 floor — `src/window_state.rs::clamp_restore` owns the arithmetic. The
-file is a convenience: absent, corrupt, or unwritable all degrade silently to
-the 1200×820 default, and the next clean close rewrites it.
+Because quit is invisible to the shell, geometry is captured as it changes:
+every move and resize feeds `window_state::GeometrySaver`, which writes
+`config_dir()/window-state.json` (beside `settings.json`) once the window
+holds still, and close flushes synchronously. Minimized and fullscreen
+readings are never saved; a maximized window keeps the frame it will
+unmaximize back to plus a flag. Restore plans the full frame rectangle —
+decorations included — in the platform's one coherent coordinate space
+(logical points on macOS, physical pixels elsewhere), clamps it to a visible
+monitor and the 900×700 floor, and applies it with `set_position`, the
+frame-top-left convention the reading used. `src/window_state.rs` owns the
+arithmetic. The file is a convenience: absent, corrupt, or unwritable all
+degrade silently to the 1200×820 default, and the next clean close rewrites
+it.
 
 ## Exports
 

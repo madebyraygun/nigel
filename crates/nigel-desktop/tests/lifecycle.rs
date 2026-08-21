@@ -9,21 +9,38 @@ fn main_rs() -> String {
     fs::read_to_string("src/main.rs").expect("read main.rs")
 }
 
+/// The attribute directly above the first line containing `needle`, looking
+/// past comments, blank lines, and a bare `{`. Anchoring on the guarded
+/// line itself is what lets these tests refuse: a `cfg` elsewhere in the
+/// file cannot stand in for the one that was deleted here.
+fn attribute_directly_above(source: &str, needle: &str) -> Option<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let at = lines.iter().position(|line| line.contains(needle))?;
+    lines[..at]
+        .iter()
+        .rev()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty() && !line.starts_with("//") && *line != "{")
+        .filter(|line| line.starts_with("#["))
+        .map(str::to_string)
+}
+
+const MACOS_CFG: &str = "#[cfg(target_os = \"macos\")]";
+
 #[test]
 fn closing_hides_rather_than_exits_on_macos_only() {
     let main = main_rs();
 
-    let cfg_at = main
-        .find("#[cfg(target_os = \"macos\")]")
-        .expect("a macos cfg block");
-    let prevent_at = main
-        .find("api.prevent_close()")
-        .expect("close is prevented so the window can hide");
-    let hide_at = main.find("window.hide()").expect("the window hides");
-
-    assert!(
-        cfg_at < prevent_at && prevent_at < hide_at,
+    assert_eq!(
+        attribute_directly_above(&main, "api.prevent_close()").as_deref(),
+        Some(MACOS_CFG),
         "hide-on-close is not confined to macOS"
+    );
+    let prevent_at = main.find("api.prevent_close()").expect("prevent_close");
+    let hide_at = main.find("window.hide()").expect("the window hides");
+    assert!(
+        prevent_at < hide_at,
+        "the close is not prevented before the hide"
     );
     assert!(
         main.contains("#[cfg(not(target_os = \"macos\"))]"),
@@ -35,21 +52,27 @@ fn closing_hides_rather_than_exits_on_macos_only() {
 fn the_app_outlives_its_last_window_on_macos() {
     let main = main_rs();
 
-    let exit_at = main
+    // The cfg must sit on the keep-alive arm itself — a macos cfg anywhere
+    // earlier in the file must not satisfy this. Without it, Windows and
+    // Linux would prevent their windowless exit and linger headless.
+    assert_eq!(
+        attribute_directly_above(&main, "tauri::RunEvent::ExitRequested {").as_deref(),
+        Some(MACOS_CFG),
+        "the keep-alive arm is not confined to macOS"
+    );
+
+    let arm_at = main
+        .find("tauri::RunEvent::ExitRequested {")
+        .expect("an exit-request arm");
+    let code_at = main
         .find("code: None")
         .expect("the no-code exit request is matched");
     let prevent_at = main
         .find("api.prevent_exit()")
         .expect("the exit is prevented");
     assert!(
-        exit_at < prevent_at,
+        arm_at < code_at && code_at < prevent_at,
         "prevent_exit is not tied to the windowless exit request"
-    );
-
-    let macos_before_exit = main[..exit_at].rfind("#[cfg(target_os = \"macos\")]");
-    assert!(
-        macos_before_exit.is_some(),
-        "the keep-alive arm is not confined to macOS"
     );
 }
 
@@ -57,20 +80,29 @@ fn the_app_outlives_its_last_window_on_macos() {
 fn the_dock_reopens_the_window() {
     let main = main_rs();
 
-    assert!(
-        main.contains("RunEvent::Reopen"),
-        "no Reopen handling: the Dock icon would do nothing"
+    assert_eq!(
+        attribute_directly_above(&main, "tauri::RunEvent::Reopen").as_deref(),
+        Some(MACOS_CFG),
+        "the Reopen arm is not confined to macOS"
     );
-    let reopen_at = main.find("RunEvent::Reopen").expect("reopen arm");
-    let show_at = main[reopen_at..]
+
+    let reopen = &main[main.find("tauri::RunEvent::Reopen").expect("reopen arm")..];
+    let unminimize_at = reopen
+        .find("window.unminimize()")
+        .expect("reopen deminiaturizes: show and focus no-op on a minimized window");
+    let show_at = reopen
         .find("window.show()")
         .expect("reopen shows the hidden window");
-    let rebuild_at = main[reopen_at..]
+    let rebuild_at = reopen
         .find("build_main_window(app)")
         .expect("reopen rebuilds a destroyed window");
     assert!(
-        show_at < rebuild_at,
-        "show is the primary path, rebuild the fallback"
+        unminimize_at < show_at && show_at < rebuild_at,
+        "expected unminimize, then show, with rebuild as the fallback"
+    );
+    assert!(
+        reopen.contains("app.exit(1)"),
+        "a failed rebuild must exit rather than strand a windowless app"
     );
 }
 
@@ -78,17 +110,30 @@ fn the_dock_reopens_the_window() {
 fn geometry_is_saved_where_it_is_restored_from() {
     let main = main_rs();
 
-    // Saved on close and on exit, restored in the builder — all three through
-    // the same state_path, so the file cannot fork.
-    assert_eq!(
-        main.matches("remember_geometry(").count(),
-        3,
-        "expected the definition plus the close and exit call sites"
-    );
+    // One saver over one path: spawned on state_path, restored from
+    // state_path, and nothing else reads it — the file cannot fork.
+    assert!(main.contains("window_state::GeometrySaver::spawn(window_state::state_path())"));
     assert!(main.contains("window_state::load_from(&window_state::state_path())"));
     assert_eq!(
         main.matches("window_state::state_path()").count(),
         2,
-        "save and restore should be the only state_path readers in the shell"
+        "the saver and the restore should be the only state_path users in the shell"
+    );
+
+    // Quit never raises a tauri event on macOS, so geometry must be
+    // observed as the window moves and resizes, not only at close.
+    assert!(
+        main.contains("tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)"),
+        "geometry is no longer observed as the window moves"
+    );
+    let close_at = main
+        .find("tauri::WindowEvent::CloseRequested")
+        .expect("a close arm");
+    let flush_at = main
+        .find("saver.save_now()")
+        .expect("close flushes the saver");
+    assert!(
+        close_at < flush_at,
+        "the close arm no longer flushes the saver"
     );
 }
