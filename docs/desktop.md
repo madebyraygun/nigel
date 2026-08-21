@@ -95,13 +95,15 @@ window back instantly. The run loop prevents the windowless exit
 (`ExitRequested` with no code) and answers `Reopen` by showing the hidden
 window, rebuilding it only if the webview is genuinely gone — and exiting if
 even the rebuild fails, rather than lingering windowless. Quit itself is
-AppKit's `terminate:`, which raises no tauri event at all. Windows and Linux
+AppKit's `terminate:`, which raises no window event and no `ExitRequested` —
+only the final `RunEvent::Exit` as the loop tears down. Windows and Linux
 keep their own convention: closing the window exits the app.
 
-Because quit is invisible to the shell, geometry is captured as it changes:
+Because quit gives the shell no warning, geometry is captured as it changes:
 every move and resize feeds `window_state::GeometrySaver`, which writes
 `config_dir()/window-state.json` (beside `settings.json`) once the window
-holds still, and close flushes synchronously. Minimized and fullscreen
+holds still; close flushes synchronously, and so does loop teardown
+(`RunEvent::Exit`), which every quit path reaches. Minimized and fullscreen
 readings are never saved; a maximized window keeps the frame it will
 unmaximize back to plus a flag. Restore plans the full frame rectangle —
 decorations included — in the platform's one coherent coordinate space

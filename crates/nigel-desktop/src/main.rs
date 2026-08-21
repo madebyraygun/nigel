@@ -17,7 +17,10 @@ fn main() {
     let runtime = Arc::new(
         tokio::runtime::Runtime::new().expect("build tokio runtime for the scheme handler"),
     );
-    let saver = window_state::GeometrySaver::spawn(window_state::state_path());
+    let saver = Arc::new(window_state::GeometrySaver::spawn(
+        window_state::state_path(),
+    ));
+    let exit_saver = Arc::clone(&saver);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -39,9 +42,9 @@ fn main() {
             }
             match event {
                 // Geometry is saved as the window moves — macOS quit is
-                // AppKit's `terminate:`, which raises no tauri event at
-                // all, so waiting for close or exit would miss the most
-                // common quit path entirely.
+                // AppKit's `terminate:`, which raises no window event and
+                // no ExitRequested, so waiting for close would miss the
+                // most common quit path entirely.
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
                     observe(&saver, window);
                 }
@@ -69,10 +72,14 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("build nigel desktop")
-        .run(|app, event| {
+        .run(move |app, event| {
             #[cfg(not(target_os = "macos"))]
             let _ = app;
             match event {
+                // Loop teardown is the one signal every quit path shares —
+                // macOS `terminate:` included — so the settle window can
+                // never eat the last observation.
+                tauri::RunEvent::Exit => exit_saver.save_now(),
                 // The app outlives its last window on macOS: the only
                 // no-code exit request is the last window closing, and it
                 // is prevented. Quit bypasses this arm entirely — see the

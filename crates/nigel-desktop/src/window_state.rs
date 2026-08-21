@@ -221,10 +221,10 @@ fn host_monitor(frame: Rect, monitors: &[Rect]) -> Option<Rect> {
 /// window holds still, [`GeometrySaver::save_now`] flushes on close.
 ///
 /// Observations arrive from the event thread; the write happens on a
-/// background thread that coalesces a drag's stream of events into one write.
-/// The thread dies with the process, so a quit inside the settle window can
-/// cost the last part-second of movement — the close path's `save_now`
-/// covers every deliberate close.
+/// background thread that coalesces a drag's stream of events into one
+/// write. Quit cannot outrun the settle window: the shell flushes with
+/// [`GeometrySaver::save_now`] at loop teardown, which every quit path
+/// reaches.
 pub struct GeometrySaver {
     path: PathBuf,
     last: Arc<Mutex<Option<WindowGeometry>>>,

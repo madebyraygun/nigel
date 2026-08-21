@@ -112,7 +112,13 @@ fn geometry_is_saved_where_it_is_restored_from() {
 
     // One saver over one path: spawned on state_path, restored from
     // state_path, and nothing else reads it — the file cannot fork.
-    assert!(main.contains("window_state::GeometrySaver::spawn(window_state::state_path())"));
+    let spawn_at = main
+        .find("window_state::GeometrySaver::spawn(")
+        .expect("a geometry saver is spawned");
+    assert!(
+        main[spawn_at..spawn_at + 120].contains("window_state::state_path()"),
+        "the saver is not spawned on state_path"
+    );
     assert!(main.contains("window_state::load_from(&window_state::state_path())"));
     assert_eq!(
         main.matches("window_state::state_path()").count(),
@@ -120,20 +126,34 @@ fn geometry_is_saved_where_it_is_restored_from() {
         "the saver and the restore should be the only state_path users in the shell"
     );
 
-    // Quit never raises a tauri event on macOS, so geometry must be
-    // observed as the window moves and resizes, not only at close.
+    // Quit raises no window event on macOS, so geometry must be observed
+    // as the window moves and resizes, not only at close.
     assert!(
         main.contains("tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)"),
         "geometry is no longer observed as the window moves"
     );
+
+    // Each flush is asserted inside its own arm's span, so neither can
+    // stand in for the other.
     let close_at = main
         .find("tauri::WindowEvent::CloseRequested")
         .expect("a close arm");
-    let flush_at = main
-        .find("saver.save_now()")
-        .expect("close flushes the saver");
+    let setup_at = main.find(".setup(").expect("a setup hook");
     assert!(
-        close_at < flush_at,
+        main[close_at..setup_at].contains("saver.save_now()"),
         "the close arm no longer flushes the saver"
+    );
+
+    // The settle window must not be able to eat the final move: loop
+    // teardown (RunEvent::Exit) is the one signal every quit path reaches,
+    // macOS terminate: included, and it flushes.
+    let run_at = main.find(".run(").expect("the run loop");
+    let exit_at = main[run_at..]
+        .find("tauri::RunEvent::Exit => ")
+        .map(|at| run_at + at)
+        .expect("the run loop no longer handles RunEvent::Exit");
+    assert!(
+        main[exit_at..].starts_with("tauri::RunEvent::Exit => exit_saver.save_now()"),
+        "loop teardown no longer flushes the saver"
     );
 }
