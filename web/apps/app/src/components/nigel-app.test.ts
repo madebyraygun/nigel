@@ -570,7 +570,7 @@ describe('the menu bar', () => {
     expect(window.location.hash).toBe('#/register');
   });
 
-  it('opens the new-invoice view, the settings route, and flips the sidebar', async () => {
+  it('opens the new-invoice view, the settings screen, and flips the sidebar', async () => {
     widescreen();
     const el = await mount(shellClient());
 
@@ -578,7 +578,9 @@ describe('the menu bar', () => {
     await settled(el);
     expect(window.location.hash).toBe('#/invoices?new=1');
 
-    send({ kind: 'settings' });
+    // Settings is a menu item of its own, but its id is the navigation one:
+    // opening it is exactly what a View selection of it does.
+    send({ kind: 'navigate', screen: 'settings' });
     await settled(el);
     expect(window.location.hash).toBe('#/settings');
 
@@ -602,6 +604,35 @@ describe('the menu bar', () => {
     expect(consumeMenuIntent('pick-import')).toBe(true);
     await settled(el);
     expect(window.location.hash).toBe('#/import');
+  });
+
+  it('leaves a filtered register alone when find fires on it', async () => {
+    window.location.hash = '#/register?account=Checking&year=2025';
+    const el = await mount(shellClient());
+
+    send({ kind: 'find' });
+    // Synchronously, before the mounted register screen can take it itself.
+    expect(consumeMenuIntent('find')).toBe(true);
+    await settled(el);
+
+    // The chord focuses search; costing the screen its filters is not focus.
+    expect(window.location.hash).toBe('#/register?account=Checking&year=2025');
+  });
+
+  it('drops selections whole while the app is locked', async () => {
+    const client = shellClient();
+    client.status = LOCKED_STATUS;
+    window.location.hash = '#/reports';
+    const el = await mount(client);
+
+    send({ kind: 'navigate', screen: 'register' });
+    send({ kind: 'import' });
+    await settled(el);
+
+    // The hash is what returns the user to where they were headed after
+    // unlock, and a stored intent would fire on whatever mounts then.
+    expect(window.location.hash).toBe('#/reports');
+    expect(consumeMenuIntent('pick-import')).toBe(false);
   });
 
   it('unsubscribes when it leaves the page', async () => {

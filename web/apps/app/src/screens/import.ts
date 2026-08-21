@@ -212,27 +212,24 @@ export class NigelImportScreen extends SignalWatcher(LitElement) {
   /** Toast text already shown, so a repeated failure does not stack up. */
   private toasted = new Set<string>();
 
-  /** A menu selection asked for the picker; opened once this update lands. */
-  private pickOnUpdate = false;
-
   willUpdate(): void {
     // Before the first render rather than after it: `source` decides how the
     // dropzone paints, and setting reactive state once the update has
     // completed would cost a second one.
     if (!this.hasUpdated) this.source = this.client.importSource();
-    if (consumeMenuIntent('pick-import')) this.pickOnUpdate = true;
+    // Parked, not consumed, while busy: taking the intent now would discard
+    // it against the picker guard. `busy` is reactive, so the cycle that
+    // clears it re-runs this read and the dialog opens then. Consuming is a
+    // tracked read — that is what subscribes the signal watcher — and the
+    // pick waits out the update so its state writes schedule a fresh one.
+    if (this.busy === null && consumeMenuIntent('pick-import')) {
+      void this.updateComplete.then(() => this.handlePickRequest());
+    }
   }
 
   firstUpdated(): void {
     this.listenForDrops();
     void this.load();
-  }
-
-  updated(): void {
-    if (this.pickOnUpdate) {
-      this.pickOnUpdate = false;
-      void this.handlePickRequest();
-    }
   }
 
   connectedCallback(): void {

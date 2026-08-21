@@ -122,11 +122,10 @@ export class NigelRegisterScreen extends SignalWatcher(LitElement) {
   private loadSeq = 0;
   private seededSearch = false;
 
-  /** A menu selection asked for the search box; focused once this update lands. */
-  private focusSearchOnUpdate = false;
-
   willUpdate(changed: PropertyValues<this>): void {
-    if (consumeMenuIntent('find')) this.focusSearchOnUpdate = true;
+    // Consumed here because the tracked read is what subscribes the signal
+    // watcher; a repeated chord is a new intent and re-runs this cycle.
+    if (consumeMenuIntent('find')) void this.focusSearchWhenReady();
     if (!changed.has('params')) return;
 
     if (!this.seededSearch) {
@@ -139,11 +138,20 @@ export class NigelRegisterScreen extends SignalWatcher(LitElement) {
     void this.load(request);
   }
 
-  updated(): void {
-    if (this.focusSearchOnUpdate) {
-      this.focusSearchOnUpdate = false;
-      this.toolbar?.focusSearch();
-    }
+  /**
+   * Focus the search box once it exists to be focused.
+   *
+   * Waiting on this element's update only reaches the toolbar *element*; on a
+   * fresh mount the toolbar's own first render — the one that puts the input
+   * in its shadow root — is still queued, so its `updateComplete` is the one
+   * the focus call has to sit behind.
+   */
+  private async focusSearchWhenReady(): Promise<void> {
+    await this.updateComplete;
+    const toolbar = this.toolbar;
+    if (!toolbar) return;
+    await toolbar.updateComplete;
+    toolbar.focusSearch();
   }
 
   // -- loading --------------------------------------------------------------
