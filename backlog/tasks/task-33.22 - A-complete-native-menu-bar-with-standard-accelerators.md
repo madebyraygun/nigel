@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:48'
-updated_date: '2026-08-21 14:34'
+updated_date: '2026-08-21 14:54'
 labels:
   - tauri
   - ui
@@ -49,3 +49,9 @@ One deliberate reclamation: wc-register-table yields Cmd+F on the reasoning that
 7. Gates: cargo fmt --check and cargo test in crates/nigel-desktop, full web gate (typecheck, lint, test, build), check-no-real-data by exit status. Linux verification: run the shell, exercise the in-window GTK bar, Ctrl+1..9, find focus, import pick. PR body carries the macOS checklist: app-menu identity and About panel, clipboard chords in text fields, Cmd+Comma, windows-menu tiling, fullscreen item.
 8. Branch feat/desktop-menubar in worktree /home/dalton/Dev/nigel/wt-menubar (own npm ci). Files: menu.rs new, main.rs, lib.rs, two new crate tests; web client.ts, desktop-client.ts, nigel-app.ts, app-store.ts, register.ts, import.ts, fake-api-client.ts and tests. Overlap with open PRs is confined to additive edits in client.ts and fake-api-client.ts (both touched by 38 and 40) — different regions, small rebase risk, accepted.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+File > Export… is deliberately absent. A native Export… implies a save dialog; navigating to the Reports screen under that label would be a small lie, and a menu item that does not do what its name says is a worse tell than its absence. The item returns when a context-sensitive export of the current screen exists to back it. Cmd+E stays unclaimed.
+<!-- SECTION:NOTES:END -->
