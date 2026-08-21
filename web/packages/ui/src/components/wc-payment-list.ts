@@ -44,6 +44,12 @@ export class WcPaymentList extends LitElement {
       overflow-x: auto;
     }
 
+    td.date {
+      font-family: var(--nc-font-figures);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -129,7 +135,7 @@ export class WcPaymentList extends LitElement {
             ${this.payments.map(
               (payment, index) => html`
                 <tr data-row=${payment.id ?? index}>
-                  <td>${payment.paidDate}</td>
+                  <td class="date">${payment.paidDate}</td>
                   <td>
                     ${paymentMethodLabel(payment.method)}
                     ${payment.stripeCheckoutSessionId

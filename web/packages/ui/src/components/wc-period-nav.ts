@@ -136,7 +136,12 @@ export class WcPeriodNav extends LitElement {
       outline-offset: 2px;
     }
 
+    /* A period is a date, and the reservation that stops the two arrows
+       shuffling as it changes is measured in ch — the width of this
+       element's own zero. Both have to be the same face or the budget is
+       sized against a glyph nothing here draws. */
     .label {
+      font-family: var(--nc-font-figures);
       min-width: 12ch;
       text-align: center;
       font-weight: var(--wa-font-weight-medium, 500);

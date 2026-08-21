@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
 import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
-import { declarationsOf } from './token-resolution.js';
+import { declarationsOf, followVar } from './token-resolution.js';
 
 const text = nigelTheme.cssText;
 
@@ -70,11 +70,12 @@ describe('nigelTheme', () => {
   });
 
   it('keeps the bundled face out of the primary stack', () => {
-    // The whole of the split is that chrome no longer reaches for Plex. A
-    // stack that still named it would fall back to it on the one engine that
-    // does not answer system-ui, which is the case this guards.
-    const sans = text.slice(text.indexOf('--wa-font-family-sans'));
-    expect(sans.slice(0, sans.indexOf(';'))).not.toContain('IBM Plex Mono');
+    // A stack that still named Plex would fall back to it on an engine that
+    // does not answer system-ui, and chrome would be mono again on exactly
+    // the platform the split is for.
+    for (const declared of declarationsOf('--wa-font-family-sans')) {
+      expect(declared).not.toContain('IBM Plex Mono');
+    }
   });
 
   it('keeps a system mono behind the bundled one, so a missing face still aligns columns', () => {
@@ -86,20 +87,34 @@ describe('nigelTheme', () => {
   });
 
   it('lands every figures and brand token on the bundled face', () => {
-    // Each is written as an indirection so a component can say why it wants
-    // the face rather than which face it wants. Following the chain is what
-    // proves the indirection still arrives somewhere.
-    const follow = (token: string): string => {
-      const declared = declarationsOf(token);
-      expect(declared, `${token} is not declared`).not.toHaveLength(0);
-      const value = declared[0];
-      const reference = /^var\(\s*(--[a-z0-9-]+)\s*\)$/i.exec(value);
-      return reference ? follow(reference[1]) : value;
-    };
-
+    // Each is an indirection so a component can say why it wants the face
+    // rather than which face it wants; following the chain is what proves the
+    // indirection still arrives somewhere.
     for (const token of ['--nc-font-figures', '--nc-font-money', '--nc-font-brand']) {
-      expect(follow(token), token).toContain("'IBM Plex Mono'");
+      expect(followVar(token), token).toContain("'IBM Plex Mono'");
     }
+  });
+
+  it('answers the four family names Web Awesome actually reads', () => {
+    // WA's compiled styles never mention --wa-font-family-sans. They read
+    // these four as bare var()s, and an undefined custom property is not a
+    // default but a discarded declaration.
+    for (const [token, want] of [
+      ['--wa-font-family-body', 'system-ui'],
+      ['--wa-font-family-heading', 'system-ui'],
+      ['--wa-font-family-longform', 'system-ui'],
+      ['--wa-font-family-code', "'IBM Plex Mono'"],
+    ]) {
+      expect(followVar(token), token).toContain(want);
+    }
+  });
+
+  it('prints in the bundled face, so two machines print one document', () => {
+    // A system face is whatever the machine has. Paper is the artifact an
+    // accountant keeps, and its metrics cannot depend on the OS it came off.
+    const print = text.slice(text.indexOf('@media print'));
+    expect(print).toMatch(/--wa-font-family-sans:\s*var\(--wa-font-family-mono\)/);
+    expect(followVar('--wa-font-family-sans')).not.toContain('IBM Plex Mono');
   });
 
   it('pins color-scheme when a mode is forced, so native widgets follow', () => {

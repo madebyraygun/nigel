@@ -48,6 +48,8 @@ export class WcCountGrid extends LitElement {
 
     dd {
       margin: 0;
+      /* The count itself. The hint below it is a sentence and takes the
+         reading face back. */
       font-family: var(--nc-font-figures);
       font-size: var(--wa-font-size-xl, 20px);
       font-weight: var(--wa-font-weight-semibold, 600);
@@ -68,6 +70,7 @@ export class WcCountGrid extends LitElement {
     }
 
     .hint {
+      font-family: var(--wa-font-family-sans);
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s, 13px);
       font-weight: var(--wa-font-weight-normal, 400);

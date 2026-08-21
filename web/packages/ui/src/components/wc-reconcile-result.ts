@@ -40,10 +40,15 @@ export class WcReconcileResult extends LitElement {
       color: var(--wa-color-muted);
     }
 
+    /* The three balances are wc-money and bring their own face; the month is
+       a date and asks for one. The account is its name, and is prose. */
+    dd.month {
+      font-family: var(--nc-font-figures);
+    }
+
     dd {
       margin: 0;
       justify-self: end;
-      font-family: var(--nc-font-figures);
       font-variant-numeric: tabular-nums;
       user-select: text;
     }
@@ -92,7 +97,7 @@ export class WcReconcileResult extends LitElement {
           <dd>${this.account}</dd>
 
           <dt>Month</dt>
-          <dd>${this.month}</dd>
+          <dd class="month">${this.month}</dd>
 
           <dt>Statement</dt>
           <dd>

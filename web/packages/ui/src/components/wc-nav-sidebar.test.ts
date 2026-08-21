@@ -105,6 +105,10 @@ describePrintHiding(WcNavSidebar, ':host');
 describe('the rail', () => {
   const text = styleText(WcNavSidebar);
 
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
   it('slides between the column and the rail rather than snapping', () => {
     // Width is the only thing that differs between the two states, so it is
     // the only thing there is to animate.
@@ -112,18 +116,41 @@ describe('the rail', () => {
   });
 
   it('stops sliding for anyone who asked motion to stop', () => {
-    // --nc-transition-base is already 0ms under the same preference; this
-    // says so where someone reading the component will see it.
     expect(text).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*:host[^{]*{[^}]*transition:\s*none/,
     );
   });
 
-  it('clips the labels rather than reflowing them on the way through', () => {
-    // A label is drawn at its full width from the first frame of an
-    // expansion, and the rail is 56px wide for most of that frame's life.
+  it('clips a long label to an ellipsis instead of wrapping it', () => {
+    // The box is 56px wide for most of an expansion's first frame, and a
+    // label that wrapped there would make the rail grow taller before it
+    // grew wider.
     expect(text).toMatch(/:host\s*{[^}]*overflow-x:\s*hidden/);
     expect(text).toMatch(/\.brand,\s*button\s*{[^}]*white-space:\s*nowrap/);
+    expect(text).toMatch(/\.label\s*{[^}]*text-overflow:\s*ellipsis/);
+  });
+
+  it('keeps the whole label reachable when it is clipped', async () => {
+    // Zoom or a large system font can push a label past the box in either
+    // state, so the title is not conditional on the rail.
+    const el = await mount({ items: NAV_ITEMS });
+    const titles = [...(el.shadowRoot?.querySelectorAll('button') ?? [])].map((b) =>
+      b.getAttribute('title'),
+    );
+    expect(titles).toEqual(NAV_ITEMS.map((item) => item.label));
+  });
+
+  it('leaves the width alone at drawer widths, where the shell decides', () => {
+    // Two rules could animate this element and only one is live at a time.
+    // Below the breakpoint wc-app-shell transitions transform on
+    // ::slotted([slot='sidebar']) from the outer tree, which beats this
+    // tree's :host for the same property whatever the specificity — so the
+    // width transition is cancelled rather than left to lose silently. It
+    // also stops a window dragged across the breakpoint animating 56px out
+    // to 232px.
+    expect(text).toMatch(
+      /@media \(max-width: 48rem\)[\s\S]*:host\s*{[^}]*transition:\s*none/,
+    );
   });
 });
 

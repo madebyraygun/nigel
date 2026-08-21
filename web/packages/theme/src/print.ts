@@ -62,6 +62,15 @@ export const printCss = css`
       --nc-color-income-fill: #000000;
       --nc-color-expense-fill: #000000;
 
+      /* A printed report is the artifact an accountant keeps, and two copies
+         of it must not differ because they came off different machines. The
+         system face is by definition whatever the machine has, so on paper
+         the sheet goes back to the face that ships in the binary: the same
+         metrics, the same line breaks and the same column widths from any
+         OS. Chrome is hidden on paper anyway, so what this actually sets is
+         the type of the report itself. */
+      --wa-font-family-sans: var(--wa-font-family-mono);
+
       --nc-color-sidebar-bg: #ffffff;
       --nc-color-selected-bg: transparent;
 

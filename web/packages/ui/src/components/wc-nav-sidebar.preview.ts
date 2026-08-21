@@ -29,8 +29,8 @@ const preview: Preview = {
         ></wc-nav-sidebar>`,
     },
     {
-      // The rail slides between the two states above, and a still frame
-      // cannot show that. This one is here to be clicked.
+      // The width transition is the whole of this state; a still frame
+      // cannot show it, so this one is here to be clicked.
       name: 'toggling',
       render: () => {
         const flip = (event: Event) => {

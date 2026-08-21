@@ -71,7 +71,11 @@ export class WcBalanceList extends LitElement {
       border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
     }
 
+    /* The column width is measured in ch, which is this cell's own zero, and
+       what it has to hold is the wc-money inside it. Same face, or the
+       budget is sized against a glyph the column never draws. */
     td.amount {
+      font-family: var(--nc-font-figures);
       text-align: right;
       width: 12ch;
     }

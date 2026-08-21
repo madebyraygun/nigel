@@ -80,6 +80,12 @@ export class WcRuleForm extends LitElement {
         color: var(--wa-color-text);
       }
 
+      /* A match pattern is read character by character against the
+         descriptions it has to catch, so it is set like the code it is. */
+      wa-input[data-pattern]::part(input) {
+        font-family: var(--wa-font-family-mono);
+      }
+
       .fields {
         display: grid;
         gap: var(--wa-space-m, 12px);

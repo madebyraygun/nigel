@@ -129,6 +129,13 @@ export class WcReportTable extends LitElement {
       text-align: end;
     }
 
+    /* Percentages and counts are set as figures alongside the wc-money cells
+       they share a column edge with; the heading above them is a word. */
+    td.end {
+      font-family: var(--nc-font-figures);
+      font-variant-numeric: tabular-nums;
+    }
+
     :host([dense]) th,
     :host([dense]) td {
       padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);

@@ -20,6 +20,12 @@ export class WcInvoiceSummary extends LitElement {
       color: var(--wa-color-text);
     }
 
+    /* The dates and the currency code, set like the amounts above them. */
+    dd.figure {
+      font-family: var(--nc-font-figures);
+      font-variant-numeric: tabular-nums;
+    }
+
     .title {
       display: flex;
       flex-wrap: wrap;
@@ -140,16 +146,16 @@ export class WcInvoiceSummary extends LitElement {
         </div>
         <div class="pair">
           <dt>Issued</dt>
-          <dd>${this.issueDate || '—'}</dd>
+          <dd class="figure">${this.issueDate || '—'}</dd>
         </div>
         <div class="pair">
           <dt>Due</dt>
-          <dd data-due>${this.dueDate ?? '—'}</dd>
+          <dd class="figure" data-due>${this.dueDate ?? '—'}</dd>
         </div>
         ${this.currency
           ? html`<div class="pair">
               <dt>Currency</dt>
-              <dd>${this.currency}</dd>
+              <dd class="figure">${this.currency}</dd>
             </div>`
           : nothing}
       </dl>

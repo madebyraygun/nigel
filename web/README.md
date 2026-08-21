@@ -111,6 +111,15 @@ Every one of those is a token. A component asks for the job, never for the
 family, and `packages/ui/src/__tests__/font-stack-guard.test.ts` fails the
 build on a `font-family` that names a stack instead of resolving through one.
 
+**On paper the sans token goes back to Plex.** A system face is by definition
+whatever the machine has, and a report printed from two machines has to be the
+same document — same metrics, same line breaks, same column widths. `printCss`
+resets it inside the same `:root:root` block that flattens the palette.
+
+Web Awesome's own compiled styles do not read either token by these names —
+they read `--wa-font-family-body`, `-heading`, `-longform` and `-code`, which
+`packages/theme/src/tokens/wa-contract.ts` answers in terms of the two stacks.
+
 Weights **400 / 500 / 600**, matching `--wa-font-weight-normal` / `-medium` /
 `-bold` exactly. That match is why Plex Mono and not Fira Mono, which has no
 600: every table header and field label would be browser-synthesised, which

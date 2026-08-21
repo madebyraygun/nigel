@@ -36,6 +36,34 @@ export function declarationsOf(name: string): string[] {
 }
 
 /**
+ * Follow a token through however many `var()` hops to the value it ends at.
+ *
+ * The colour resolver below understands hexes and `color-mix`; this one
+ * understands only the indirection itself, so it answers for any token —
+ * a font stack, a duration, a width. `var(--x, fallback)` resolves to `--x`
+ * when that is declared and to the fallback when it is not, which is what a
+ * browser does. A loop throws rather than recursing until the stack ends.
+ */
+export function followVar(name: string, mode: Mode = 'light'): string {
+  const step = (value: string, trail: string[]): string => {
+    const reference = /^var\(\s*(--[a-z0-9-]+)\s*(?:,\s*([\s\S]+))?\)$/i.exec(value);
+    if (!reference) return value;
+
+    const [, next, fallback] = reference;
+    if (trail.includes(next)) throw new Error(`token cycle: ${[...trail, next].join(' -> ')}`);
+
+    const declared = declarationsOf(next);
+    if (declared.length === 0) {
+      if (fallback === undefined) throw new Error(`${next} is not declared and has no fallback`);
+      return step(fallback.trim(), [...trail, next]);
+    }
+    return step(declarationFor(next, mode), [...trail, next]);
+  };
+
+  return step(declarationFor(name, mode), [name]);
+}
+
+/**
  * Light mode reads the first declaration and dark the last: the light block
  * comes first, the two dark blocks (media query and `.dark-mode`) after it and
  * identical to each other. A token declared once answers both.

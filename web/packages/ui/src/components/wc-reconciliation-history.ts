@@ -77,7 +77,8 @@ export class WcReconciliationHistory extends LitElement {
       text-align: end;
     }
 
-    td.month {
+    td.month,
+    td.when {
       font-family: var(--nc-font-figures);
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
@@ -194,7 +195,7 @@ export class WcReconciliationHistory extends LitElement {
               : html`<wc-icon-close inline class="mark"></wc-icon-close>Discrepancy`}
           </span>
         </td>
-        <td class=${row.reconciledAt === null ? 'muted' : ''}>
+        <td class=${row.reconciledAt === null ? 'when muted' : 'when'}>
           ${row.reconciledAt ?? '—'}
         </td>
       </tr>

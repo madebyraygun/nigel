@@ -62,9 +62,12 @@ export class WcSampleTable extends LitElement {
     }
 
     .date {
-      font-family: var(--nc-font-figures);
       white-space: nowrap;
       width: 1%;
+    }
+
+    td.date {
+      font-family: var(--nc-font-figures);
     }
 
     .description {

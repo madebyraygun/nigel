@@ -106,6 +106,9 @@ export class WcManagerTable extends LitElement {
       td.end,
       th.end {
         text-align: end;
+      }
+
+      td.end {
         font-family: var(--nc-font-figures);
         font-variant-numeric: tabular-nums;
       }

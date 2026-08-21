@@ -96,6 +96,15 @@ export class WcImportForm extends LitElement {
         gap: var(--wa-space-m, 12px);
       }
 
+      /* A strftime pattern and a zero-based column index are both read
+         character by character against the CSV beside them. */
+      wa-input.date-format::part(input),
+      wa-input.date-col::part(input),
+      wa-input.desc-col::part(input),
+      wa-input.amount-col::part(input) {
+        font-family: var(--wa-font-family-mono);
+      }
+
       .row > * {
         flex: 1 1 16rem;
         min-width: 0;

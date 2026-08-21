@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
@@ -86,9 +86,18 @@ export class WcInvoiceTable extends LitElement {
       text-align: end;
     }
 
+    /* An invoice number is an identifier read character by character, not a
+       quantity — the same class of thing as an account code, so it takes the
+       code face rather than the figures one. Both resolve to Plex today; the
+       distinction is what a later change would need to tell them apart by. */
     td.number {
-      font-family: var(--nc-font-figures);
+      font-family: var(--wa-font-family-mono);
       font-variant-numeric: tabular-nums;
+    }
+
+    td.due {
+      font-family: var(--nc-font-figures);
+      white-space: nowrap;
     }
 
     td.client {
@@ -197,7 +206,7 @@ export class WcInvoiceTable extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td class=${row.dueDate === null ? 'muted' : nothing}>${row.dueDate ?? '—'}</td>
+        <td class=${row.dueDate === null ? 'due muted' : 'due'}>${row.dueDate ?? '—'}</td>
       </tr>
     `;
   }

@@ -26,17 +26,13 @@ export class WcNavSidebar extends LitElement {
       border-right: 1px solid var(--wa-color-border);
       font-family: var(--wa-font-family-sans);
       overflow-y: auto;
-      /* Clipped rather than scrolled sideways: a label is drawn at its full
-         width from the first frame of an expansion, and the rail is 56px
-         wide for most of that frame's life. overflow-y: auto alone would
-         compute overflow-x to auto and flash a scrollbar through the whole
-         transition. */
+      /* A label is drawn at its full width from the first frame of an
+         expansion, while the box around it is still 56px. Clipping is what
+         makes that a wipe; overflow-y: auto on its own computes overflow-x
+         to auto, which is a scrollbar for the length of the animation. */
       overflow-x: hidden;
-      /* The rail is the wide-viewport half of "put the sidebar away", and
-         the width is the only thing that changes between the two states, so
-         it is the only thing to animate. --nc-transition-base is already
-         0ms under a reduced-motion preference; the media query below says
-         so a second time where a reader of this file will see it. */
+      /* Width is the only thing that differs between the column and the
+         rail, so it is the only thing to animate. */
       transition: width var(--nc-transition-base, 200ms ease);
     }
 
@@ -50,13 +46,19 @@ export class WcNavSidebar extends LitElement {
       width: var(--nc-sidebar-collapsed-width, 56px);
     }
 
-    /* Both rows hold their line while the width animates. Without this the
-       company name and the nav labels reflow onto second lines on their way
-       through 56px, and the rail appears to grow taller before it grows
-       wider. */
+    /* Each row holds its line, so a label reaching past the box is clipped to
+       an ellipsis rather than wrapping onto a second line — which at 56px
+       would make the rail grow taller before it grew wider. The full text
+       stays reachable as the button's title in both states. */
     .brand,
     button {
       white-space: nowrap;
+    }
+
+    .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
 
     .brand {
@@ -136,6 +138,16 @@ export class WcNavSidebar extends LitElement {
        and the rail styling stands down: what slides back in is the full nav
        with its words. */
     @media (max-width: 48rem) {
+      /* The rail does not exist at this width, so neither does the animation
+         that reaches it: what moves here is the whole sidebar, and
+         wc-app-shell slides it with transform from the outer tree. Leaving
+         the width transition on would also make dragging a window across the
+         breakpoint animate 56px out to 232px, which is a resize, not a
+         gesture anyone made. */
+      :host {
+        transition: none;
+      }
+
       :host([collapsed]) {
         width: var(--nc-sidebar-width, 232px);
       }
@@ -214,7 +226,7 @@ export class WcNavSidebar extends LitElement {
                   data-nav=${item.id}
                   aria-current=${isActive ? 'page' : 'false'}
                   aria-disabled=${item.disabled ? 'true' : 'false'}
-                  title=${this.collapsed ? item.label : nothing}
+                  title=${item.label}
                   @click=${() => this.handleClick(item)}
                 >
                   ${this.renderIcon(item)}

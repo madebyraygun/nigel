@@ -161,7 +161,8 @@ export class WcLineItems extends LitElement {
         min-width: 12rem;
       }
 
-      td.figure input {
+      td.figure input,
+      td.figure {
         text-align: end;
         font-family: var(--nc-font-figures);
         font-variant-numeric: tabular-nums;
@@ -385,7 +386,7 @@ export class WcLineItems extends LitElement {
       return html`
         <tr data-row=${index}>
           <td class="description">${item.description}</td>
-          <td class="end">${item.quantity}</td>
+          <td class="end figure">${item.quantity}</td>
           <td class="end">
             <wc-money
               .amount=${parseLineNumber(item.unitAmount) ?? 0}
