@@ -237,6 +237,19 @@ export type DragDropEvent =
   | { type: 'drop'; paths: string[] };
 
 /**
+ * The native window chrome this client sits inside, if any.
+ *
+ * `ready` tells the shell the SPA is ready to be seen, so the hidden native
+ * window can show already painted. `background` keeps the window's own
+ * color on the SPA's resolved palette, so a fast resize shows theme
+ * background at the edges rather than the webview's default white.
+ */
+export interface ShellChrome {
+  ready(): void;
+  background(mode: 'light' | 'dark'): void;
+}
+
+/**
  * Where a statement comes from in this client, in the shape of
  * `ExportTarget`: a discriminant plus whatever the running platform can
  * actually do.
@@ -247,19 +260,6 @@ export type DragDropEvent =
  * another machine cannot see this disk, so path staging must not be offered
  * there.
  */
-/**
- * The native window chrome this client sits inside, if any.
- *
- * `ready` tells the shell the first frame exists, so the hidden native
- * window can show already painted. `background` keeps the window's own
- * color on the SPA's resolved palette, so a fast resize shows theme
- * background at the edges rather than the webview's default white.
- */
-export interface ShellChrome {
-  ready(): void;
-  background(mode: 'light' | 'dark'): void;
-}
-
 export type ImportSource =
   | { kind: 'browser' }
   | {
