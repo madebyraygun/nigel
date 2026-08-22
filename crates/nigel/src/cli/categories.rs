@@ -9,11 +9,13 @@ pub use nigel_core::categories::*;
 pub fn add(
     name: &str,
     category_type: &str,
+    class: Option<&str>,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<()> {
+    let class = class.map(crate::cli::accounts::parse_class).transpose()?;
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    add_category(&conn, name, category_type, tax_line, form_line)?;
+    add_category(&conn, name, category_type, class, tax_line, form_line)?;
     println!("Added category: {name}");
     Ok(())
 }
@@ -23,12 +25,13 @@ pub fn list() -> Result<()> {
     let categories = list_categories(&conn)?;
 
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Name", "Type", "Tax Line", "Form Line"]);
+    table.set_header(vec!["ID", "Name", "Type", "Class", "Tax Line", "Form Line"]);
     for cat in categories {
         table.add_row(vec![
             Cell::new(cat.id),
             Cell::new(cat.name),
             Cell::new(cat.category_type),
+            Cell::new(cat.class.as_str()),
             Cell::new(cat.tax_line.unwrap_or_default()),
             Cell::new(cat.form_line.unwrap_or_default()),
         ]);
@@ -48,11 +51,16 @@ pub fn update(
     id: i64,
     name: &str,
     category_type: &str,
+    class: Option<&str>,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    update_category(&conn, id, name, category_type, tax_line, form_line)?;
+    let class = match class {
+        Some(value) => crate::cli::accounts::parse_class(value)?,
+        None => get_category(&conn, id)?.class,
+    };
+    update_category(&conn, id, name, category_type, class, tax_line, form_line)?;
     println!("Updated category {id}: {name}");
     Ok(())
 }
@@ -67,7 +75,7 @@ pub fn delete(id: i64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nigel_core::db::init_db;
+    use nigel_core::db::{init_db, AccountClass};
     use nigel_core::error::NigelError;
     use rusqlite::Connection;
 
@@ -76,6 +84,36 @@ mod tests {
         let conn = get_connection(&dir.path().join("test.db")).unwrap();
         init_db(&conn).unwrap();
         (dir, conn)
+    }
+
+    #[test]
+    fn a_category_takes_its_class_from_its_type_or_from_the_flag() {
+        let (_dir, conn) = test_conn();
+        add_category(&conn, "Workshop Fees", "income", None, None, None).unwrap();
+        let draws = add_category(
+            &conn,
+            "Partner Draw",
+            "expense",
+            Some(AccountClass::Equity),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let by_name = |name: &str| {
+            list_categories(&conn)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .class
+        };
+        assert_eq!(by_name("Workshop Fees"), AccountClass::Revenue);
+        assert_eq!(by_name("Partner Draw"), AccountClass::Equity);
+
+        // A rename keeps the class the operator chose.
+        rename_category(&conn, draws, "Member Draw").unwrap();
+        assert_eq!(by_name("Member Draw"), AccountClass::Equity);
     }
 
     #[test]
@@ -104,7 +142,7 @@ mod tests {
     #[test]
     fn test_add_category_and_list() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "New Category", "income", Some("Line 1"), None).unwrap();
+        add_category(&conn, "New Category", "income", None, Some("Line 1"), None).unwrap();
         let categories = list_categories(&conn).unwrap();
         let found = categories.iter().find(|c| c.name == "New Category");
         assert!(
@@ -120,22 +158,22 @@ mod tests {
     #[test]
     fn test_add_duplicate_name_rejected() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Test Cat", "expense", None, None).unwrap();
-        let err = add_category(&conn, "Test Cat", "income", None, None).unwrap_err();
+        add_category(&conn, "Test Cat", "expense", None, None, None).unwrap();
+        let err = add_category(&conn, "Test Cat", "income", None, None, None).unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn test_add_invalid_type_rejected() {
         let (_dir, conn) = test_conn();
-        let err = add_category(&conn, "Bad Type", "revenue", None, None).unwrap_err();
+        let err = add_category(&conn, "Bad Type", "revenue", None, None, None).unwrap_err();
         assert!(err.to_string().contains("Invalid category type"));
     }
 
     #[test]
     fn test_add_empty_name_rejected() {
         let (_dir, conn) = test_conn();
-        let err = add_category(&conn, "  ", "income", None, None).unwrap_err();
+        let err = add_category(&conn, "  ", "income", None, None, None).unwrap_err();
         assert!(err.to_string().contains("Name is required"));
     }
 
@@ -146,6 +184,7 @@ mod tests {
             &conn,
             "Original",
             "expense",
+            None,
             Some("Line 8"),
             Some("1120S-16"),
         )
@@ -162,6 +201,7 @@ mod tests {
             id,
             "Updated",
             "income",
+            AccountClass::Revenue,
             Some("Gross receipts"),
             Some("K-4"),
         )
@@ -181,7 +221,15 @@ mod tests {
     #[test]
     fn test_rename_category_changes_only_name() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Before", "expense", Some("Line 8"), Some("1120S-16")).unwrap();
+        add_category(
+            &conn,
+            "Before",
+            "expense",
+            None,
+            Some("Line 8"),
+            Some("1120S-16"),
+        )
+        .unwrap();
         let id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -205,7 +253,7 @@ mod tests {
     #[test]
     fn test_name_uniqueness_excludes_self_on_update() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Self Update", "expense", None, None).unwrap();
+        add_category(&conn, "Self Update", "expense", None, None, None).unwrap();
         let id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -214,14 +262,23 @@ mod tests {
             .id;
 
         // Updating to the same name should succeed
-        update_category(&conn, id, "Self Update", "income", None, None).unwrap();
+        update_category(
+            &conn,
+            id,
+            "Self Update",
+            "income",
+            AccountClass::Revenue,
+            None,
+            None,
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_update_duplicate_name_rejected() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Cat A", "expense", None, None).unwrap();
-        add_category(&conn, "Cat B", "expense", None, None).unwrap();
+        add_category(&conn, "Cat A", "expense", None, None, None).unwrap();
+        add_category(&conn, "Cat B", "expense", None, None, None).unwrap();
         let id_b = list_categories(&conn)
             .unwrap()
             .iter()
@@ -230,14 +287,23 @@ mod tests {
             .id;
 
         // Updating Cat B to Cat A's name should fail
-        let err = update_category(&conn, id_b, "Cat A", "expense", None, None).unwrap_err();
+        let err = update_category(
+            &conn,
+            id_b,
+            "Cat A",
+            "expense",
+            AccountClass::Expense,
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn test_delete_unused_category() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "To Delete", "expense", None, None).unwrap();
+        add_category(&conn, "To Delete", "expense", None, None, None).unwrap();
         let id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -254,7 +320,7 @@ mod tests {
     #[test]
     fn test_delete_category_with_transactions_blocked() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Has Txns", "expense", None, None).unwrap();
+        add_category(&conn, "Has Txns", "expense", None, None, None).unwrap();
         let cat_id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -290,7 +356,7 @@ mod tests {
     #[test]
     fn test_delete_category_with_active_rules_blocked() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Has Rules", "expense", None, None).unwrap();
+        add_category(&conn, "Has Rules", "expense", None, None, None).unwrap();
         let cat_id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -312,7 +378,7 @@ mod tests {
     #[test]
     fn test_get_category_round_trips_and_404s() {
         let (_dir, conn) = test_conn();
-        let id = add_category(&conn, "Fetched", "expense", Some("Line 8"), None).unwrap();
+        let id = add_category(&conn, "Fetched", "expense", None, Some("Line 8"), None).unwrap();
 
         let cat = get_category(&conn, id).unwrap();
         assert_eq!(cat.name, "Fetched");
@@ -329,7 +395,7 @@ mod tests {
     #[test]
     fn test_delete_blocker_distinguishes_its_two_reasons() {
         let (_dir, conn) = test_conn();
-        let cat_id = add_category(&conn, "Blocked", "expense", None, None).unwrap();
+        let cat_id = add_category(&conn, "Blocked", "expense", None, None, None).unwrap();
         assert!(delete_blocker(&conn, cat_id).unwrap().is_none());
 
         conn.execute(
@@ -367,7 +433,7 @@ mod tests {
     #[test]
     fn test_usage_count() {
         let (_dir, conn) = test_conn();
-        add_category(&conn, "Counted", "expense", None, None).unwrap();
+        add_category(&conn, "Counted", "expense", None, None, None).unwrap();
         let cat_id = list_categories(&conn)
             .unwrap()
             .iter()
@@ -438,7 +504,16 @@ mod tests {
     #[test]
     fn test_update_nonexistent_category() {
         let (_dir, conn) = test_conn();
-        let err = update_category(&conn, 99999, "Nope", "income", None, None).unwrap_err();
+        let err = update_category(
+            &conn,
+            99999,
+            "Nope",
+            "income",
+            AccountClass::Revenue,
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("Category not found"));
     }
 }

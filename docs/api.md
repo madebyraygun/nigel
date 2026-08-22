@@ -337,6 +337,25 @@ build its date controls from the response instead of a hardcoded table:
 `yearOnly` (tax, K-1), or `none` (balance, flagged). It tells the client which
 of `year` and `month` that route will accept.
 
+The balance report's accounts each carry `class` and `naturalBalance` beside
+`balance`. `balance` is the register summed with the signs the transactions were
+imported with, which is what `total` adds up; `naturalBalance` is the same
+figure stated so that more of what the class is reads positive — a liability
+with money owed reports positive.
+
+`ytdNetIncome` is this calendar year's revenue and spending plus every
+transaction that still has no category; equity moves and transfers stay out of
+it. `uncategorizedTotal` and `uncategorizedCount` are the share of that figure
+nobody has sorted yet and how many transactions it came from, for the same year
+and the same transfer exclusion. They are `0` on a book with nothing waiting,
+and every surface that prints the figure footnotes them when they are not.
+
+The tax summary's line items each carry `class` as well, and it is what they
+are ordered by: revenue first, then equity, then expense, then the two
+balance-sheet classes a category should not be on at all. `categoryType` is
+still the word the Type column prints; `class` is what the ordering and the
+K-1's treatment follow.
+
 ### List responses
 
 The eight list endpoints answer with a bare JSON array — no envelope, no
@@ -344,7 +363,8 @@ pagination.
 
 - `/api/accounts` — every account, by name.
 - `/api/categories` — the active chart of accounts; soft-deleted categories are
-  omitted.
+  omitted. Both carry `class` — `asset`, `liability`, `equity`, `revenue` or
+  `expense`.
 - `/api/rules` — active rules in the order the categorizer applies them:
   priority descending, ties by id. `vendor` is `null` when the rule sets none.
 - `/api/imports` — import history, newest first, each with the number of
@@ -559,11 +579,11 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/review/:id` | `GET` | — | `RegisterRow` |
 | `/api/review/:id/apply` | `POST` | `categoryId`, `vendor?`, `createRule?`, `rulePattern?` | `{ transactionId, ruleId }` |
 | `/api/review/:id/undo` | `POST` | `ruleId?` | `RegisterRow` |
-| `/api/accounts` | `POST` | `name`, `accountType`, `institution?`, `lastFour?` | `Account` (`201`) |
-| `/api/accounts/:id` | `PATCH` | `name` | `Account` |
+| `/api/accounts` | `POST` | `name`, `accountType`, `class?`, `institution?`, `lastFour?` | `Account` (`201`) |
+| `/api/accounts/:id` | `PATCH` | `name?`, `class?` | `Account` |
 | `/api/accounts/:id` | `DELETE` | — | `{ id, deleted }` |
-| `/api/categories` | `POST` | `name`, `categoryType`, `taxLine?`, `formLine?` | `CategoryRow` (`201`) |
-| `/api/categories/:id` | `PATCH` | `name?`, `categoryType?`, `taxLine?`, `formLine?` | `CategoryRow` |
+| `/api/categories` | `POST` | `name`, `categoryType`, `class?`, `taxLine?`, `formLine?` | `CategoryRow` (`201`) |
+| `/api/categories/:id` | `PATCH` | `name?`, `categoryType?`, `class?`, `taxLine?`, `formLine?` | `CategoryRow` |
 | `/api/categories/:id` | `DELETE` | — | `{ id, deleted }` |
 | `/api/rules` | `POST` | `pattern`, `categoryId`, `matchType?`, `vendor?`, `priority?` | `RuleRow` (`201`) |
 | `/api/rules/:id` | `PATCH` | `pattern?`, `categoryId?`, `matchType?`, `vendor?`, `priority?` | `RuleRow` |
@@ -662,8 +682,16 @@ means "just restore the transaction". The response is the restored register row.
 ### Accounts, categories, and rules
 
 Accounts are hard-deleted and categories are soft-deleted, exactly as in the CLI
-and the TUI. `PATCH /api/accounts/:id` renames and nothing else — institution
-and last four are set at creation, which is all the data layer offers.
+and the TUI. `PATCH /api/accounts/:id` takes a name, a class, or both;
+institution, last four and `accountType` are set at creation, which is all the
+data layer offers. A patch with neither field is a `400`.
+
+`class` is the accounting class — `asset`, `liability`, `equity`, `revenue`,
+`expense` — and anything outside those five is a `400`. Omitting it on a create
+derives it: an account from its `accountType` (`credit_card` and
+`line_of_credit` are liabilities, everything else an asset) and a category from
+its `categoryType` (`income` → `revenue`, `expense` → `expense`). A client that
+has never heard of the field therefore keeps working unchanged.
 
 Rules address their category by **id**; only the CLI resolves a category name.
 `matchType` defaults to `contains` and `priority` to `0`, matching

@@ -100,6 +100,7 @@ const preview: Preview = {
               .value=${{
                 name: 'Chase Business',
                 accountType: 'checking',
+                class: 'asset',
                 institution: 'Chase',
                 lastFour: '9921',
               }}

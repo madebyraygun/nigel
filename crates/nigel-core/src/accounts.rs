@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 
+use crate::db::AccountClass;
 use crate::error::{DeleteBlock, NigelError, Result};
 use crate::models::Account;
 
@@ -12,49 +13,75 @@ pub const ACCOUNT_TYPES: &[&str] = &["checking", "credit_card", "line_of_credit"
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<Account>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, account_type, institution, last_four FROM accounts ORDER BY name",
+        "SELECT id, name, account_type, class, institution, last_four FROM accounts ORDER BY name",
     )?;
-    let accounts = stmt
+    let rows = stmt
         .query_map([], |row| {
-            Ok(Account {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                account_type: row.get(2)?,
-                institution: row.get(3)?,
-                last_four: row.get(4)?,
-            })
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(accounts)
+    rows.into_iter()
+        .map(|(id, name, account_type, class, institution, last_four)| {
+            Ok(Account {
+                id,
+                name,
+                account_type,
+                class: AccountClass::from_db(&class)?,
+                institution,
+                last_four,
+            })
+        })
+        .collect()
 }
 
 pub fn get_account(conn: &Connection, id: i64) -> Result<Account> {
-    conn.query_row(
-        "SELECT id, name, account_type, institution, last_four FROM accounts WHERE id = ?1",
-        [id],
-        |row| {
-            Ok(Account {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                account_type: row.get(2)?,
-                institution: row.get(3)?,
-                last_four: row.get(4)?,
-            })
-        },
-    )
-    .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => {
-            NigelError::NotFound(format!("Account not found: id {id}"))
-        }
-        other => NigelError::Db(other),
+    let (id, name, account_type, class, institution, last_four) = conn
+        .query_row(
+            "SELECT id, name, account_type, class, institution, last_four FROM accounts WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                NigelError::NotFound(format!("Account not found: id {id}"))
+            }
+            other => NigelError::Db(other),
+        })?;
+    Ok(Account {
+        id,
+        name,
+        account_type,
+        class: AccountClass::from_db(&class)?,
+        institution,
+        last_four,
     })
 }
 
 /// Insert an account and return its id.
+///
+/// `class` absent means the account type decides. An explicit one is taken as
+/// given: the derivation is a default, not a rule.
 pub fn add_account(
     conn: &Connection,
     name: &str,
     account_type: &str,
+    class: Option<AccountClass>,
     institution: Option<&str>,
     last_four: Option<&str>,
 ) -> Result<i64> {
@@ -67,6 +94,7 @@ pub fn add_account(
             ACCOUNT_TYPES.join(", ")
         )));
     }
+    let class = class.unwrap_or_else(|| crate::db::class_for_account_type(account_type));
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1)",
         [name],
@@ -79,35 +107,47 @@ pub fn add_account(
         });
     }
     conn.execute(
-        "INSERT INTO accounts (name, account_type, institution, last_four) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![name, account_type, institution, last_four],
+        "INSERT INTO accounts (name, account_type, class, institution, last_four) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![name, account_type, class.as_str(), institution, last_four],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
-pub fn rename_account(conn: &Connection, id: i64, new_name: &str) -> Result<()> {
-    if new_name.trim().is_empty() {
-        return Err(NigelError::Invalid("Name is required".into()));
-    }
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1 AND id != ?2)",
-        rusqlite::params![new_name, id],
-        |row| row.get(0),
-    )?;
-    if exists {
-        return Err(NigelError::DuplicateName {
-            kind: "Account",
-            name: new_name.to_string(),
-        });
+/// Change an account's name, its class, or both. `None` leaves a field alone.
+pub fn update_account(
+    conn: &Connection,
+    id: i64,
+    name: Option<&str>,
+    class: Option<AccountClass>,
+) -> Result<()> {
+    if let Some(name) = name {
+        if name.trim().is_empty() {
+            return Err(NigelError::Invalid("Name is required".into()));
+        }
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE name = ?1 AND id != ?2)",
+            rusqlite::params![name, id],
+            |row| row.get(0),
+        )?;
+        if exists {
+            return Err(NigelError::DuplicateName {
+                kind: "Account",
+                name: name.to_string(),
+            });
+        }
     }
     let updated = conn.execute(
-        "UPDATE accounts SET name = ?1 WHERE id = ?2",
-        rusqlite::params![new_name, id],
+        "UPDATE accounts SET name = COALESCE(?1, name), class = COALESCE(?2, class) WHERE id = ?3",
+        rusqlite::params![name, class.map(|c| c.as_str()), id],
     )?;
     if updated == 0 {
         return Err(NigelError::NotFound(format!("Account not found: id {id}")));
     }
     Ok(())
+}
+
+pub fn rename_account(conn: &Connection, id: i64, new_name: &str) -> Result<()> {
+    update_account(conn, id, Some(new_name), None)
 }
 
 pub fn transaction_count(conn: &Connection, account_id: i64) -> Result<i64> {

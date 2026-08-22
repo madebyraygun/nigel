@@ -1,29 +1,59 @@
 use comfy_table::{Cell, Table};
 
-use nigel_core::db::get_connection;
+use nigel_core::db::{get_connection, AccountClass};
 use nigel_core::error::Result;
 use nigel_core::settings::get_data_dir;
 
 pub use nigel_core::accounts::*;
 
+/// A `--class` flag as a class. The five words are the vocabulary; the error
+/// names all of them rather than only rejecting the one that was typed.
+pub fn parse_class(value: &str) -> Result<AccountClass> {
+    AccountClass::parse(value).ok_or_else(|| {
+        nigel_core::error::NigelError::Invalid(format!(
+            "Invalid class: {value} (must be one of: {})",
+            AccountClass::ALL
+                .iter()
+                .map(|c| c.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })
+}
+
 pub fn add(
     name: &str,
     account_type: &str,
+    class: Option<&str>,
     institution: Option<&str>,
     last_four: Option<&str>,
 ) -> Result<()> {
+    let class = class.map(parse_class).transpose()?;
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    add_account(&conn, name, account_type, institution, last_four)?;
+    add_account(&conn, name, account_type, class, institution, last_four)?;
     println!("Added account: {name}");
+    Ok(())
+}
+
+pub fn edit(id: i64, name: Option<&str>, class: Option<&str>) -> Result<()> {
+    if name.is_none() && class.is_none() {
+        return Err(nigel_core::error::NigelError::Invalid(
+            "Nothing to change — pass --name, --class, or both".into(),
+        ));
+    }
+    let class = class.map(parse_class).transpose()?;
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    update_account(&conn, id, name, class)?;
+    println!("Updated account {id}");
     Ok(())
 }
 
 pub fn list() -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let mut stmt =
-        conn.prepare("SELECT id, name, account_type, institution, last_four FROM accounts")?;
+        conn.prepare("SELECT id, name, account_type, class, institution, last_four FROM accounts")?;
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(i64, String, String, Option<String>, Option<String>)> = stmt
+    let rows: Vec<(i64, String, String, String, Option<String>, Option<String>)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -31,17 +61,26 @@ pub fn list() -> Result<()> {
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Name", "Type", "Institution", "Last Four"]);
-    for (id, name, acct_type, inst, last) in rows {
+    table.set_header(vec![
+        "ID",
+        "Name",
+        "Type",
+        "Class",
+        "Institution",
+        "Last Four",
+    ]);
+    for (id, name, acct_type, class, inst, last) in rows {
         table.add_row(vec![
             Cell::new(id),
             Cell::new(name),
             Cell::new(acct_type),
+            Cell::new(class),
             Cell::new(inst.unwrap_or_default()),
             Cell::new(last.unwrap_or_default()),
         ]);
@@ -79,6 +118,57 @@ mod tests {
     }
 
     #[test]
+    fn a_class_flag_is_parsed_or_names_the_five_words() {
+        assert_eq!(parse_class("equity").unwrap(), AccountClass::Equity);
+        let err = parse_class("contra-asset").unwrap_err();
+        for word in ["asset", "liability", "equity", "revenue", "expense"] {
+            assert!(err.to_string().contains(word), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn an_account_takes_its_class_from_its_type_or_from_the_flag() {
+        let (_dir, conn) = test_conn();
+        add_account(&conn, "Globex Card", "credit_card", None, None, None).unwrap();
+        add_account(
+            &conn,
+            "Globex Payroll",
+            "payroll",
+            Some(AccountClass::Liability),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let by_name = |name: &str| {
+            list_accounts(&conn)
+                .unwrap()
+                .into_iter()
+                .find(|a| a.name == name)
+                .unwrap()
+                .class
+        };
+        assert_eq!(by_name("Globex Card"), AccountClass::Liability);
+        assert_eq!(by_name("Globex Payroll"), AccountClass::Liability);
+    }
+
+    #[test]
+    fn editing_an_account_changes_only_what_it_names() {
+        let (_dir, conn) = test_conn();
+        let id = add_account(&conn, "Globex Checking", "checking", None, None, None).unwrap();
+
+        update_account(&conn, id, None, Some(AccountClass::Liability)).unwrap();
+        let account = get_account(&conn, id).unwrap();
+        assert_eq!(account.name, "Globex Checking");
+        assert_eq!(account.class, AccountClass::Liability);
+
+        update_account(&conn, id, Some("Globex Operating"), None).unwrap();
+        let account = get_account(&conn, id).unwrap();
+        assert_eq!(account.name, "Globex Operating");
+        assert_eq!(account.class, AccountClass::Liability);
+    }
+
+    #[test]
     fn test_list_accounts_empty() {
         let (_dir, conn) = test_conn();
         let accounts = list_accounts(&conn).unwrap();
@@ -92,11 +182,12 @@ mod tests {
             &conn,
             "BofA Checking",
             "checking",
+            None,
             Some("Bank of America"),
             Some("1234"),
         )
         .unwrap();
-        add_account(&conn, "Chase Credit", "credit_card", None, None).unwrap();
+        add_account(&conn, "Chase Credit", "credit_card", None, None, None).unwrap();
 
         let accounts = list_accounts(&conn).unwrap();
         assert_eq!(accounts.len(), 2);
@@ -110,15 +201,15 @@ mod tests {
     #[test]
     fn test_add_duplicate_name_rejected() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "BofA Checking", "checking", None, None).unwrap();
-        let err = add_account(&conn, "BofA Checking", "credit_card", None, None).unwrap_err();
+        add_account(&conn, "BofA Checking", "checking", None, None, None).unwrap();
+        let err = add_account(&conn, "BofA Checking", "credit_card", None, None, None).unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
     #[test]
     fn test_rename_account() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Old Name", "checking", None, None).unwrap();
+        add_account(&conn, "Old Name", "checking", None, None, None).unwrap();
         let accounts = list_accounts(&conn).unwrap();
         let id = accounts[0].id;
 
@@ -131,7 +222,7 @@ mod tests {
     #[test]
     fn test_rename_to_empty_rejected() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Test", "checking", None, None).unwrap();
+        add_account(&conn, "Test", "checking", None, None, None).unwrap();
         let id = list_accounts(&conn).unwrap()[0].id;
 
         let err = rename_account(&conn, id, "  ").unwrap_err();
@@ -141,8 +232,8 @@ mod tests {
     #[test]
     fn test_rename_to_duplicate_rejected() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Account A", "checking", None, None).unwrap();
-        add_account(&conn, "Account B", "checking", None, None).unwrap();
+        add_account(&conn, "Account A", "checking", None, None, None).unwrap();
+        add_account(&conn, "Account B", "checking", None, None, None).unwrap();
         let id_b = list_accounts(&conn)
             .unwrap()
             .iter()
@@ -157,7 +248,7 @@ mod tests {
     #[test]
     fn test_delete_account_no_transactions() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Test", "checking", None, None).unwrap();
+        add_account(&conn, "Test", "checking", None, None, None).unwrap();
         let id = list_accounts(&conn).unwrap()[0].id;
 
         delete_account(&conn, id).unwrap();
@@ -167,7 +258,7 @@ mod tests {
     #[test]
     fn test_delete_account_with_transactions_blocked() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Test", "checking", None, None).unwrap();
+        add_account(&conn, "Test", "checking", None, None, None).unwrap();
         let id = list_accounts(&conn).unwrap()[0].id;
 
         conn.execute(
@@ -183,7 +274,7 @@ mod tests {
     #[test]
     fn test_transaction_count() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Test", "checking", None, None).unwrap();
+        add_account(&conn, "Test", "checking", None, None, None).unwrap();
         let id = list_accounts(&conn).unwrap()[0].id;
 
         assert_eq!(transaction_count(&conn, id).unwrap(), 0);
@@ -206,17 +297,17 @@ mod tests {
     #[test]
     fn test_add_account_returns_the_new_id() {
         let (_dir, conn) = test_conn();
-        let id = add_account(&conn, "Test", "checking", None, None).unwrap();
+        let id = add_account(&conn, "Test", "checking", None, None, None).unwrap();
         assert_eq!(get_account(&conn, id).unwrap().name, "Test");
     }
 
     #[test]
     fn test_add_account_rejects_empty_name_and_unknown_type() {
         let (_dir, conn) = test_conn();
-        let err = add_account(&conn, "  ", "checking", None, None).unwrap_err();
+        let err = add_account(&conn, "  ", "checking", None, None, None).unwrap_err();
         assert!(err.to_string().contains("Name is required"));
 
-        let err = add_account(&conn, "Test", "brokerage", None, None).unwrap_err();
+        let err = add_account(&conn, "Test", "brokerage", None, None, None).unwrap_err();
         assert!(
             err.to_string().contains("Invalid account type: brokerage"),
             "got: {err}"
@@ -234,7 +325,7 @@ mod tests {
     #[test]
     fn test_delete_blocker_reports_the_transaction_count() {
         let (_dir, conn) = test_conn();
-        let id = add_account(&conn, "Test", "checking", None, None).unwrap();
+        let id = add_account(&conn, "Test", "checking", None, None, None).unwrap();
         assert!(delete_blocker(&conn, id).unwrap().is_none());
 
         for date in ["2025-01-01", "2025-01-02"] {
@@ -257,8 +348,8 @@ mod tests {
     #[test]
     fn test_account_names_returns_sorted_names() {
         let (_dir, conn) = test_conn();
-        add_account(&conn, "Zeta Account", "checking", None, None).unwrap();
-        add_account(&conn, "Alpha Account", "credit_card", None, None).unwrap();
+        add_account(&conn, "Zeta Account", "checking", None, None, None).unwrap();
+        add_account(&conn, "Alpha Account", "credit_card", None, None, None).unwrap();
 
         let names = account_names(&conn).unwrap();
         assert_eq!(names, vec!["Alpha Account", "Zeta Account"]);

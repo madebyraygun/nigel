@@ -477,7 +477,27 @@ export class NigelReportsScreen extends SignalWatcher(LitElement) {
           .amount=${report.ytdNetIncome}
           hint="Year to date, cash basis"
         ></wc-stat-card>
+        ${this.renderUncategorizedNote(report)}
       </div>
+    `;
+  }
+
+  /**
+   * What the headline figure is carrying that nobody has sorted yet.
+   *
+   * Uncategorized money counts toward net income rather than sitting outside
+   * it, so the figure has to say so — and point at the one screen that clears
+   * it.
+   */
+  private renderUncategorizedNote(report: BalanceReport) {
+    if (report.uncategorizedCount < 1) return nothing;
+    const one = report.uncategorizedCount === 1;
+    return html`
+      <p class="note">
+        Includes ${money(report.uncategorizedTotal)} across ${report.uncategorizedCount}
+        uncategorized ${one ? 'transaction' : 'transactions'} —
+        <a href="#/review">go to review</a> to sort ${one ? 'it' : 'them'} out.
+      </p>
     `;
   }
 

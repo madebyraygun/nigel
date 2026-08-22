@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '@nigel/ui';
 import {
+  accountClassLabel,
   accountTypeLabel,
   confirmDialog,
   EMPTY_ACCOUNT_FORM,
@@ -17,27 +18,33 @@ import {
 } from '@nigel/ui';
 
 import { ApiError, type ApiClient } from '../api/index.js';
-import type { Account } from '../api/types.js';
+import type { Account, AccountPatch } from '../api/types.js';
 import { guardrailMessage } from './manager-errors.js';
 import type { ScreenContext } from './context.js';
 
 const COLUMNS: ManagerColumn[] = [
   { key: 'name', label: 'Name' },
   { key: 'accountType', label: 'Type' },
+  { key: 'class', label: 'Class' },
   { key: 'institution', label: 'Institution' },
   { key: 'lastFour', label: 'Last four' },
 ];
 
 const ACTIONS: ManagerAction[] = [
-  { name: 'rename', label: 'Rename', icon: 'wc-icon-edit' },
+  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
   { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
 ];
 
 interface Editor {
   mode: WcAccountFormMode;
-  /** The account being renamed; absent when creating. */
+  /** The account being edited; absent when creating. */
   id?: number;
   value: AccountFormValue;
+  /**
+   * Whether the class on screen is the operator's answer rather than the
+   * control's opening default. A create sends the field only when it is.
+   */
+  classChosen: boolean;
 }
 
 /** Empty means "no value", which on the wire is null rather than "". */
@@ -50,6 +57,7 @@ function toFormValue(account: Account): AccountFormValue {
   return {
     name: account.name,
     accountType: account.accountType,
+    class: account.class,
     institution: account.institution ?? '',
     lastFour: account.lastFour ?? '',
   };
@@ -111,6 +119,7 @@ export class NigelAccountsScreen extends LitElement {
       cells: [
         account.name,
         accountTypeLabel(account.accountType),
+        accountClassLabel(account.class),
         account.institution,
         account.lastFour,
       ],
@@ -120,7 +129,7 @@ export class NigelAccountsScreen extends LitElement {
   // -- editing --------------------------------------------------------------
 
   private openCreate = (): void => {
-    this.editor = { mode: 'create', value: EMPTY_ACCOUNT_FORM };
+    this.editor = { mode: 'create', value: EMPTY_ACCOUNT_FORM, classChosen: false };
     this.formErrors = {};
     this.dialogError = null;
   };
@@ -134,7 +143,11 @@ export class NigelAccountsScreen extends LitElement {
   private handleFormChange = (event: Event): void => {
     if (!this.editor) return;
     const detail = (event as CustomEvent<NcAccountFormChangeDetail>).detail;
-    this.editor = { ...this.editor, value: detail.value };
+    this.editor = {
+      ...this.editor,
+      value: detail.value,
+      classChosen: this.editor.classChosen || detail.value.class !== this.editor.value.class,
+    };
   };
 
   private handleAction = (event: Event): void => {
@@ -142,8 +155,8 @@ export class NigelAccountsScreen extends LitElement {
     const account = this.accounts.find((candidate) => candidate.id === id);
     if (!account) return;
 
-    if (action === 'rename') {
-      this.editor = { mode: 'rename', id, value: toFormValue(account) };
+    if (action === 'edit') {
+      this.editor = { mode: 'edit', id, value: toFormValue(account), classChosen: true };
       this.formErrors = {};
       this.dialogError = null;
       return;
@@ -166,17 +179,26 @@ export class NigelAccountsScreen extends LitElement {
         await this.client.createAccount({
           name: editor.value.name.trim(),
           accountType: editor.value.accountType,
+          // Absent means "derive it from the type", which is the right answer
+          // for a class control the operator never touched.
+          ...(editor.classChosen ? { class: editor.value.class } : {}),
           institution: orNull(editor.value.institution),
           lastFour: orNull(editor.value.lastFour),
         });
       } else if (editor.id !== undefined) {
         const current = this.accounts.find((account) => account.id === editor.id);
-        // A rename to the same name is a request that can only fail on itself.
-        if (current && current.name === editor.value.name.trim()) {
+        const patch: AccountPatch = {};
+        const name = editor.value.name.trim();
+        if (!current || current.name !== name) patch.name = name;
+        if (!current || current.class !== editor.value.class) {
+          patch.class = editor.value.class;
+        }
+        // An edit that changed nothing is a request that can only fail on itself.
+        if (Object.keys(patch).length === 0) {
           this.closeEditor();
           return;
         }
-        await this.client.renameAccount(editor.id, { name: editor.value.name.trim() });
+        await this.client.updateAccount(editor.id, patch);
       }
 
       this.closeEditor();
@@ -272,7 +294,7 @@ export class NigelAccountsScreen extends LitElement {
       <wc-manager-dialog
         slot="overlay"
         open
-        heading=${creating ? 'Add account' : 'Rename account'}
+        heading=${creating ? 'Add account' : 'Edit account'}
         confirm-label=${creating ? 'Add account' : 'Save'}
         ?busy=${this.saving}
         .error=${this.dialogError}

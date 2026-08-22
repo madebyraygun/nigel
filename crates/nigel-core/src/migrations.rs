@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::db::set_metadata;
+use crate::db::{set_metadata, AccountClass, Profile};
 use crate::error::Result;
 use crate::invoicing::invoices::{refresh_status, validate_date};
 
@@ -228,6 +228,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "seed payment_instructions from the paragraph the stock page used to print",
         up: |conn| seed_payment_instructions(conn, contact_address()),
     },
+    Migration {
+        version: 10,
+        description: "classify accounts and categories as asset/liability/equity/revenue/expense",
+        up: classify_accounts_and_categories,
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -292,6 +297,68 @@ fn seed_payment_instructions(conn: &Connection, contact: Option<String>) -> Resu
         "payment_instructions",
         &legacy_payment_instructions(&contact),
     )
+}
+
+/// The `CHECK` every class column carries, written once so the two tables and
+/// the fresh-install schema cannot drift apart.
+const CLASS_CHECK: &str = "CHECK (class IN ('asset', 'liability', 'equity', 'revenue', 'expense'))";
+
+/// Add the column when it is not already there. SQLite has no
+/// `ADD COLUMN IF NOT EXISTS`, and a fresh database created from `SCHEMA` runs
+/// every migration too, so the probe is what makes the two paths agree.
+fn add_class_column(conn: &Connection, table: &str, default: AccountClass) -> Result<()> {
+    let has_column: bool = conn.query_row(
+        &format!("SELECT COUNT(*) > 0 FROM pragma_table_info('{table}') WHERE name = 'class'"),
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_column {
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN class TEXT NOT NULL DEFAULT '{}' {CLASS_CHECK}",
+            default.as_str()
+        ))?;
+    }
+    Ok(())
+}
+
+/// Give every existing account and category its accounting class.
+///
+/// The order is what makes it correct. The general rule runs first and lands
+/// `Owner Draw / Distribution` on `expense` along with every other
+/// `category_type = 'expense'` row; the by-name rule then moves it to `equity`.
+/// Reversing the two would classify distributions as deductions, which is the
+/// defect this migration exists to end. `Owner Contribution` is named there too
+/// because a fresh install seeds it and then runs every migration, and the
+/// general `income` rule would otherwise take its `equity` back off it.
+///
+/// `Owner Contribution` is seeded only where the business chart is, and only
+/// when it is absent, so a replay and an installation that already added one
+/// by hand both come out with exactly one.
+fn classify_accounts_and_categories(conn: &Connection) -> Result<()> {
+    add_class_column(conn, "accounts", AccountClass::Asset)?;
+    add_class_column(conn, "categories", AccountClass::Expense)?;
+
+    conn.execute_batch(
+        "UPDATE accounts SET class = 'asset'
+             WHERE account_type NOT IN ('credit_card', 'line_of_credit');
+         UPDATE accounts SET class = 'liability'
+             WHERE account_type IN ('credit_card', 'line_of_credit');
+         UPDATE categories SET class = 'revenue' WHERE category_type = 'income';
+         UPDATE categories SET class = 'expense' WHERE category_type = 'expense';
+         UPDATE categories SET class = 'equity'
+             WHERE name IN ('Owner Draw / Distribution', 'Owner Contribution');",
+    )?;
+
+    if crate::db::get_profile(conn) == Profile::Business {
+        conn.execute(
+            "INSERT INTO categories (name, category_type, tax_line, description, class)
+             SELECT ?1, 'income', 'Not taxable',
+                    'Money the owner puts into the business', 'equity'
+             WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = ?1)",
+            [crate::db::OWNER_CONTRIBUTION],
+        )?;
+    }
+    Ok(())
 }
 
 /// Rewrite every value a date column holds that `validate_date` accepts to its
@@ -852,6 +919,148 @@ mod tests {
         run_migrations(&conn).unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+    /// A pre-v10 database: the current schema with the class columns dropped
+    /// back off, which is what an installation upgrading into this migration
+    /// actually holds.
+    fn db_without_classes() -> (tempfile::TempDir, Connection) {
+        let (dir, conn) = test_db();
+        conn.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN class;
+             ALTER TABLE categories DROP COLUMN class;
+             DELETE FROM categories WHERE name = 'Owner Contribution';",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "9").unwrap();
+        (dir, conn)
+    }
+
+    fn class_of(conn: &Connection, table: &str, name: &str) -> String {
+        conn.query_row(
+            &format!("SELECT class FROM {table} WHERE name = ?1"),
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("{table}.{name}: {e}"))
+    }
+
+    #[test]
+    fn v10_backfills_every_account_and_category_on_the_task_mapping() {
+        let (_dir, conn) = db_without_classes();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, account_type) VALUES ('Harbor Checking', 'checking');
+             INSERT INTO accounts (name, account_type) VALUES ('Harbor Card', 'credit_card');
+             INSERT INTO accounts (name, account_type) VALUES ('Harbor LOC', 'line_of_credit');
+             INSERT INTO accounts (name, account_type) VALUES ('Harbor Payroll', 'payroll');",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(class_of(&conn, "accounts", "Harbor Checking"), "asset");
+        assert_eq!(class_of(&conn, "accounts", "Harbor Payroll"), "asset");
+        assert_eq!(class_of(&conn, "accounts", "Harbor Card"), "liability");
+        assert_eq!(class_of(&conn, "accounts", "Harbor LOC"), "liability");
+
+        assert_eq!(class_of(&conn, "categories", "Client Services"), "revenue");
+        assert_eq!(class_of(&conn, "categories", "Office Expense"), "expense");
+        assert_eq!(class_of(&conn, "categories", "Transfer"), "expense");
+
+        let unclassified: i64 = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM accounts WHERE class IS NULL) \
+                      + (SELECT COUNT(*) FROM categories WHERE class IS NULL)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unclassified, 0, "nothing needs re-categorizing by hand");
+    }
+
+    #[test]
+    fn v10_lands_distributions_on_equity_after_the_general_rule() {
+        let (_dir, conn) = db_without_classes();
+        run_migrations(&conn).unwrap();
+        // The seeded row is category_type = 'expense', so the general rule
+        // reaches it first and the by-name rule has to run after it.
+        assert_eq!(
+            class_of(&conn, "categories", "Owner Draw / Distribution"),
+            "equity"
+        );
+    }
+
+    #[test]
+    fn v10_seeds_owner_contribution_once_on_a_business_database() {
+        let (_dir, conn) = db_without_classes();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM categories WHERE name = 'Owner Contribution'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1, "a replay adds no second copy");
+        assert_eq!(
+            class_of(&conn, "categories", "Owner Contribution"),
+            "equity"
+        );
+        let ctype: String = conn
+            .query_row(
+                "SELECT category_type FROM categories WHERE name = 'Owner Contribution'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ctype, "income", "money coming into the business");
+    }
+
+    #[test]
+    fn v10_seeds_no_owner_contribution_on_a_personal_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("personal.db")).unwrap();
+        crate::db::init_db_with_profile(&conn, crate::db::Profile::Personal).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE accounts DROP COLUMN class;
+             ALTER TABLE categories DROP COLUMN class;",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "9").unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM categories WHERE name = 'Owner Contribution'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_fresh_install_and_a_migrated_one_have_the_same_class_columns() {
+        let (_dir, fresh) = test_db();
+        let (_dir2, migrated) = db_without_classes();
+        run_migrations(&migrated).unwrap();
+
+        for table in ["accounts", "categories"] {
+            let column = |conn: &Connection| -> (String, i64, Option<String>) {
+                conn.query_row(
+                    &format!(
+                        "SELECT type, \"notnull\", dflt_value \
+                         FROM pragma_table_info('{table}') WHERE name = 'class'"
+                    ),
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap_or_else(|e| panic!("{table}: {e}"))
+            };
+            assert_eq!(column(&fresh), column(&migrated), "{table}.class");
+        }
     }
 }
 

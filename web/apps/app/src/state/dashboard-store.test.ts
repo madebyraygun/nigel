@@ -18,9 +18,19 @@ const PNL: PnlReport = {
 };
 
 const BALANCE: BalanceReport = {
-  accounts: [{ name: 'BofA Checking', accountType: 'checking', balance: 4928.01 }],
+  accounts: [
+    {
+      name: 'BofA Checking',
+      accountType: 'checking',
+      class: 'asset',
+      balance: 4928.01,
+      naturalBalance: 4928.01,
+    },
+  ],
   total: 4928.01,
   ytdNetIncome: 87780.32,
+  uncategorizedTotal: 0,
+  uncategorizedCount: 0,
 };
 
 const CASHFLOW: CashflowReport = {
@@ -137,7 +147,13 @@ describe('dashboard store', () => {
 
   it('ignores a fetch that is overtaken by a newer one', async () => {
     const pending: Array<() => void> = [];
-    const stale: BalanceReport = { accounts: [], total: 1, ytdNetIncome: 1 };
+    const stale: BalanceReport = {
+      accounts: [],
+      total: 1,
+      ytdNetIncome: 1,
+      uncategorizedTotal: 0,
+      uncategorizedCount: 0,
+    };
     let answer = stale;
     client.getBalance = () => {
       const report = answer;
@@ -169,7 +185,13 @@ describe('dashboard store', () => {
   });
 
   it('reports an empty database once both answers are in', async () => {
-    client.balance = { accounts: [], total: 0, ytdNetIncome: 0 };
+    client.balance = {
+      accounts: [],
+      total: 0,
+      ytdNetIncome: 0,
+      uncategorizedTotal: 0,
+      uncategorizedCount: 0,
+    };
     client.cashflow = { months: [] };
 
     await store.load();
