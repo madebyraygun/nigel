@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
+    ImportsCommands, InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -299,6 +299,10 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 }
                 InvoiceTemplateCommands::Path => cli::invoice::template_show_path(),
             },
+        },
+        Commands::Imports { command } => match command {
+            ImportsCommands::List => cli::imports::list(),
+            ImportsCommands::Rejects { id } => cli::imports::rejects(id),
         },
         Commands::Import {
             file,

@@ -12,9 +12,8 @@ use rusqlite::Connection;
 
 use crate::cli::accounts;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
-use nigel_core::categorizer::categorize_transactions;
 use nigel_core::error::Result;
-use nigel_core::importer::import_file;
+use nigel_core::importer::{import_and_categorize, ImportRequest};
 use nigel_core::settings::{get_data_dir, shellexpand_path};
 
 pub enum ImportAction {
@@ -188,11 +187,18 @@ impl ImportScreen {
             Line::from(""),
         ];
 
+        // Wrapped, because what lands here is a sentence from somewhere else —
+        // a refusal naming the format and the first reasons runs past 200
+        // characters, and a truncated reason is a reason nobody can act on.
         for line in result.message.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("   {line}"),
-                Style::default().fg(color),
-            )));
+            let (wrapped, _) =
+                crate::tui::wrap_text(line, (content_area.width as usize).max(20) - 6);
+            for wrapped_line in wrapped.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("   {wrapped_line}"),
+                    Style::default().fg(color),
+                )));
+            }
         }
 
         frame.render_widget(Paragraph::new(lines), content_area);
@@ -289,47 +295,108 @@ fn run_import(conn: &Connection, file_path: &Path, account_name: &str) -> Import
         };
     }
 
-    match import_file(conn, file_path, account_name, None, false, None) {
+    match import_and_categorize(
+        conn,
+        &ImportRequest {
+            file_path,
+            account_name,
+            format_key: None,
+            inline_config: None,
+        },
+    ) {
         Err(e) => ImportResult {
             message: format!("Import failed: {e}"),
             is_error: true,
         },
-        Ok(result) => {
-            if result.duplicate_file {
+        Ok(outcome) => {
+            if outcome.result.duplicate_file {
                 return ImportResult {
                     message: "This file has already been imported (duplicate checksum).".into(),
                     is_error: false,
                 };
             }
-
-            let mut msg = if result.malformed > 0 {
+            let mut msg = if outcome.result.malformed > 0 {
                 format!(
                     "{} imported, {} skipped (duplicates), {} skipped (malformed data)",
-                    result.imported, result.skipped, result.malformed
+                    outcome.result.imported, outcome.result.skipped, outcome.result.malformed
                 )
             } else {
                 format!(
                     "{} imported, {} skipped (duplicates)",
-                    result.imported, result.skipped
+                    outcome.result.imported, outcome.result.skipped
                 )
             };
-
-            match categorize_transactions(conn) {
-                Ok(cat) => {
-                    msg.push_str(&format!(
-                        "\n{} categorized, {} still flagged",
-                        cat.categorized, cat.still_flagged
-                    ));
-                }
-                Err(e) => {
-                    msg.push_str(&format!("\nCategorization error: {e}"));
-                }
-            }
-
+            msg.push_str(&format!(
+                "\n{} categorized, {} still flagged",
+                outcome.categorized, outcome.still_flagged
+            ));
             ImportResult {
                 message: msg,
                 is_error: false,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nigel_core::error::EmptyImport;
+
+    fn refused() -> ImportScreen {
+        let empty = EmptyImport {
+            format: "bofa_checking".into(),
+            malformed: 3,
+            reasons: vec![
+                "date \"2026-13-40\" is not MM/DD/YYYY".into(),
+                "expected at least 3 columns, found 1".into(),
+                "the description column is empty".into(),
+            ],
+        };
+
+        ImportScreen {
+            accounts: vec!["Cedar Systems Checking".into()],
+            account_idx: 0,
+            file_path: "march.csv".into(),
+            focused: FIELD_FILE,
+            screen: Screen::Result(ImportResult {
+                message: empty.to_string(),
+                is_error: true,
+            }),
+            status_message: None,
+            greeting: "Good morning".into(),
+        }
+    }
+
+    /// The screen as an 80x24 terminal renders it, one string per row.
+    fn rendered(screen: &ImportScreen) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| screen.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_refusal_long_enough_to_overrun_the_terminal_still_reads_to_its_last_reason() {
+        let screen = rendered(&refused());
+
+        assert!(
+            screen.contains("Nothing could be read from this file"),
+            "{screen}"
+        );
+        assert!(screen.contains("bofa_checking"), "{screen}");
+        // The reasons are the whole point of the sentence and the last of them
+        // sits ~280 characters in — off the right edge of any terminal.
+        assert!(
+            screen.contains("the description column is empty"),
+            "{screen}"
+        );
     }
 }

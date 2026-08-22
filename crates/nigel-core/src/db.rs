@@ -57,8 +57,20 @@ CREATE TABLE IF NOT EXISTS imports (
     date_range_start TEXT,
     date_range_end TEXT,
     checksum TEXT,
+    malformed_count INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
+
+CREATE TABLE IF NOT EXISTS import_rejects (
+    id INTEGER PRIMARY KEY,
+    import_id INTEGER NOT NULL,
+    row_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    FOREIGN KEY (import_id) REFERENCES imports(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_rejects_import ON import_rejects(import_id);
 
 CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY,

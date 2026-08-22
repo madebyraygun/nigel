@@ -10,6 +10,7 @@ const IMPORTS: ImportHistoryRow[] = [
     accountName: 'BofA Checking',
     importDate: '2025-04-02 09:14:11',
     transactionCount: 42,
+    malformedCount: 2,
   },
   {
     id: 11,
@@ -17,6 +18,7 @@ const IMPORTS: ImportHistoryRow[] = [
     accountName: 'BofA Credit Card',
     importDate: '2025-03-03 17:40:02',
     transactionCount: 17,
+    malformedCount: 0,
   },
   {
     id: 9,
@@ -24,6 +26,7 @@ const IMPORTS: ImportHistoryRow[] = [
     accountName: 'BofA Checking',
     importDate: '2025-02-01 08:02:55',
     transactionCount: 0,
+    malformedCount: 0,
   },
 ];
 

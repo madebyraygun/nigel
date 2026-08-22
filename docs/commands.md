@@ -22,6 +22,8 @@ nigel import <file> --account <name> --date-col 0 --desc-col 1 --amount-col 3  #
 nigel import <file> --account <name> --date-col 0 --desc-col 1 --amount-col 3 --save-profile chase  # Save profile
 nigel import <file> --account <name> --format chase      # Use saved profile
 nigel undo                                        # Undo the last import (with confirmation)
+nigel imports list                                # Every import, newest first, with its row and dropped counts
+nigel imports rejects 7                           # The rows import 7 could not parse: line, reason, raw row
 nigel accounts add "BofA Checking" --type checking # Add an account (--class defaults from the type)
 nigel accounts add "Globex Card" --type credit_card --class liability  # Set the class explicitly
 nigel accounts rename 1 "New Name"                # Rename account by ID
@@ -101,7 +103,7 @@ nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
 nigel serve --port 8080                           # Bind a different port (0 = ephemeral)
 nigel serve --no-open                             # Print the tokenized URL instead of opening a browser
-nigel status                                      # Show active DB and summary stats
+nigel status                                      # Show active DB and summary stats, including a Dropped rows line naming the accounts
 nigel load ~/other-books                          # Switch to a different data directory
 nigel backup                                      # Back up DB to <data_dir>/backups/
 nigel backup --output /tmp/nigel-backup.db        # Back up to custom path

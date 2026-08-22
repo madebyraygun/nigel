@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-import-history.js';
 import {
+  droppedCountLabel,
   transactionCountLabel,
   type ImportHistoryRow,
   type NcImportUndoDetail,
@@ -16,6 +17,7 @@ const IMPORTS: ImportHistoryRow[] = [
     accountName: 'BofA Checking',
     importDate: '2025-04-02 09:14:11',
     transactionCount: 42,
+    malformedCount: 2,
   },
   {
     id: 9,
@@ -23,6 +25,7 @@ const IMPORTS: ImportHistoryRow[] = [
     accountName: 'BofA Checking',
     importDate: '2025-02-01 08:02:55',
     transactionCount: 0,
+    malformedCount: 0,
   },
 ];
 
@@ -46,6 +49,14 @@ describe('transactionCountLabel', () => {
   });
 });
 
+describe('droppedCountLabel', () => {
+  it('says nothing was dropped as a dash, so a whole column reads at a glance', () => {
+    expect(droppedCountLabel(0)).toBe('—');
+    expect(droppedCountLabel(1)).toBe('1 dropped');
+    expect(droppedCountLabel(7)).toBe('7 dropped');
+  });
+});
+
 describe('wc-import-history', () => {
   it('lists every import in the order it was given', async () => {
     const el = await mount();
@@ -63,6 +74,14 @@ describe('wc-import-history', () => {
     const el = await mount();
     const rows = [...(el.shadowRoot?.querySelectorAll('tbody tr') ?? [])];
     expect(rows[1].querySelector('.count')?.textContent?.trim()).toBe('0');
+  });
+
+  it('shows what each import dropped beside what it kept', async () => {
+    const el = await mount();
+    const rows = [...(el.shadowRoot?.querySelectorAll('tbody tr') ?? [])];
+
+    expect(rows[0].querySelector('.dropped')?.textContent?.trim()).toBe('2 dropped');
+    expect(rows[1].querySelector('.dropped')?.textContent?.trim()).toBe('—');
   });
 
   it('names the file in each button, so a screen reader gets more than "Undo"', async () => {
