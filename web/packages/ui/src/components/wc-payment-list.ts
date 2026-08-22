@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
+import { figuresCss } from '@nigel/theme';
 
 /** One recorded payment, oldest first as `payments` answers them. */
 export interface PaymentRow {
@@ -33,7 +34,9 @@ export function paymentMethodLabel(method: string): string {
  */
 @customElement('wc-payment-list')
 export class WcPaymentList extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -42,6 +45,10 @@ export class WcPaymentList extends LitElement {
 
     .scroll {
       overflow-x: auto;
+    }
+
+    td.date {
+      white-space: nowrap;
     }
 
     table {
@@ -92,7 +99,8 @@ export class WcPaymentList extends LitElement {
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s, 13px);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   payments: PaymentRow[] = [];
@@ -129,7 +137,7 @@ export class WcPaymentList extends LitElement {
             ${this.payments.map(
               (payment, index) => html`
                 <tr data-row=${payment.id ?? index}>
-                  <td>${payment.paidDate}</td>
+                  <td class="date figure">${payment.paidDate}</td>
                   <td>
                     ${paymentMethodLabel(payment.method)}
                     ${payment.stripeCheckoutSessionId

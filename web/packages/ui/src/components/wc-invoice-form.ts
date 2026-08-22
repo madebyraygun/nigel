@@ -354,6 +354,11 @@ export class WcInvoiceForm extends LitElement {
         gap: var(--wa-space-m, 12px);
       }
 
+      wa-input[data-currency]::part(input) {
+        font-family: var(--nc-font-figures);
+        font-variant-numeric: tabular-nums;
+      }
+
       .row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));

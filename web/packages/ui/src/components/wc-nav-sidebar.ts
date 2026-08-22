@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
+import type { PropertyValues } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
 
@@ -26,10 +27,43 @@ export class WcNavSidebar extends LitElement {
       border-right: 1px solid var(--wa-color-border);
       font-family: var(--wa-font-family-sans);
       overflow-y: auto;
+      /* Clipping is what turns the width change into a wipe, in both
+         directions: a label keeps its layout and the moving edge crops it.
+         overflow-y: auto on its own computes overflow-x to auto, which is a
+         scrollbar for the length of the animation. */
+      overflow-x: hidden;
+    }
+
+    /* Only a gesture animates: toggling sets data-animating for the
+       transition's lifetime, so a window resize — including one across the
+       48rem breakpoint, in either direction — changes width in one frame. */
+    :host([data-animating]) {
+      transition: width var(--nc-transition-base, 200ms ease);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      :host([data-animating]) {
+        transition: none;
+      }
     }
 
     :host([collapsed]) {
       width: var(--nc-sidebar-collapsed-width, 56px);
+    }
+
+    /* Each row holds its line, so a label reaching past the box is clipped to
+       an ellipsis rather than wrapping onto a second line — which at 56px
+       would make the rail grow taller before it grew wider. The full text
+       stays reachable as the button's title in both states. */
+    .brand,
+    button {
+      white-space: nowrap;
+    }
+
+    .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
 
     .brand {
@@ -43,16 +77,16 @@ export class WcNavSidebar extends LitElement {
     }
 
     .brand-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+      font-family: var(--nc-font-brand);
       font-weight: var(--wa-font-weight-bold, 600);
       font-size: var(--wa-font-size-lg, 16px);
       background: var(--nc-grad-brand-text, var(--nc-grad-brand));
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
-    }
-
-    :host([collapsed]) .brand-name {
-      display: none;
     }
 
     ul {
@@ -80,6 +114,12 @@ export class WcNavSidebar extends LitElement {
       transition: background var(--nc-transition-fast, 120ms ease);
     }
 
+    /* The icon holds its size; the label is what gives way, so the crop
+       lands on text rather than squeezing the glyph. */
+    button > :not(.label) {
+      flex-shrink: 0;
+    }
+
     button:hover:not(.disabled) {
       background: var(--wa-color-surface-alt);
     }
@@ -94,32 +134,20 @@ export class WcNavSidebar extends LitElement {
       cursor: not-allowed;
     }
 
-    :host([collapsed]) .label {
-      display: none;
-    }
-
-    :host([collapsed]) button {
-      justify-content: center;
-      padding: 8px 0;
-    }
-
     /* At phone width the shell slides the whole sidebar off-canvas instead of
        narrowing it, so collapsed means "away" rather than "56px of icons"
        and the rail styling stands down: what slides back in is the full nav
        with its words. */
     @media (max-width: 48rem) {
+      /* The rail does not exist at this width: collapsed means the shell has
+         slid the whole sidebar off-canvas with transform from the outer
+         tree, and what slides back in is the full column. */
+      :host([data-animating]) {
+        transition: none;
+      }
+
       :host([collapsed]) {
         width: var(--nc-sidebar-width, 232px);
-      }
-
-      :host([collapsed]) .brand-name,
-      :host([collapsed]) .label {
-        display: revert;
-      }
-
-      :host([collapsed]) button {
-        justify-content: revert;
-        padding: 8px 10px;
       }
     }
 
@@ -145,6 +173,18 @@ export class WcNavSidebar extends LitElement {
 
   @property({ type: String, attribute: 'app-name' })
   appName = 'Nigel';
+
+  private animationDone = 0;
+
+  protected updated(changed: PropertyValues<this>): void {
+    // A toggle is the only thing that changes collapsed after first render,
+    // so the attribute marks a gesture; the timeout stands in for the
+    // transitionend that reduced motion never fires.
+    if (!changed.has('collapsed') || changed.get('collapsed') === undefined) return;
+    this.setAttribute('data-animating', '');
+    window.clearTimeout(this.animationDone);
+    this.animationDone = window.setTimeout(() => this.removeAttribute('data-animating'), 300);
+  }
 
   private handleClick(item: NavItem): void {
     if (item.disabled) return;
@@ -186,7 +226,7 @@ export class WcNavSidebar extends LitElement {
                   data-nav=${item.id}
                   aria-current=${isActive ? 'page' : 'false'}
                   aria-disabled=${item.disabled ? 'true' : 'false'}
-                  title=${this.collapsed ? item.label : nothing}
+                  title=${item.label}
                   @click=${() => this.handleClick(item)}
                 >
                   ${this.renderIcon(item)}

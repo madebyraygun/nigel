@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-invoice-status.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * The header of an invoice detail view: who, how much, how much is left, and
@@ -13,7 +14,9 @@ import './wc-invoice-status.js';
  */
 @customElement('wc-invoice-summary')
 export class WcInvoiceSummary extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -72,7 +75,8 @@ export class WcInvoiceSummary extends LitElement {
       align-items: baseline;
       gap: var(--wa-space-2xs, 4px);
     }
-  `;
+    `,
+  ];
 
   @property({ type: Number })
   number = 0;
@@ -140,16 +144,16 @@ export class WcInvoiceSummary extends LitElement {
         </div>
         <div class="pair">
           <dt>Issued</dt>
-          <dd>${this.issueDate || '—'}</dd>
+          <dd class="figure">${this.issueDate || '—'}</dd>
         </div>
         <div class="pair">
           <dt>Due</dt>
-          <dd data-due>${this.dueDate ?? '—'}</dd>
+          <dd class="figure" data-due>${this.dueDate ?? '—'}</dd>
         </div>
         ${this.currency
           ? html`<div class="pair">
               <dt>Currency</dt>
-              <dd>${this.currency}</dd>
+              <dd class="figure">${this.currency}</dd>
             </div>`
           : nothing}
       </dl>
