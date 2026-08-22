@@ -706,7 +706,7 @@ fn parse_bofa_checking(file_path: &Path) -> Result<ParseOutcome> {
             }
             continue;
         }
-        if record.is_empty() || record[0].trim().is_empty() {
+        if record.iter().all(|field| field.trim().is_empty()) {
             continue;
         }
         if record.len() < MIN_COLS {
@@ -2126,6 +2126,49 @@ Date,Note,Amount
             outcome.rejects[0].reason,
             "date \"2026-03-09\" is not MM/DD/YYYY"
         );
+    }
+
+    #[test]
+    fn a_row_missing_only_its_date_is_recorded_rather_than_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        // An empty date cell with a real description and amount either side of
+        // it: a transaction the parser cannot place, not filler between
+        // sections.
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             ,GLOBEX HOSTING,-88.00,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 1);
+        assert_eq!(outcome.rejects[0].reason, "date \"\" is not MM/DD/YYYY");
+        assert_eq!(outcome.rejects[0].content, ",GLOBEX HOSTING,-88.00,0.00");
+    }
+
+    #[test]
+    fn a_line_with_nothing_on_it_is_not_a_dropped_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        // Statements separate their sections with blank lines. Counting those
+        // as dropped rows would report a loss that never happened.
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             ,,,\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 0);
     }
 
     #[test]

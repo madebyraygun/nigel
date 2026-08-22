@@ -123,7 +123,7 @@ fn parse_chase_checking(file_path: &Path) -> Result<ParseOutcome> {
             }
             continue;
         }
-        if record.is_empty() || record[0].trim().is_empty() {
+        if record.iter().all(|field| field.trim().is_empty()) {
             continue;
         }
         if record.len() < MIN_COLS {
@@ -229,8 +229,10 @@ reject keeps the line number in the file, the raw row, and a reason in the parse
 words (`date "13/40/2025" is not MM/DD/YYYY`), because that reason is what the reader
 sees in `nigel imports rejects <id>` and has to fix the file by.
 
-A silent `continue` is only for lines that are not transactions at all: blank rows, the
-header, a "Beginning balance" summary. Anything that was meant to be a transaction and
+A silent `continue` is only for lines that are not transactions at all: wholly blank
+rows, the header, a "Beginning balance" summary. Test every field, not the first one —
+a row with an empty date column and a real description and amount is a transaction the
+parser cannot place, and it belongs in `rejects`. Anything that was meant to be a transaction and
 is not usable is a reject — dropping it silently is how a statement imports short and
 nobody finds out. A file whose parse yields no rows at all is refused by the import,
 which reports the format, the malformed count and the first reasons rather than
