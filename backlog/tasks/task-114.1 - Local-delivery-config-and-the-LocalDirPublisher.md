@@ -4,9 +4,11 @@ title: Local delivery config and the LocalDirPublisher
 status: To Do
 assignee: []
 created_date: '2026-08-17 13:27'
+updated_date: '2026-08-21 00:21'
 labels:
   - invoicing
   - desktop
+milestone: m-0
 dependencies: []
 parent_task_id: TASK-114
 ---

@@ -1,0 +1,58 @@
+name: Bug report
+description: Something Nigel does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **Before you paste anything:** this is a public repository and Nigel holds
+        financial information. Replace real amounts, payees, account names and reference
+        numbers with invented ones (the codebase uses a fictional cast — Acme, Cedar
+        Systems, Globex — feel free to borrow it). A bug report almost never needs your
+        real numbers to be reproducible.
+  - type: checkboxes
+    id: no-real-data
+    attributes:
+      label: Real-data check
+      options:
+        - label: This report contains no real financial data — amounts, payees, account or reference numbers are invented or redacted
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Nigel version
+      description: '`nigel --version`, or the commit if built from source'
+      placeholder: e.g. 0.9.2
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where it happens
+      multiple: true
+      options:
+        - CLI command
+        - Interactive dashboard (TUI)
+        - Web UI (nigel serve)
+        - Desktop app
+        - Import pipeline
+        - Invoicing / documents
+        - Reports
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what Nigel did, and what you expected instead. Exact commands and exact error text help most.
+      placeholder: |
+        1. Ran `nigel import statement.csv`
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and version; for web UI issues, the browser; anything unusual (encrypted DB, personal profile, non-default data dir)
+      placeholder: macOS 15.3, encrypted database, business profile

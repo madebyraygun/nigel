@@ -16,6 +16,7 @@ import preview from './wc-category-form.preview.js';
 const filled: CategoryFormValue = {
   name: 'Software / Subscriptions',
   categoryType: 'expense',
+  class: 'expense',
   taxLine: 'Other expenses',
   formLine: '1120S-19',
 };
@@ -135,6 +136,54 @@ describe('wc-category-form', () => {
   it('shows no warning for a recognized one', async () => {
     const el = await mount({ value: filled });
     expect(el.shadowRoot?.querySelector('.warning')).toBeNull();
+  });
+});
+
+describe('the class control', () => {
+  it('offers the five classes and nothing borrowed from a ledger', async () => {
+    const el = await mount({ value: { ...EMPTY_CATEGORY_FORM } });
+    const options = [
+      ...(el.shadowRoot?.querySelectorAll('[data-class] wa-option') ?? []),
+    ].map((option) => option.getAttribute('value'));
+
+    expect(options).toEqual([
+      'asset',
+      'liability',
+      'equity',
+      'revenue',
+      'expense',
+    ]);
+    expect(el.shadowRoot?.textContent).not.toMatch(/debit|credit/i);
+  });
+
+  it('keeps a class it does not know rather than retyping the row', async () => {
+    const el = await mount({
+      value: { ...EMPTY_CATEGORY_FORM, class: 'contra-asset' },
+    });
+    const options = [
+      ...(el.shadowRoot?.querySelectorAll('[data-class] wa-option') ?? []),
+    ].map((option) => option.getAttribute('value'));
+
+    expect(options).toContain('contra-asset');
+  });
+
+  it('emits the whole value when the class changes', async () => {
+    const el = await mount({
+      value: { ...EMPTY_CATEGORY_FORM, name: 'Member Draw' },
+    });
+    const seen: CategoryFormValue[] = [];
+    el.addEventListener('nc-category-form-change', (event) => {
+      seen.push((event as CustomEvent<NcCategoryFormChangeDetail>).detail.value);
+    });
+
+    const select = el.shadowRoot?.querySelector<HTMLInputElement>('[data-class]');
+    if (!select) throw new Error('no class select');
+    select.value = 'equity';
+    select.dispatchEvent(new Event('change'));
+
+    expect(seen).toEqual([
+      { ...EMPTY_CATEGORY_FORM, name: 'Member Draw', class: 'equity' },
+    ]);
   });
 });
 

@@ -14,6 +14,7 @@ use crate::tui::{
     FOOTER_STYLE, HEADER_STYLE,
 };
 use nigel_core::db::get_connection;
+use nigel_core::db::AccountClass;
 use nigel_core::error::Result;
 use nigel_core::fmt::money;
 use nigel_core::reports::{self, DateGranularity, ReportKind};
@@ -90,6 +91,7 @@ pub(crate) fn build_view(cmd: &ReportCommands) -> Result<Box<dyn ReportView>> {
 
 const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
 const SECTION_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+const NOTE_STYLE: Style = Style::new().fg(Color::DarkGray);
 const HEADER_ROW_STYLE: Style = Style::new()
     .fg(Color::DarkGray)
     .add_modifier(Modifier::BOLD);
@@ -509,41 +511,45 @@ pub(crate) fn build_expenses(
 pub(crate) fn build_tax(year: Option<i32>) -> Result<Box<dyn ReportView>> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let data = reports::get_tax_summary(&conn, year)?;
+    Ok(Box::new(tax_view(&data, year)))
+}
 
+fn tax_view(data: &reports::TaxSummary, year: Option<i32>) -> TableReportView {
     let widths = vec![
         Constraint::Fill(1),
         Constraint::Length(20),
         Constraint::Length(12),
+        Constraint::Length(12),
         Constraint::Length(14),
     ];
-    let header = Row::new(["Category", "Tax Line", "Type", "Amount"])
+    let header = Row::new(["Category", "Tax Line", "Type", "Class", "Amount"])
         .style(HEADER_ROW_STYLE)
         .bottom_margin(1);
 
     let mut rows = Vec::new();
 
     for item in &data.line_items {
-        let style = if item.category_type == "income" {
-            AMOUNT_POS_STYLE
-        } else {
-            AMOUNT_NEG_STYLE
+        let style = match item.class {
+            AccountClass::Revenue | AccountClass::Asset => AMOUNT_POS_STYLE,
+            AccountClass::Expense | AccountClass::Liability | AccountClass::Equity => {
+                AMOUNT_NEG_STYLE
+            }
         };
         rows.push(Row::new([
             text_cell(&item.name),
             text_cell(item.tax_line.as_deref().unwrap_or("")),
             text_cell(&item.category_type),
+            text_cell(item.class.as_str()),
             Cell::from(Span::styled(money(item.total.abs()), style)),
         ]));
     }
 
     let effective_year = year.unwrap_or_else(|| chrono::Datelike::year(&chrono::Local::now()));
-    Ok(Box::new(
-        TableReportView::new("Tax Summary", header, rows, widths).with_date(
-            ReportKind::Tax.granularity(),
-            effective_year,
-            None,
-        ),
-    ))
+    TableReportView::new("Tax Summary", header, rows, widths).with_date(
+        ReportKind::Tax.granularity(),
+        effective_year,
+        None,
+    )
 }
 
 pub(crate) fn build_cashflow(
@@ -645,7 +651,10 @@ pub(crate) fn build_flagged() -> Result<Box<dyn ReportView>> {
 pub(crate) fn build_balance() -> Result<Box<dyn ReportView>> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let data = reports::get_balance(&conn)?;
+    Ok(Box::new(balance_view(&data)))
+}
 
+fn balance_view(data: &reports::BalanceReport) -> TableReportView {
     let widths = vec![
         Constraint::Fill(1),
         Constraint::Length(20),
@@ -677,13 +686,29 @@ pub(crate) fn build_balance() -> Result<Box<dyn ReportView>> {
         Cell::from(""),
         money_cell(data.ytd_net_income),
     ]));
+    // The backlog rides in the headline figure, so it gets a line of its own
+    // under it. The sentence is trimmed for a table cell; the money goes in
+    // the money column, where the eye already is.
+    if data.uncategorized_count > 0 {
+        let noun = if data.uncategorized_count == 1 {
+            "transaction"
+        } else {
+            "transactions"
+        };
+        rows.push(Row::new([
+            Cell::from(Span::styled(
+                format!(
+                    "Includes {} uncategorized {noun} — run `nigel review`",
+                    data.uncategorized_count
+                ),
+                NOTE_STYLE,
+            )),
+            Cell::from(""),
+            money_cell(data.uncategorized_total),
+        ]));
+    }
 
-    Ok(Box::new(TableReportView::new(
-        "Cash Position",
-        header,
-        rows,
-        widths,
-    )))
+    TableReportView::new("Cash Position", header, rows, widths)
 }
 
 pub(crate) fn build_k1(year: Option<i32>) -> Result<Box<dyn ReportView>> {
@@ -1118,6 +1143,97 @@ mod tests {
             invoices,
             outstanding: 100.0 * invoice_count as f64,
         }
+    }
+
+    fn tax_fixture() -> nigel_core::reports::TaxSummary {
+        nigel_core::reports::TaxSummary {
+            line_items: vec![
+                nigel_core::reports::TaxItem {
+                    name: "Workshop Fees".into(),
+                    tax_line: Some("Gross receipts".into()),
+                    category_type: "income".into(),
+                    class: AccountClass::Revenue,
+                    total: 4200.0,
+                },
+                nigel_core::reports::TaxItem {
+                    name: "Member Draw".into(),
+                    tax_line: Some("Distributions".into()),
+                    category_type: "expense".into(),
+                    class: AccountClass::Equity,
+                    total: -1500.0,
+                },
+            ],
+        }
+    }
+
+    fn rendered(view: &mut TableReportView) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
+        terminal
+            .draw(|frame| ReportView::draw(view, frame))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(100)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn balance_fixture(
+        uncategorized_total: f64,
+        uncategorized_count: i64,
+    ) -> reports::BalanceReport {
+        reports::BalanceReport {
+            accounts: vec![reports::AccountBalance {
+                name: "Cedar Checking".into(),
+                account_type: "checking".into(),
+                class: AccountClass::Asset,
+                balance: 5_000.0,
+                natural_balance: 5_000.0,
+            }],
+            total: 5_000.0,
+            ytd_net_income: 4_670.0,
+            uncategorized_total,
+            uncategorized_count,
+        }
+    }
+
+    #[test]
+    fn the_balance_view_footnotes_the_uncategorized_money_in_net_income() {
+        let mut view = balance_view(&balance_fixture(-330.0, 2));
+        let screen = rendered(&mut view);
+
+        assert!(screen.contains("YTD Net Income"));
+        assert!(
+            screen.contains("2 uncategorized transactions"),
+            "the footnote names the count: {screen}"
+        );
+        // The TUI prints magnitudes and lets the colour carry the direction.
+        assert!(screen.contains("$330.00"), "and the amount: {screen}");
+        assert!(screen.contains("nigel review"), "and the way to resolve it");
+    }
+
+    #[test]
+    fn the_balance_view_says_nothing_when_every_transaction_has_a_category() {
+        let mut view = balance_view(&balance_fixture(0.0, 0));
+        let screen = rendered(&mut view);
+
+        assert!(screen.contains("YTD Net Income"));
+        assert!(!screen.contains("uncategorized"), "no backlog, no footnote");
+    }
+
+    #[test]
+    fn the_tax_view_names_the_class_each_line_is_ordered_by() {
+        let mut view = tax_view(&tax_fixture(), Some(2025));
+        let screen = rendered(&mut view);
+
+        assert!(screen.contains("Class"), "the column header");
+        assert!(screen.contains("revenue"));
+        assert!(screen.contains("equity"));
+        assert!(!screen.to_lowercase().contains("debit"));
     }
 
     #[test]

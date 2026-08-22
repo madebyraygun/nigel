@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::db::AccountClass;
 use crate::error::{DeleteBlock, NigelError, Result};
 
 #[derive(Debug, Clone, Serialize)]
@@ -9,6 +10,7 @@ pub struct CategoryRow {
     pub id: i64,
     pub name: String,
     pub category_type: String,
+    pub class: AccountClass,
     pub tax_line: Option<String>,
     pub form_line: Option<String>,
 }
@@ -19,45 +21,67 @@ pub struct CategoryRow {
 
 pub fn list_categories(conn: &Connection) -> Result<Vec<CategoryRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, category_type, tax_line, form_line \
+        "SELECT id, name, category_type, class, tax_line, form_line \
          FROM categories WHERE is_active = 1 \
          ORDER BY CASE category_type WHEN 'income' THEN 0 ELSE 1 END, name ASC",
     )?;
-    let categories = stmt
+    let rows = stmt
         .query_map([], |row| {
-            Ok(CategoryRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                category_type: row.get(2)?,
-                tax_line: row.get(3)?,
-                form_line: row.get(4)?,
-            })
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(categories)
+    rows.into_iter()
+        .map(|(id, name, category_type, class, tax_line, form_line)| {
+            Ok(CategoryRow {
+                id,
+                name,
+                category_type,
+                class: AccountClass::from_db(&class)?,
+                tax_line,
+                form_line,
+            })
+        })
+        .collect()
 }
 
 /// Fetch one active category by id.
 pub fn get_category(conn: &Connection, id: i64) -> Result<CategoryRow> {
-    conn.query_row(
-        "SELECT id, name, category_type, tax_line, form_line \
-         FROM categories WHERE id = ?1 AND is_active = 1",
-        [id],
-        |row| {
-            Ok(CategoryRow {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                category_type: row.get(2)?,
-                tax_line: row.get(3)?,
-                form_line: row.get(4)?,
-            })
-        },
-    )
-    .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => {
-            NigelError::NotFound(format!("Category not found: id {id}"))
-        }
-        other => NigelError::Db(other),
+    let (id, name, category_type, class, tax_line, form_line) = conn
+        .query_row(
+            "SELECT id, name, category_type, class, tax_line, form_line \
+             FROM categories WHERE id = ?1 AND is_active = 1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                NigelError::NotFound(format!("Category not found: id {id}"))
+            }
+            other => NigelError::Db(other),
+        })?;
+    Ok(CategoryRow {
+        id,
+        name,
+        category_type,
+        class: AccountClass::from_db(&class)?,
+        tax_line,
+        form_line,
     })
 }
 
@@ -82,10 +106,12 @@ pub fn add_category(
     conn: &Connection,
     name: &str,
     category_type: &str,
+    class: Option<AccountClass>,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<i64> {
     validate_fields(name, category_type)?;
+    let class = class.unwrap_or_else(|| crate::db::class_for_category_type(category_type));
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM categories WHERE name = ?1 AND is_active = 1)",
         [name],
@@ -98,8 +124,8 @@ pub fn add_category(
         });
     }
     conn.execute(
-        "INSERT INTO categories (name, category_type, tax_line, form_line) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![name, category_type, tax_line, form_line],
+        "INSERT INTO categories (name, category_type, class, tax_line, form_line) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![name, category_type, class.as_str(), tax_line, form_line],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -118,11 +144,11 @@ fn validate_fields(name: &str, category_type: &str) -> Result<()> {
 
 pub fn rename_category(conn: &Connection, id: i64, new_name: &str) -> Result<()> {
     // Fetch the existing row so we can delegate to update_category with current values
-    let (cat_type, tax_line, form_line): (String, Option<String>, Option<String>) = conn
-        .query_row(
-            "SELECT category_type, tax_line, form_line FROM categories WHERE id = ?1 AND is_active = 1",
+    let (cat_type, class, tax_line, form_line): (String, String, Option<String>, Option<String>) =
+        conn.query_row(
+            "SELECT category_type, class, tax_line, form_line FROM categories WHERE id = ?1 AND is_active = 1",
             [id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
@@ -135,6 +161,7 @@ pub fn rename_category(conn: &Connection, id: i64, new_name: &str) -> Result<()>
         id,
         new_name,
         &cat_type,
+        AccountClass::from_db(&class)?,
         tax_line.as_deref(),
         form_line.as_deref(),
     )
@@ -145,6 +172,7 @@ pub fn update_category(
     id: i64,
     name: &str,
     category_type: &str,
+    class: AccountClass,
     tax_line: Option<&str>,
     form_line: Option<&str>,
 ) -> Result<()> {
@@ -161,8 +189,8 @@ pub fn update_category(
         });
     }
     let updated = conn.execute(
-        "UPDATE categories SET name = ?1, category_type = ?2, tax_line = ?3, form_line = ?4 WHERE id = ?5 AND is_active = 1",
-        rusqlite::params![name, category_type, tax_line, form_line, id],
+        "UPDATE categories SET name = ?1, category_type = ?2, class = ?3, tax_line = ?4, form_line = ?5 WHERE id = ?6 AND is_active = 1",
+        rusqlite::params![name, category_type, class.as_str(), tax_line, form_line, id],
     )?;
     if updated == 0 {
         return Err(NigelError::NotFound(format!("Category not found: id {id}")));

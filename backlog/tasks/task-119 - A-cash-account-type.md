@@ -4,10 +4,10 @@ title: A cash account type
 status: To Do
 assignee: []
 created_date: '2026-08-19 17:04'
-updated_date: '2026-08-20 14:19'
+updated_date: '2026-08-21 00:21'
 labels:
   - enhancement
-milestone: v1
+milestone: m-0
 dependencies: []
 priority: medium
 ---

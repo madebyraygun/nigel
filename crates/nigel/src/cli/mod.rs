@@ -248,6 +248,9 @@ pub enum AccountsCommands {
         /// Account type: checking, credit_card, line_of_credit, payroll
         #[arg(long = "type")]
         account_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// Institution name
         #[arg(long)]
         institution: Option<String>,
@@ -263,6 +266,17 @@ pub enum AccountsCommands {
         id: i64,
         /// New name
         name: String,
+    },
+    /// Change an account's name or its accounting class.
+    Edit {
+        /// Account ID
+        id: i64,
+        /// New name
+        #[arg(long)]
+        name: Option<String>,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
     },
     /// Delete an account by ID (blocked if account has transactions).
     Delete {
@@ -282,6 +296,9 @@ pub enum CategoriesCommands {
         /// Category type: income or expense
         #[arg(long = "type")]
         category_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// IRS tax line mapping
         #[arg(long)]
         tax_line: Option<String>,
@@ -305,6 +322,9 @@ pub enum CategoriesCommands {
         /// Category type: income or expense
         #[arg(long = "type")]
         category_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// IRS tax line mapping
         #[arg(long)]
         tax_line: Option<String>,

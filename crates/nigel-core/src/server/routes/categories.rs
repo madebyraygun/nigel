@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::categories::{self, CategoryRow};
+use crate::db::AccountClass;
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
@@ -34,6 +35,9 @@ async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<CategoryRow>>
 pub struct NewCategory {
     name: String,
     category_type: String,
+    /// Absent means the type decides. An unknown value is a `400` from the
+    /// extractor — the closed set is the type, not a checker.
+    class: Option<AccountClass>,
     tax_line: Option<String>,
     form_line: Option<String>,
 }
@@ -47,6 +51,7 @@ async fn create(
             conn,
             &new.name,
             &new.category_type,
+            new.class,
             new.tax_line.as_deref(),
             new.form_line.as_deref(),
         )?;
@@ -61,6 +66,7 @@ async fn create(
 pub struct CategoryPatch {
     name: Option<String>,
     category_type: Option<String>,
+    class: Option<AccountClass>,
     #[serde(default, deserialize_with = "double_option")]
     tax_line: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -71,6 +77,7 @@ impl CategoryPatch {
     fn is_empty(&self) -> bool {
         self.name.is_none()
             && self.category_type.is_none()
+            && self.class.is_none()
             && self.tax_line.is_none()
             && self.form_line.is_none()
     }
@@ -83,7 +90,7 @@ async fn update(
 ) -> ApiResult<Json<CategoryRow>> {
     if patch.is_empty() {
         return Err(ApiError::bad_request(
-            "Nothing to update — provide at least one of `name`, `categoryType`, `taxLine`, or `formLine`.",
+            "Nothing to update — provide at least one of `name`, `categoryType`, `class`, `taxLine`, or `formLine`.",
         ));
     }
 
@@ -91,6 +98,7 @@ async fn update(
         let current = categories::get_category(conn, id)?;
         let name = patch.name.unwrap_or(current.name);
         let category_type = patch.category_type.unwrap_or(current.category_type);
+        let class = patch.class.unwrap_or(current.class);
         // `Some(None)` means the client asked for the field to be cleared;
         // absent means keep what is there.
         let tax_line = patch.tax_line.unwrap_or(current.tax_line);
@@ -101,6 +109,7 @@ async fn update(
             id,
             &name,
             &category_type,
+            class,
             tax_line.as_deref(),
             form_line.as_deref(),
         )?;
@@ -144,9 +153,76 @@ mod tests {
 
         let rows = body.as_array().expect("a bare array");
         assert!(rows.len() >= 29, "the seeded chart of accounts");
-        for key in ["categoryType", "taxLine", "formLine"] {
+        for key in ["categoryType", "taxLine", "formLine", "class"] {
             assert!(rows[0].get(key).is_some(), "missing {key}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_category_defaults_its_class_from_its_type_and_accepts_an_explicit_one() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        // No class named: the type decides, so a client that predates the
+        // field keeps working.
+        let (status, derived) = post_json(
+            &app,
+            "/api/categories",
+            &token,
+            &serde_json::json!({ "name": "Workshop Fees", "categoryType": "income" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{derived}");
+        assert_eq!(derived["class"], "revenue");
+
+        // Named explicitly: taken as given.
+        let (status, chosen) = post_json(
+            &app,
+            "/api/categories",
+            &token,
+            &serde_json::json!({
+                "name": "Owner Loan Repayment",
+                "categoryType": "expense",
+                "class": "liability",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{chosen}");
+        assert_eq!(chosen["class"], "liability");
+
+        // And it is patchable on its own.
+        let id = chosen["id"].as_i64().unwrap();
+        let (status, patched) = patch_json(
+            &app,
+            &format!("/api/categories/{id}"),
+            &token,
+            &serde_json::json!({ "class": "equity" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{patched}");
+        assert_eq!(patched["class"], "equity");
+        assert_eq!(patched["categoryType"], "expense", "the word is untouched");
+        assert_eq!(patched["name"], "Owner Loan Repayment");
+    }
+
+    #[tokio::test]
+    async fn a_class_outside_the_set_is_a_bad_request() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_json(
+            &app,
+            "/api/categories",
+            &token,
+            &serde_json::json!({
+                "name": "Nope",
+                "categoryType": "expense",
+                "class": "contra-asset",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "bad_request");
     }
 
     #[tokio::test]

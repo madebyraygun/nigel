@@ -495,7 +495,8 @@ fn seed(conn: &Connection) {
     let checking = conn.last_insert_rowid();
 
     conn.execute(
-        "INSERT INTO accounts (name, account_type) VALUES ('BofA Credit Card', 'credit_card')",
+        "INSERT INTO accounts (name, account_type, class) \
+         VALUES ('BofA Credit Card', 'credit_card', 'liability')",
         [],
     )
     .expect("card account");

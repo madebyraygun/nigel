@@ -4,10 +4,11 @@ title: 'Epic: cash-basis double entry on the v1 milestone'
 status: To Do
 assignee: []
 created_date: '2026-04-25 18:06'
-updated_date: '2026-08-20 14:01'
+updated_date: '2026-08-21 00:21'
 labels:
   - epic
   - architecture
+milestone: m-0
 dependencies: []
 references:
   - 'archived issue #81'
