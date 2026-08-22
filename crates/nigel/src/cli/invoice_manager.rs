@@ -20,8 +20,8 @@ use nigel_core::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, duplicate_invoice, ensure_not_void,
     ensure_voidable, get_invoice, is_void, line_items, list_invoices, paid_amount, payment_amount,
-    payments, record_payment, validate_currency, validate_date, validate_items, InvoiceListRow,
-    NewLineItem, CENT_SLACK,
+    payments, record_payment, validate_currency, validate_date, validate_items,
+    with_effective_status, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use nigel_core::invoicing::render_html::{load_template, Branding};
 use nigel_core::invoicing::send::{send_invoice, SendOutcome};
@@ -384,7 +384,7 @@ struct Detail {
 }
 
 impl Detail {
-    fn load(conn: &Connection, invoice_id: i64) -> Result<Self> {
+    fn load(conn: &Connection, invoice_id: i64, today: &str) -> Result<Self> {
         let invoice = get_invoice(conn, invoice_id)?;
         let client = match get_client(conn, invoice.client_id) {
             Ok(client) => Some(client),
@@ -392,12 +392,15 @@ impl Detail {
             Err(NigelError::NotFound(_)) => None,
             Err(e) => return Err(e),
         };
+        let paid = paid_amount(conn, invoice.id)?;
         Ok(Self {
             items: line_items(conn, invoice.id)?,
             payments: payments(conn, invoice.id)?,
-            paid: paid_amount(conn, invoice.id)?,
+            // Asked of the stored row: what may be deleted is a fact about the
+            // record, not about the day it is being looked at.
             deletable: delete_blocker(conn, &invoice)?.is_none(),
-            invoice,
+            invoice: with_effective_status(invoice, paid, today),
+            paid,
             client,
         })
     }
@@ -434,7 +437,7 @@ pub struct InvoiceManager {
 impl InvoiceManager {
     pub fn new(conn: &Connection, greeting: &str) -> Self {
         Self {
-            rows: list_invoices(conn, None, None).unwrap_or_default(),
+            rows: list_invoices(conn, None, None, &crate::cli::today()).unwrap_or_default(),
             selection: 0,
             scroll_offset: 0,
             last_visible_rows: 20,
@@ -448,7 +451,7 @@ impl InvoiceManager {
     }
 
     fn reload_list(&mut self, conn: &Connection) {
-        self.rows = list_invoices(conn, None, None).unwrap_or_default();
+        self.rows = list_invoices(conn, None, None, &crate::cli::today()).unwrap_or_default();
         if self.rows.is_empty() {
             self.selection = 0;
         } else {
@@ -471,7 +474,11 @@ impl InvoiceManager {
 
     /// Load (or reload) the detail for one invoice.
     fn load_detail(&mut self, conn: &Connection, invoice_id: i64) -> Result<()> {
-        self.detail = Some(Box::new(Detail::load(conn, invoice_id)?));
+        self.detail = Some(Box::new(Detail::load(
+            conn,
+            invoice_id,
+            &crate::cli::today(),
+        )?));
         Ok(())
     }
 
@@ -1648,7 +1655,15 @@ impl InvoiceManager {
         let invoice_id = detail.invoice.id;
         let number = detail.invoice.number;
         let was_published = detail.invoice.published_at.is_some();
-        if let Err(e) = record_payment(conn, invoice_id, amount, &date, method, None) {
+        if let Err(e) = record_payment(
+            conn,
+            invoice_id,
+            amount,
+            &date,
+            method,
+            None,
+            &crate::cli::today(),
+        ) {
             self.set_status(e.to_string());
             return InvoiceAction::Continue;
         }
@@ -2207,6 +2222,40 @@ mod tests {
         InvoiceManager::new(conn, "Hello, Sam.")
     }
 
+    /// The screen the operator actually looks at agrees with the report: the
+    /// list and the detail both read the lapsed due date.
+    #[test]
+    fn the_manager_reads_a_lapsed_due_date_as_overdue() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Globex", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Site build".into(),
+            quantity: 1.0,
+            unit_amount: 960.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-01-05",
+            Some("2026-02-04"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        mark_published(&conn, id, "2026-01-05").unwrap();
+
+        // Loaded on a day past the due date, which every wall clock this runs
+        // on already is.
+        let detail = Detail::load(&conn, id, "2026-03-15").unwrap();
+        assert_eq!(detail.invoice.status, "overdue");
+
+        // The manager reads the wall clock, which is past 2026-02-04 too.
+        let mgr = manager(&conn);
+        assert_eq!(mgr.rows[0].status, "overdue");
+    }
+
     fn is_close(action: InvoiceAction) -> bool {
         matches!(action, InvoiceAction::Close)
     }
@@ -2215,6 +2264,14 @@ mod tests {
     fn seed_invoice(conn: &Connection, client: &str, amount: f64) -> i64 {
         let cid = add_client(conn, client, Some("ops@cedar.test"), None, None).unwrap();
         seed_invoice_for(conn, cid, amount)
+    }
+
+    /// A due date ahead of whatever day the suite runs on, so the status a
+    /// screen reads is about the invoice rather than about the calendar.
+    fn not_yet_due() -> String {
+        (chrono::Local::now() + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string()
     }
 
     fn seed_invoice_for(conn: &Connection, client_id: i64, amount: f64) -> i64 {
@@ -2227,7 +2284,7 @@ mod tests {
             conn,
             client_id,
             "2026-07-16",
-            Some("2026-08-15"),
+            Some(&not_yet_due()),
             "USD",
             &items,
             None,
@@ -2332,7 +2389,7 @@ mod tests {
     fn balance_is_total_minus_paid() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
 
         let mgr = manager(&conn);
         let row = &mgr.rows[0];
@@ -2347,7 +2404,7 @@ mod tests {
     fn enter_loads_the_detail_for_the_selected_invoice() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
 
@@ -2454,7 +2511,7 @@ mod tests {
     fn the_detail_renders_the_invoice_its_payments_and_the_action_keys() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
@@ -2553,7 +2610,7 @@ mod tests {
     fn p_prefills_the_amount_with_the_outstanding_balance_and_today() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -2566,7 +2623,7 @@ mod tests {
     fn p_on_a_settled_invoice_prefills_an_empty_amount() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 100.0);
-        record_payment(&conn, id, 100.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -2590,7 +2647,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 1_000.0);
         for method in METHODS {
-            record_payment(&conn, id, 1.0, "2026-08-01", method, None)
+            record_payment(&conn, id, 1.0, "2026-08-01", method, None, "2026-08-01")
                 .unwrap_or_else(|e| panic!("method {method} is not insertable: {e}"));
         }
     }
@@ -2736,7 +2793,11 @@ mod tests {
         // the rule is the CLI's, so the screen cannot disagree about it.
         let (_d, conn) = test_conn();
         seed_invoice(&conn, "Cedar Systems", 100.0);
-        let invoice = get_invoice(&conn, list_invoices(&conn, None, None).unwrap()[0].id).unwrap();
+        let invoice = get_invoice(
+            &conn,
+            list_invoices(&conn, None, None, &crate::cli::today()).unwrap()[0].id,
+        )
+        .unwrap();
 
         for amount in [-25.0, f64::NAN, f64::INFINITY] {
             let message = field_wording(
@@ -2768,7 +2829,7 @@ mod tests {
     fn a_valid_payment_is_recorded_and_returns_to_detail() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
         submit_payment(&mut mgr, &conn, "750.00", "2026-08-20");
@@ -2852,7 +2913,7 @@ mod tests {
     fn the_pay_form_renders_the_balance_line_and_the_fields() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_pay(&mut mgr, &conn);
 
@@ -3035,7 +3096,7 @@ mod tests {
 
         // Somebody else publishes it while the confirmation is up.
         mark_published(&conn, id, "2026-07-17").unwrap();
-        record_payment(&conn, id, 100.0, "2026-07-18", "ach", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-07-18", "ach", None, "2026-07-18").unwrap();
 
         mgr.handle_key(KeyCode::Char('y'), &conn);
 
@@ -3251,7 +3312,7 @@ mod tests {
     fn v_on_an_invoice_with_payments_is_refused_before_the_dialog() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
         open_void(&mut mgr, &conn);
 
@@ -3928,7 +3989,7 @@ mod tests {
     fn the_list_renders_its_columns_inside_eighty_columns() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
 
         let screen = rendered(&mut mgr);
@@ -3939,12 +4000,15 @@ mod tests {
         assert!(screen.contains("> 1248"), "{screen}");
         assert!(screen.contains("$2,000.00"), "{screen}");
         assert!(screen.contains("$750.00"), "{screen}");
-        assert!(screen.contains("2026-08-15"), "{screen}");
+        assert!(screen.contains(&not_yet_due()), "{screen}");
         assert!(screen.contains("Enter=open  Esc=back  q=quit"), "{screen}");
     }
 
     fn row_of(conn: &Connection) -> InvoiceListRow {
-        list_invoices(conn, None, None).unwrap().pop().unwrap()
+        list_invoices(conn, None, None, &crate::cli::today())
+            .unwrap()
+            .pop()
+            .unwrap()
     }
 
     #[test]
@@ -3971,7 +4035,7 @@ mod tests {
             rendered.chars().count()
         );
         // The client name yields; the due date is not pushed off the end.
-        assert!(rendered.ends_with("2026-08-15"), "{rendered:?}");
+        assert!(rendered.ends_with(&not_yet_due()), "{rendered:?}");
         assert!(rendered.contains("$9,999,999.99"), "{rendered:?}");
     }
 
@@ -3979,7 +4043,7 @@ mod tests {
     fn an_ordinary_row_keeps_the_specced_columns() {
         let (_d, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
 
         let rendered = list_row(&row_of(&conn));
         assert_eq!(rendered.chars().count(), ROW_WIDTH);
@@ -3993,7 +4057,7 @@ mod tests {
     fn every_screen_survives_a_terminal_narrower_than_its_columns() {
         let (dir, conn) = test_conn();
         let id = seed_invoice(&conn, "Cedar Systems", 2_000.0);
-        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None).unwrap();
+        record_payment(&conn, id, 1_250.0, "2026-08-01", "ach", None, "2026-08-01").unwrap();
         let mut mgr = manager(&conn);
 
         let mut narrow =
@@ -4683,14 +4747,34 @@ mod tests {
     #[test]
     fn the_duplicate_takes_the_reference_day_it_is_given() {
         let (_d, conn) = test_conn();
-        let source = seed_invoice(&conn, "Juniper Labs", 600.0);
+        // Its own source rather than `seed_invoice`'s: that one is due thirty
+        // days from whatever day the suite runs on, and the term a copy
+        // inherits has to be a constant for the arithmetic to be assertable.
+        let client =
+            add_client(&conn, "Juniper Labs", Some("ops@juniper.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Strategy workshop".into(),
+            quantity: 1.0,
+            unit_amount: 600.0,
+        }];
+        let source = create_invoice(
+            &conn,
+            client,
+            "2026-07-16",
+            Some("2026-08-15"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
         mgr.perform_duplicate(&conn, "2027-01-15");
 
         let detail = mgr.detail.as_ref().expect("the new draft is open");
         assert_eq!(detail.invoice.issue_date, "2027-01-15");
-        // `seed_invoice_for` issues 2026-07-16 due 2026-08-15 — thirty days.
+        // Thirty days from issue to due on the source, so thirty on the copy.
         assert_eq!(detail.invoice.due_date.as_deref(), Some("2027-02-14"));
         assert_ne!(detail.invoice.id, source);
     }

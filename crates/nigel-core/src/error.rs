@@ -135,6 +135,54 @@ impl fmt::Display for DeleteBlock {
     }
 }
 
+/// A parse that produced no rows: which importer ran, how many rows it
+/// refused, and the first few reasons it gave.
+///
+/// Carried rather than flattened into a string at the raise site, because the
+/// API publishes the parts as `details` and the CLI prints the sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyImport {
+    /// A built-in importer key, a saved profile name, or `generic`.
+    pub format: String,
+    pub malformed: usize,
+    pub reasons: Vec<String>,
+}
+
+impl EmptyImport {
+    /// How many reasons a message quotes. Enough to see a pattern, few enough
+    /// that a statement of nothing but bad rows does not print itself.
+    pub const REASON_LIMIT: usize = 3;
+}
+
+impl fmt::Display for EmptyImport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Nothing could be read from this file as `{}`: ",
+            self.format
+        )?;
+        if self.malformed == 0 {
+            write!(f, "no rows matched the format.")?;
+        } else {
+            let rows = if self.malformed == 1 {
+                "row was"
+            } else {
+                "rows were"
+            };
+            write!(f, "{} {rows} malformed", self.malformed)?;
+            if self.reasons.is_empty() {
+                write!(f, ".")?;
+            } else {
+                write!(f, " ({}).", self.reasons.join("; "))?;
+            }
+        }
+        write!(
+            f,
+            " Nothing was imported and the file was not recorded — correct the format or the column mapping and import it again."
+        )
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum NigelError {
     #[error("Database error: {0}")]
@@ -184,6 +232,11 @@ pub enum NigelError {
     /// A delete refused by a guardrail.
     #[error("{0}")]
     Blocked(DeleteBlock),
+
+    /// A parse that produced no rows. Refused rather than recorded, so the
+    /// file's checksum stays free for the corrected import.
+    #[error("{0}")]
+    EmptyImport(EmptyImport),
 
     /// Any other state conflict, carrying the machine-readable reason the API
     /// publishes alongside the message.
@@ -285,6 +338,47 @@ mod tests {
         assert_eq!(DeleteBlock::invoices("client", 1).count(), Some(1));
         assert_eq!(DeleteBlock::not_deletable("invoice").count(), None);
         assert_eq!(DeleteBlock::from_schedule("invoice", 3).count(), None);
+    }
+
+    #[test]
+    fn an_empty_import_says_the_format_the_count_and_the_first_reasons() {
+        let empty = EmptyImport {
+            format: "bofa_checking".into(),
+            malformed: 3,
+            reasons: vec![
+                "date \"2026-03-02\" is not MM/DD/YYYY".into(),
+                "date \"2026-03-09\" is not MM/DD/YYYY".into(),
+                "amount \"n/a\" is not a number".into(),
+            ],
+        };
+
+        assert_eq!(
+            empty.to_string(),
+            "Nothing could be read from this file as `bofa_checking`: 3 rows were malformed \
+             (date \"2026-03-02\" is not MM/DD/YYYY; date \"2026-03-09\" is not MM/DD/YYYY; \
+             amount \"n/a\" is not a number). Nothing was imported and the file was not \
+             recorded — correct the format or the column mapping and import it again."
+        );
+        assert_eq!(
+            NigelError::EmptyImport(empty.clone()).to_string(),
+            empty.to_string()
+        );
+    }
+
+    #[test]
+    fn an_empty_import_with_nothing_malformed_says_so() {
+        let empty = EmptyImport {
+            format: "generic".into(),
+            malformed: 0,
+            reasons: Vec::new(),
+        };
+
+        assert_eq!(
+            empty.to_string(),
+            "Nothing could be read from this file as `generic`: no rows matched the format. \
+             Nothing was imported and the file was not recorded — correct the format or the \
+             column mapping and import it again."
+        );
     }
 
     #[test]

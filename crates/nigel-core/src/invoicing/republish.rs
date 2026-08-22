@@ -274,7 +274,7 @@ mod tests {
     fn an_unpublished_invoice_is_not_applicable_and_uploads_nothing() {
         let (_d, conn) = test_conn();
         let id = seed(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
 
         let outcome = republish(&conn, id, Some(&publisher));
@@ -288,7 +288,7 @@ mod tests {
     fn a_published_invoice_is_re_rendered_and_re_uploaded() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let token = get_invoice(&conn, id).unwrap().token;
         let publisher = CapturePub::default();
 
@@ -307,7 +307,7 @@ mod tests {
     fn the_pdf_beside_the_page_is_replaced_too() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
 
         let outcome = republish(&conn, id, Some(&publisher));
@@ -326,7 +326,7 @@ mod tests {
     fn a_settled_invoice_is_republished_without_its_pay_button() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 100.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 100.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
 
         republish(&conn, id, Some(&publisher));
@@ -360,7 +360,7 @@ mod tests {
     fn no_publisher_is_skipped_and_warns_that_the_page_is_stale() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
 
         let outcome = republish(&conn, id, None::<&CapturePub>);
 
@@ -375,7 +375,7 @@ mod tests {
     fn a_failed_upload_keeps_the_upstreams_own_words() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
 
         let outcome = republish(&conn, id, Some(&FailPub));
 
@@ -394,7 +394,7 @@ mod tests {
     fn republishing_writes_nothing_to_the_invoice() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let before = get_invoice(&conn, id).unwrap();
 
         republish(&conn, id, Some(&CapturePub::default()));
@@ -414,7 +414,7 @@ mod tests {
     fn without_the_pdf_feature_only_the_page_is_replaced_and_nothing_warns() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
 
         let outcome = republish(&conn, id, Some(&publisher));
@@ -449,7 +449,7 @@ mod tests {
     fn a_republished_page_points_at_the_hosted_logo() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
         let uri = logo_uri();
         let branding = Branding {
@@ -481,7 +481,7 @@ mod tests {
     fn a_failed_logo_upload_still_republishes_the_corrected_page() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = LogoRefusingPub::default();
         let uri = logo_uri();
         let branding = Branding {
@@ -516,7 +516,7 @@ mod tests {
     fn a_republish_that_cannot_render_uploads_nothing() {
         let (_d, conn) = test_conn();
         let id = seed_sent(&conn);
-        record_payment(&conn, id, 40.0, "2026-08-05", "other", None).unwrap();
+        record_payment(&conn, id, 40.0, "2026-08-05", "other", None, "2026-08-05").unwrap();
         let publisher = CapturePub::default();
         let uri = logo_uri();
         let branding = Branding {

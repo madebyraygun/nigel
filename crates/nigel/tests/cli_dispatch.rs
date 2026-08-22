@@ -2737,6 +2737,165 @@ fn test_import_generic_csv_with_saved_profile() {
         .stdout(predicate::str::contains("1 imported"));
 }
 
+/// A statement whose rows the parser refuses one by one, leaving nothing to
+/// import. The header is the only line `bofa_checking` can read.
+fn write_unreadable_statement(env: &TestEnv, name: &str) -> PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(
+        &path,
+        "Date,Description,Amount,Running Bal.\n\
+         13/40/2026,GLOBEX HOSTING,-88.00,900.00\n\
+         13/41/2026,CEDAR SYSTEMS,-12.00,888.00\n",
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_refused_import_leaves_no_profile_behind() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_unreadable_statement(&env, "unreadable-profile.csv");
+
+    // The mapping is well formed; the file it points at is not. --save-profile
+    // must wait for the import, or a refusal names a profile nobody can use.
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--date-col",
+            "0",
+            "--desc-col",
+            "1",
+            "--amount-col",
+            "2",
+            "--save-profile",
+            "sinkhole",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Nothing could be read from this file",
+        ));
+
+    let good_path = env.home.path().join("readable.csv");
+    std::fs::write(
+        &good_path,
+        "03/02/2026,GLOBEX HOSTING,-88.00\n03/04/2026,CLIENT PAYMENT,1200.00\n",
+    )
+    .unwrap();
+
+    env.cmd()
+        .args([
+            "import",
+            &good_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "sinkhole",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown format: 'sinkhole'"));
+}
+
+/// A statement with one row the parser cannot read and two it can.
+fn write_statement_with_one_bad_row(env: &TestEnv, name: &str) -> PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(
+        &path,
+        "Date,Description,Amount,Running Bal.\n\
+         03/02/2026,GLOBEX HOSTING,-88.00,900.00\n\
+         13/40/2026,CEDAR SYSTEMS,-12.00,888.00\n\
+         03/04/2026,CLIENT PAYMENT,1200.00,2088.00\n",
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn imports_list_shows_what_each_import_dropped() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_statement_with_one_bad_row(&env, "march-checking.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 imported"));
+
+    env.cmd()
+        .arg("imports")
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("march-checking.csv")
+                .and(predicate::str::contains("2 rows, 1 dropped")),
+        );
+}
+
+#[test]
+fn status_names_the_account_whose_books_are_incomplete() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_statement_with_one_bad_row(&env, "february-checking.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .success();
+
+    env.cmd()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Dropped rows:  1 (BofA Checking 1)",
+        ));
+}
+
+#[test]
+fn a_refused_import_says_the_format_and_the_reasons_and_exits_nonzero() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let csv_path = write_unreadable_statement(&env, "unreadable.csv");
+
+    env.cmd()
+        .args([
+            "import",
+            &csv_path.to_string_lossy(),
+            "--account",
+            "BofA Checking",
+            "--format",
+            "bofa_checking",
+        ])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Nothing could be read from this file as `bofa_checking`")
+                .and(predicate::str::contains("2 rows were malformed"))
+                .and(predicate::str::contains("is not MM/DD/YYYY")),
+        );
+}
+
 #[test]
 fn status_migrates_outdated_database() {
     let env = TestEnv::new();
@@ -3748,4 +3907,93 @@ fn an_explicit_currency_survives_seeding_a_schedule_from_an_invoice() {
         )
         .expect("the schedule exists");
     assert_eq!(currency, "EUR", "the typed currency is not the source's");
+}
+
+/// An invoice whose due date passed with no event since publish reads `overdue`
+/// on both surfaces — and looking at it does not write to it.
+#[test]
+fn invoice_list_and_show_report_a_lapsed_due_date_as_overdue() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Published in the past with a due date behind it, which is the state no
+    // event will ever revisit.
+    env.db()
+        .execute_batch(
+            "UPDATE invoices
+                SET status = 'sent', published_at = '2026-01-05', due_date = '2026-02-04'
+              WHERE number = 1248;",
+        )
+        .expect("publish the seeded invoice");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("overdue"));
+
+    env.cmd()
+        .args(["invoice", "show", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[overdue]"));
+
+    let stored: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("status");
+    assert_eq!(stored, "sent", "a read wrote to the books");
+}
+
+/// `--amount -5` used to die in clap with a tip (`-- -5`) that also fails, so
+/// the app's own sentence was reachable only as `--amount=-5`. Both spellings
+/// now get the same answer.
+#[test]
+fn a_negative_payment_amount_gets_the_apps_own_refusal_either_way() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    for amount in ["-5", "-5.00"] {
+        env.cmd()
+            .args([
+                "invoice",
+                "pay",
+                "1248",
+                "--date",
+                "2026-08-20",
+                "--amount",
+                amount,
+            ])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "--amount must be a finite number greater than zero",
+            ))
+            .stderr(predicate::str::contains("unexpected argument").not());
+    }
+
+    // The joined spelling has always reached it, and still says the same thing.
+    env.cmd()
+        .args([
+            "invoice",
+            "pay",
+            "1248",
+            "--date",
+            "2026-08-20",
+            "--amount=-5",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "--amount must be a finite number greater than zero",
+        ));
+
+    // Nothing was recorded by any of them.
+    let payments: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoice_payments", [], |r| r.get(0))
+        .expect("payments");
+    assert_eq!(payments, 0);
 }

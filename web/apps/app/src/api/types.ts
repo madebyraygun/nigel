@@ -889,6 +889,8 @@ export interface ImportListItem {
   accountName: string;
   importDate: string;
   transactionCount: number;
+  /** How many rows the parser refused; the rows are readable through the API. */
+  malformedCount: number;
 }
 
 /** `DELETE /api/imports/:id` — what rolling one back removed. */

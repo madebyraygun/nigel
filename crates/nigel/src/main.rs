@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    InvoiceCommands, InvoiceScheduleCommands, InvoiceTemplateCommands, PasswordCommand,
-    RulesCommands,
+    ImportsCommands, InvoiceCommands, InvoiceScheduleCommands, InvoiceTemplateCommands,
+    PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -298,8 +298,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ),
             InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
             InvoiceCommands::Delete { number, yes } => cli::invoice::delete(number, yes),
-            InvoiceCommands::List => cli::invoice::list(),
-            InvoiceCommands::Show { number } => cli::invoice::show(number),
+            InvoiceCommands::List => cli::invoice::list(&cli::today()),
+            InvoiceCommands::Show { number } => cli::invoice::show(number, &cli::today()),
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)
             }
@@ -310,7 +310,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 amount,
                 date,
                 method,
-            } => cli::invoice::pay(number, amount, &date, &method),
+            } => cli::invoice::pay(number, amount, &date, &method, &cli::today()),
             InvoiceCommands::Aging => cli::invoice::aging(&cli::today()),
             InvoiceCommands::Import { db } => cli::invoice::import(&db),
             InvoiceCommands::Template { command } => match command {
@@ -368,6 +368,10 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 }
                 InvoiceScheduleCommands::Run => cli::invoice_schedule::run(&cli::today()),
             },
+        },
+        Commands::Imports { command } => match command {
+            ImportsCommands::List => cli::imports::list(),
+            ImportsCommands::Rejects { id } => cli::imports::rejects(id),
         },
         Commands::Import {
             file,

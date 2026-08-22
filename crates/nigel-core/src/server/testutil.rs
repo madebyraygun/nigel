@@ -670,8 +670,16 @@ fn seed_invoicing(conn: &Connection) {
     )
     .expect("1248");
     inv::mark_published(conn, id, "2026-01-15").expect("publish 1248");
-    inv::record_payment(conn, id, 4_000.00, "2026-02-10", "direct_deposit", None)
-        .expect("pay 1248");
+    inv::record_payment(
+        conn,
+        id,
+        4_000.00,
+        "2026-02-10",
+        "direct_deposit",
+        None,
+        AS_OF,
+    )
+    .expect("pay 1248");
 
     // 1249 — overdue.
     let id = inv::create_invoice(
@@ -710,6 +718,7 @@ fn seed_invoicing(conn: &Connection) {
         "2026-03-01",
         "stripe",
         Some("cs_test_seed_1250"),
+        AS_OF,
     )
     .expect("pay 1250");
 

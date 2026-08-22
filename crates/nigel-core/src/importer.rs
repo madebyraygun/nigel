@@ -5,7 +5,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::error::{NigelError, Result};
+use crate::categorizer::{categorize_transactions, CategorizeResult};
+use crate::error::{EmptyImport, NigelError, Result};
 use crate::models::ParsedRow;
 
 // ---------------------------------------------------------------------------
@@ -124,14 +125,18 @@ impl ImporterKind {
         }
     }
 
-    pub fn parse(&self, file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
+    pub fn parse(&self, file_path: &Path) -> Result<ParseOutcome> {
         match self {
             Self::BofaChecking => parse_bofa_checking(file_path),
             Self::BofaCreditCard => parse_bofa_credit_card(file_path),
             Self::BofaLineOfCredit => parse_bofa_line_of_credit(file_path),
             #[cfg(feature = "gusto")]
-            // Gusto extracts aggregate totals only; per-row malformed tracking is not applicable.
-            Self::GustoPayroll => parse_gusto_payroll(file_path).map(|rows| (rows, 0)),
+            // Gusto extracts aggregate totals only; there is no per-row parse
+            // to refuse.
+            Self::GustoPayroll => parse_gusto_payroll(file_path).map(|rows| ParseOutcome {
+                rows,
+                rejects: Vec::new(),
+            }),
         }
     }
 
@@ -221,6 +226,49 @@ pub struct GenericCsvConfig {
     pub date_format: String,
 }
 
+/// A row a parser refused, kept as it appeared in the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedRow {
+    /// The line in the file, 1-based, as the CSV reader counted it.
+    pub row_number: u64,
+    /// The row's fields, rejoined with commas.
+    pub content: String,
+    /// What failed, in the parser's own words.
+    pub reason: String,
+}
+
+/// What one parse produced: the rows that can become transactions, and the
+/// rows that cannot with the reason each was refused.
+#[derive(Debug, Default)]
+pub struct ParseOutcome {
+    pub rows: Vec<ParsedRow>,
+    pub rejects: Vec<RejectedRow>,
+}
+
+impl ParseOutcome {
+    /// How many rows were refused. The count and the rows are the same fact,
+    /// so there is only one of them to keep correct.
+    pub fn malformed(&self) -> usize {
+        self.rejects.len()
+    }
+
+    fn reject(&mut self, record: &csv::StringRecord, reason: String) {
+        self.rejects.push(RejectedRow {
+            row_number: record.position().map_or(0, |p| p.line()),
+            content: record.iter().collect::<Vec<_>>().join(","),
+            reason,
+        });
+    }
+
+    fn reject_unreadable(&mut self, err: &csv::Error) {
+        self.rejects.push(RejectedRow {
+            row_number: err.position().map_or(0, |p| p.line()),
+            content: String::new(),
+            reason: format!("the row could not be read as CSV: {err}"),
+        });
+    }
+}
+
 pub fn save_csv_profile(conn: &Connection, name: &str, config: &GenericCsvConfig) -> Result<()> {
     if get_by_key(name).is_some() {
         return Err(NigelError::Other(format!(
@@ -295,13 +343,9 @@ pub fn load_csv_profile(conn: &Connection, name: &str) -> Result<Option<GenericC
     }
 }
 
-pub fn parse_generic_csv(
-    file_path: &Path,
-    config: &GenericCsvConfig,
-) -> Result<(Vec<ParsedRow>, usize)> {
+pub fn parse_generic_csv(file_path: &Path, config: &GenericCsvConfig) -> Result<ParseOutcome> {
     let mut rdr = create_csv_reader(file_path)?;
-    let mut rows = Vec::new();
-    let mut malformed = 0usize;
+    let mut out = ParseOutcome::default();
     let mut first = true;
     let min_cols = [config.date_col, config.desc_col, config.amount_col]
         .into_iter()
@@ -310,9 +354,12 @@ pub fn parse_generic_csv(
         + 1;
 
     for result in rdr.records() {
-        let Ok(record) = result else {
-            malformed += 1;
-            continue;
+        let record = match result {
+            Ok(record) => record,
+            Err(err) => {
+                out.reject_unreadable(&err);
+                continue;
+            }
         };
         // Skip header row
         if first {
@@ -320,33 +367,42 @@ pub fn parse_generic_csv(
             continue;
         }
         if record.len() < min_cols {
-            malformed += 1;
+            let reason = format!(
+                "expected at least {min_cols} columns, found {}",
+                record.len()
+            );
+            out.reject(&record, reason);
             continue;
         }
         let raw_date = record[config.date_col].trim();
         let date = match chrono::NaiveDate::parse_from_str(raw_date, &config.date_format) {
             Ok(d) => d.format("%Y-%m-%d").to_string(),
             Err(_) => {
-                malformed += 1;
+                let reason = format!("date {:?} is not {}", raw_date, config.date_format);
+                out.reject(&record, reason);
                 continue;
             }
         };
         let description = record[config.desc_col].trim().to_string();
         if description.is_empty() {
-            malformed += 1;
+            out.reject(&record, "the description column is empty".to_string());
             continue;
         }
         let Some(amount) = parse_amount(&record[config.amount_col]) else {
-            malformed += 1;
+            let reason = format!(
+                "amount {:?} is not a number",
+                record[config.amount_col].trim()
+            );
+            out.reject(&record, reason);
             continue;
         };
-        rows.push(ParsedRow {
+        out.rows.push(ParsedRow {
             date,
             description,
             amount,
         });
     }
-    Ok((rows, malformed))
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -356,7 +412,7 @@ pub fn parse_generic_csv(
 /// The format key used for an inline column mapping, which has no saved name.
 pub const GENERIC_FORMAT: &str = "generic";
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub imported: usize,
@@ -434,10 +490,34 @@ pub fn import_file(
         ResolvedImporter::Generic(_, name) => name.clone(),
     };
 
-    let (parsed_rows, malformed) = match &resolved {
+    let parsed = match &resolved {
         ResolvedImporter::BuiltIn(kind) => kind.parse(file_path)?,
         ResolvedImporter::Generic(config, _) => parse_generic_csv(file_path, config)?,
     };
+    let malformed = parsed.malformed();
+
+    // A parse that read nothing is refused rather than recorded: an `imports`
+    // row here would spend the file's checksum on an import that added no
+    // transactions, and every corrected retry would answer "already imported".
+    // A dry run is exempt — reporting that nothing would be imported is the
+    // preview's job.
+    if !dry_run && parsed.rows.is_empty() {
+        return Err(NigelError::EmptyImport(EmptyImport {
+            format,
+            malformed,
+            reasons: parsed
+                .rejects
+                .iter()
+                .take(EmptyImport::REASON_LIMIT)
+                .map(|reject| reject.reason.clone())
+                .collect(),
+        }));
+    }
+
+    let ParseOutcome {
+        rows: parsed_rows,
+        rejects,
+    } = parsed;
     let sample: Vec<ParsedRow> = parsed_rows.iter().take(5).cloned().collect();
 
     let mut imported = 0usize;
@@ -449,7 +529,7 @@ pub fn import_file(
         let min_date = dates.iter().min().copied();
         let max_date = dates.iter().max().copied();
         conn.execute(
-            "INSERT INTO imports (filename, account_id, record_count, date_range_start, date_range_end, checksum) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO imports (filename, account_id, record_count, date_range_start, date_range_end, checksum, malformed_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 file_path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
                 account_id,
@@ -457,10 +537,29 @@ pub fn import_file(
                 min_date,
                 max_date,
                 checksum,
+                malformed as i64,
             ],
         )?;
         let import_id = conn.last_insert_rowid();
         created_import = Some(import_id);
+
+        // The rejected rows ride in the caller's transaction with the import
+        // they belong to, and leave with it: `import_rejects.import_id`
+        // cascades on delete.
+        {
+            let mut stmt = conn.prepare_cached(
+                "INSERT INTO import_rejects (import_id, row_number, content, reason) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for reject in &rejects {
+                stmt.execute(rusqlite::params![
+                    import_id,
+                    reject.row_number as i64,
+                    reject.content,
+                    reject.reason,
+                ])?;
+            }
+        }
 
         for row in &parsed_rows {
             if is_duplicate_row(conn, account_id, row)? {
@@ -500,6 +599,71 @@ pub fn import_file(
     })
 }
 
+/// One import, as an entry point describes it.
+///
+/// A struct rather than six positional arguments because three callers hand
+/// over the same thing and only one of them can see the others.
+pub struct ImportRequest<'a> {
+    pub file_path: &'a Path,
+    pub account_name: &'a str,
+    pub format_key: Option<&'a str>,
+    pub inline_config: Option<&'a GenericCsvConfig>,
+}
+
+/// A committed import: what was written, and what categorization made of it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOutcome {
+    #[serde(flatten)]
+    pub result: ImportResult,
+    pub categorized: usize,
+    /// The whole ledger's flagged count, not just this import's.
+    pub still_flagged: usize,
+}
+
+/// Import a file and categorize what it added, as one unit of work.
+///
+/// The transaction is the whole point: `import_file` writes the `imports` row
+/// and then a transaction apiece, and `categorize_transactions` updates each
+/// row it matches, so a failure anywhere in the middle would otherwise leave
+/// committed transactions, a spent checksum, and no way to retry the file.
+/// Everything here rolls back to the state the pre-import snapshot describes.
+///
+/// The snapshot itself belongs outside, and before: it is the escape hatch for
+/// what a transaction cannot undo.
+pub fn import_and_categorize(
+    conn: &Connection,
+    request: &ImportRequest<'_>,
+) -> Result<ImportOutcome> {
+    let tx = conn.unchecked_transaction()?;
+    let result = import_file(
+        &tx,
+        request.file_path,
+        request.account_name,
+        request.format_key,
+        false,
+        request.inline_config,
+    )?;
+    // A file already imported is answered, not undone — there is nothing new
+    // to categorize, and saying "0 categorized" is the truth rather than a
+    // sweep of the whole ledger.
+    let counts = if result.duplicate_file {
+        CategorizeResult {
+            categorized: 0,
+            still_flagged: 0,
+        }
+    } else {
+        categorize_transactions(&tx)?
+    };
+    tx.commit()?;
+
+    Ok(ImportOutcome {
+        result,
+        categorized: counts.categorized,
+        still_flagged: counts.still_flagged,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // BofA Checking parser
 // ---------------------------------------------------------------------------
@@ -521,16 +685,19 @@ fn detect_bofa_checking(file_path: &Path) -> bool {
     false
 }
 
-fn parse_bofa_checking(file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
+fn parse_bofa_checking(file_path: &Path) -> Result<ParseOutcome> {
+    const MIN_COLS: usize = 3;
     let mut rdr = create_csv_reader(file_path)?;
-    let mut rows = Vec::new();
+    let mut out = ParseOutcome::default();
     let mut found_header = false;
-    let mut malformed = 0usize;
 
     for result in rdr.records() {
-        let Ok(record) = result else {
-            malformed += 1;
-            continue;
+        let record = match result {
+            Ok(record) => record,
+            Err(err) => {
+                out.reject_unreadable(&err);
+                continue;
+            }
         };
         if !found_header {
             if record.len() >= 4 && record[0].trim() == "Date" && record[1].contains("Description")
@@ -539,27 +706,42 @@ fn parse_bofa_checking(file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
             }
             continue;
         }
-        if record.len() < 3 || record[0].trim().is_empty() {
+        if record.iter().all(|field| field.trim().is_empty()) {
+            continue;
+        }
+        if record.len() < MIN_COLS {
+            let reason = format!(
+                "expected at least {MIN_COLS} columns, found {}",
+                record.len()
+            );
+            out.reject(&record, reason);
             continue;
         }
         let Some(date) = parse_date_mdy(&record[0]) else {
+            let reason = format!("date {:?} is not MM/DD/YYYY", record[0].trim());
+            out.reject(&record, reason);
             continue;
         };
         let description = record[1].trim().to_string();
-        if description.is_empty() || description.contains("Beginning balance") {
+        if description.contains("Beginning balance") {
+            continue;
+        }
+        if description.is_empty() {
+            out.reject(&record, "the description column is empty".to_string());
             continue;
         }
         let Some(amount) = parse_amount(&record[2]) else {
-            malformed += 1;
+            let reason = format!("amount {:?} is not a number", record[2].trim());
+            out.reject(&record, reason);
             continue;
         };
-        rows.push(ParsedRow {
+        out.rows.push(ParsedRow {
             date,
             description,
             amount,
         });
     }
-    Ok((rows, malformed))
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +764,7 @@ fn detect_bofa_credit_card(file_path: &Path) -> bool {
     false
 }
 
-fn parse_bofa_credit_card(file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
+fn parse_bofa_credit_card(file_path: &Path) -> Result<ParseOutcome> {
     parse_bofa_card_format(file_path, true)
 }
 
@@ -590,28 +772,27 @@ fn parse_bofa_credit_card(file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
 // BofA Line of Credit parser
 // ---------------------------------------------------------------------------
 
-fn parse_bofa_line_of_credit(file_path: &Path) -> Result<(Vec<ParsedRow>, usize)> {
+fn parse_bofa_line_of_credit(file_path: &Path) -> Result<ParseOutcome> {
     parse_bofa_card_format(file_path, false)
 }
 
 /// Shared parser for BofA Credit Card and Line of Credit CSV formats.
 /// - `has_type_column: true`  → Credit Card (D/C sign logic)
 /// - `has_type_column: false` → Line of Credit (always negate)
-fn parse_bofa_card_format(
-    file_path: &Path,
-    has_type_column: bool,
-) -> Result<(Vec<ParsedRow>, usize)> {
+fn parse_bofa_card_format(file_path: &Path, has_type_column: bool) -> Result<ParseOutcome> {
     let mut rdr = create_csv_reader(file_path)?;
-    let mut rows = Vec::new();
+    let mut out = ParseOutcome::default();
     let mut found_header = false;
-    let mut malformed = 0usize;
     let (mut idx_date, mut idx_desc, mut idx_amount, mut idx_type) = (3, 5, 6, 9);
     let mut header_field_count: usize = 0;
 
     for result in rdr.records() {
-        let Ok(record) = result else {
-            malformed += 1;
-            continue;
+        let record = match result {
+            Ok(record) => record,
+            Err(err) => {
+                out.reject_unreadable(&err);
+                continue;
+            }
         };
         if !found_header {
             if record.iter().any(|f| f.contains("Posting Date")) {
@@ -664,15 +845,23 @@ fn parse_bofa_card_format(
                 + 1
         };
         if record.len() < min_cols {
+            let reason = format!(
+                "expected at least {min_cols} columns, found {}",
+                record.len()
+            );
+            out.reject(&record, reason);
             continue;
         }
         // Validate that adjusted indices land on the right columns — a date
         // that doesn't parse or a non-numeric amount means the offset was wrong.
         let Some(date) = parse_date_mdy(&record[adj_date]) else {
+            let reason = format!("date {:?} is not MM/DD/YYYY", record[adj_date].trim());
+            out.reject(&record, reason);
             continue;
         };
         let description = record[adj_desc].trim().to_string();
         if description.is_empty() {
+            out.reject(&record, "the description column is empty".to_string());
             continue;
         }
         let amount_str = record[adj_amount].trim();
@@ -684,11 +873,13 @@ fn parse_bofa_card_format(
                 .chars()
                 .any(|c| !c.is_ascii_digit())
         {
-            malformed += 1;
+            let reason = format!("amount {:?} is not a number", amount_str);
+            out.reject(&record, reason);
             continue;
         }
         let Some(parsed) = parse_amount(amount_str) else {
-            malformed += 1;
+            let reason = format!("amount {:?} is not a number", amount_str);
+            out.reject(&record, reason);
             continue;
         };
         let amount = if has_type_column {
@@ -701,13 +892,13 @@ fn parse_bofa_card_format(
         } else {
             -parsed
         };
-        rows.push(ParsedRow {
+        out.rows.push(ParsedRow {
             date,
             description,
             amount,
         });
     }
-    Ok((rows, malformed))
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,9 +1274,9 @@ Date,Description,Amount,Running Bal.
 01/31/2025,BKOFAMERICA MOBILE DEPOSIT,\"2,000.00\",\"32,742.87\"
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaChecking.parse(&path).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].amount, 2000.0);
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.rows[0].amount, 2000.0);
     }
 
     #[test]
@@ -1102,12 +1293,12 @@ Date,Description,Amount,Running Bal.
 01/17/2025,STRIPE PAYOUT,2500.00,3450.00
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaChecking.parse(&path).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].description, "ADOBE CREATIVE");
-        assert_eq!(rows[0].amount, -50.0);
-        assert_eq!(rows[1].description, "STRIPE PAYOUT");
-        assert_eq!(rows[1].amount, 2500.0);
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 2);
+        assert_eq!(outcome.rows[0].description, "ADOBE CREATIVE");
+        assert_eq!(outcome.rows[0].amount, -50.0);
+        assert_eq!(outcome.rows[1].description, "STRIPE PAYOUT");
+        assert_eq!(outcome.rows[1].amount, 2500.0);
     }
 
     #[test]
@@ -1122,15 +1313,15 @@ BLUEPEAK DESIGN, LLC,1234,01/16/2025,01/16/2025,-75.50,Travel,DELTA AIRLINES,456
 BLUEPEAK DESIGN, LLC,1234,01/17/2025,01/17/2025,200.00,Refund,STORE REFUND,789 Oak Ave,Portland OR,REF003,C
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
-        assert_eq!(rows.len(), 3, "all 3 rows should be parsed");
-        assert_eq!(rows[0].date, "2025-01-15");
-        assert_eq!(rows[0].description, "AMAZON PURCHASE");
-        assert_eq!(rows[0].amount, -50.0); // D = debit
-        assert_eq!(rows[1].description, "DELTA AIRLINES");
-        assert_eq!(rows[1].amount, -75.5);
-        assert_eq!(rows[2].description, "STORE REFUND");
-        assert_eq!(rows[2].amount, 200.0); // C = credit
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 3, "all 3 rows should be parsed");
+        assert_eq!(outcome.rows[0].date, "2025-01-15");
+        assert_eq!(outcome.rows[0].description, "AMAZON PURCHASE");
+        assert_eq!(outcome.rows[0].amount, -50.0); // D = debit
+        assert_eq!(outcome.rows[1].description, "DELTA AIRLINES");
+        assert_eq!(outcome.rows[1].amount, -75.5);
+        assert_eq!(outcome.rows[2].description, "STORE REFUND");
+        assert_eq!(outcome.rows[2].amount, 200.0); // C = credit
     }
 
     #[test]
@@ -1143,10 +1334,10 @@ CardHolder Name,Account Number,Transaction Date,Posting Date,Amount,Category,Pay
 BLUEPEAK DESIGN LLC,1234,01/15/2025,01/15/2025,-50.00,Shopping,AMAZON PURCHASE,123 Main St,Seattle WA,REF001,D
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].description, "AMAZON PURCHASE");
-        assert_eq!(rows[0].amount, -50.0);
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.rows[0].description, "AMAZON PURCHASE");
+        assert_eq!(outcome.rows[0].amount, -50.0);
     }
 
     #[test]
@@ -1159,13 +1350,13 @@ BLUEPEAK DESIGN, LLC,5678,02/01/2025,02/01/2025,-1000.00,Transfer,LINE OF CREDIT
 BLUEPEAK DESIGN, LLC,5678,02/05/2025,02/05/2025,500.00,Payment,LOC PAYMENT,100 Bank St,Boston MA,REF102
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaLineOfCredit.parse(&path).unwrap();
-        assert_eq!(rows.len(), 2, "all 2 rows should be parsed");
-        assert_eq!(rows[0].date, "2025-02-01");
-        assert_eq!(rows[0].description, "LINE OF CREDIT DRAW");
-        assert_eq!(rows[0].amount, 1000.0); // LOC negates the amount
-        assert_eq!(rows[1].description, "LOC PAYMENT");
-        assert_eq!(rows[1].amount, -500.0);
+        let outcome = ImporterKind::BofaLineOfCredit.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 2, "all 2 rows should be parsed");
+        assert_eq!(outcome.rows[0].date, "2025-02-01");
+        assert_eq!(outcome.rows[0].description, "LINE OF CREDIT DRAW");
+        assert_eq!(outcome.rows[0].amount, 1000.0); // LOC negates the amount
+        assert_eq!(outcome.rows[1].description, "LOC PAYMENT");
+        assert_eq!(outcome.rows[1].amount, -500.0);
     }
 
     #[test]
@@ -1178,10 +1369,10 @@ CardHolder Name,Account Number,Transaction Date,Posting Date,Amount,Category,Pay
 SMITH, JONES, AND ASSOCIATES,1234,01/15/2025,01/15/2025,-99.00,Office,STAPLES,100 Main,City ST,REF001,D
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].description, "STAPLES");
-        assert_eq!(rows[0].amount, -99.0);
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.rows[0].description, "STAPLES");
+        assert_eq!(outcome.rows[0].amount, -99.0);
     }
 
     #[test]
@@ -1196,14 +1387,14 @@ JOHN DOE,1234,01/16/2025,01/16/2025,-30.00,Food,RESTAURANT,456 Elm St,Portland O
 BLUEPEAK DESIGN, LLC,1234,01/17/2025,01/17/2025,100.00,Refund,STORE REFUND,789 Oak Ave,City ST,REF003,C
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
-        assert_eq!(rows.len(), 3, "all 3 rows should be parsed");
-        assert_eq!(rows[0].description, "AMAZON PURCHASE");
-        assert_eq!(rows[0].amount, -50.0);
-        assert_eq!(rows[1].description, "RESTAURANT");
-        assert_eq!(rows[1].amount, -30.0);
-        assert_eq!(rows[2].description, "STORE REFUND");
-        assert_eq!(rows[2].amount, 100.0);
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 3, "all 3 rows should be parsed");
+        assert_eq!(outcome.rows[0].description, "AMAZON PURCHASE");
+        assert_eq!(outcome.rows[0].amount, -50.0);
+        assert_eq!(outcome.rows[1].description, "RESTAURANT");
+        assert_eq!(outcome.rows[1].amount, -30.0);
+        assert_eq!(outcome.rows[2].description, "STORE REFUND");
+        assert_eq!(outcome.rows[2].amount, 100.0);
     }
 
     #[test]
@@ -1251,13 +1442,17 @@ CardHolder Name,Account Number,Transaction Date,Posting Date,Amount,Category,Pay
 JOHN DOE,1234,01/15/2025,01/15/2025,-50.00,Shopping,AMAZON, INC,123 Main St,Seattle WA,REF001,D
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, _malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
         // Row has 12 fields (one extra from Payee comma) but CardHolder Name
         // has no comma, so offset=1 shifts all indices — the adjusted date
         // column now points at "01/15/2025" → date still looks valid, but
         // adjusted desc points at "Shopping" and adjusted amount at "AMAZON".
         // Amount validation rejects "AMAZON" as non-numeric, so row is skipped.
-        assert_eq!(rows.len(), 0, "row with misaligned comma should be skipped");
+        assert_eq!(
+            outcome.rows.len(),
+            0,
+            "row with misaligned comma should be skipped"
+        );
     }
 
     #[test]
@@ -1300,11 +1495,15 @@ BLUEPEAK DESIGN LLC,1234,01/16/2025,01/16/2025,NOT_A_NUMBER,Food,RESTAURANT,456 
 BLUEPEAK DESIGN LLC,1234,01/17/2025,01/17/2025,-25.00,Travel,DELTA AIRLINES,789 Oak Ave,City ST,REF003,D
 ";
         std::fs::write(&path, content).unwrap();
-        let (rows, malformed) = ImporterKind::BofaCreditCard.parse(&path).unwrap();
-        assert_eq!(rows.len(), 2, "only valid rows should be imported");
-        assert_eq!(malformed, 1, "one row should be counted as malformed");
-        assert_eq!(rows[0].description, "AMAZON PURCHASE");
-        assert_eq!(rows[1].description, "DELTA AIRLINES");
+        let outcome = ImporterKind::BofaCreditCard.parse(&path).unwrap();
+        assert_eq!(outcome.rows.len(), 2, "only valid rows should be imported");
+        assert_eq!(
+            outcome.malformed(),
+            1,
+            "one row should be counted as malformed"
+        );
+        assert_eq!(outcome.rows[0].description, "AMAZON PURCHASE");
+        assert_eq!(outcome.rows[1].description, "DELTA AIRLINES");
     }
 
     #[test]
@@ -1453,12 +1652,12 @@ Date,Memo,Debit,Credit,Balance
             amount_col: 2,
             date_format: "%m/%d/%Y".to_string(),
         };
-        let (rows, malformed) = parse_generic_csv(&path, &config).unwrap();
-        assert_eq!(rows.len(), 2); // row 2 has empty amount col -> malformed
-        assert_eq!(malformed, 1);
-        assert_eq!(rows[0].date, "2025-01-15");
-        assert_eq!(rows[0].description, "COFFEE SHOP");
-        assert_eq!(rows[0].amount, -5.50);
+        let outcome = parse_generic_csv(&path, &config).unwrap();
+        assert_eq!(outcome.rows.len(), 2); // row 2 has empty amount col -> malformed
+        assert_eq!(outcome.malformed(), 1);
+        assert_eq!(outcome.rows[0].date, "2025-01-15");
+        assert_eq!(outcome.rows[0].description, "COFFEE SHOP");
+        assert_eq!(outcome.rows[0].amount, -5.50);
     }
 
     #[test]
@@ -1477,10 +1676,10 @@ transaction_date,description,amount
             amount_col: 2,
             date_format: "%Y-%m-%d".to_string(),
         };
-        let (rows, _) = parse_generic_csv(&path, &config).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].date, "2025-01-15");
-        assert_eq!(rows[1].amount, 2000.0);
+        let outcome = parse_generic_csv(&path, &config).unwrap();
+        assert_eq!(outcome.rows.len(), 2);
+        assert_eq!(outcome.rows[0].date, "2025-01-15");
+        assert_eq!(outcome.rows[1].amount, 2000.0);
     }
 
     #[test]
@@ -1675,5 +1874,411 @@ Date,Note,Amount
             .query_row("SELECT count(*) FROM transactions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 2);
+    }
+    /// A trigger that aborts the UPDATE `categorize_transactions` runs, which
+    /// is a failure between the import and the categorize step with no test
+    /// hook in the production path.
+    fn break_categorization(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TRIGGER fail_categorize BEFORE UPDATE ON transactions \
+             BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+        )
+        .unwrap();
+    }
+
+    fn repair_categorization(conn: &Connection) {
+        conn.execute_batch("DROP TRIGGER fail_categorize").unwrap();
+    }
+
+    fn add_matching_rule(conn: &Connection) {
+        let category_id: i64 = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO rules (pattern, match_type, vendor, category_id) \
+             VALUES ('CEDAR', 'contains', 'Cedar Systems', ?1)",
+            [category_id],
+        )
+        .unwrap();
+    }
+
+    fn table_count(conn: &Connection, table: &str) -> i64 {
+        conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_failure_during_categorization_leaves_nothing_behind() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[
+                ("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00"),
+                ("03/09/2026", "GLOBEX HOSTING", "-88.00"),
+            ],
+        );
+        break_categorization(&conn);
+
+        let err = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &csv_path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("injected failure"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(table_count(&conn, "transactions"), 0);
+        assert_eq!(table_count(&conn, "imports"), 0);
+    }
+
+    #[test]
+    fn a_rolled_back_import_does_not_spend_the_checksum() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00")],
+        );
+        let request = ImportRequest {
+            file_path: &csv_path,
+            account_name: "Test Checking",
+            format_key: Some("bofa_checking"),
+            inline_config: None,
+        };
+
+        break_categorization(&conn);
+        assert!(import_and_categorize(&conn, &request).is_err());
+        repair_categorization(&conn);
+
+        let outcome = import_and_categorize(&conn, &request).unwrap();
+        assert!(
+            !outcome.result.duplicate_file,
+            "the failed run spent the checksum"
+        );
+        assert_eq!(outcome.result.imported, 1);
+        assert_eq!(outcome.categorized, 1);
+        assert_eq!(table_count(&conn, "imports"), 1);
+    }
+
+    #[test]
+    fn a_duplicate_file_commits_nothing_and_categorizes_nothing() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let csv_path = write_bofa_csv(
+            dir.path(),
+            "march.csv",
+            &[("03/02/2026", "CEDAR SYSTEMS RETAINER", "2400.00")],
+        );
+        let request = ImportRequest {
+            file_path: &csv_path,
+            account_name: "Test Checking",
+            format_key: Some("bofa_checking"),
+            inline_config: None,
+        };
+
+        import_and_categorize(&conn, &request).unwrap();
+        let again = import_and_categorize(&conn, &request).unwrap();
+
+        assert!(again.result.duplicate_file);
+        assert_eq!(again.categorized, 0);
+        assert_eq!(again.still_flagged, 0);
+        assert_eq!(table_count(&conn, "imports"), 1);
+    }
+
+    #[test]
+    fn a_parse_that_reads_nothing_is_refused_and_the_file_stays_importable() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        // A statement whose dates are ISO, read as BofA checking, which wants
+        // MM/DD/YYYY: every row is malformed and none parses.
+        let path = dir.path().join("harbor-and-vale.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             2026-03-02,HARBOR & VALE RETAINER,1800.00,0.00\n\
+             2026-03-11,INITECH LICENSE,-240.00,0.00\n",
+        )
+        .unwrap();
+
+        let err = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .unwrap_err();
+
+        let NigelError::EmptyImport(empty) = &err else {
+            panic!("expected a refusal, got {err}");
+        };
+        assert_eq!(empty.format, "bofa_checking");
+        assert_eq!(empty.malformed, 2);
+        assert!(
+            empty.reasons[0].contains("is not MM/DD/YYYY"),
+            "{:?}",
+            empty.reasons
+        );
+        assert_eq!(table_count(&conn, "imports"), 0);
+        assert_eq!(table_count(&conn, "transactions"), 0);
+
+        // The same file, read with a mapping that fits it, imports normally:
+        // the refused attempt spent no checksum.
+        let outcome = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: None,
+                inline_config: Some(&GenericCsvConfig {
+                    date_col: 0,
+                    desc_col: 1,
+                    amount_col: 2,
+                    date_format: "%Y-%m-%d".into(),
+                }),
+            },
+        )
+        .unwrap();
+        assert!(!outcome.result.duplicate_file);
+        assert_eq!(outcome.result.imported, 2);
+    }
+
+    #[test]
+    fn a_dry_run_of_an_unreadable_file_still_reports_zero() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let path = dir.path().join("harbor-and-vale.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             2026-03-02,HARBOR & VALE RETAINER,1800.00,0.00\n",
+        )
+        .unwrap();
+
+        let result = import_file(
+            &conn,
+            &path,
+            "Test Checking",
+            Some("bofa_checking"),
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.malformed, 1);
+    }
+
+    #[test]
+    fn a_rejected_row_carries_its_line_its_content_and_a_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             03/09/2026,GLOBEX HOSTING,n/a,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 1);
+        let reject = &outcome.rejects[0];
+        assert_eq!(reject.row_number, 3);
+        assert_eq!(reject.content, "03/09/2026,GLOBEX HOSTING,n/a,0.00");
+        assert_eq!(reject.reason, "amount \"n/a\" is not a number");
+    }
+
+    #[test]
+    fn a_date_the_parser_cannot_read_is_a_reject_rather_than_a_silent_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        // The bank changed its date format mid-statement.
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             2026-03-09,GLOBEX HOSTING,-88.00,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 1);
+        assert_eq!(
+            outcome.rejects[0].reason,
+            "date \"2026-03-09\" is not MM/DD/YYYY"
+        );
+    }
+
+    #[test]
+    fn a_row_missing_only_its_date_is_recorded_rather_than_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        // An empty date cell with a real description and amount either side of
+        // it: a transaction the parser cannot place, not filler between
+        // sections.
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             ,GLOBEX HOSTING,-88.00,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 1);
+        assert_eq!(outcome.rejects[0].reason, "date \"\" is not MM/DD/YYYY");
+        assert_eq!(outcome.rejects[0].content, ",GLOBEX HOSTING,-88.00,0.00");
+    }
+
+    #[test]
+    fn a_line_with_nothing_on_it_is_not_a_dropped_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cedar.csv");
+        // Statements separate their sections with blank lines. Counting those
+        // as dropped rows would report a loss that never happened.
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             ,,,\n",
+        )
+        .unwrap();
+
+        let outcome = ImporterKind::BofaChecking.parse(&path).unwrap();
+
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.malformed(), 0);
+    }
+
+    #[test]
+    fn a_committed_import_records_the_rows_it_dropped() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             2026-03-09,GLOBEX HOSTING,-88.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+
+        let outcome = import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.result.imported, 1);
+        assert_eq!(outcome.result.malformed, 2);
+
+        let import_id = outcome.result.import_id.expect("an imports row");
+        let (records, malformed): (i64, i64) = conn
+            .query_row(
+                "SELECT record_count, malformed_count FROM imports WHERE id = ?1",
+                [import_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(records, 1);
+        assert_eq!(malformed, 2);
+
+        let mut stmt = conn
+            .prepare("SELECT row_number, content, reason FROM import_rejects WHERE import_id = ?1 ORDER BY row_number")
+            .unwrap();
+        let rejects: Vec<(i64, String, String)> = stmt
+            .query_map([import_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+
+        assert_eq!(rejects.len(), 2);
+        assert_eq!(rejects[0].0, 3);
+        assert_eq!(rejects[0].1, "2026-03-09,GLOBEX HOSTING,-88.00,0.00");
+        assert_eq!(rejects[0].2, "date \"2026-03-09\" is not MM/DD/YYYY");
+        assert_eq!(rejects[1].2, "amount \"n/a\" is not a number");
+    }
+
+    #[test]
+    fn a_rolled_back_import_leaves_no_rejects_either() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        add_matching_rule(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+        break_categorization(&conn);
+
+        assert!(import_and_categorize(
+            &conn,
+            &ImportRequest {
+                file_path: &path,
+                account_name: "Test Checking",
+                format_key: Some("bofa_checking"),
+                inline_config: None,
+            },
+        )
+        .is_err());
+
+        assert_eq!(table_count(&conn, "import_rejects"), 0);
+    }
+
+    #[test]
+    fn a_dry_run_records_no_rejects() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let path = dir.path().join("march.csv");
+        std::fs::write(
+            &path,
+            "Date,Description,Amount,Running Bal.\n\
+             03/02/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+             03/11/2026,INITECH LICENSE,n/a,0.00\n",
+        )
+        .unwrap();
+
+        let result = import_file(
+            &conn,
+            &path,
+            "Test Checking",
+            Some("bofa_checking"),
+            true,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.malformed, 1);
+        assert_eq!(table_count(&conn, "import_rejects"), 0);
     }
 }

@@ -18,6 +18,8 @@ export interface ImportHistoryRow {
   accountName: string;
   importDate: string;
   transactionCount: number;
+  /** How many rows the parser refused; the rows are readable through the API. */
+  malformedCount: number;
 }
 
 export interface NcImportUndoDetail {
@@ -27,6 +29,11 @@ export interface NcImportUndoDetail {
 /** "42 transactions", but "1 transaction". */
 export function transactionCountLabel(count: number): string {
   return `${count} ${count === 1 ? 'transaction' : 'transactions'}`;
+}
+
+/** "2 dropped", but an em dash when nothing was. */
+export function droppedCountLabel(count: number): string {
+  return count === 0 ? '—' : `${count} dropped`;
 }
 
 /**
@@ -91,6 +98,17 @@ export class WcImportHistory extends LitElement {
       th.count {
         text-align: end;
         font-variant-numeric: tabular-nums;
+      }
+
+      td.dropped,
+      th.dropped {
+        text-align: end;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      td.dropped[data-dropped='true'] {
+        color: var(--nc-color-flagged);
       }
 
       td.actions {
@@ -183,6 +201,7 @@ export class WcImportHistory extends LitElement {
             <th scope="col">Account</th>
             <th scope="col">Imported</th>
             <th scope="col" class="count">Transactions</th>
+            <th scope="col" class="dropped">Dropped</th>
             <th scope="col" class="actions">Actions</th>
           </tr>
         </thead>
@@ -202,6 +221,9 @@ export class WcImportHistory extends LitElement {
         <td>${item.accountName}</td>
         <td>${item.importDate}</td>
         <td class="count">${item.transactionCount}</td>
+        <td class="dropped" data-dropped=${item.malformedCount > 0 ? 'true' : 'false'}>
+          ${droppedCountLabel(item.malformedCount)}
+        </td>
         <td class="actions">
           <wa-button
             data-undo

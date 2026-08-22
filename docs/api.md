@@ -289,12 +289,13 @@ table is what `report` holds. The list routes below it answer with a bare array.
 | `/api/categories` | — | `CategoryRow[]` |
 | `/api/rules` | — | `RuleRow[]` |
 | `/api/imports` | — | `ImportListItem[]` |
+| `/api/imports/{id}/rejects` | — | `ImportReject[]` |
 | `/api/imports/formats` | — | `ImporterFormat[]` |
 | `/api/csv-profiles` | — | `CsvProfile[]` |
 | `/api/clients` | `includeArchived` | `Client[]` |
 | `/api/clients/{id}` | — | `ClientDetail` |
-| `/api/invoices` | `status`, `clientId` | `InvoiceListRow[]` |
-| `/api/invoices/{number}` | — | `InvoiceDetail` |
+| `/api/invoices` | `status`, `clientId`, `asOf` | `InvoiceListRow[]` |
+| `/api/invoices/{number}` | `asOf` | `InvoiceDetail` |
 | `/api/invoices/aging` | `asOf` | `AgingReport` |
 | `/api/invoices/next-number` | — | `{ number }` |
 
@@ -358,7 +359,7 @@ K-1's treatment follow.
 
 ### List responses
 
-The eight list endpoints answer with a bare JSON array — no envelope, no
+The nine list endpoints answer with a bare JSON array — no envelope, no
 pagination.
 
 - `/api/accounts` — every account, by name.
@@ -368,8 +369,12 @@ pagination.
 - `/api/rules` — active rules in the order the categorizer applies them:
   priority descending, ties by id. `vendor` is `null` when the rule sets none.
 - `/api/imports` — import history, newest first, each with the number of
-  transactions still attached. An import whose transactions were undone still
-  lists, at `transactionCount: 0`.
+  transactions still attached and, in `malformedCount`, the number of rows that
+  import dropped. An import whose transactions were undone still lists, at
+  `transactionCount: 0`.
+- `/api/imports/{id}/rejects` — the rows one import could not parse, in file
+  order: `rowNumber`, the raw `content`, and the parser's `reason`. An id no
+  import has is a `404`; an import that dropped nothing is an empty array.
 - `/api/csv-profiles` — saved generic-CSV column mappings, by name:
 
 ```json
@@ -445,6 +450,16 @@ client has is `404` `client_not_found`, not an empty array — filtering by
 something that does not exist is a wrong question, the same reasoning
 `/api/reports/register` applies to an unknown `account`.
 
+`asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
+today. An invoice past its due date with money owing reads `overdue` on that day
+even when the stored status still says `sent` or `partial`, which is what keeps
+this endpoint and `/api/invoices/aging` agreeing about the same invoice. The
+overlay only ever widens, never narrows: asked about a past day, a status the
+books already recorded is reported as stored, so an invoice a later event marked
+`overdue` reads `overdue` on a day the report still buckets it as current. The
+status filter selects on the same reading, so `?status=overdue` returns what the
+rows are rendered as. Nothing is written by a read.
+
 #### `GET /api/invoices/{number}`
 
 The invoice's own fields flattened, plus everything a detail screen prints:
@@ -483,6 +498,12 @@ re-derive them from `status`** — an edit is blocked by recorded payments as we
 as by status, and so is a delete, and a second copy of that rule is a second
 copy of the guardrails. The flags disable a control; the `409` is what enforces
 it.
+
+`asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
+today. An invoice past its due date with money owing reads `overdue` on that day
+even when the stored status still says `sent` or `partial`, which is what keeps
+this endpoint and `/api/invoices/aging` agreeing about the same invoice. Nothing
+is written by a read.
 
 An unknown number is `404` with `details.reason` = `invoice_not_found`.
 
@@ -1212,10 +1233,18 @@ happen — preview writes nothing at all, and `sample` is the first five rows.
 The preview body plus an optional `saveProfile`, which remembers the `mapping`
 under that name for next time. It requires a `mapping` to save and refuses the
 name of a built-in importer; both are `400`. The profile is written only after
-the import succeeds.
+the import succeeds. Because that write lands after the transaction commits, a
+profile save that fails on an import that succeeded answers an error for an
+import that is already in the books — retrying the same `uploadId` then reports
+`duplicateFile: true`. Rare by construction: the name and the mapping are
+validated up front, so only a raw SQL failure gets this far.
 
 The sequence is the one the terminal UI has always used: a pre-import snapshot
-into `<data-dir>/snapshots/`, then the import, then auto-categorization.
+into `<data-dir>/snapshots/`, then the import and auto-categorization together
+in one transaction. A failure anywhere in that transaction rolls the database
+back to its pre-import state — no `imports` row, no transactions, and the
+file's checksum unspent — so the same `uploadId` can be sent again once the
+cause is fixed.
 
 ```json
 {
@@ -1244,8 +1273,9 @@ Two outcomes look like failures and are not:
   counts, and a null `format` and `importId` — the checksum is checked before
   anything else, so nothing was parsed or written. This is what the CLI prints
   as "This file has already been imported".
-- **Rows that could not be parsed** are counted in `malformed` and skipped. A
-  statement with a bad row still imports its good ones.
+- **Rows that could not be parsed** are counted in `malformed` and recorded in
+  `import_rejects`, readable at `GET /api/imports/{id}/rejects`. A statement
+  with a bad row still imports its good ones.
 
 Genuine failures:
 
@@ -1257,6 +1287,7 @@ Genuine failures:
 | Format needs a cargo feature this build lacks | `501` |
 | No importer can read this file for that account type | `400` |
 | The file will not parse at all | `400`, carrying the parser's message |
+| A file that parses to no rows at all | `400`, `details.reason` = `empty_import`, with `format`, `malformed` and the first reasons |
 | Upload over 25 MB | `413` |
 
 ### Conflict reasons

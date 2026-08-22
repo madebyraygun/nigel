@@ -15,6 +15,7 @@ mod fixture_capture;
 pub mod goodbye;
 pub mod import;
 pub mod import_manager;
+pub mod imports;
 pub mod init;
 pub mod invoice;
 pub mod invoice_manager;
@@ -115,6 +116,11 @@ pub enum Commands {
     Invoice {
         #[command(subcommand)]
         command: InvoiceCommands,
+    },
+    /// Inspect import history and the rows an import dropped.
+    Imports {
+        #[command(subcommand)]
+        command: ImportsCommands,
     },
     /// Import a CSV/XLSX file and auto-categorize transactions.
     Import {
@@ -226,6 +232,17 @@ pub enum Commands {
     Completions {
         /// Shell: bash, zsh, fish, powershell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ImportsCommands {
+    /// List every import, newest first, with its row and dropped counts.
+    List,
+    /// Show the rows an import could not parse.
+    Rejects {
+        /// Import id, from `nigel imports list`.
+        id: i64,
     },
 }
 
@@ -516,7 +533,10 @@ pub enum InvoiceCommands {
         /// Invoice number
         number: i64,
         /// Amount paid (default: the full outstanding balance)
-        #[arg(long)]
+        ///
+        /// `allow_negative_numbers` so `--amount -5` reaches the app's own
+        /// "greater than zero" refusal instead of dying as an unknown flag.
+        #[arg(long, allow_negative_numbers = true)]
         amount: Option<f64>,
         /// Payment date: YYYY-MM-DD
         #[arg(long)]

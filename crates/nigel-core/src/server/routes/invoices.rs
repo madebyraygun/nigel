@@ -111,7 +111,12 @@ fn find_invoice(conn: &Connection, number: i64) -> ApiResult<Invoice> {
     inv::get_invoice_by_number(conn, number).map_err(|e| not_found_because(e, "invoice_not_found"))
 }
 
-fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
+/// The whole invoice a screen renders, read on `today`.
+///
+/// The capability flags are asked of the **stored** row: what may be edited,
+/// voided, paid or deleted is a fact about the record, and the derivation only
+/// changes what a reader is told the invoice's state is.
+fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<InvoiceDetail> {
     let client = get_client(conn, invoice.client_id)
         .map_err(|e| not_found_because(e, "client_not_found"))?;
     let items = inv::line_items(conn, invoice.id)?;
@@ -124,6 +129,8 @@ fn detail_for(conn: &Connection, invoice: Invoice) -> ApiResult<InvoiceDetail> {
     let can_send = not_void && client.email.is_some() && invoice.total > 0.0;
     let can_pay = not_void && inv::payment_amount(&invoice, paid, None).is_ok();
     let can_delete = inv::delete_blocker(conn, &invoice)?.is_none();
+
+    let invoice = inv::with_effective_status(invoice, paid, today);
 
     Ok(InvoiceDetail {
         public_url: public_url(&invoice),
@@ -167,6 +174,17 @@ fn public_url(invoice: &Invoice) -> Option<String> {
 struct ListQuery {
     status: Option<String>,
     client_id: Option<String>,
+    as_of: Option<String>,
+}
+
+/// The day a read is asked about, `asOf` or the server's own — the same knob
+/// the aging route has, so the two answer the same question about the same
+/// invoice on the same day.
+fn reference_day(as_of: Option<&str>) -> ApiResult<String> {
+    match as_of {
+        Some(value) => super::reports::parse_date("asOf", value),
+        None => Ok(crate::clock::today()),
+    }
 }
 
 async fn list(
@@ -184,6 +202,7 @@ async fn list(
             })
         })
         .transpose()?;
+    let today = reference_day(query.as_of.as_deref())?;
 
     let rows = with_conn_api(&state, move |conn| {
         // Filtering by a client that does not exist is a wrong question, not an
@@ -199,39 +218,38 @@ async fn list(
             conn,
             query.status.as_deref(),
             client_id,
+            &today,
         )?)
     })
     .await?;
     Ok(Json(rows))
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AsOfQuery {
+    as_of: Option<String>,
+}
+
 async fn detail(
     State(state): State<AppState>,
     ApiPath(number): ApiPath<i64>,
+    Query(query): Query<AsOfQuery>,
 ) -> ApiResult<Json<InvoiceDetail>> {
+    let today = reference_day(query.as_of.as_deref())?;
     let detail = with_conn_api(&state, move |conn| {
         let invoice = find_invoice(conn, number)?;
-        detail_for(conn, invoice)
+        detail_for(conn, invoice, &today)
     })
     .await?;
     Ok(Json(detail))
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgingQuery {
-    as_of: Option<String>,
-}
-
 async fn aging(
     State(state): State<AppState>,
-    Query(query): Query<AgingQuery>,
+    Query(query): Query<AsOfQuery>,
 ) -> ApiResult<Json<AgingReport>> {
-    // The server's own today, which is what `nigel invoice aging` uses.
-    let as_of = match query.as_of.as_deref() {
-        Some(value) => super::reports::parse_date("asOf", value)?,
-        None => chrono::Local::now().format("%Y-%m-%d").to_string(),
-    };
+    let as_of = reference_day(query.as_of.as_deref())?;
     let report = with_conn(&state, move |conn| inv::ar_aging_detail(conn, &as_of)).await?;
     Ok(Json(report))
 }
@@ -348,7 +366,7 @@ async fn create(
         )
         // The only thing `create_invoice` looks up is the client.
         .map_err(|e| not_found_because(e, "client_not_found"))?;
-        detail_for(conn, inv::get_invoice(conn, id)?)
+        detail_for(conn, inv::get_invoice(conn, id)?, &crate::clock::today())
     })
     .await?;
     Ok((StatusCode::CREATED, Json(detail)))
@@ -368,7 +386,7 @@ async fn duplicate(
     let detail = with_conn_api(&state, move |conn| {
         let source = find_invoice(conn, number)?;
         let id = inv::duplicate_invoice(conn, source.id, &today)?;
-        detail_for(conn, inv::get_invoice(conn, id)?)
+        detail_for(conn, inv::get_invoice(conn, id)?, &today)
     })
     .await?;
     Ok((StatusCode::CREATED, Json(detail)))
@@ -435,7 +453,7 @@ async fn update(
         // open a transaction of its own around it.
         inv::update_invoice(conn, invoice.id, &update, &today)
             .map_err(|e| enrich_conflict(e, &invoice, paid))?;
-        detail_for(conn, find_invoice(conn, number)?)
+        detail_for(conn, find_invoice(conn, number)?, &today)
     })
     .await?;
     Ok(Json(detail))
@@ -505,7 +523,7 @@ fn void_with<G: PaymentGateway, P: AssetPublisher>(
         .map_err(|e| enrich_conflict(e, &invoice, paid))?;
 
     Ok(VoidResult {
-        invoice: detail_for(conn, find_invoice(conn, number)?)?,
+        invoice: detail_for(conn, find_invoice(conn, number)?, today)?,
         payment_link_url: outcome.payment_link_url.clone(),
         teardown_warnings: outcome.warnings(),
     })
@@ -581,6 +599,7 @@ async fn pay(
     // keeps a request that cannot succeed from opening a connection at all.
     inv::validate_payment_method(&request.method)?;
     checked_date("date", &request.date)?;
+    let today = crate::clock::today();
 
     // The config and the data directory are resolved **inside** the closure,
     // which runs after `with_conn_api` has taken the `db_gate` read guard. A
@@ -603,6 +622,7 @@ async fn pay(
                 publisher.as_ref(),
                 &cfg,
                 &state.data_dir(),
+                &today,
             )
         }
     })
@@ -620,6 +640,7 @@ fn pay_with<P: AssetPublisher>(
     publisher: Option<&P>,
     cfg: &InvoicingConfig,
     data_dir: &std::path::Path,
+    today: &str,
 ) -> ApiResult<PayResult> {
     let invoice = find_invoice(conn, number)?;
     let paid = inv::paid_amount(conn, invoice.id)?;
@@ -632,6 +653,7 @@ fn pay_with<P: AssetPublisher>(
         &request.date,
         &request.method,
         None,
+        today,
     )
     .map_err(|e| enrich_conflict(e, &invoice, paid))?;
 
@@ -642,7 +664,7 @@ fn pay_with<P: AssetPublisher>(
     let republish_warnings =
         crate::invoicing::wiring::republish_with(conn, &refreshed, cfg, data_dir, publisher);
     Ok(PayResult {
-        invoice: detail_for(conn, refreshed)?,
+        invoice: detail_for(conn, refreshed, today)?,
         republish_warnings,
     })
 }
@@ -845,7 +867,7 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     .map_err(|failure| send_error(conn, &invoice, failure))?;
 
     Ok(SendResult {
-        invoice: detail_for(conn, find_invoice(conn, number)?)?,
+        invoice: detail_for(conn, find_invoice(conn, number)?, today)?,
         public_url: outcome.public_url,
         payment_link_url: outcome.payment_link_url,
         steps: outcome
@@ -1080,7 +1102,7 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let (app, token) = app_for(&db_path);
 
-        let body = ok_json(&app, "/api/invoices", &token).await;
+        let body = ok_json(&app, "/api/invoices?asOf=2026-03-15", &token).await;
         let rows = body.as_array().expect("a bare array");
         assert_eq!(rows.len(), 6);
         assert_eq!(rows[0]["number"], 1252);
@@ -1100,7 +1122,7 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let (app, token) = app_for(&db_path);
 
-        let open = ok_json(&app, "/api/invoices?status=open", &token).await;
+        let open = ok_json(&app, "/api/invoices?status=open&asOf=2026-03-15", &token).await;
         let numbers: Vec<i64> = open
             .as_array()
             .unwrap()
@@ -1109,12 +1131,12 @@ mod tests {
             .collect();
         assert_eq!(numbers, vec![1251, 1250, 1249], "{open}");
 
-        let draft = ok_json(&app, "/api/invoices?status=draft", &token).await;
+        let draft = ok_json(&app, "/api/invoices?status=draft&asOf=2026-03-15", &token).await;
         assert_eq!(draft.as_array().unwrap().len(), 1);
         assert_eq!(draft[0]["number"], 1252);
 
         // Acme Co is client 1: invoices 1251 and 1250.
-        let acme = ok_json(&app, "/api/invoices?clientId=1", &token).await;
+        let acme = ok_json(&app, "/api/invoices?clientId=1&asOf=2026-03-15", &token).await;
         let numbers: Vec<i64> = acme
             .as_array()
             .unwrap()
@@ -1123,9 +1145,55 @@ mod tests {
             .collect();
         assert_eq!(numbers, vec![1251, 1250], "{acme}");
 
-        let both = ok_json(&app, "/api/invoices?clientId=1&status=sent", &token).await;
+        let both = ok_json(
+            &app,
+            "/api/invoices?clientId=1&status=sent&asOf=2026-03-15",
+            &token,
+        )
+        .await;
         assert_eq!(both.as_array().unwrap().len(), 1);
         assert_eq!(both[0]["number"], 1251);
+    }
+
+    /// The same rows, read on two days. `asOf` is what lets a caller — the
+    /// fixture capture above all — ask the question on a fixed day.
+    #[tokio::test]
+    async fn the_list_and_the_detail_read_overdue_on_the_day_they_are_asked_about() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        // 1250 is due 2026-03-20: partly paid and not yet late at AS_OF.
+        let at_as_of = ok_json(&app, "/api/invoices?asOf=2026-03-15", &token).await;
+        assert_eq!(at_as_of[2]["number"], 1250);
+        assert_eq!(at_as_of[2]["status"], "partial");
+
+        let later = ok_json(&app, "/api/invoices?asOf=2026-04-15", &token).await;
+        assert_eq!(later[2]["number"], 1250);
+        assert_eq!(later[2]["status"], "overdue");
+
+        let detail = ok_json(&app, "/api/invoices/1250?asOf=2026-04-15", &token).await;
+        assert_eq!(detail["status"], "overdue");
+        // Still the invoice it was: reading it changed nothing.
+        assert_eq!(detail["paid"], 2000.0);
+        assert_eq!(detail["balance"], 1200.0);
+        let unchanged = ok_json(&app, "/api/invoices/1250?asOf=2026-03-15", &token).await;
+        assert_eq!(unchanged["status"], "partial");
+    }
+
+    #[tokio::test]
+    async fn a_malformed_as_of_on_the_list_or_the_detail_is_a_400() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for uri in [
+            "/api/invoices?asOf=2026-4-1",
+            "/api/invoices/1250?asOf=yesterday",
+        ] {
+            let (status, body) = get_json(&app, uri, &token).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+            assert_eq!(body["error"]["code"], "bad_request");
+        }
     }
 
     #[tokio::test]
@@ -1163,7 +1231,7 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let (app, token) = app_for(&db_path);
 
-        let body = ok_json(&app, "/api/invoices/1250", &token).await;
+        let body = ok_json(&app, "/api/invoices/1250?asOf=2026-03-15", &token).await;
         assert!(body.get("token").is_none(), "token leaked: {body}");
 
         // Flattened, so the invoice's own fields sit at the top level.
@@ -1732,7 +1800,12 @@ mod tests {
 
         // 1247 void, 1248 paid, 1249 overdue, 1250 partial, 1251 sent.
         for number in [1247, 1248, 1249, 1250, 1251] {
-            let detail = ok_json(&app, &format!("/api/invoices/{number}"), &token).await;
+            let detail = ok_json(
+                &app,
+                &format!("/api/invoices/{number}?asOf=2026-03-15"),
+                &token,
+            )
+            .await;
             assert_eq!(detail["canDelete"], false, "#{number}: {detail}");
 
             let (status, body) =
@@ -1923,6 +1996,7 @@ mod tests {
             Some(&publisher),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment goes through");
 
@@ -1953,6 +2027,7 @@ mod tests {
             Some(&ForbiddenPub),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("a failed republish is not a failed payment");
 
@@ -1985,6 +2060,7 @@ mod tests {
             Some(&publisher),
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment goes through");
 
@@ -2011,6 +2087,7 @@ mod tests {
             None::<&FakePub>,
             &InvoicingConfig::default(),
             _dir.path(),
+            AS_OF,
         )
         .expect("the payment lands");
 
@@ -2201,12 +2278,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_partial_payment_moves_the_status_to_partial_and_a_full_one_to_paid() {
+    async fn a_partial_payment_leaves_a_balance_and_a_full_one_settles_it() {
         let _config = TempConfig::new();
         let (_dir, db_path) = seeded_db();
+        // 1251: 1,850 outstanding, due a month before whatever day this runs
+        // on, so a part-paid 1251 reads `overdue` rather than `partial`. That
+        // is the read this branch exists to make true, and the POST answers on
+        // the server's own day.
+        let lapsed = (chrono::Local::now() - chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+        crate::db::get_connection(&db_path)
+            .expect("open the seeded book")
+            .execute(
+                "UPDATE invoices SET due_date = ?1 WHERE number = 1251",
+                rusqlite::params![lapsed],
+            )
+            .expect("lapse 1251");
         let (app, token) = app_for(&db_path);
 
-        // 1251: sent, 1,850 outstanding.
         let (status, partial) = post_json(
             &app,
             "/api/invoices/1251/pay",
@@ -2215,7 +2305,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{partial}");
-        assert_eq!(partial["status"], "partial");
+        assert_eq!(partial["status"], "overdue");
+        assert_eq!(partial["paid"], 500.0);
         assert_eq!(partial["balance"], 1350.0);
         assert_eq!(partial["payments"][0]["method"], "ach");
 
@@ -2645,6 +2736,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -3213,6 +3305,7 @@ mod tests {
                 Ok(vec![PaidSession {
                     session_id: format!("cs_{id}"),
                     amount: 100.0,
+                    paid_at: None,
                 }])
             }
         }

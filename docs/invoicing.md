@@ -38,9 +38,11 @@ separate, confirmed action on the invoice itself, so writing an invoice and
 mailing it to a client are never one keystroke apart. A refusal appears under
 the field it is about, in the words `nigel invoice new` would have used.
 
-The list shows the stored status, exactly as `nigel invoice list` does, so an
-invoice that crossed its due date since it was last written still reads `sent`
-rather than `overdue` until something touches it.
+The list shows an invoice's status as of today, exactly as `nigel invoice list`
+does: an invoice that crossed its due date since it was last written reads
+`overdue` without waiting for a payment or a publish to touch it. The stored
+status is the record of what happened to the invoice; nothing is written by
+looking at it.
 
 Sending from the dashboard blocks the terminal for the few seconds the three
 network hops take. The screen says so while it waits, and keys pressed during
@@ -378,8 +380,9 @@ nigel invoice new --client 1 --issue 2026-08-04 --due 2026-09-03 \
 - `--item "desc:qty:unit"` is repeatable; at least one is required. The line total
   is `qty × unit`, and the invoice total is the sum of the lines. Descriptions
   cannot contain a colon.
-- `--due` is optional. An invoice with no due date never goes overdue and ages
-  from its issue date.
+- `--due` is optional. An invoice with no due date never goes overdue — no date
+  was promised — though the aging report still ages it from its issue date, so
+  it appears in a bucket without ever being called late.
 - `--currency` defaults to `USD` and must be a 3-letter code; it is stored
   uppercase.
 - `--notes` and `--terms` are free text, e.g.
@@ -1147,6 +1150,14 @@ any it has not seen. Payments are keyed by checkout session ID, so re-running it
 records nothing twice. It prints `Recorded N new payment(s)`, and a notice per
 invoice Stripe refused — a deleted payment link 404s forever, and one of those
 must not stop the rest of the run.
+
+A payment is dated the day the client paid it, read off the checkout session's
+own timestamp and converted to the local calendar day the books are kept in — so
+a payment made in late December and synced in January is recorded in December. A
+session that arrives without a timestamp is dated the day the sync ran, which is
+the only other day the run can honestly name. Either way the invoice's status is
+derived against the day of the run, so a backdated payment never un-ages an
+invoice.
 
 `POST /api/invoices/sync` is the same run over HTTP. It answers with the count,
 how many invoices were checked, `recordedInvoices` (the numbers a payment landed

@@ -17,9 +17,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::backup;
-use crate::categorizer::categorize_transactions;
 use crate::error::NigelError;
-use crate::importer::{self, CsvProfile, GenericCsvConfig, ImportResult, ImporterFormat};
+use crate::importer::{
+    self, import_and_categorize, CsvProfile, GenericCsvConfig, ImportOutcome, ImportRequest,
+    ImportResult, ImporterFormat,
+};
 use crate::imports::{self, ImportListItem};
 
 use super::super::error::{ApiError, ApiResult};
@@ -31,6 +33,7 @@ use super::with_conn;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/imports", get(list_imports))
+        .route("/imports/{id}/rejects", get(import_rejects))
         .route("/imports/{id}", delete(undo_import))
         .route("/imports/formats", get(list_formats))
         .route(
@@ -75,6 +78,24 @@ async fn undo_import(
 
 async fn list_imports(State(state): State<AppState>) -> ApiResult<Json<Vec<ImportListItem>>> {
     Ok(Json(with_conn(&state, imports::list_imports).await?))
+}
+
+/// The rows one import could not parse. A missing import is a `404` rather
+/// than an empty list: "nothing was dropped" and "no such import" are
+/// different answers.
+async fn import_rejects(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<Vec<imports::ImportReject>>> {
+    let rejects = with_conn(&state, move |conn| {
+        if !imports::import_exists(conn, id)? {
+            return Err(NigelError::NotFound(format!("No import with ID {id}")));
+        }
+        imports::list_rejects(conn, id)
+    })
+    .await?;
+
+    Ok(Json(rejects))
 }
 
 async fn list_csv_profiles(State(state): State<AppState>) -> ApiResult<Json<Vec<CsvProfile>>> {
@@ -170,7 +191,7 @@ async fn preview(
         request.mapping,
     )?;
 
-    let result = blocking(&state, move |db_path| plan.run(&db_path, true)).await?;
+    let result = blocking(&state, move |db_path| plan.run(&db_path)).await?;
 
     Ok(Json(result))
 }
@@ -192,9 +213,7 @@ struct ConfirmRequest {
 #[serde(rename_all = "camelCase")]
 struct ConfirmResponse {
     #[serde(flatten)]
-    result: ImportResult,
-    categorized: usize,
-    still_flagged: usize,
+    outcome: ImportOutcome,
     /// Where the pre-import snapshot went, the same line the CLI prints.
     snapshot: String,
 }
@@ -230,15 +249,7 @@ async fn confirm(
         super::ensure_account_exists(&conn, &plan.account)?;
         backup::snapshot(&conn, &snapshot_path)?;
 
-        let result = plan.import(&conn, false)?;
-        // A file already imported is answered, not undone: the CLI stops here
-        // too, before categorizing.
-        let (categorized, still_flagged) = if result.duplicate_file {
-            (0, 0)
-        } else {
-            let counts = categorize_transactions(&conn).map_err(ApiError::from)?;
-            (counts.categorized, counts.still_flagged)
-        };
+        let outcome = plan.run_import(&conn)?;
 
         // After the import rather than before it, so a file that would not
         // parse does not leave a profile behind.
@@ -247,9 +258,7 @@ async fn confirm(
         }
 
         Ok(ConfirmResponse {
-            result,
-            categorized,
-            still_flagged,
+            outcome,
             snapshot: snapshot_path.display().to_string(),
         })
     })
@@ -303,21 +312,36 @@ impl ImportPlan {
         })
     }
 
-    fn import(&self, conn: &rusqlite::Connection, dry_run: bool) -> ApiResult<ImportResult> {
+    /// The preview: a dry run that writes nothing.
+    fn preview(&self, conn: &rusqlite::Connection) -> ApiResult<ImportResult> {
         importer::import_file(
             conn,
             &self.upload.path,
             &self.account,
             self.format.as_deref(),
-            dry_run,
+            true,
             self.mapping.as_ref(),
         )
         .map_err(import_error)
     }
 
-    fn run(&self, db_path: &std::path::Path, dry_run: bool) -> ApiResult<ImportResult> {
+    /// The real thing: import and categorize, committed together or not at all.
+    fn run_import(&self, conn: &rusqlite::Connection) -> ApiResult<ImportOutcome> {
+        import_and_categorize(
+            conn,
+            &ImportRequest {
+                file_path: &self.upload.path,
+                account_name: &self.account,
+                format_key: self.format.as_deref(),
+                inline_config: self.mapping.as_ref(),
+            },
+        )
+        .map_err(import_error)
+    }
+
+    fn run(&self, db_path: &std::path::Path) -> ApiResult<ImportResult> {
         let conn = crate::db::get_connection(db_path)?;
-        self.import(&conn, dry_run)
+        self.preview(&conn)
     }
 }
 
@@ -977,6 +1001,111 @@ mod tests {
             &json!({"uploadId": stale, "account": "BofA Checking"}),
         )
         .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+    /// The same injected failure the importer tests use, reached through the
+    /// route: the confirm must answer an error and leave the database alone.
+    #[tokio::test]
+    async fn a_confirm_that_fails_partway_writes_nothing_and_can_be_retried() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let before = counts(&db_path);
+
+        {
+            let conn = crate::db::open_connection(&db_path, None).expect("open db");
+            conn.execute_batch(
+                "CREATE TRIGGER fail_categorize BEFORE UPDATE ON transactions \
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+            )
+            .unwrap();
+        }
+
+        let upload_id = upload_ok(&app, &token, "april.csv", &statement()).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+        let (status, body) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(counts(&db_path), before, "the failed confirm wrote rows");
+        // The upload survives a failure so the same id can be retried.
+        assert_eq!(spooled_count(&db_path), 1);
+
+        {
+            let conn = crate::db::open_connection(&db_path, None).expect("open db");
+            conn.execute_batch("DROP TRIGGER fail_categorize").unwrap();
+        }
+
+        let (status, retried) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+        assert_eq!(status, StatusCode::OK, "{retried}");
+        assert_eq!(
+            retried["duplicateFile"], false,
+            "the failed run spent the checksum: {retried}"
+        );
+        assert_eq!(retried["imported"], 3);
+    }
+
+    #[tokio::test]
+    async fn a_confirm_that_parses_nothing_is_refused_with_reasons() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let before = counts(&db_path);
+
+        let iso = b"Date,Description,Amount,Running Bal.\n\
+                    2026-03-02,HARBOR & VALE RETAINER,1800.00,0.00\n"
+            .to_vec();
+        let upload_id = upload_ok(&app, &token, "march.csv", &iso).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+
+        let (status, body) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "empty_import");
+        assert_eq!(body["error"]["details"]["format"], "bofa_checking");
+        assert_eq!(body["error"]["details"]["malformed"], 1);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Nothing could be read"),
+            "{body}"
+        );
+        assert_eq!(counts(&db_path), before, "the refused confirm wrote rows");
+    }
+
+    #[tokio::test]
+    async fn an_imports_rejects_are_readable_and_go_with_the_undo() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let mixed = b"Date,Description,Amount,Running Bal.\n\
+                      04/01/2026,CEDAR SYSTEMS RETAINER,2400.00,0.00\n\
+                      2026-04-09,GLOBEX HOSTING,-88.00,0.00\n"
+            .to_vec();
+        let upload_id = upload_ok(&app, &token, "april.csv", &mixed).await;
+        let request = json!({"uploadId": upload_id, "account": "BofA Checking"});
+        let (status, confirmed) = post_json(&app, "/api/imports/confirm", &token, &request).await;
+        assert_eq!(status, StatusCode::OK, "{confirmed}");
+        assert_eq!(confirmed["malformed"], 1);
+        let import_id = confirmed["importId"].as_i64().expect("an importId");
+
+        let history = ok_json(&app, "/api/imports", &token).await;
+        assert_eq!(history[0]["malformedCount"], 1);
+
+        let rejects = ok_json(&app, &format!("/api/imports/{import_id}/rejects"), &token).await;
+        assert_eq!(rejects.as_array().unwrap().len(), 1);
+        assert_eq!(rejects[0]["rowNumber"], 3);
+        assert_eq!(
+            rejects[0]["content"],
+            "2026-04-09,GLOBEX HOSTING,-88.00,0.00"
+        );
+        assert_eq!(
+            rejects[0]["reason"],
+            "date \"2026-04-09\" is not MM/DD/YYYY"
+        );
+
+        let (status, _) = delete_json(&app, &format!("/api/imports/{import_id}"), &token).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) =
+            get_json(&app, &format!("/api/imports/{import_id}/rejects"), &token).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 }

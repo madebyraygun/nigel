@@ -273,21 +273,21 @@ async fn capture_web_invoicing_fixtures() {
     nigel_core::db::set_metadata(&conn, "company_name", COMPANY).expect("company name");
     let (app, token) = app_for(&db_path);
 
-    let aging_query = format!("asOf={AS_OF}");
+    let as_of_query = format!("asOf={AS_OF}");
     let routes = [
-        ("invoices", "/api/invoices".to_string()),
-        ("invoice-1250", "/api/invoices/1250".to_string()),
-        ("aging", format!("/api/invoices/aging?{aging_query}")),
+        ("invoices", format!("/api/invoices?{as_of_query}")),
+        ("invoice-1250", format!("/api/invoices/1250?{as_of_query}")),
+        ("aging", format!("/api/invoices/aging?{as_of_query}")),
         ("clients", "/api/clients".to_string()),
     ];
 
-    let invoice = inv::get_invoice_by_number(&conn, 1250).expect("1250");
+    let invoice = inv::get_invoice_by_number_as_of(&conn, 1250, AS_OF).expect("1250");
     let client =
         nigel_core::invoicing::clients::get_client(&conn, invoice.client_id).expect("client");
     let texts = [
         (
             "invoices",
-            format_invoice_list(&inv::list_invoices(&conn, None, None).expect("list")),
+            format_invoice_list(&inv::list_invoices(&conn, None, None, AS_OF).expect("list")),
         ),
         (
             "invoice-1250",
@@ -337,7 +337,7 @@ async fn capture_web_invoicing_fixtures() {
         manifest.push(serde_json::json!({
             "view": view,
             "route": route,
-            "params": if view == "aging" {
+            "params": if route.contains("asOf=") {
                 serde_json::json!({ "asOf": AS_OF })
             } else {
                 serde_json::json!({})

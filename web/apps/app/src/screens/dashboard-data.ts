@@ -1,5 +1,5 @@
 import type { BarBucket } from '@nigel/ui';
-import type { CashflowReport } from '../api/types.js';
+import type { CashflowReport, ImportListItem } from '../api/types.js';
 
 /** What the chart needs, derived from a cash flow report. */
 export interface CashflowChart {
@@ -76,4 +76,30 @@ export function cashflowBuckets(report: CashflowReport): CashflowChart {
     buckets,
     caption: first && last ? caption(first.month, last.month) : '',
   };
+}
+
+/**
+ * What to say when imports dropped rows, or nothing when they did not.
+ *
+ * Named per account: "some rows were dropped" is not actionable, and the
+ * account is what the reader re-imports a statement into.
+ */
+export function droppedRowsNotice(imports: ImportListItem[]): string | null {
+  const byAccount = new Map<string, number>();
+  for (const item of imports) {
+    if (item.malformedCount > 0) {
+      byAccount.set(
+        item.accountName,
+        (byAccount.get(item.accountName) ?? 0) + item.malformedCount,
+      );
+    }
+  }
+  if (byAccount.size === 0) return null;
+
+  const total = [...byAccount.values()].reduce((sum, n) => sum + n, 0);
+  const detail = [...byAccount.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([account, count]) => `${account} (${count})`)
+    .join(', ');
+  return `${total} rows could not be imported — ${detail}. Their books are incomplete.`;
 }

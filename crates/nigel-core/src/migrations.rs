@@ -234,6 +234,39 @@ const MIGRATIONS: &[Migration] = &[
         up: classify_accounts_and_categories,
     },
     Migration {
+        version: 11,
+        description: "record what an import dropped: imports.malformed_count and import_rejects",
+        up: |conn| {
+            // v5's probe, for v5's reason: SQLite has no ADD COLUMN IF NOT
+            // EXISTS, and a replay must be harmless.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('imports') WHERE name = 'malformed_count'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                // NOT NULL DEFAULT 0 fills every existing row: an import from
+                // before the count existed dropped nothing anyone recorded.
+                conn.execute_batch(
+                    "ALTER TABLE imports ADD COLUMN malformed_count INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS import_rejects (
+                    id INTEGER PRIMARY KEY,
+                    import_id INTEGER NOT NULL,
+                    row_number INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    FOREIGN KEY (import_id) REFERENCES imports(id) ON DELETE CASCADE
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_import_rejects_import
+                     ON import_rejects(import_id);",
+            )?;
+            Ok(())
+        },
+    },
+    Migration {
         version: 12,
         description: "add recurring invoice schedules, their items and their run history",
         up: |conn| {
@@ -1014,9 +1047,66 @@ mod tests {
     #[test]
     fn v12_is_replayable() {
         let (_dir, conn) = test_db();
-        set_metadata(&conn, "schema_version", "10").unwrap();
+        set_metadata(&conn, "schema_version", "11").unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn a_database_from_before_the_column_migrates_to_zero_dropped_rows() {
+        let (_dir, conn) = test_db();
+        // `imports` as it was before it recorded what it dropped.
+        conn.execute_batch(
+            "ALTER TABLE imports DROP COLUMN malformed_count;
+             DROP TABLE import_rejects;
+             INSERT INTO accounts (name, account_type)
+                 VALUES ('Cedar Systems Checking', 'checking');
+             INSERT INTO imports (filename, account_id, record_count, checksum)
+                 VALUES ('march.csv', 1, 12, 'a1b2c3');",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "10").unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        let malformed: i64 = conn
+            .query_row(
+                "SELECT malformed_count FROM imports WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            malformed, 0,
+            "an old import reads as having dropped nothing"
+        );
+        let rejects: i64 = conn
+            .query_row("SELECT count(*) FROM import_rejects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rejects, 0);
+    }
+
+    #[test]
+    fn deleting_an_import_takes_its_rejects_with_it() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO accounts (name, account_type) VALUES ('Cedar Systems Checking', 'checking');
+             INSERT INTO imports (filename, account_id, record_count, checksum, malformed_count)
+                 VALUES ('march.csv', 1, 4, 'a1b2c3', 2);
+             INSERT INTO import_rejects (import_id, row_number, content, reason)
+                 VALUES (1, 7, '2026-03-09,GLOBEX HOSTING,-88.00', 'date \"2026-03-09\" is not MM/DD/YYYY'),
+                        (1, 9, '2026-03-11,INITECH LICENSE,n/a', 'amount \"n/a\" is not a number');",
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM imports WHERE id = 1", [])
+            .unwrap();
+
+        let left: i64 = conn
+            .query_row("SELECT count(*) FROM import_rejects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "the cascade did not fire");
     }
     /// A pre-v10 database: the current schema with the class columns dropped
     /// back off, which is what an installation upgrading into this migration

@@ -15,6 +15,7 @@ const ITEMS: ImportListItem[] = [
     accountName: 'BofA Checking',
     importDate: '2025-04-02 09:14:11',
     transactionCount: 42,
+    malformedCount: 2,
   },
   {
     id: 9,
@@ -22,6 +23,7 @@ const ITEMS: ImportListItem[] = [
     accountName: 'BofA Checking',
     importDate: '2025-02-01 08:02:55',
     transactionCount: 0,
+    malformedCount: 0,
   },
 ];
 
@@ -38,6 +40,7 @@ describe('toImportRows', () => {
       accountName: 'BofA Checking',
       importDate: '2025-04-02 09:14:11',
       transactionCount: 42,
+      malformedCount: 2,
     });
   });
 });
@@ -45,7 +48,7 @@ describe('toImportRows', () => {
 describe('the two import-row shapes', () => {
   it('are assignable both ways, so they cannot drift apart', () => {
     // `@nigel/ui` depends on lit alone and may not import api types, so the
-    // five fields are declared twice. Mutual assignability makes a field added
+    // six fields are declared twice. Mutual assignability makes a field added
     // to one and not the other a compile error rather than a blank column.
     const apiToUi: ImportHistoryRow = ITEMS[0];
     const uiToApi: ImportListItem = apiToUi;
@@ -55,6 +58,7 @@ describe('the two import-row shapes', () => {
       'filename',
       'id',
       'importDate',
+      'malformedCount',
       'transactionCount',
     ]);
   });

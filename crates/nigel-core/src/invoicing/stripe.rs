@@ -50,6 +50,10 @@ struct Session {
     status: String,
     payment_status: String,
     amount_total: i64,
+    /// Unix seconds. `default` rather than required: a session missing one
+    /// still carries money that has to be recorded.
+    #[serde(default)]
+    created: Option<i64>,
 }
 
 pub fn parse_paid_sessions(json: &str) -> Result<Vec<PaidSession>> {
@@ -62,6 +66,7 @@ pub fn parse_paid_sessions(json: &str) -> Result<Vec<PaidSession>> {
         .map(|s| PaidSession {
             session_id: s.id,
             amount: s.amount_total as f64 / 100.0,
+            paid_at: s.created,
         })
         .collect())
 }
@@ -265,5 +270,28 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "cs_1");
         assert_eq!(sessions[0].amount, 250.0);
+    }
+
+    #[test]
+    fn parse_paid_sessions_carries_the_session_timestamp() {
+        let json = r#"{"object":"list","data":[
+            {"id":"cs_1","status":"complete","payment_status":"paid","amount_total":25000,"created":1767220200}
+        ]}"#;
+        let sessions = parse_paid_sessions(json).unwrap();
+        assert_eq!(sessions[0].paid_at, Some(1_767_220_200));
+    }
+
+    /// A session without one is still a payment worth recording — the absence
+    /// is a fact `sync` handles, not a parse failure.
+    #[test]
+    fn a_session_with_no_timestamp_still_parses_as_a_payment() {
+        let json = r#"{"object":"list","data":[
+            {"id":"cs_1","status":"complete","payment_status":"paid","amount_total":25000}
+        ]}"#;
+        let sessions = parse_paid_sessions(json).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "cs_1");
+        assert_eq!(sessions[0].amount, 250.0);
+        assert_eq!(sessions[0].paid_at, None);
     }
 }
