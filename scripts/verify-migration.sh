@@ -101,11 +101,19 @@ echo "  database: $DB"
 [ -f "$DB" ] || { echo "  no database was created — is 'demo' available in this build?" >&2; exit 1; }
 q "$DB" "SELECT 'schema_version before: '||value FROM metadata WHERE key='schema_version'"
 
-REPORTS="pnl balance taxsummary cashflow expenses"
+REPORTS="pnl balance tax cashflow expenses k1"
 
 say "2. Capture the BASELINE reports"
 for r in $REPORTS; do
   "$BASELINE_BIN" report "$r" > "$OUT/before-$r.txt" 2>&1 || true
+  # A misspelled report name writes clap's error into the file, and the same
+  # error lands in the after-file too — which then diffs clean and reads as a
+  # report that did not move. Fail on it instead.
+  case "$(head -1 "$OUT/before-$r.txt")" in
+    error:*) echo "  '$r' is not a report this build has:" >&2
+             sed 's/^/    /' "$OUT/before-$r.txt" >&2
+             exit 1 ;;
+  esac
 done
 echo "  captured: $REPORTS"
 
