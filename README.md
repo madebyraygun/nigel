@@ -26,7 +26,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Register filters** — narrow `nigel report register` and `nigel browse register` by `--account`, `--category`, or `--uncategorized`, composed with any date range; active filters appear in the report header and in the default export filename
 - **Interactive browser** — paginated register browser showing all transactions, starting at today with full backwards scrolling, keyboard navigation, jump-to-date, and transaction search
 - **PDF export** — export any report to PDF or text with `nigel report <type> --mode export`
-- **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`. Your letterhead — logo, address, phone and payment instructions — is set once in Settings and appears on both the page and the PDF. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too. See [docs/invoicing.md](docs/invoicing.md)
+- **Invoicing** — draft invoices for your clients, edit or void them while they are still drafts, publish them as a static page and PDF on Cloudflare R2, email them via Mailgun with a Stripe payment link attached, and pull payments back in with `nigel invoice sync`. Your letterhead — logo, address, phone and payment instructions — is set once in Settings and appears on both the page and the PDF. Duplicate any invoice into a fresh draft, or put a retainer on a recurring schedule and let `nigel invoice schedule run` bill it from cron. Manual payments, A/R aging, and a one-time InvoiceShelf import are included. Clients (`k`) and invoices (`n`) are on the dashboard too. See [docs/invoicing.md](docs/invoicing.md)
 - **Monthly reconciliation** — compare calculated balances against bank statements
 - **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same.
 - **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link
@@ -144,6 +144,7 @@ nigel client list --all                               # Include archived clients
 nigel client delete 7                                 # Refused while any invoice bills them
 nigel invoice new --client 1 --issue 2026-08-04 --item "Consulting:10:150"
 nigel invoice edit 1248 --due 2026-09-30              # Drafts only
+nigel invoice duplicate 1248                          # Copy into a fresh draft, issued today
 nigel invoice void 1248                               # Cancel, deactivate its link, void its page
 nigel invoice delete 1252                             # Remove an unsent draft; the number is not reused
 nigel invoice preview 1248                            # Render it locally first — no network, no config
@@ -153,6 +154,8 @@ nigel invoice sync                                    # Record Stripe payments
 nigel invoice pay 1248 --date 2026-08-20              # Record a payment received directly
 nigel invoice aging                                   # A/R aging
 nigel invoice template export                         # Make the invoice page your own
+nigel invoice schedule add --client 1 --cadence monthly --start 2026-01-01 --item "Hosting:1:450"
+nigel invoice schedule run                            # Generate everything due (cron-friendly; never prompts)
 
 # Reconcile against a bank statement
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
@@ -200,6 +203,28 @@ NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
 Put this in a wrapper script rather than directly in a launchd plist.
 
 Read the password from a secret store, as above, rather than writing it into a script or a plist.
+
+## Scheduled invoices
+
+`nigel invoice schedule run` generates every recurring invoice currently due and
+is built for launchd or cron: it drafts by default, a rerun for a period it has
+already billed does nothing, and **it never prompts**. On an encrypted database
+it reads `NIGEL_DB_PASSWORD` the same way `nigel backup` does:
+
+```bash
+NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
+  nigel invoice schedule run
+```
+
+Put this in a wrapper script rather than directly in a launchd plist, and read
+the password from a secret store rather than writing it into a script or a
+plist. The command exits non-zero when a schedule that asked to send could not,
+so the job's log and exit status are enough to notice. Like every command that
+reads or writes the books it runs the launch-time Stripe sync first, so on a
+Stripe-configured install the job makes network calls before it generates —
+best effort, and it cannot fail the run. See
+[docs/invoicing.md](docs/invoicing.md) for schedules, catch-up behaviour and the
+autosend opt-in.
 
 ## Configuration
 

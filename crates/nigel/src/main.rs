@@ -2,7 +2,8 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    ImportsCommands, InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
+    ImportsCommands, InvoiceCommands, InvoiceScheduleCommands, InvoiceTemplateCommands,
+    PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -78,6 +79,18 @@ fn main() {
     }
 }
 
+/// Commands built for cron and launchd, which must never reach a prompt.
+fn is_unattended(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Invoice {
+            command: InvoiceCommands::Schedule {
+                command: InvoiceScheduleCommands::Run
+            }
+        }
+    )
+}
+
 fn dispatch(command: Commands) -> error::Result<()> {
     // Commands that need an already-initialized database (skip for init/demo which create
     // new DBs, load which switches directories, update which needs no DB, and
@@ -117,7 +130,11 @@ fn dispatch(command: Commands) -> error::Result<()> {
     }
 
     if needs_password && db_path.exists() {
-        nigel::cli::password::prompt_password_if_needed(&db_path)?;
+        if is_unattended(&command) {
+            nigel::cli::password::unlock_without_prompting(&db_path)?;
+        } else {
+            nigel::cli::password::prompt_password_if_needed(&db_path)?;
+        }
     }
 
     // `restore` overwrites the database file and then migrates the restored copy itself,
@@ -256,6 +273,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 notes.as_deref(),
                 terms.as_deref(),
             ),
+            InvoiceCommands::Duplicate { number, issue_date } => {
+                cli::invoice::duplicate(number, issue_date.as_deref().unwrap_or(&cli::today()))
+            }
             InvoiceCommands::Edit {
                 number,
                 issue_date,
@@ -298,6 +318,55 @@ fn dispatch(command: Commands) -> error::Result<()> {
                     cli::invoice::template_export(output.as_deref(), force)
                 }
                 InvoiceTemplateCommands::Path => cli::invoice::template_show_path(),
+            },
+            InvoiceCommands::Schedule { command } => match command {
+                InvoiceScheduleCommands::Add {
+                    client,
+                    cadence,
+                    start,
+                    anchor_day,
+                    net_days,
+                    currency,
+                    items,
+                    from,
+                    notes,
+                    terms,
+                    autosend,
+                } => cli::invoice_schedule::add(
+                    client, &cadence, &start, anchor_day, net_days, currency, &items, from, notes,
+                    terms, autosend,
+                ),
+                InvoiceScheduleCommands::List { all } => cli::invoice_schedule::list(all),
+                InvoiceScheduleCommands::Show { id } => cli::invoice_schedule::show(id),
+                InvoiceScheduleCommands::Edit {
+                    id,
+                    anchor_day,
+                    net_days,
+                    clear_net_days,
+                    currency,
+                    notes,
+                    terms,
+                    items,
+                    autosend,
+                    no_autosend,
+                } => cli::invoice_schedule::edit(
+                    id,
+                    anchor_day,
+                    net_days,
+                    clear_net_days,
+                    currency,
+                    notes,
+                    terms,
+                    &items,
+                    autosend,
+                    no_autosend,
+                ),
+                InvoiceScheduleCommands::Pause { id } => cli::invoice_schedule::pause(id),
+                InvoiceScheduleCommands::Resume { id } => cli::invoice_schedule::resume(id),
+                InvoiceScheduleCommands::End { id } => {
+                    cli::invoice_schedule::end(id, &cli::today())
+                }
+                InvoiceScheduleCommands::Run => cli::invoice_schedule::run(&cli::today()),
             },
         },
         Commands::Imports { command } => match command {
