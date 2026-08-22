@@ -1,10 +1,13 @@
 import {
   FetchApiClient,
+  MENU_COMMAND_IDS,
   type FetchApiClientOptions,
   type ApiClient,
   type DragDropEvent,
   type ExportTarget,
   type ImportSource,
+  type MenuCommand,
+  type MenuSource,
 } from './client.js';
 import type { ExportFormat, ExportParams, ReportSlug, StagedUpload } from './types.js';
 
@@ -34,6 +37,29 @@ const DRAG_EVENTS = {
   drop: 'tauri://drag-drop',
   leave: 'tauri://drag-leave',
 } as const;
+
+/** The shell's menu bridge: one event, the command id as its payload. */
+const MENU_EVENT = 'menu-command';
+
+type MenuCommandId = (typeof MENU_COMMAND_IDS)[number];
+
+function isMenuCommandId(value: string): value is MenuCommandId {
+  return (MENU_COMMAND_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * The command a payload carries, or `null` for one this build does not know —
+ * dropped rather than thrown, so a newer shell can add items before the SPA
+ * learns them.
+ */
+function menuCommandOf(payload: unknown): MenuCommand | null {
+  if (typeof payload !== 'string') return null;
+  if (payload.startsWith('navigate:')) {
+    const screen = payload.slice('navigate:'.length);
+    return screen ? { kind: 'navigate', screen } : null;
+  }
+  return isMenuCommandId(payload) ? { kind: payload } : null;
+}
 
 /**
  * The api client the desktop shell runs.
@@ -83,31 +109,60 @@ export class DesktopApiClient extends FetchApiClient {
     };
   }
 
-  private subscribeDragDrop(handler: (event: DragDropEvent) => void): () => void {
-    const off: Array<() => void> = [];
-    let cancelled = false;
-
-    const subscribe = (name: string, toEvent: (payload: unknown) => DragDropEvent) => {
-      void this.listen(name, (event) => {
-        if (!cancelled) handler(toEvent(event.payload));
-      })
-        .then((unlisten) => {
-          if (cancelled) unlisten();
-          else off.push(unlisten);
-        })
-        // An ACL-denied `listen` leaves the picker as the only way in, which
-        // works; a rejection thrown from here would only be unhandled.
-        .catch(() => {});
+  override menuSource(): MenuSource {
+    return {
+      kind: 'native',
+      onCommand: (handler) => this.subscribeMenu(handler),
     };
+  }
 
-    subscribe(DRAG_EVENTS.enter, () => ({ type: 'over' }));
-    subscribe(DRAG_EVENTS.over, () => ({ type: 'over' }));
-    subscribe(DRAG_EVENTS.drop, (payload) => ({ type: 'drop', paths: pathsOf(payload) }));
-    subscribe(DRAG_EVENTS.leave, () => ({ type: 'leave' }));
+  private subscribeMenu(handler: (command: MenuCommand) => void): () => void {
+    return this.guardedListen(MENU_EVENT, (payload) => {
+      const command = menuCommandOf(payload);
+      if (command) handler(command);
+    });
+  }
+
+  private subscribeDragDrop(handler: (event: DragDropEvent) => void): () => void {
+    const off = [
+      this.guardedListen(DRAG_EVENTS.enter, () => handler({ type: 'over' })),
+      this.guardedListen(DRAG_EVENTS.over, () => handler({ type: 'over' })),
+      this.guardedListen(DRAG_EVENTS.drop, (payload) =>
+        handler({ type: 'drop', paths: pathsOf(payload) }),
+      ),
+      this.guardedListen(DRAG_EVENTS.leave, () => handler({ type: 'leave' })),
+    ];
+    return () => {
+      for (const unlisten of off) unlisten();
+    };
+  }
+
+  /**
+   * `listen`, returning its unsubscribe synchronously the way screens need it.
+   *
+   * The guard covers the gap that `listen` being async opens: an unsubscribe
+   * that lands before the listener resolves flips `cancelled`, and the
+   * resolution handler sees it and detaches immediately. An ACL-denied
+   * `listen` leaves the surface inert rather than broken — a rejection thrown
+   * from here would only be unhandled.
+   */
+  private guardedListen(event: string, onPayload: (payload: unknown) => void): () => void {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void this.listen(event, (received) => {
+      if (!cancelled) onPayload(received.payload);
+    })
+      .then((off) => {
+        if (cancelled) off();
+        else unlisten = off;
+      })
+      .catch(() => {});
 
     return () => {
       cancelled = true;
-      for (const unlisten of off.splice(0)) unlisten();
+      unlisten?.();
+      unlisten = null;
     };
   }
 

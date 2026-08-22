@@ -155,6 +155,36 @@ decided. It answers `{kind: 'native', …}`; the web client answers
 shell they are in. A desktop client attached to a remote server will answer
 `browser` from here too, since a server on another machine cannot see this disk.
 
+## The menu bar
+
+The shell authors a full application menu in `crates/nigel-desktop/src/menu.rs`
+and installs it in `main.rs` with `.menu(menu::build)`. On macOS it is the
+system bar: the app menu carries the native About panel and Settings…
+(`Cmd+,`), the Window submenu is handed to AppKit for window management and
+tiling, and the Help submenu gets the system search field. Windows and Linux
+render the same bar in-window, with Settings and Quit in File and About in
+Help — the shape those platforms expect.
+
+Edit is built from the predefined clipboard items, which is load-bearing
+rather than decorative: WKWebView's clipboard chords stop working in text
+fields the moment a custom menu omits them. View lists every sidebar screen in
+the sidebar's order, with `CmdOrCtrl+1..9` on the first nine;
+`tests/menu_bar.rs` reads the SPA's screen registry and fails the build if the
+two drift.
+
+Selections the platform cannot answer natively are forwarded as one app event,
+`menu-command`, whose payload is the command id. `DesktopApiClient.menuSource()`
+is the seam: it answers `{kind: 'native', onCommand}`, the web client answers
+`{kind: 'none'}`, and the root container binds it once — screens never see the
+menu, and an id this build does not recognize is dropped, so a newer shell
+degrades to inert items rather than a broken one. Find (`CmdOrCtrl+F`) and
+Import Statement… land on their screens as one-shot intents
+(`apps/app/src/state/menu-intent.ts`) that the register and import screens
+consume — an intent rather than a route parameter so the chord pressed twice
+is two deliveries. There is no File ▸ Export… item: a native Export… implies a
+save dialog, and until a context-sensitive export exists an item that
+navigates somewhere under that name would lie.
+
 ## Not a deep link
 
 The scheme is an in-process transport, not a URL another application on the
