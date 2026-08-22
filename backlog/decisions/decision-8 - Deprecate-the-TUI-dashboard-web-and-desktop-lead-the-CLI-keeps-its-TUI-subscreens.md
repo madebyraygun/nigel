@@ -16,11 +16,11 @@ are written as three-way parity claims that each change has to re-prove.
 The SPA reached parity or better with the dashboard on nearly every screen: accounts,
 categories, clients, invoices (fixture-pinned), rules, review, imports, reconcile, undo,
 settings, onboarding, and Snake. The dashboard-only TUI code — `dashboard.rs` plus the
-thirteen screens reachable only from it, with splash, goodbye, onboarding and effects —
-is ~12,300 lines carrying ~58% of the crate's unit tests, none of it reachable from any
-CLI subcommand. The TUI screens that CLI subcommands *do* invoke are a separate ~3,600
-lines: the report viewers (`nigel report <kind>` on a TTY), the register browser
-(`nigel browse register`), and the reviewer (`nigel review`).
+screens reachable only from it, with splash and goodbye — is ~10,850 lines carrying
+~51% of the crate's unit tests, none of it reachable from any CLI subcommand. The TUI
+screens that CLI subcommands *do* invoke are a separate ~3,600 lines: the report viewers
+(`nigel report <kind>` on a TTY), the register browser (`nigel browse register`), and
+the reviewer (`nigel review`).
 
 ## Decision
 
@@ -29,8 +29,14 @@ The web SPA and desktop shell are the interactive surface; the CLI keeps the TUI
 subscreens its subcommands invoke.**
 
 - **Bare `nigel` becomes `nigel serve`**: it starts the server and opens the browser with
-  the session link, the way `nigel serve` does today. First run lands on the web setup
-  screen; `nigel init` remains the terminal path.
+  the session link, the way `nigel serve` does today. On a first run it runs the TUI
+  onboarding before starting the server.
+- **The TUI onboarding stays.** It is the terminal's front door — the README's lead
+  screenshot, and the flow that carries the gradient logo and Nigel's voice to the
+  terminal-native audience. It already owns its own event loop, so it needs no new
+  driver: interactive `nigel init` on a TTY runs it, and the bare first run does too.
+  `effects.rs` stays with it. The cost is accepted knowingly: the setup flow is
+  maintained twice (TUI and web), on a four-question flow that changes rarely.
 - **The report viewers, register browser, and reviewer stay.** `ratatui`/`crossterm`
   remain dependencies; there is no TUI feature flag to flip.
 - **Settings keeps a terminal path via a new `nigel settings` subcommand** that reuses
@@ -44,10 +50,10 @@ subscreens its subcommands invoke.**
 
 ## Consequences
 
-- ~12,300 lines and ~283 inline tests are deleted; `effects.rs`, `splash.rs`,
-  `goodbye.rs`, `onboarding.rs` and `snake.rs` go with the dashboard. The terminal loses
-  its animated brand moments — the gradient logo and conversational voice obligations
-  move entirely to the SPA (TASK-116).
+- ~10,850 lines and ~251 inline tests are deleted; `splash.rs`, `goodbye.rs` and
+  `snake.rs` go with the dashboard, while `onboarding.rs` and `effects.rs` stay. The
+  first run keeps its animated brand moment in the terminal; the dashboard's day-to-day
+  voice moves to the SPA (TASK-116).
 - The three-way parity invariants in `docs/design-constraints.md` become two-way
   (CLI/API); `docs/walkthrough.md` is rewritten around the web UI; `docs/architecture.md`,
   `README.md`, `docs/invoicing.md`, `docs/api.md` and the site drop their dashboard
