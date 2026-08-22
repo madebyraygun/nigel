@@ -1,0 +1,42 @@
+name: Importer request or problem
+description: A bank or card export Nigel cannot import, or imports wrong
+labels: [importer]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Importers are Nigel's favorite contribution — a new bank usually needs only a
+        format description. **Never attach a real statement.** Recreate the format with
+        a few invented rows: keep the real header line and column layout, replace every
+        amount, date, payee and account number with made-up values. That synthetic
+        sample is all an importer needs.
+  - type: checkboxes
+    id: no-real-data
+    attributes:
+      label: Real-data check
+      options:
+        - label: The sample rows below are synthetic — headers and layout are real, every value is invented
+          required: true
+  - type: input
+    id: institution
+    attributes:
+      label: Institution and export format
+      placeholder: e.g. First Example Bank — checking, CSV export from web banking
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Synthetic sample
+      description: The real header line plus 3–5 invented rows, exactly as the file is structured (delimiter, quoting, date format intact)
+      render: text
+      placeholder: |
+        Date,Description,Amount,Balance
+        01/05/2026,ACME SUPPLY CO,-125.00,4875.00
+    validations:
+      required: true
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What happens today
+      description: For a problem with an existing importer — the command, the error or the wrong result. Leave empty for a new-importer request.

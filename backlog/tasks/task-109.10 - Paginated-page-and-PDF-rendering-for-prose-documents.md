@@ -4,8 +4,10 @@ title: Paginated page and PDF rendering for prose documents
 status: To Do
 assignee: []
 created_date: '2026-08-17 04:55'
+updated_date: '2026-08-21 00:21'
 labels:
   - documents
+milestone: m-1
 dependencies: []
 parent_task_id: TASK-109
 ---

@@ -135,7 +135,10 @@ uninitialized, so the SPA can decide which screen to show before it has data.
 }
 ```
 
-`initialized` is whether the database file exists, `encrypted` whether it needs
+`initialized` is whether there are books here — the database file exists **and**
+has been written to. A zero-byte file, which is what a stray connection leaves
+behind, reads as uninitialized, and a client that sees `false` shows the setup
+gate rather than a dashboard over nothing. `encrypted` is whether it needs
 a key, and `locked` whether this process still lacks that key. `companyName` is
 `null` while locked or uninitialized — reading it requires the key — and
 `dataDir` names the directory of the database the server actually opened.
@@ -221,6 +224,46 @@ delay has already been served, the client may retry immediately.
 A successful unlock resets the counter. It is not persisted, so restarting the
 server clears it.
 
+### `POST /api/setup`
+
+Creates a set of books on a machine that has none. The web and desktop
+equivalent of the terminal's onboarding: the same four answers, the same three
+exits.
+
+```json
+{
+  "userName": "Marta",
+  "companyName": "Cedar Systems",
+  "profile": "business",
+  "password": "…",
+  "action": "fresh"
+}
+```
+
+`profile` is `business` or `personal` and picks the chart of accounts.
+`password` is optional; when present the database is encrypted from its first
+write, and the process stays unlocked afterwards. `action` is `fresh` — an
+empty ledger — or `demo`, which additionally builds `<data_dir>/demo/` with its
+own seeded database for a fictional consultancy and points the server at it.
+Unknown fields are refused.
+
+The answer is a full [`StatusResponse`](#get-apistatus) for the database that
+now exists, so a client needs no second round trip before it renders.
+
+Setup runs once. A call against books that already exist is `409` with
+`details.reason` of `already_initialized` — the guard is the route's, not the
+client's, so no client bug can write over somebody's ledger. An unknown
+`profile`, or a password holding a control character, is `400`.
+
+It is not exempt from the locked guard and needs no exemption: an
+uninitialized database cannot be locked. In web mode the session guard applies
+as it does to every other endpoint.
+
+**Loading books that already exist is not this endpoint.** That is
+[`POST /api/settings/data-dir`](#switching-data-directory), which already
+validates, migrates and rebinds, and which relocks the server when the target
+turns out to be encrypted.
+
 ## Reading data
 
 Every endpoint below answers `423 locked` until an encrypted database has been
@@ -295,6 +338,25 @@ build its date controls from the response instead of a hardcoded table:
 `yearOnly` (tax, K-1), or `none` (balance, flagged). It tells the client which
 of `year` and `month` that route will accept.
 
+The balance report's accounts each carry `class` and `naturalBalance` beside
+`balance`. `balance` is the register summed with the signs the transactions were
+imported with, which is what `total` adds up; `naturalBalance` is the same
+figure stated so that more of what the class is reads positive — a liability
+with money owed reports positive.
+
+`ytdNetIncome` is this calendar year's revenue and spending plus every
+transaction that still has no category; equity moves and transfers stay out of
+it. `uncategorizedTotal` and `uncategorizedCount` are the share of that figure
+nobody has sorted yet and how many transactions it came from, for the same year
+and the same transfer exclusion. They are `0` on a book with nothing waiting,
+and every surface that prints the figure footnotes them when they are not.
+
+The tax summary's line items each carry `class` as well, and it is what they
+are ordered by: revenue first, then equity, then expense, then the two
+balance-sheet classes a category should not be on at all. `categoryType` is
+still the word the Type column prints; `class` is what the ordering and the
+K-1's treatment follow.
+
 ### List responses
 
 The nine list endpoints answer with a bare JSON array — no envelope, no
@@ -302,7 +364,8 @@ pagination.
 
 - `/api/accounts` — every account, by name.
 - `/api/categories` — the active chart of accounts; soft-deleted categories are
-  omitted.
+  omitted. Both carry `class` — `asset`, `liability`, `equity`, `revenue` or
+  `expense`.
 - `/api/rules` — active rules in the order the categorizer applies them:
   priority descending, ties by id. `vendor` is `null` when the rule sets none.
 - `/api/imports` — import history, newest first, each with the number of
@@ -521,11 +584,11 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/review/:id` | `GET` | — | `RegisterRow` |
 | `/api/review/:id/apply` | `POST` | `categoryId`, `vendor?`, `createRule?`, `rulePattern?` | `{ transactionId, ruleId }` |
 | `/api/review/:id/undo` | `POST` | `ruleId?` | `RegisterRow` |
-| `/api/accounts` | `POST` | `name`, `accountType`, `institution?`, `lastFour?` | `Account` (`201`) |
-| `/api/accounts/:id` | `PATCH` | `name` | `Account` |
+| `/api/accounts` | `POST` | `name`, `accountType`, `class?`, `institution?`, `lastFour?` | `Account` (`201`) |
+| `/api/accounts/:id` | `PATCH` | `name?`, `class?` | `Account` |
 | `/api/accounts/:id` | `DELETE` | — | `{ id, deleted }` |
-| `/api/categories` | `POST` | `name`, `categoryType`, `taxLine?`, `formLine?` | `CategoryRow` (`201`) |
-| `/api/categories/:id` | `PATCH` | `name?`, `categoryType?`, `taxLine?`, `formLine?` | `CategoryRow` |
+| `/api/categories` | `POST` | `name`, `categoryType`, `class?`, `taxLine?`, `formLine?` | `CategoryRow` (`201`) |
+| `/api/categories/:id` | `PATCH` | `name?`, `categoryType?`, `class?`, `taxLine?`, `formLine?` | `CategoryRow` |
 | `/api/categories/:id` | `DELETE` | — | `{ id, deleted }` |
 | `/api/rules` | `POST` | `pattern`, `categoryId`, `matchType?`, `vendor?`, `priority?` | `RuleRow` (`201`) |
 | `/api/rules/:id` | `PATCH` | `pattern?`, `categoryId?`, `matchType?`, `vendor?`, `priority?` | `RuleRow` |
@@ -624,8 +687,16 @@ means "just restore the transaction". The response is the restored register row.
 ### Accounts, categories, and rules
 
 Accounts are hard-deleted and categories are soft-deleted, exactly as in the CLI
-and the TUI. `PATCH /api/accounts/:id` renames and nothing else — institution
-and last four are set at creation, which is all the data layer offers.
+and the TUI. `PATCH /api/accounts/:id` takes a name, a class, or both;
+institution, last four and `accountType` are set at creation, which is all the
+data layer offers. A patch with neither field is a `400`.
+
+`class` is the accounting class — `asset`, `liability`, `equity`, `revenue`,
+`expense` — and anything outside those five is a `400`. Omitting it on a create
+derives it: an account from its `accountType` (`credit_card` and
+`line_of_credit` are liabilities, everything else an asset) and a category from
+its `categoryType` (`income` → `revenue`, `expense` → `expense`). A client that
+has never heard of the field therefore keeps working unchanged.
 
 Rules address their category by **id**; only the CLI resolves a category name.
 `matchType` defaults to `contains` and `priority` to `0`, matching

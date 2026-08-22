@@ -10,6 +10,7 @@ import type { ClientFormValue } from './wc-client-form.js';
 const value = {
   name: 'Chase Business',
   accountType: 'checking',
+  class: 'asset',
   institution: 'Chase',
   lastFour: '9921',
 };
@@ -78,7 +79,7 @@ const preview: Preview = {
       name: 'edit',
       render: () => html`
         <wc-manager-dialog open heading="Rename account">
-          <wc-account-form mode="rename" .value=${value}></wc-account-form>
+          <wc-account-form mode="edit" .value=${value}></wc-account-form>
         </wc-manager-dialog>
       `,
     },

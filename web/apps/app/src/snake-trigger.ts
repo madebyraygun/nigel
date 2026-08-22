@@ -179,6 +179,7 @@ export function snakeAllowedOnBoot(boot: BootPhase): boolean {
       return true;
     case 'starting':
     case 'locked':
+    case 'needs-setup':
     case 'failed':
       return false;
     default: {

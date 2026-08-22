@@ -4,7 +4,9 @@ title: Add FAQ and documentation pages to the site
 status: To Do
 assignee: []
 created_date: '2026-04-25 18:06'
+updated_date: '2026-08-21 00:21'
 labels: []
+milestone: m-0
 dependencies: []
 references:
   - 'archived issue #169'

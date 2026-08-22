@@ -106,14 +106,31 @@ export interface PnlReport {
 export interface AccountBalance {
   name: string;
   accountType: string;
+  /** `asset`, `liability`, `equity`, `revenue` or `expense`. */
+  class: string;
+  /** The register summed with the signs the transactions were imported with. */
   balance: number;
+  /**
+   * The same figure stated so that more of what the class is reads positive —
+   * a liability with money owed reports positive. `total` sums `balance`, not
+   * this, so the two are not interchangeable.
+   */
+  naturalBalance: number;
 }
 
 /** `GET /api/reports/balance` */
 export interface BalanceReport {
   accounts: AccountBalance[];
   total: number;
+  /**
+   * This year's revenue and spending, plus every transaction still waiting for
+   * a category. Equity moves and transfers stay out of it.
+   */
   ytdNetIncome: number;
+  /** The part of `ytdNetIncome` that has no category yet. */
+  uncategorizedTotal: number;
+  /** How many transactions that part came from. */
+  uncategorizedCount: number;
 }
 
 /** One month of cash movement, in `CashflowReport`. */
@@ -174,6 +191,8 @@ export interface TaxItem {
   name: string;
   taxLine: string | null;
   categoryType: string;
+  /** The class the summary is ordered by: earned, taken out, then spent. */
+  class: string;
   total: number;
 }
 
@@ -292,6 +311,16 @@ export interface Account {
   id: number;
   name: string;
   accountType: string;
+  /**
+   * Where the account sits in the accounting structure: asset, liability,
+   * equity, revenue or expense.
+   *
+   * A plain string rather than a union, for `RuleRow.matchType`'s reason: every
+   * write path validates against the five, but a row written by some other tool
+   * cannot be assumed to be one of them, and typing it narrowly would make the
+   * form's select quietly retype an account it merely displayed.
+   */
+  class: string;
   institution: string | null;
   lastFour: string | null;
 }
@@ -301,6 +330,11 @@ export interface CategoryRow {
   id: number;
   name: string;
   categoryType: string;
+  /**
+   * Where the category sits in the accounting structure: asset, liability,
+   * equity, revenue or expense. A plain string for `Account.class`'s reason.
+   */
+  class: string;
   taxLine: string | null;
   formLine: string | null;
 }
@@ -338,6 +372,19 @@ export interface UnlockRequest {
 
 export interface UnlockResponse {
   locked: boolean;
+}
+
+/** `POST /api/setup` — what to do once the books exist. */
+export type SetupAction = 'fresh' | 'demo';
+
+/** `POST /api/setup` */
+export interface SetupRequest {
+  userName: string;
+  companyName: string;
+  profile: BooksProfile;
+  /** Absent or empty leaves the database unencrypted. */
+  password?: string;
+  action: SetupAction;
 }
 
 /** `GET /api/settings/app`, and the body of a successful `PUT`. */
@@ -495,28 +542,26 @@ export interface RuleRow {
   hitCount: number;
 }
 
-/** `POST /api/accounts` */
+/** `POST /api/accounts` — `class` absent means the account type decides. */
 export interface NewAccountRequest {
   name: string;
   accountType: string;
+  class?: string;
   institution?: string | null;
   lastFour?: string | null;
 }
 
-/**
- * `PATCH /api/accounts/:id`
- *
- * Renaming is the whole of it: institution and last four are set at creation,
- * which is all the data layer offers.
- */
+/** `PATCH /api/accounts/:id` — name, class, or both. An empty body is a 400. */
 export interface AccountPatch {
-  name: string;
+  name?: string;
+  class?: string;
 }
 
-/** `POST /api/categories` */
+/** `POST /api/categories` — `class` absent means the category type decides. */
 export interface NewCategoryRequest {
   name: string;
   categoryType: string;
+  class?: string;
   taxLine?: string | null;
   formLine?: string | null;
 }
@@ -531,6 +576,7 @@ export interface NewCategoryRequest {
 export interface CategoryPatch {
   name?: string;
   categoryType?: string;
+  class?: string;
   taxLine?: string | null;
   formLine?: string | null;
 }
@@ -693,6 +739,18 @@ export interface UploadResponse {
   /** The name as stored, reduced to safe characters. */
   filename: string;
   size: number;
+}
+
+/**
+ * A file the native shell has already spooled.
+ *
+ * The first three fields are `UploadResponse`'s, because downstream of the
+ * `uploadId` there is no difference between a staged file and an uploaded one.
+ * `path` is the difference: it is where the file still lives, so a spool that
+ * expired can be refilled without asking the user to choose again.
+ */
+export interface StagedUpload extends UploadResponse {
+  path: string;
 }
 
 /** Column positions for a CSV no built-in importer can read. */

@@ -17,6 +17,7 @@ const CATEGORIES: CategoryRow[] = [
     id: 3,
     name: 'Consulting income',
     categoryType: 'income',
+    class: 'revenue',
     taxLine: 'Gross receipts',
     formLine: '1120S-1a',
   },
@@ -24,13 +25,15 @@ const CATEGORIES: CategoryRow[] = [
     id: 12,
     name: 'Software / Subscriptions',
     categoryType: 'expense',
+    class: 'expense',
     taxLine: 'Other expenses',
     formLine: '1120S-19',
   },
   {
     id: 14,
-    name: 'Meals / Entertainment',
+    name: 'Owner Draw',
     categoryType: 'expense',
+    class: 'equity',
     taxLine: null,
     formLine: null,
   },
@@ -104,6 +107,18 @@ async function type(
   await settle(el);
 }
 
+async function pick(
+  el: NigelCategoriesScreen,
+  hook: string,
+  value: string,
+): Promise<void> {
+  const control = form(el).shadowRoot?.querySelector<HTMLInputElement>(hook);
+  if (!control) throw new Error(`no ${hook} in the form`);
+  control.value = value;
+  control.dispatchEvent(new Event('change'));
+  await settle(el);
+}
+
 async function openAdd(el: NigelCategoriesScreen): Promise<void> {
   layout(el).dispatchEvent(new CustomEvent('nc-manager-add'));
   await settle(el);
@@ -155,17 +170,27 @@ describe('nigel-categories-screen', () => {
     expect(table(el).rows.map((row) => row.cells[0])).toEqual([
       'Consulting income',
       'Software / Subscriptions',
-      'Meals / Entertainment',
+      'Owner Draw',
     ]);
   });
 
   it('renders every field, with missing ones left null for the table', async () => {
     const { el } = await mount();
     expect(table(el).rows[2].cells).toEqual([
-      'Meals / Entertainment',
+      'Owner Draw',
       'Expense',
+      'Equity',
       null,
       null,
+    ]);
+  });
+
+  it('shows each category class in the list', async () => {
+    const { el } = await mount();
+    expect(table(el).rows.map((row) => row.cells[2])).toEqual([
+      'Revenue',
+      'Expense',
+      'Equity',
     ]);
   });
 
@@ -182,6 +207,35 @@ describe('nigel-categories-screen', () => {
       'createCategory:{"name":"Contract labor","categoryType":"expense","taxLine":"Contract labor","formLine":"1120S-11"}',
       'getCategories',
     ]);
+  });
+
+  it('leaves the class out when the operator never picked one', async () => {
+    // An income category whose class control was never touched still reads
+    // "expense": the derivation belongs to the server, not to the default.
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Workshop Fees');
+    await pick(el, '[data-type]', 'income');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createCategory:{"name":"Workshop Fees","categoryType":"income","taxLine":null,"formLine":null}',
+    );
+    expect(
+      fake.categories.find((category) => category.name === 'Workshop Fees')?.class,
+    ).toBe('revenue');
+  });
+
+  it('sends the class the operator did pick', async () => {
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Member Draw');
+    await pick(el, '[data-class]', 'equity');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createCategory:{"name":"Member Draw","categoryType":"expense","class":"equity","taxLine":null,"formLine":null}',
+    );
   });
 
   it('sends only the fields an edit changed', async () => {

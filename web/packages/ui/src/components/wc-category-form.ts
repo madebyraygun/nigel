@@ -3,11 +3,19 @@ import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/radio-group/radio-group.js';
 import '@awesome.me/webawesome/dist/components/radio/radio.js';
+import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/option/option.js';
+import {
+  ACCOUNT_CLASSES,
+  accountClassLabel,
+  type AccountClassValue,
+} from './account-class.js';
 import { controlsCss } from '@nigel/theme';
 
 export interface CategoryFormValue {
   name: string;
   categoryType: string;
+  class: string;
   taxLine: string;
   formLine: string;
 }
@@ -28,6 +36,7 @@ export interface NcCategoryFormChangeDetail {
 export const EMPTY_CATEGORY_FORM: CategoryFormValue = {
   name: '',
   categoryType: 'expense',
+  class: 'expense',
   taxLine: '',
   formLine: '',
 };
@@ -170,6 +179,9 @@ export class WcCategoryForm extends LitElement {
 
   render() {
     const warning = formLineWarning(this.value.formLine);
+    const unknownClass = !ACCOUNT_CLASSES.includes(
+      this.value.class as AccountClassValue,
+    );
 
     return html`
       <div class="fields">
@@ -199,6 +211,25 @@ export class WcCategoryForm extends LitElement {
           <wa-radio value="income">Income</wa-radio>
           <wa-radio value="expense">Expense</wa-radio>
         </wa-radio-group>
+
+        <wa-select
+          data-class
+          label="Class"
+          hint="Where this sits in the accounting structure."
+          value=${this.value.class}
+          ?disabled=${this.disabled}
+          @change=${this.handleField('class')}
+        >
+          ${ACCOUNT_CLASSES.map(
+            (value) =>
+              html`<wa-option value=${value}>${accountClassLabel(value)}</wa-option>`,
+          )}
+          ${unknownClass
+            ? html`<wa-option value=${this.value.class}
+                >${this.value.class}</wa-option
+              >`
+            : nothing}
+        </wa-select>
 
         <wa-input
           data-tax-line

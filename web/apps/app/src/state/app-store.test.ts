@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getAppStore, initializeAppStore, resetAppStore } from './app-store.js';
 import { ApiError, appLocked } from '../api/index.js';
-import { FakeApiClient, LOCKED_STATUS } from '../__mocks__/fake-api-client.js';
+import {
+  FakeApiClient,
+  LOCKED_STATUS,
+  UNINITIALIZED_STATUS,
+} from '../__mocks__/fake-api-client.js';
 
 describe('app store', () => {
   beforeEach(() => {
@@ -197,6 +201,42 @@ describe('app store boot phase', () => {
     expect(outcome).toEqual({ ok: true });
     expect(store.boot.get()).toBe('ready');
   });
+
+  it('needs setup when the database has never been created', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('needs-setup');
+  });
+
+  it('is locked rather than needing setup when both could be claimed', async () => {
+    // An encrypted file exists, so the key is the question — not setup.
+    // Offering setup here would be offering to overwrite somebody's books.
+    const client = new FakeApiClient();
+    client.status = { ...LOCKED_STATUS, initialized: false };
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('locked');
+  });
+
+  it('is ready once setup has answered with initialized books', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+    expect(store.boot.get()).toBe('needs-setup');
+
+    await client.setup({
+      userName: 'Marta',
+      companyName: 'Cedar Systems',
+      profile: 'business',
+      action: 'fresh',
+    });
+    await store.refreshStatus();
+
+    expect(store.boot.get()).toBe('ready');
+  });
 });
 
 describe('switching data directory', () => {
@@ -236,5 +276,50 @@ describe('switching data directory', () => {
       message: 'No database found at /nope/nigel.db',
     });
     expect(reloads).toBe(0);
+  });
+});
+
+describe('running setup', () => {
+  beforeEach(() => {
+    resetAppStore();
+    appLocked.set(false);
+  });
+
+  const plan = {
+    userName: 'Marta',
+    companyName: 'Cedar Systems',
+    profile: 'business',
+    action: 'fresh',
+  } as const;
+
+  it('creates the books and lands on ready', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+
+    const outcome = await store.runSetup(plan);
+
+    expect(outcome).toEqual({ ok: true });
+    expect(store.boot.get()).toBe('ready');
+    expect(store.companyName.get()).toBe('Cedar Systems');
+  });
+
+  it('reports a refusal without changing the phase', async () => {
+    const client = new FakeApiClient();
+    client.status = UNINITIALIZED_STATUS;
+    client.setupError = new ApiError({
+      code: 'conflict',
+      rawCode: 'conflict',
+      message: 'These books are already set up.',
+      status: 409,
+    });
+    const store = initializeAppStore(client);
+    await store.refreshStatus();
+
+    const outcome = await store.runSetup(plan);
+
+    expect(outcome).toEqual({ ok: false, message: 'These books are already set up.' });
+    expect(store.boot.get()).toBe('needs-setup');
   });
 });

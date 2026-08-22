@@ -68,6 +68,7 @@ export const printCss = css`
       --nc-grad-brand: none;
       --nc-grad-brand-hover: none;
       --nc-grad-brand-text: none;
+      --nc-grad-brand-text-cycle: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;

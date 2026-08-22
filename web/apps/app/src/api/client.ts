@@ -64,6 +64,8 @@ import {
   type RuleTestResult,
   type SendResult,
   type SetPasswordRequest,
+  type SetupRequest,
+  type StagedUpload,
   type StatusResponse,
   type SyncResult,
   type TaxSummary,
@@ -224,10 +226,45 @@ export type ExportTarget =
   | { kind: 'href'; href: string }
   | { kind: 'action'; run: () => Promise<void> };
 
+/**
+ * Tauri's window-level drag-and-drop, reduced to the three moments a screen
+ * has a use for. `enter` and `over` both mean "a file is over the window",
+ * and one highlight is all a screen shows, so both arrive as `over`.
+ */
+export type DragDropEvent =
+  | { type: 'over' }
+  | { type: 'leave' }
+  | { type: 'drop'; paths: string[] };
+
+/**
+ * Where a statement comes from in this client, in the shape of
+ * `ExportTarget`: a discriminant plus whatever the running platform can
+ * actually do.
+ *
+ * A browser has bytes and no path; a native shell has a path and no reason to
+ * put the bytes through the webview. This is also the seam a desktop client
+ * attached to a *remote* server will use to answer `browser` — a server on
+ * another machine cannot see this disk, so path staging must not be offered
+ * there.
+ */
+export type ImportSource =
+  | { kind: 'browser' }
+  | {
+      kind: 'native';
+      /** `null` is a cancelled dialog, which is not a failure. */
+      pick(): Promise<StagedUpload | null>;
+      stagePath(path: string): Promise<StagedUpload>;
+      /** Returns its unsubscribe synchronously; a screen disconnects synchronously. */
+      onDragDrop(handler: (event: DragDropEvent) => void): () => void;
+    };
+
 export interface ApiClient {
   ping(): Promise<PingResponse>;
   getStatus(): Promise<StatusResponse>;
   unlock(password: string): Promise<UnlockResponse>;
+
+  /** Create the books. Answers with the status of what it created. */
+  setup(input: SetupRequest): Promise<StatusResponse>;
 
   getPnl(params?: ReportDateParams): Promise<ReportEnvelope<PnlReport>>;
   getBalance(): Promise<ReportEnvelope<BalanceReport>>;
@@ -276,8 +313,8 @@ export interface ApiClient {
   categorize(): Promise<CategorizeResult>;
 
   createAccount(input: NewAccountRequest): Promise<Account>;
-  /** The only edit an account has: `PATCH /api/accounts/:id` takes a name. */
-  renameAccount(id: number, input: AccountPatch): Promise<Account>;
+  /** Name, class, or both — `PATCH /api/accounts/:id` takes a partial. */
+  updateAccount(id: number, input: AccountPatch): Promise<Account>;
   /** Hard delete, and it takes the account's reconciliations with it. */
   deleteAccount(id: number): Promise<Deleted>;
 
@@ -307,6 +344,11 @@ export interface ApiClient {
    * that can measure it adds an options object without breaking this one.
    */
   uploadImport(file: File): Promise<UploadResponse>;
+  /**
+   * How this client obtains a statement. Screens branch on the discriminant
+   * and never ask which shell they are in.
+   */
+  importSource(): ImportSource;
   /** A dry run: reports what an import would do, having written nothing. */
   previewImport(input: ImportRequest): Promise<ImportPreview>;
   /** Snapshot, import, categorize — the sequence the TUI has always used. */
@@ -480,6 +522,14 @@ export class FetchApiClient implements ApiClient {
     return this.request<UnlockResponse>('POST', '/unlock', { password });
   }
 
+  async setup(input: SetupRequest): Promise<StatusResponse> {
+    const status = await this.request<StatusResponse>('POST', '/setup', input);
+    // A password in the plan encrypts the database; this answer is the
+    // authority on the resulting lock state the same way getStatus is.
+    appLocked.set(status.locked);
+    return status;
+  }
+
   getAppSettings(): Promise<AppSettings> {
     return this.request<AppSettings>('GET', '/settings/app');
   }
@@ -601,7 +651,7 @@ export class FetchApiClient implements ApiClient {
     return this.request<Account>('POST', '/accounts', input);
   }
 
-  renameAccount(id: number, input: AccountPatch): Promise<Account> {
+  updateAccount(id: number, input: AccountPatch): Promise<Account> {
     return this.request<Account>('PATCH', `/accounts/${id}`, input);
   }
 
@@ -657,6 +707,10 @@ export class FetchApiClient implements ApiClient {
     const form = new FormData();
     form.append('file', file, file.name);
     return this.request<UploadResponse>('POST', '/imports/upload', form);
+  }
+
+  importSource(): ImportSource {
+    return { kind: 'browser' };
   }
 
   previewImport(input: ImportRequest): Promise<ImportPreview> {

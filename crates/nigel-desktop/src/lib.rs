@@ -3,6 +3,7 @@
 //! path with no window at all.
 
 pub mod db;
+pub mod imports;
 pub mod save;
 pub mod transport;
 

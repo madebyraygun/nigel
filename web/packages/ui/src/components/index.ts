@@ -76,7 +76,9 @@ export {
 } from './wc-register-toolbar.js';
 export {
   WcDropzone,
+  DEFAULT_EXTENSIONS,
   DEFAULT_MAX_BYTES,
+  unsupportedFileMessage,
   type NcFileErrorDetail,
   type NcFileSelectDetail,
 } from './wc-dropzone.js';
@@ -117,6 +119,11 @@ export {
   accountTypeLabel,
   type AccountTypeValue,
 } from './account-type.js';
+export {
+  ACCOUNT_CLASSES,
+  accountClassLabel,
+  type AccountClassValue,
+} from './account-class.js';
 export {
   WcAccountForm,
   EMPTY_ACCOUNT_FORM,
@@ -256,6 +263,9 @@ export {
 } from './wc-send-dialog.js';
 export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher.js';
 export { WcSnake } from './wc-snake.js';
+export { WcParticleField } from './wc-particle-field.js';
+export { seedParticleField, prefersReducedMotion, type FieldParticle } from './particle-field.js';
+export { WcWordmark, WORDMARK_ART } from './wc-wordmark.js';
 export {
   BOARD_HEIGHT,
   BOARD_WIDTH,

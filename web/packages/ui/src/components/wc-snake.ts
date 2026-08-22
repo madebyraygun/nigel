@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { styleMap } from 'lit/directives/style-map.js';
-import { gradientColor, NIGEL_PALETTE } from '@nigel/theme';
+import { gradientColor } from '@nigel/theme';
 
 // The score is money, and there is one component in this package that renders
 // money. `plain` drops the income/expense colouring, which belongs to a ledger
@@ -9,8 +9,6 @@ import { gradientColor, NIGEL_PALETTE } from '@nigel/theme';
 import './wc-money.js';
 
 import {
-  MAX_PARTICLES,
-  PARTICLE_CHARS,
   createGame,
   step,
   tickInterval,
@@ -18,6 +16,7 @@ import {
   type Direction,
   type SnakeState,
 } from './snake-engine.js';
+import { seedParticleField, prefersReducedMotion } from './particle-field.js';
 
 /** How far the gradient phase advances per move — `snake.rs`'s `1.0 / 70.0`. */
 const PHASE_PER_TICK = 1 / 70;
@@ -30,33 +29,6 @@ const ARROWS: Record<string, Direction> = {
   ArrowLeft: 'left',
   ArrowRight: 'right',
 };
-
-interface Particle {
-  left: string;
-  rest: string;
-  duration: string;
-  delay: string;
-  tint: string;
-  brightness: string;
-  glyph: string;
-}
-
-function seedParticles(rng: () => number): Particle[] {
-  return Array.from({ length: MAX_PARTICLES }, () => ({
-    left: `${(rng() * 100).toFixed(2)}%`,
-    rest: `${(rng() * 100).toFixed(2)}%`,
-    duration: `${(9 + rng() * 12).toFixed(2)}s`,
-    delay: `${(-rng() * 12).toFixed(2)}s`,
-    tint: NIGEL_PALETTE[Math.floor(rng() * NIGEL_PALETTE.length)],
-    brightness: (0.2 + rng() * 0.4).toFixed(2),
-    glyph: PARTICLE_CHARS[Math.floor(rng() * PARTICLE_CHARS.length)],
-  }));
-}
-
-const prefersReducedMotion = (): boolean =>
-  typeof window !== 'undefined' &&
-  typeof window.matchMedia === 'function' &&
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /**
  * Snake, as the TUI plays it.
@@ -285,7 +257,7 @@ export class WcSnake extends LitElement {
    */
   @state() private backgrounded = false;
 
-  private particles = seedParticles(Math.random);
+  private particles = seedParticleField(Math.random);
   private timer: ReturnType<typeof setTimeout> | null = null;
   private motionQuery: MediaQueryList | null = null;
 

@@ -290,7 +290,8 @@ mod tests {
 
         // And the category has to be one the chart of accounts still offers.
         let gone =
-            crate::cli::categories::add_category(&conn, "Doomed", "expense", None, None).unwrap();
+            crate::cli::categories::add_category(&conn, "Doomed", "expense", None, None, None)
+                .unwrap();
         crate::cli::categories::delete_category(&conn, gone).unwrap();
         let err = super::add_rule(
             &conn,

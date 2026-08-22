@@ -1,12 +1,15 @@
 ---
 id: TASK-66
 title: 'Invoicing: negative --amount is rejected by clap with a misleading tip'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-07 23:09'
+updated_date: '2026-08-21 00:21'
 labels:
   - invoicing
   - bug
+milestone: m-0
 dependencies: []
 references:
   - 'archived PR #172'
