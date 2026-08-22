@@ -16,6 +16,7 @@ import { renderInvoices } from './invoices.js';
 import { renderReconcile } from './reconcile.js';
 import { renderUndo } from './undo.js';
 import { renderSettings } from './settings.js';
+import { renderSetup } from './setup.js';
 import { renderUnlock } from './unlock.js';
 
 export type ScreenId =
@@ -32,6 +33,7 @@ export type ScreenId =
   | 'reconcile'
   | 'undo'
   | 'settings'
+  | 'setup'
   | 'unlock';
 
 export interface ScreenDef {
@@ -165,6 +167,15 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-settings',
     inNav: true,
     render: renderSettings,
+  },
+  setup: {
+    id: 'setup',
+    title: 'Setup',
+    navLabel: 'Setup',
+    icon: 'wc-icon-settings',
+    // Reached only through the first-run gate, never by choice.
+    inNav: false,
+    render: renderSetup,
   },
   unlock: {
     id: 'unlock',

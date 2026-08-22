@@ -237,6 +237,14 @@ export class NigelApp extends SignalWatcher(LitElement) {
       return html`<div class="gate">${gate.render(ctx)}</div>`;
     }
 
+    // Same treatment as the unlock gate, and for the same reason: with no
+    // database there is no screen that could fetch anything.
+    if (boot === 'needs-setup') {
+      const gate = screenDef('setup');
+      document.title = `${gate.title} · ${store.companyName.get()}`;
+      return html`<div class="gate">${gate.render(ctx)}</div>`;
+    }
+
     const screen = screenDef(this.route.screen);
     document.title = `${screen.title} · ${store.companyName.get()}`;
 

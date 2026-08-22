@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::db::AccountClass;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -7,6 +9,7 @@ pub struct Account {
     pub id: i64,
     pub name: String,
     pub account_type: String,
+    pub class: AccountClass,
     pub institution: Option<String>,
     pub last_four: Option<String>,
 }

@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     account_type TEXT NOT NULL,
+    class TEXT NOT NULL DEFAULT 'asset'
+        CHECK (class IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
     institution TEXT,
     last_four TEXT,
     created_at TEXT DEFAULT (datetime('now'))
@@ -37,6 +39,8 @@ CREATE TABLE IF NOT EXISTS categories (
     name TEXT NOT NULL,
     parent_id INTEGER,
     category_type TEXT NOT NULL,
+    class TEXT NOT NULL DEFAULT 'expense'
+        CHECK (class IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
     tax_line TEXT,
     form_line TEXT,
     description TEXT,
@@ -53,8 +57,20 @@ CREATE TABLE IF NOT EXISTS imports (
     date_range_start TEXT,
     date_range_end TEXT,
     checksum TEXT,
+    malformed_count INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
+
+CREATE TABLE IF NOT EXISTS import_rejects (
+    id INTEGER PRIMARY KEY,
+    import_id INTEGER NOT NULL,
+    row_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    FOREIGN KEY (import_id) REFERENCES imports(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_rejects_import ON import_rejects(import_id);
 
 CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY,
@@ -144,6 +160,95 @@ pub fn get_profile(conn: &Connection) -> Profile {
         .unwrap_or_default()
 }
 
+/// Where a thing sits in the accounting structure: the five classes every
+/// account and every category carries.
+///
+/// Stored as text with a `CHECK` constraint, read through this type. Serde
+/// carries it over the wire, which is what makes an unknown class a `400` from
+/// the extractor instead of a value the data layer has to check for.
+///
+/// Nothing matching on this may use a catch-all arm. A sixth class must be a
+/// compile error at every site that decides what a class means, because an
+/// unhandled class falling into an `else` and being counted as an expense is
+/// how owner distributions came to be reported as deductions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountClass {
+    Asset,
+    Liability,
+    Equity,
+    Revenue,
+    Expense,
+}
+
+impl AccountClass {
+    /// Every class, in the order the UIs offer them.
+    pub const ALL: [AccountClass; 5] = [
+        AccountClass::Asset,
+        AccountClass::Liability,
+        AccountClass::Equity,
+        AccountClass::Revenue,
+        AccountClass::Expense,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AccountClass::Asset => "asset",
+            AccountClass::Liability => "liability",
+            AccountClass::Equity => "equity",
+            AccountClass::Revenue => "revenue",
+            AccountClass::Expense => "expense",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "asset" => Some(AccountClass::Asset),
+            "liability" => Some(AccountClass::Liability),
+            "equity" => Some(AccountClass::Equity),
+            "revenue" => Some(AccountClass::Revenue),
+            "expense" => Some(AccountClass::Expense),
+            _ => None,
+        }
+    }
+
+    /// A class read out of the database. The `CHECK` constraint should have
+    /// refused anything else, so a value this cannot read is a damaged
+    /// database and is reported as one rather than defaulted.
+    pub fn from_db(value: &str) -> Result<Self> {
+        Self::parse(value).ok_or_else(|| {
+            crate::error::NigelError::Invalid(format!(
+                "Unknown account class in the database: {value}"
+            ))
+        })
+    }
+}
+
+/// The class an account type sits in.
+///
+/// `asset` is the answer for anything outside the known set: a database
+/// written by another tool still has to land somewhere, and an asset is the
+/// reading that can never be counted as a deduction.
+pub fn class_for_account_type(account_type: &str) -> AccountClass {
+    match account_type {
+        "credit_card" | "line_of_credit" => AccountClass::Liability,
+        _ => AccountClass::Asset,
+    }
+}
+
+/// The class a category type sits in. `category_type` is the user-facing
+/// income/expense split the UI organizes by; this is the structure under it.
+pub fn class_for_category_type(category_type: &str) -> AccountClass {
+    match category_type {
+        "income" => AccountClass::Revenue,
+        _ => AccountClass::Expense,
+    }
+}
+
+/// The equity category for money the owner puts into the business. Seeded on
+/// business-profile databases beside `Owner Draw / Distribution`.
+pub const OWNER_CONTRIBUTION: &str = "Owner Contribution";
+
 type CategoryDef = (
     &'static str,
     Option<i64>,
@@ -151,6 +256,7 @@ type CategoryDef = (
     Option<&'static str>,
     Option<&'static str>,
     &'static str,
+    AccountClass,
 );
 
 const BUSINESS_CATEGORIES: &[CategoryDef] = &[
@@ -162,6 +268,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Gross receipts"),
         Some("1120S-1a"),
         "Project fees, retainer payments",
+        AccountClass::Revenue,
     ),
     (
         "Hosting & Maintenance",
@@ -170,6 +277,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Gross receipts"),
         Some("1120S-1a"),
         "Recurring client hosting/maintenance fees",
+        AccountClass::Revenue,
     ),
     (
         "Reimbursements",
@@ -178,6 +286,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Gross receipts"),
         Some("1120S-1a"),
         "Client reimbursements for expenses",
+        AccountClass::Revenue,
     ),
     (
         "Interest Income",
@@ -186,6 +295,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Other income"),
         Some("K-4"),
         "Bank interest",
+        AccountClass::Revenue,
     ),
     (
         "Other Income",
@@ -194,6 +304,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Other income"),
         Some("1120S-5"),
         "Anything else",
+        AccountClass::Revenue,
     ),
     // Expenses
     (
@@ -203,6 +314,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Schedule C Part III / 1120-S Line 2"),
         Some("1120S-2"),
         "Materials, subcontractor costs directly tied to delivering client work",
+        AccountClass::Expense,
     ),
     (
         "Advertising & Marketing",
@@ -211,6 +323,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 8"),
         Some("1120S-16"),
         "Ads, sponsorships, marketing tools",
+        AccountClass::Expense,
     ),
     (
         "Car & Truck",
@@ -219,6 +332,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 9"),
         Some("1120S-19"),
         "Mileage, fuel, parking",
+        AccountClass::Expense,
     ),
     (
         "Commissions & Fees",
@@ -227,6 +341,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 10"),
         Some("1120S-19"),
         "Subcontractor commissions, platform fees",
+        AccountClass::Expense,
     ),
     (
         "Contract Labor",
@@ -235,6 +350,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 11"),
         Some("1120S-19"),
         "Freelancers, subcontractors (1099 work)",
+        AccountClass::Expense,
     ),
     (
         "Insurance",
@@ -243,6 +359,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 15"),
         Some("1120S-19"),
         "Business insurance, E&O",
+        AccountClass::Expense,
     ),
     (
         "Legal & Professional",
@@ -251,6 +368,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 17"),
         Some("1120S-19"),
         "Accountant, lawyer, professional services",
+        AccountClass::Expense,
     ),
     (
         "Office Expense",
@@ -259,6 +377,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 18"),
         Some("1120S-19"),
         "Office supplies, minor equipment",
+        AccountClass::Expense,
     ),
     (
         "Rent / Lease",
@@ -267,6 +386,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 20b"),
         Some("1120S-11"),
         "Office rent, coworking",
+        AccountClass::Expense,
     ),
     (
         "Software & Subscriptions",
@@ -275,6 +395,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 18/27a"),
         Some("1120S-19"),
         "SaaS tools, domain renewals, cloud services",
+        AccountClass::Expense,
     ),
     (
         "Hosting & Infrastructure",
@@ -283,6 +404,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 18/27a"),
         Some("1120S-19"),
         "AWS, server costs, CDN",
+        AccountClass::Expense,
     ),
     (
         "Taxes & Licenses",
@@ -291,6 +413,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 23"),
         Some("1120S-12"),
         "Business licenses, state fees",
+        AccountClass::Expense,
     ),
     (
         "Travel",
@@ -299,6 +422,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 24a"),
         Some("1120S-19"),
         "Flights, hotels, conference travel",
+        AccountClass::Expense,
     ),
     (
         "Meals",
@@ -307,6 +431,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 24b"),
         Some("1120S-19"),
         "Business meals (50% deductible)",
+        AccountClass::Expense,
     ),
     (
         "Utilities",
@@ -315,6 +440,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 25"),
         Some("1120S-19"),
         "Internet, phone (business portion)",
+        AccountClass::Expense,
     ),
     (
         "Payroll — Wages",
@@ -323,6 +449,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 26"),
         Some("1120S-8"),
         "Employee salaries (from Gusto)",
+        AccountClass::Expense,
     ),
     (
         "Payroll — Taxes",
@@ -331,6 +458,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 23"),
         Some("1120S-12"),
         "Employer payroll taxes (from Gusto)",
+        AccountClass::Expense,
     ),
     (
         "Payroll — Benefits",
@@ -339,6 +467,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 14"),
         Some("1120S-18"),
         "Health insurance, retirement (from Gusto)",
+        AccountClass::Expense,
     ),
     (
         "Bank & Merchant Fees",
@@ -347,6 +476,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 27a"),
         Some("1120S-19"),
         "Stripe fees, bank charges, wire fees",
+        AccountClass::Expense,
     ),
     (
         "Education & Training",
@@ -355,6 +485,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 27a"),
         Some("1120S-19"),
         "Courses, books, conferences",
+        AccountClass::Expense,
     ),
     (
         "Equipment",
@@ -363,6 +494,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 13"),
         Some("1120S-19"),
         "Hardware, major purchases",
+        AccountClass::Expense,
     ),
     (
         "Home Office",
@@ -371,6 +503,16 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Line 30"),
         Some("1120S-19"),
         "Simplified method or actual expenses",
+        AccountClass::Expense,
+    ),
+    (
+        OWNER_CONTRIBUTION,
+        None,
+        "income",
+        Some("Not taxable"),
+        None,
+        "Money the owner puts into the business",
+        AccountClass::Equity,
     ),
     (
         "Owner Draw / Distribution",
@@ -379,6 +521,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Not deductible"),
         Some("K-16d"),
         "Owner payments, distributions",
+        AccountClass::Equity,
     ),
     (
         "Transfer",
@@ -387,6 +530,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("Not deductible"),
         Some("excluded"),
         "Transfers between own accounts",
+        AccountClass::Expense,
     ),
     (
         "Uncategorized",
@@ -395,6 +539,7 @@ const BUSINESS_CATEGORIES: &[CategoryDef] = &[
         Some("\u{2014}"),
         None,
         "Needs review",
+        AccountClass::Expense,
     ),
 ];
 
@@ -410,6 +555,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Paychecks and take-home pay",
+        AccountClass::Revenue,
     ),
     (
         "Interest Income",
@@ -418,6 +564,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Bank interest",
+        AccountClass::Revenue,
     ),
     (
         "Other Income",
@@ -426,6 +573,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Refunds, rebates, anything else",
+        AccountClass::Revenue,
     ),
     // Expenses
     (
@@ -435,6 +583,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Housing payments",
+        AccountClass::Expense,
     ),
     (
         "Groceries",
@@ -443,6 +592,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Food and household staples",
+        AccountClass::Expense,
     ),
     (
         "Dining & Takeout",
@@ -451,6 +601,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Restaurants, cafes, delivery",
+        AccountClass::Expense,
     ),
     (
         "Utilities",
@@ -459,6 +610,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Electric, gas, water, internet, phone",
+        AccountClass::Expense,
     ),
     (
         "Transportation",
@@ -467,6 +619,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Fuel, transit fares, parking, rideshare",
+        AccountClass::Expense,
     ),
     (
         "Auto & Vehicle",
@@ -475,6 +628,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Car payments, repairs, registration",
+        AccountClass::Expense,
     ),
     (
         "Health & Medical",
@@ -483,6 +637,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Doctors, dental, pharmacy",
+        AccountClass::Expense,
     ),
     (
         "Insurance",
@@ -491,6 +646,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Home, auto, health premiums",
+        AccountClass::Expense,
     ),
     (
         "Subscriptions & Streaming",
@@ -499,6 +655,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Streaming, apps, memberships",
+        AccountClass::Expense,
     ),
     (
         "Shopping",
@@ -507,6 +664,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Clothing, electronics, general purchases",
+        AccountClass::Expense,
     ),
     (
         "Home & Garden",
@@ -515,6 +673,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Furnishings, repairs, maintenance",
+        AccountClass::Expense,
     ),
     (
         "Travel",
@@ -523,6 +682,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Flights, hotels, holidays",
+        AccountClass::Expense,
     ),
     (
         "Entertainment",
@@ -531,6 +691,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Events, hobbies, going out",
+        AccountClass::Expense,
     ),
     (
         "Education",
@@ -539,6 +700,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Tuition, courses, books",
+        AccountClass::Expense,
     ),
     (
         "Childcare & Family",
@@ -547,8 +709,17 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Childcare, school costs, allowances",
+        AccountClass::Expense,
     ),
-    ("Pets", None, "expense", None, None, "Food, vet, supplies"),
+    (
+        "Pets",
+        None,
+        "expense",
+        None,
+        None,
+        "Food, vet, supplies",
+        AccountClass::Expense,
+    ),
     (
         "Personal Care",
         None,
@@ -556,6 +727,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Haircuts, gym, wellness",
+        AccountClass::Expense,
     ),
     (
         "Gifts & Donations",
@@ -564,6 +736,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Presents and charitable giving",
+        AccountClass::Expense,
     ),
     (
         "Bank & Merchant Fees",
@@ -572,6 +745,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Account fees, card charges",
+        AccountClass::Expense,
     ),
     (
         "Taxes",
@@ -580,6 +754,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         None,
         "Income and property tax payments",
+        AccountClass::Expense,
     ),
     (
         "Transfer",
@@ -588,8 +763,17 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
         None,
         Some("excluded"),
         "Transfers between own accounts, credit card payments",
+        AccountClass::Expense,
     ),
-    ("Uncategorized", None, "expense", None, None, "Needs review"),
+    (
+        "Uncategorized",
+        None,
+        "expense",
+        None,
+        None,
+        "Needs review",
+        AccountClass::Expense,
+    ),
 ];
 
 pub fn get_connection(db_path: &Path) -> Result<Connection> {
@@ -727,8 +911,8 @@ pub fn init_db_with_profile(conn: &Connection, profile: Profile) -> Result<()> {
         let tx = conn.unchecked_transaction()?;
         for cat in template {
             tx.execute(
-                "INSERT INTO categories (name, parent_id, category_type, tax_line, form_line, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![cat.0, cat.1, cat.2, cat.3, cat.4, cat.5],
+                "INSERT INTO categories (name, parent_id, category_type, tax_line, form_line, description, class) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![cat.0, cat.1, cat.2, cat.3, cat.4, cat.5, cat.6.as_str()],
             )?;
         }
         set_metadata(&tx, PROFILE_KEY, profile.as_str())?;
@@ -1143,5 +1327,109 @@ mod tests {
         let (_dir, conn) = test_db();
         let version = crate::migrations::get_schema_version(&conn).unwrap();
         assert_eq!(version, crate::migrations::LATEST_VERSION);
+    }
+
+    #[test]
+    fn every_class_round_trips_through_its_stored_string() {
+        for class in AccountClass::ALL {
+            assert_eq!(AccountClass::parse(class.as_str()), Some(class));
+        }
+        assert_eq!(AccountClass::ALL.len(), 5);
+    }
+
+    #[test]
+    fn a_string_that_is_not_a_class_is_an_error_rather_than_a_default() {
+        assert_eq!(AccountClass::parse("Asset"), None);
+        assert_eq!(AccountClass::parse(""), None);
+        let err = AccountClass::from_db("contra-asset").unwrap_err();
+        assert!(
+            matches!(err, crate::error::NigelError::Invalid(_)),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn account_types_and_category_types_map_to_the_classes_the_task_names() {
+        assert_eq!(class_for_account_type("checking"), AccountClass::Asset);
+        assert_eq!(class_for_account_type("savings"), AccountClass::Asset);
+        assert_eq!(class_for_account_type("payroll"), AccountClass::Asset);
+        assert_eq!(
+            class_for_account_type("credit_card"),
+            AccountClass::Liability
+        );
+        assert_eq!(
+            class_for_account_type("line_of_credit"),
+            AccountClass::Liability
+        );
+        // Nothing else has a mapping; asset is the reading that can never be
+        // counted as a deduction.
+        assert_eq!(class_for_account_type("brokerage"), AccountClass::Asset);
+
+        assert_eq!(class_for_category_type("income"), AccountClass::Revenue);
+        assert_eq!(class_for_category_type("expense"), AccountClass::Expense);
+    }
+
+    #[test]
+    fn the_seeded_business_chart_carries_its_classes() {
+        let (_dir, conn) = test_db();
+        let class_of = |name: &str| -> String {
+            conn.query_row(
+                "SELECT class FROM categories WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(class_of("Client Services"), "revenue");
+        assert_eq!(class_of("Office Expense"), "expense");
+        assert_eq!(class_of("Owner Draw / Distribution"), "equity");
+        assert_eq!(class_of("Owner Contribution"), "equity");
+    }
+
+    #[test]
+    fn the_personal_chart_carries_its_classes_and_seeds_no_equity() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = get_connection(&dir.path().join("personal.db")).unwrap();
+        init_db_with_profile(&conn, Profile::Personal).unwrap();
+
+        let equity: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM categories WHERE class = 'equity'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(equity, 0, "a household chart has no owner equity");
+
+        let salary: String = conn
+            .query_row(
+                "SELECT class FROM categories WHERE name = 'Salary & Wages'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(salary, "revenue");
+    }
+
+    #[test]
+    fn the_check_constraint_refuses_a_class_outside_the_set() {
+        let (_dir, conn) = test_db();
+        let err = conn
+            .execute(
+                "INSERT INTO categories (name, category_type, class) \
+                 VALUES ('Bogus', 'expense', 'contra-asset')",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("CHECK constraint failed"), "{err}");
+
+        let err = conn
+            .execute(
+                "INSERT INTO accounts (name, account_type, class) \
+                 VALUES ('Bogus', 'checking', 'contra-asset')",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("CHECK constraint failed"), "{err}");
     }
 }

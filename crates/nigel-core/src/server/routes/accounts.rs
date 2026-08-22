@@ -1,4 +1,4 @@
-//! Accounts: `GET /api/accounts` plus create, rename, and delete.
+//! Accounts: `GET /api/accounts` plus create, edit, and delete.
 //!
 //! Delete is a hard delete guarded by a transaction count, exactly as the CLI
 //! and the TUI do it — a blocked delete answers `409` with the count, so the
@@ -11,9 +11,10 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use crate::accounts;
+use crate::db::AccountClass;
 use crate::models::Account;
 
-use super::super::error::ApiResult;
+use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
 use super::super::state::AppState;
 use super::{with_conn, Deleted};
@@ -21,7 +22,7 @@ use super::{with_conn, Deleted};
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/accounts", get(list).post(create))
-        .route("/accounts/{id}", patch(rename).delete(remove))
+        .route("/accounts/{id}", patch(update).delete(remove))
 }
 
 async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<Account>>> {
@@ -33,6 +34,7 @@ async fn list(State(state): State<AppState>) -> ApiResult<Json<Vec<Account>>> {
 pub struct NewAccount {
     name: String,
     account_type: String,
+    class: Option<AccountClass>,
     institution: Option<String>,
     last_four: Option<String>,
 }
@@ -46,6 +48,7 @@ async fn create(
             conn,
             &new.name,
             &new.account_type,
+            new.class,
             new.institution.as_deref(),
             new.last_four.as_deref(),
         )?;
@@ -55,21 +58,27 @@ async fn create(
     Ok((StatusCode::CREATED, Json(account)))
 }
 
-/// Renaming is the only edit the data layer offers; institution and last four
-/// are set when the account is created.
+/// A partial update: name, class, or both. Institution and last four are set
+/// when the account is created, which is all the data layer offers.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountPatch {
-    name: String,
+    name: Option<String>,
+    class: Option<AccountClass>,
 }
 
-async fn rename(
+async fn update(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<i64>,
     ApiJson(patch): ApiJson<AccountPatch>,
 ) -> ApiResult<Json<Account>> {
+    if patch.name.is_none() && patch.class.is_none() {
+        return Err(ApiError::bad_request(
+            "Nothing to update — provide `name`, `class`, or both.",
+        ));
+    }
     let account = with_conn(&state, move |conn| {
-        accounts::rename_account(conn, id, &patch.name)?;
+        accounts::update_account(conn, id, patch.name.as_deref(), patch.class)?;
         accounts::get_account(conn, id)
     })
     .await?;
@@ -103,9 +112,87 @@ mod tests {
         let rows = body.as_array().expect("a bare array");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["name"], "BofA Checking");
-        for key in ["accountType", "lastFour"] {
+        for key in ["accountType", "lastFour", "class"] {
             assert!(rows[0].get(key).is_some(), "missing {key} in {rows:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn an_account_defaults_its_class_from_its_type_and_can_be_reclassified() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, card) = post_json(
+            &app,
+            "/api/accounts",
+            &token,
+            &serde_json::json!({ "name": "Globex Card", "accountType": "credit_card" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{card}");
+        assert_eq!(card["class"], "liability");
+
+        let (status, checking) = post_json(
+            &app,
+            "/api/accounts",
+            &token,
+            &serde_json::json!({ "name": "Globex Checking", "accountType": "checking" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{checking}");
+        assert_eq!(checking["class"], "asset");
+
+        // Name and class are each patchable alone; neither blanks the other.
+        let id = checking["id"].as_i64().unwrap();
+        let (status, reclassified) = patch_json(
+            &app,
+            &format!("/api/accounts/{id}"),
+            &token,
+            &serde_json::json!({ "class": "liability" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{reclassified}");
+        assert_eq!(reclassified["class"], "liability");
+        assert_eq!(reclassified["name"], "Globex Checking");
+        assert_eq!(reclassified["accountType"], "checking");
+
+        let (status, renamed) = patch_json(
+            &app,
+            &format!("/api/accounts/{id}"),
+            &token,
+            &serde_json::json!({ "name": "Globex Operating" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{renamed}");
+        assert_eq!(renamed["name"], "Globex Operating");
+        assert_eq!(renamed["class"], "liability");
+    }
+
+    #[tokio::test]
+    async fn an_empty_account_patch_and_an_unknown_class_are_both_refused() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let id = ok_json(&app, "/api/accounts", &token).await[0]["id"]
+            .as_i64()
+            .unwrap();
+
+        let (status, body) = patch_json(
+            &app,
+            &format!("/api/accounts/{id}"),
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) = patch_json(
+            &app,
+            &format!("/api/accounts/{id}"),
+            &token,
+            &serde_json::json!({ "class": "contra-asset" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
 
     #[tokio::test]

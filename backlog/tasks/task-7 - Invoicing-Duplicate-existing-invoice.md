@@ -5,8 +5,9 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-04-25 18:05'
-updated_date: '2026-08-20 14:42'
+updated_date: '2026-08-21 00:21'
 labels: []
+milestone: m-0
 dependencies: []
 references:
   - 'archived issue #30'

@@ -16,6 +16,7 @@ const ACCOUNTS: Account[] = [
     id: 1,
     name: 'BofA Checking',
     accountType: 'checking',
+    class: 'asset',
     institution: 'Bank of America',
     lastFour: '4821',
   },
@@ -23,6 +24,7 @@ const ACCOUNTS: Account[] = [
     id: 2,
     name: 'Gusto Payroll',
     accountType: 'payroll',
+    class: 'asset',
     institution: null,
     lastFour: null,
   },
@@ -85,6 +87,18 @@ async function type(
   await settle(el);
 }
 
+async function pick(
+  el: NigelAccountsScreen,
+  hook: string,
+  value: string,
+): Promise<void> {
+  const control = form(el).shadowRoot?.querySelector<HTMLInputElement>(hook);
+  if (!control) throw new Error(`no ${hook} in the form`);
+  control.value = value;
+  control.dispatchEvent(new Event('change'));
+  await settle(el);
+}
+
 async function openAdd(el: NigelAccountsScreen): Promise<void> {
   layout(el).dispatchEvent(new CustomEvent('nc-manager-add'));
   await settle(el);
@@ -124,8 +138,8 @@ describe('nigel-accounts-screen', () => {
   it('lists the accounts with humanized types', async () => {
     const { el } = await mount();
     expect(table(el).rows.map((row) => row.cells)).toEqual([
-      ['BofA Checking', 'Checking', 'Bank of America', '4821'],
-      ['Gusto Payroll', 'Payroll', null, null],
+      ['BofA Checking', 'Checking', 'Asset', 'Bank of America', '4821'],
+      ['Gusto Payroll', 'Payroll', 'Asset', null, null],
     ]);
     expect(layout(el).count).toBe(2);
   });
@@ -152,6 +166,35 @@ describe('nigel-accounts-screen', () => {
     expect(table(el).rows).toHaveLength(3);
   });
 
+  it('leaves the class out when the operator never picked one', async () => {
+    // The server derives it from the type; sending the control's untouched
+    // default would file a credit card as an asset.
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Globex Card');
+    await pick(el, '[data-type]', 'credit_card');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createAccount:{"name":"Globex Card","accountType":"credit_card","institution":null,"lastFour":null}',
+    );
+    expect(fake.accounts.find((account) => account.name === 'Globex Card')?.class).toBe(
+      'liability',
+    );
+  });
+
+  it('sends the class the operator did pick', async () => {
+    const { el, fake } = await mount();
+    await openAdd(el);
+    await type(el, '[data-name]', 'Owner Loan');
+    await pick(el, '[data-class]', 'liability');
+    await save(el);
+
+    expect(fake.calls[1]).toBe(
+      'createAccount:{"name":"Owner Loan","accountType":"checking","class":"liability","institution":null,"lastFour":null}',
+    );
+  });
+
   it('sends empty optional fields as null rather than as empty strings', async () => {
     const { el, fake } = await mount();
     await openAdd(el);
@@ -164,21 +207,31 @@ describe('nigel-accounts-screen', () => {
 
   it('renames through the patch route, sending only the name', async () => {
     const { el, fake } = await mount();
-    await rowAction(el, 'rename', 1);
+    await rowAction(el, 'edit', 1);
     await type(el, '[data-name]', 'BofA Business Checking');
     await save(el);
 
     expect(fake.calls).toEqual([
       'getAccounts',
-      'renameAccount:1:{"name":"BofA Business Checking"}',
+      'updateAccount:1:{"name":"BofA Business Checking"}',
       'getAccounts',
     ]);
   });
 
-  it('issues no request when a rename changes nothing', async () => {
+  it('saves a reclassification without touching the name', async () => {
+    const fake = client();
+    const { el } = await mount(fake);
+    await rowAction(el, 'edit', 1);
+    await pick(el, '[data-class]', 'liability');
+    await save(el);
+
+    expect(fake.calls).toContain('updateAccount:1:{"class":"liability"}');
+  });
+
+  it('issues no request when an edit changes nothing', async () => {
     // The only thing such a request could do is fail on the account's own name.
     const { el, fake } = await mount();
-    await rowAction(el, 'rename', 1);
+    await rowAction(el, 'edit', 1);
     await save(el);
 
     expect(fake.calls).toEqual(['getAccounts']);
@@ -307,10 +360,11 @@ describe('nigel-accounts-screen', () => {
     expect(layout(el).error).toBeNull();
   });
 
-  it('shows only the name field when renaming', async () => {
+  it('offers the name and the class when editing, and nothing else', async () => {
     const { el } = await mount();
-    await rowAction(el, 'rename', 1);
-    expect(form(el).mode).toBe('rename');
+    await rowAction(el, 'edit', 1);
+    expect(form(el).mode).toBe('edit');
+    expect(form(el).shadowRoot?.querySelector('[data-class]')).not.toBeNull();
     expect(form(el).shadowRoot?.querySelector('[data-type]')).toBeNull();
   });
 });

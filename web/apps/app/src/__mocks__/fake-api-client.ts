@@ -73,6 +73,7 @@ import type {
   RuleTestResult,
   SendResult,
   SetPasswordRequest,
+  SetupRequest,
   StatusResponse,
   SyncResult,
   TaxSummary,
@@ -113,6 +114,8 @@ export const EMPTY_BALANCE: BalanceReport = {
   accounts: [],
   total: 0,
   ytdNetIncome: 0,
+  uncategorizedTotal: 0,
+  uncategorizedCount: 0,
 };
 
 export const EMPTY_EXPENSES: ExpenseBreakdown = {
@@ -186,6 +189,13 @@ export const LOCKED_STATUS: StatusResponse = {
   companyName: null,
 };
 
+/** A machine that has never run Nigel: settings.json may exist, books do not. */
+export const UNINITIALIZED_STATUS: StatusResponse = {
+  ...UNLOCKED_STATUS,
+  initialized: false,
+  companyName: null,
+};
+
 /** No open receivables — the five buckets exist even when they are all zero. */
 export const EMPTY_AGING: AgingReport = {
   asOf: '2026-03-15',
@@ -203,6 +213,17 @@ export const EMPTY_AGING: AgingReport = {
 /** The order `GET /api/rules` answers in: priority descending, ties by id. */
 function sortRules(rules: RuleRow[]): RuleRow[] {
   return [...rules].sort((a, b) => b.priority - a.priority || a.id - b.id);
+}
+
+/**
+ * What a create without a `class` gets, the way the server derives it — a
+ * fixture that skipped the derivation would answer with a row no endpoint
+ * could ever return.
+ */
+function classForAccountType(accountType: string): string {
+  return accountType === 'credit_card' || accountType === 'line_of_credit'
+    ? 'liability'
+    : 'asset';
 }
 
 /**
@@ -266,6 +287,20 @@ export class FakeApiClient implements ApiClient {
     if (this.unlockError) throw this.unlockError;
     this.status = { ...this.status, locked: false };
     return { locked: false };
+  }
+
+  setupError: Error | null = null;
+
+  async setup(input: SetupRequest): Promise<StatusResponse> {
+    this.calls.push(`setup:${JSON.stringify(input)}`);
+    if (this.setupError) throw this.setupError;
+    this.status = {
+      ...this.status,
+      initialized: true,
+      companyName: input.companyName || null,
+      profile: input.profile,
+    };
+    return this.status;
   }
 
   // -- reports --------------------------------------------------------------
@@ -526,7 +561,7 @@ export class FakeApiClient implements ApiClient {
 
   rulesError: Error | null = null;
   createAccountError: Error | null = null;
-  renameAccountError: Error | null = null;
+  updateAccountError: Error | null = null;
   deleteAccountError: Error | null = null;
   createCategoryError: Error | null = null;
   updateCategoryError: Error | null = null;
@@ -552,6 +587,7 @@ export class FakeApiClient implements ApiClient {
       id: this.nextId++,
       name: input.name,
       accountType: input.accountType,
+      class: input.class ?? classForAccountType(input.accountType),
       institution: input.institution ?? null,
       lastFour: input.lastFour ?? null,
     };
@@ -559,13 +595,14 @@ export class FakeApiClient implements ApiClient {
     return account;
   }
 
-  async renameAccount(id: number, input: AccountPatch): Promise<Account> {
-    this.calls.push(`renameAccount:${id}:${JSON.stringify(input)}`);
-    if (this.renameAccountError) throw this.renameAccountError;
+  async updateAccount(id: number, input: AccountPatch): Promise<Account> {
+    this.calls.push(`updateAccount:${id}:${JSON.stringify(input)}`);
+    if (this.updateAccountError) throw this.updateAccountError;
 
     const account = this.accounts.find((candidate) => candidate.id === id);
     if (!account) throw new Error(`no account ${id} in the fixture`);
-    account.name = input.name;
+    if (input.name !== undefined) account.name = input.name;
+    if (input.class !== undefined) account.class = input.class;
     return { ...account };
   }
 
@@ -585,6 +622,7 @@ export class FakeApiClient implements ApiClient {
       id: this.nextId++,
       name: input.name,
       categoryType: input.categoryType,
+      class: input.class ?? (input.categoryType === 'income' ? 'revenue' : 'expense'),
       taxLine: input.taxLine ?? null,
       formLine: input.formLine ?? null,
     };
@@ -602,6 +640,7 @@ export class FakeApiClient implements ApiClient {
     // Absent keeps, null clears — the double_option semantics the route has.
     if (input.name !== undefined) category.name = input.name;
     if (input.categoryType !== undefined) category.categoryType = input.categoryType;
+    if (input.class !== undefined) category.class = input.class;
     if (input.taxLine !== undefined) category.taxLine = input.taxLine;
     if (input.formLine !== undefined) category.formLine = input.formLine;
     return { ...category };

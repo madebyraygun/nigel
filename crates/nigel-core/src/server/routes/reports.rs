@@ -571,7 +571,10 @@ mod tests {
             ("/api/reports/expenses", &["topVendors"]),
             ("/api/reports/tax", &["lineItems"]),
             ("/api/reports/cashflow", &["months"]),
-            ("/api/reports/balance", &["ytdNetIncome"]),
+            (
+                "/api/reports/balance",
+                &["ytdNetIncome", "uncategorizedTotal", "uncategorizedCount"],
+            ),
             ("/api/reports/flagged", &[]),
             ("/api/reports/register", &["rows"]),
             (

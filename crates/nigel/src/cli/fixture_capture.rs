@@ -85,16 +85,16 @@ fn fixtures_dir() -> PathBuf {
 /// income that falls back to gross receipts.
 fn seed_unmapped(conn: &Connection) {
     conn.execute(
-        "INSERT INTO categories (name, category_type, tax_line, form_line) \
-         VALUES ('Studio Sundries', 'expense', NULL, NULL)",
+        "INSERT INTO categories (name, category_type, tax_line, form_line, class) \
+         VALUES ('Studio Sundries', 'expense', NULL, NULL, 'expense')",
         [],
     )
     .expect("unmapped expense category");
     let sundries = conn.last_insert_rowid();
 
     conn.execute(
-        "INSERT INTO categories (name, category_type, tax_line, form_line) \
-         VALUES ('Workshop Fees', 'income', NULL, NULL)",
+        "INSERT INTO categories (name, category_type, tax_line, form_line, class) \
+         VALUES ('Workshop Fees', 'income', NULL, NULL, 'revenue')",
         [],
     )
     .expect("unmapped income category");

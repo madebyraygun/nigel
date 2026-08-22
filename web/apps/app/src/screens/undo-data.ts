@@ -15,6 +15,7 @@ export function toImportRows(items: ImportListItem[]): ImportHistoryRow[] {
     accountName: item.accountName,
     importDate: item.importDate,
     transactionCount: item.transactionCount,
+    malformedCount: item.malformedCount,
   }));
 }
 

@@ -22,12 +22,19 @@ nigel import <file> --account <name> --date-col 0 --desc-col 1 --amount-col 3  #
 nigel import <file> --account <name> --date-col 0 --desc-col 1 --amount-col 3 --save-profile chase  # Save profile
 nigel import <file> --account <name> --format chase      # Use saved profile
 nigel undo                                        # Undo the last import (with confirmation)
+nigel imports list                                # Every import, newest first, with its row and dropped counts
+nigel imports rejects 7                           # The rows import 7 could not parse: line, reason, raw row
+nigel accounts add "BofA Checking" --type checking # Add an account (--class defaults from the type)
+nigel accounts add "Globex Card" --type credit_card --class liability  # Set the class explicitly
 nigel accounts rename 1 "New Name"                # Rename account by ID
+nigel accounts edit 1 --name "New Name" --class liability  # Change the name, the class, or both
 nigel accounts delete 3                           # Delete account by ID (blocked if has transactions)
 nigel categories list                             # List all categories
-nigel categories add "Consulting" --type income   # Add a category
+nigel categories add "Consulting" --type income   # Add a category (--class defaults from the type)
+nigel categories add "Owner Draw" --type expense --class equity  # Set the class explicitly
 nigel categories rename 5 "Professional Fees"     # Rename a category
 nigel categories update 5 "Fees" --type income --tax-line "Gross receipts"  # Update all fields
+nigel categories update 5 "Owner Draw" --type expense --class equity  # Update the accounting class
 nigel categories delete 30                        # Soft-delete a category
 nigel rules test "ADOBE" --match-type contains    # Test pattern against transactions (dry run)
 nigel rules update 1 --priority 10                # Update a rule field
@@ -96,7 +103,7 @@ nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
 nigel serve --port 8080                           # Bind a different port (0 = ephemeral)
 nigel serve --no-open                             # Print the tokenized URL instead of opening a browser
-nigel status                                      # Show active DB and summary stats
+nigel status                                      # Show active DB and summary stats, including a Dropped rows line naming the accounts
 nigel load ~/other-books                          # Switch to a different data directory
 nigel backup                                      # Back up DB to <data_dir>/backups/
 nigel backup --output /tmp/nigel-backup.db        # Back up to custom path
@@ -107,6 +114,13 @@ nigel password remove                             # Decrypt database (remove pas
 nigel update                                      # Check for and install the latest version
 nigel completions bash                            # Generate shell completions (bash, zsh, fish, powershell)
 ```
+
+A renamed distributions category needs its class set by hand. The v10 backfill
+recognizes `Owner Draw / Distribution` and `Owner Contribution` by name; a
+category called something else was classified from its type and landed on
+`expense`, where the K-1 worksheet counts it as a deduction. Give it the class
+it actually is — `nigel categories update <id> "<name>" --type expense --class
+equity` — and its `K-16d` money is reported as distributions.
 
 ### Web UI
 

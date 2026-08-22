@@ -40,6 +40,7 @@ pub fn run() -> Result<()> {
         |r| r.get(0),
     )?;
     let rules: i64 = conn.query_row("SELECT count(*) FROM rules", [], |r| r.get(0))?;
+    let dropped = nigel_core::imports::dropped_rows_by_account(&conn)?;
 
     // All data collected — print output
     println!("User:       {user_name}");
@@ -54,13 +55,57 @@ pub fn run() -> Result<()> {
     println!("Transactions:  {transactions}");
     println!("Flagged:       {flagged}");
     println!("Rules:         {rules}");
+    println!("{}", dropped_rows_line(&dropped));
 
     Ok(())
+}
+
+/// What the books are missing, if anything.
+///
+/// Named per account, because "some rows were dropped" is not actionable and
+/// "Cedar Systems Checking dropped 2" points at the statement to re-import.
+pub fn dropped_rows_line(dropped: &[nigel_core::imports::DroppedRows]) -> String {
+    let total: i64 = dropped.iter().map(|d| d.malformed_count).sum();
+    if total == 0 {
+        return "Dropped rows:  0".to_string();
+    }
+    let detail = dropped
+        .iter()
+        .map(|d| format!("{} {}", d.account_name, d.malformed_count))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Dropped rows:  {total} ({detail}) — run `nigel imports rejects <id>` to see them")
 }
 
 #[cfg(test)]
 mod tests {
     use nigel_core::db::{get_connection, init_db, is_encrypted, open_connection, set_db_password};
+    use nigel_core::imports::DroppedRows;
+
+    #[test]
+    fn whole_books_report_no_dropped_rows() {
+        assert_eq!(super::dropped_rows_line(&[]), "Dropped rows:  0");
+    }
+
+    #[test]
+    fn dropped_rows_name_the_accounts_they_came_from() {
+        let dropped = vec![
+            DroppedRows {
+                account_name: "Cedar Systems Checking".into(),
+                malformed_count: 2,
+            },
+            DroppedRows {
+                account_name: "Globex Card".into(),
+                malformed_count: 1,
+            },
+        ];
+
+        assert_eq!(
+            super::dropped_rows_line(&dropped),
+            "Dropped rows:  3 (Cedar Systems Checking 2, Globex Card 1) \
+             — run `nigel imports rejects <id>` to see them"
+        );
+    }
 
     #[test]
     fn test_is_encrypted_shown_false_for_plain_db() {

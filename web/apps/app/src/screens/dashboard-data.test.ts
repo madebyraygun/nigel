@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { cashflowBuckets } from './dashboard-data.js';
-import type { CashflowMonth, CashflowReport } from '../api/types.js';
+import { cashflowBuckets, droppedRowsNotice } from './dashboard-data.js';
+import type {
+  CashflowMonth,
+  CashflowReport,
+  ImportListItem,
+} from '../api/types.js';
+
+const IMPORT: ImportListItem = {
+  id: 7,
+  filename: 'march.csv',
+  accountName: 'Cedar Systems Checking',
+  importDate: '2026-03-02 09:14:11',
+  transactionCount: 42,
+  malformedCount: 0,
+};
 
 function month(m: string, inflows = 1000, outflows = -400): CashflowMonth {
   return { month: m, inflows, outflows, net: inflows + outflows, runningBalance: 0 };
@@ -107,5 +120,29 @@ describe('cashflowBuckets', () => {
       'Nov',
       'Dec',
     ]);
+  });
+});
+
+describe('droppedRowsNotice', () => {
+  it('says nothing when every row landed', () => {
+    expect(droppedRowsNotice([IMPORT])).toBeNull();
+    expect(droppedRowsNotice([])).toBeNull();
+  });
+
+  it('names the accounts whose books are incomplete', () => {
+    const notice = droppedRowsNotice([
+      { ...IMPORT, malformedCount: 2 },
+      {
+        ...IMPORT,
+        id: 8,
+        accountName: 'Globex Card',
+        filename: 'april.csv',
+        malformedCount: 1,
+      },
+    ]);
+
+    expect(notice).toBe(
+      '3 rows could not be imported — Cedar Systems Checking (2), Globex Card (1). Their books are incomplete.',
+    );
   });
 });

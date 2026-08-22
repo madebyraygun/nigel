@@ -11,6 +11,7 @@ pub mod categories;
 pub mod categorizer;
 pub mod clock;
 pub mod db;
+pub mod demo;
 pub mod error;
 pub mod fmt;
 pub mod importer;
@@ -28,4 +29,5 @@ pub mod rules;
 #[cfg(feature = "serve")]
 pub mod server;
 pub mod settings;
+pub mod setup;
 pub mod updater;

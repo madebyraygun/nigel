@@ -15,6 +15,7 @@ mod fixture_capture;
 pub mod goodbye;
 pub mod import;
 pub mod import_manager;
+pub mod imports;
 pub mod init;
 pub mod invoice;
 pub mod invoice_manager;
@@ -114,6 +115,11 @@ pub enum Commands {
     Invoice {
         #[command(subcommand)]
         command: InvoiceCommands,
+    },
+    /// Inspect import history and the rows an import dropped.
+    Imports {
+        #[command(subcommand)]
+        command: ImportsCommands,
     },
     /// Import a CSV/XLSX file and auto-categorize transactions.
     Import {
@@ -229,6 +235,17 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
+pub enum ImportsCommands {
+    /// List every import, newest first, with its row and dropped counts.
+    List,
+    /// Show the rows an import could not parse.
+    Rejects {
+        /// Import id, from `nigel imports list`.
+        id: i64,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum PasswordCommand {
     /// Set a password on an unencrypted database.
     Set,
@@ -247,6 +264,9 @@ pub enum AccountsCommands {
         /// Account type: checking, credit_card, line_of_credit, payroll
         #[arg(long = "type")]
         account_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// Institution name
         #[arg(long)]
         institution: Option<String>,
@@ -262,6 +282,17 @@ pub enum AccountsCommands {
         id: i64,
         /// New name
         name: String,
+    },
+    /// Change an account's name or its accounting class.
+    Edit {
+        /// Account ID
+        id: i64,
+        /// New name
+        #[arg(long)]
+        name: Option<String>,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
     },
     /// Delete an account by ID (blocked if account has transactions).
     Delete {
@@ -281,6 +312,9 @@ pub enum CategoriesCommands {
         /// Category type: income or expense
         #[arg(long = "type")]
         category_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// IRS tax line mapping
         #[arg(long)]
         tax_line: Option<String>,
@@ -304,6 +338,9 @@ pub enum CategoriesCommands {
         /// Category type: income or expense
         #[arg(long = "type")]
         category_type: String,
+        /// Accounting class: asset, liability, equity, revenue, expense
+        #[arg(long)]
+        class: Option<String>,
         /// IRS tax line mapping
         #[arg(long)]
         tax_line: Option<String>,

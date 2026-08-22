@@ -205,12 +205,13 @@ pub fn format_expenses(data: &reports::ExpenseBreakdown) -> String {
 
 pub fn format_tax(data: &reports::TaxSummary) -> String {
     let mut table = Table::new();
-    table.set_header(vec!["Category", "Tax Line", "Type", "Amount"]);
+    table.set_header(vec!["Category", "Tax Line", "Type", "Class", "Amount"]);
     for item in &data.line_items {
         table.add_row(vec![
             Cell::new(&item.name),
             Cell::new(item.tax_line.as_deref().unwrap_or("")),
             Cell::new(&item.category_type),
+            Cell::new(item.class.as_str()),
             Cell::new(money(item.total.abs())),
         ]);
     }
@@ -321,10 +322,14 @@ pub fn format_balance(data: &reports::BalanceReport) -> String {
         Cell::new(""),
         Cell::new(money(data.total)),
     ]);
-    format!(
+    let mut out = format!(
         "Cash Position\n{table}\n\nYTD Net Income: {}",
         money(data.ytd_net_income)
-    )
+    );
+    if let Some(note) = data.uncategorized_note() {
+        out.push_str(&format!("\n{note}"));
+    }
+    out
 }
 
 pub fn format_k1(data: &reports::K1PrepReport) -> String {
@@ -517,8 +522,26 @@ pub fn format_aging(data: &crate::invoicing::invoices::AgingReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_aging, format_k1, with_header};
+    use super::{format_aging, format_balance, format_k1, format_tax, with_header};
+    use crate::db::AccountClass;
     use crate::invoicing::invoices::{AgingBucket, AgingInvoice, AgingReport};
+    use crate::reports::BalanceReport;
+
+    fn tax_item(
+        name: &str,
+        tax_line: &str,
+        category_type: &str,
+        class: AccountClass,
+        total: f64,
+    ) -> crate::reports::TaxItem {
+        crate::reports::TaxItem {
+            name: name.into(),
+            tax_line: Some(tax_line.into()),
+            category_type: category_type.into(),
+            class,
+            total,
+        }
+    }
 
     fn bucket(label: &'static str, count: usize, total: f64) -> AgingBucket {
         AgingBucket {
@@ -596,6 +619,37 @@ mod tests {
     }
 
     #[test]
+    fn format_tax_names_the_class_each_line_is_ordered_by() {
+        // The summary is sorted by class, so a reader who cannot see the class
+        // cannot see why a draw sits between the income and the deductions.
+        let out = format_tax(&crate::reports::TaxSummary {
+            line_items: vec![
+                tax_item(
+                    "Workshop Fees",
+                    "Gross receipts",
+                    "income",
+                    AccountClass::Revenue,
+                    4200.0,
+                ),
+                tax_item(
+                    "Member Draw",
+                    "Distributions",
+                    "expense",
+                    AccountClass::Equity,
+                    -1500.0,
+                ),
+            ],
+        });
+
+        assert!(out.contains("Class"), "the column header");
+        assert!(out.contains("revenue"));
+        assert!(out.contains("equity"));
+        // AC #6: the five class words, nothing borrowed from a ledger.
+        let lower = out.to_lowercase();
+        assert!(!lower.contains("debit"));
+    }
+
+    #[test]
     fn format_k1_shows_cogs_gross_profit_and_needs_mapping() {
         let data = crate::reports::K1PrepReport {
             gross_receipts: 1000.0,
@@ -628,6 +682,48 @@ mod tests {
         assert!(out.contains("Mystery Spend"));
         assert!(out.contains("(auto)"));
         assert!(out.contains("Widget Sales"));
+    }
+
+    fn balance_fixture(uncategorized_total: f64, uncategorized_count: i64) -> BalanceReport {
+        BalanceReport {
+            accounts: vec![crate::reports::AccountBalance {
+                name: "Cedar Checking".into(),
+                account_type: "checking".into(),
+                class: AccountClass::Asset,
+                balance: 5_000.0,
+                natural_balance: 5_000.0,
+            }],
+            total: 5_000.0,
+            ytd_net_income: 4_670.0,
+            uncategorized_total,
+            uncategorized_count,
+        }
+    }
+
+    #[test]
+    fn format_balance_footnotes_the_uncategorized_money_in_net_income() {
+        let out = format_balance(&balance_fixture(-330.0, 2));
+        assert!(out.contains("YTD Net Income"));
+        assert!(
+            out.contains("Includes -$330.00 across 2 uncategorized transactions"),
+            "the footnote names the amount and the count: {out}"
+        );
+        assert!(
+            out.contains("nigel review"),
+            "and points at the review flow"
+        );
+        let lower = out.to_lowercase();
+        assert!(!lower.contains("debit") && !lower.contains("credit"));
+    }
+
+    #[test]
+    fn format_balance_says_nothing_when_every_transaction_has_a_category() {
+        let out = format_balance(&balance_fixture(0.0, 0));
+        assert!(out.contains("YTD Net Income"));
+        assert!(
+            !out.contains("uncategorized"),
+            "no backlog, no footnote: {out}"
+        );
     }
 
     #[test]

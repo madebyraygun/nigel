@@ -1,12 +1,14 @@
 ---
 id: TASK-58
-title: Accessibility pass: focus management, live regions, field errors
+title: 'Accessibility pass: focus management, live regions, field errors'
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-08-21 00:22'
 labels:
   - accessibility
   - spa
+milestone: m-0
 dependencies: []
 priority: medium
 ---

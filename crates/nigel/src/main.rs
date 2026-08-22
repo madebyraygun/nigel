@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
+    ImportsCommands, InvoiceCommands, InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -167,16 +167,21 @@ fn dispatch(command: Commands) -> error::Result<()> {
             AccountsCommands::Add {
                 name,
                 account_type,
+                class,
                 institution,
                 last_four,
             } => cli::accounts::add(
                 &name,
                 &account_type,
+                class.as_deref(),
                 institution.as_deref(),
                 last_four.as_deref(),
             ),
             AccountsCommands::List => cli::accounts::list(),
             AccountsCommands::Rename { id, name } => cli::accounts::rename(id, &name),
+            AccountsCommands::Edit { id, name, class } => {
+                cli::accounts::edit(id, name.as_deref(), class.as_deref())
+            }
             AccountsCommands::Delete { id } => cli::accounts::delete(id),
         },
         Commands::Categories { command } => match command {
@@ -184,11 +189,13 @@ fn dispatch(command: Commands) -> error::Result<()> {
             CategoriesCommands::Add {
                 name,
                 category_type,
+                class,
                 tax_line,
                 form_line,
             } => cli::categories::add(
                 &name,
                 &category_type,
+                class.as_deref(),
                 tax_line.as_deref(),
                 form_line.as_deref(),
             ),
@@ -197,12 +204,14 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 id,
                 name,
                 category_type,
+                class,
                 tax_line,
                 form_line,
             } => cli::categories::update(
                 id,
                 &name,
                 &category_type,
+                class.as_deref(),
                 tax_line.as_deref(),
                 form_line.as_deref(),
             ),
@@ -290,6 +299,10 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 }
                 InvoiceTemplateCommands::Path => cli::invoice::template_show_path(),
             },
+        },
+        Commands::Imports { command } => match command {
+            ImportsCommands::List => cli::imports::list(),
+            ImportsCommands::Rejects { id } => cli::imports::rejects(id),
         },
         Commands::Import {
             file,

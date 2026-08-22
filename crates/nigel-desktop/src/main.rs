@@ -38,6 +38,7 @@ fn main() {
             )
             .title("Nigel")
             .inner_size(1200.0, 820.0)
+            .min_inner_size(900.0, 700.0)
             .build()?;
             Ok(())
         })

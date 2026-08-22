@@ -11,7 +11,7 @@ import {
   initializeDashboardStore,
   type DashboardStore,
 } from '../state/dashboard-store.js';
-import { cashflowBuckets } from './dashboard-data.js';
+import { cashflowBuckets, droppedRowsNotice } from './dashboard-data.js';
 import type { ScreenContext } from './context.js';
 import { controlsCss } from '@nigel/theme';
 
@@ -152,6 +152,21 @@ export class NigelDashboardScreen extends SignalWatcher(LitElement) {
     `;
   }
 
+  private renderDroppedNotice(store: DashboardStore) {
+    const notice = droppedRowsNotice(store.imports.data.get() ?? []);
+    if (!notice) return nothing;
+    return html`
+      <wc-notice-bar
+        variant="warning"
+        message=${notice}
+        action-label="Review imports"
+        @nc-notice-action=${() => {
+          window.location.hash = '#/undo';
+        }}
+      ></wc-notice-bar>
+    `;
+  }
+
   private renderToolbar(store: DashboardStore) {
     const flagged = store.flaggedCount.get();
 
@@ -277,7 +292,8 @@ export class NigelDashboardScreen extends SignalWatcher(LitElement) {
     }
 
     return html`
-      ${this.renderUpdateNotice()} ${this.renderToolbar(store)}
+      ${this.renderUpdateNotice()} ${this.renderDroppedNotice(store)}
+      ${this.renderToolbar(store)}
       ${this.renderStats(store)} ${this.renderPanels(store)}
     `;
   }

@@ -4,9 +4,10 @@ title: 'Publish, send, revise and withdraw a document'
 status: To Do
 assignee: []
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-17 04:56'
+updated_date: '2026-08-21 00:21'
 labels:
   - documents
+milestone: m-1
 dependencies: []
 parent_task_id: TASK-109
 priority: medium
