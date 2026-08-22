@@ -3596,3 +3596,92 @@ fn invoice_pay_refuses_a_malformed_date() {
         .unwrap();
     assert_eq!(payments, 0);
 }
+
+/// An invoice whose due date passed with no event since publish reads `overdue`
+/// on both surfaces — and looking at it does not write to it.
+#[test]
+fn invoice_list_and_show_report_a_lapsed_due_date_as_overdue() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    // Published in the past with a due date behind it, which is the state no
+    // event will ever revisit.
+    env.db()
+        .execute_batch(
+            "UPDATE invoices
+                SET status = 'sent', published_at = '2026-01-05', due_date = '2026-02-04'
+              WHERE number = 1248;",
+        )
+        .expect("publish the seeded invoice");
+
+    env.cmd()
+        .args(["invoice", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("overdue"));
+
+    env.cmd()
+        .args(["invoice", "show", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[overdue]"));
+
+    let stored: String = env
+        .db()
+        .query_row("SELECT status FROM invoices WHERE number = 1248", [], |r| {
+            r.get(0)
+        })
+        .expect("status");
+    assert_eq!(stored, "sent", "a read wrote to the books");
+}
+
+/// `--amount -5` used to die in clap with a tip (`-- -5`) that also fails, so
+/// the app's own sentence was reachable only as `--amount=-5`. Both spellings
+/// now get the same answer.
+#[test]
+fn a_negative_payment_amount_gets_the_apps_own_refusal_either_way() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    for amount in ["-5", "-5.00"] {
+        env.cmd()
+            .args([
+                "invoice",
+                "pay",
+                "1248",
+                "--date",
+                "2026-08-20",
+                "--amount",
+                amount,
+            ])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "--amount must be a finite number greater than zero",
+            ))
+            .stderr(predicate::str::contains("unexpected argument").not());
+    }
+
+    // The joined spelling has always reached it, and still says the same thing.
+    env.cmd()
+        .args([
+            "invoice",
+            "pay",
+            "1248",
+            "--date",
+            "2026-08-20",
+            "--amount=-5",
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "--amount must be a finite number greater than zero",
+        ));
+
+    // Nothing was recorded by any of them.
+    let payments: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoice_payments", [], |r| r.get(0))
+        .expect("payments");
+    assert_eq!(payments, 0);
+}

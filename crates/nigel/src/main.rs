@@ -278,8 +278,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ),
             InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
             InvoiceCommands::Delete { number, yes } => cli::invoice::delete(number, yes),
-            InvoiceCommands::List => cli::invoice::list(),
-            InvoiceCommands::Show { number } => cli::invoice::show(number),
+            InvoiceCommands::List => cli::invoice::list(&cli::today()),
+            InvoiceCommands::Show { number } => cli::invoice::show(number, &cli::today()),
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)
             }
@@ -290,7 +290,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 amount,
                 date,
                 method,
-            } => cli::invoice::pay(number, amount, &date, &method),
+            } => cli::invoice::pay(number, amount, &date, &method, &cli::today()),
             InvoiceCommands::Aging => cli::invoice::aging(&cli::today()),
             InvoiceCommands::Import { db } => cli::invoice::import(&db),
             InvoiceCommands::Template { command } => match command {

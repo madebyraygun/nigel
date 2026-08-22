@@ -50,13 +50,21 @@ pub fn sync_invoice<G: PaymentGateway>(
     };
     let mut recorded = 0;
     for session in gateway.paid_sessions(link_id)? {
+        // The day the client paid, read off the gateway's own timestamp. A
+        // session with no timestamp falls back to the run's day — the only
+        // other day this code can honestly name.
+        let paid_date = session
+            .paid_at
+            .and_then(crate::clock::local_day)
+            .unwrap_or_else(|| today.to_string());
         let is_new = record_payment(
             conn,
             invoice_id,
             session.amount,
-            today,
+            &paid_date,
             "stripe",
             Some(&session.session_id),
+            today,
         )?;
         if is_new {
             recorded += 1;
@@ -167,7 +175,7 @@ mod tests {
     use crate::invoicing::clients::add_client;
     use crate::invoicing::gateway::{PaidSession, PaymentGateway, PaymentLink};
     use crate::invoicing::invoices::{
-        create_invoice, get_invoice, paid_amount, set_payment_link, NewLineItem,
+        create_invoice, get_invoice, paid_amount, payments, set_payment_link, NewLineItem,
     };
     use crate::migrations::run_migrations;
     use crate::models::{Client, Invoice};
@@ -214,6 +222,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -230,6 +239,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -254,6 +264,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 100.0,
+            paid_at: None,
         }]);
         assert_eq!(sync_invoice(&conn, id, "2026-08-10", &gw).unwrap(), 1);
         assert_eq!(sync_invoice(&conn, id, "2026-08-11", &gw).unwrap(), 0); // idempotent
@@ -283,6 +294,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 40.0,
+            paid_at: None,
         }]);
         let report = sync_all_report(&conn, "2026-08-10", &gw).unwrap();
         assert_eq!(report.recorded, 1);
@@ -311,6 +323,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 40.0,
+            paid_at: None,
         }]);
         sync_all_report(&conn, "2026-08-10", &gw).unwrap();
         let again = sync_all_report(&conn, "2026-08-11", &gw).unwrap();
@@ -333,6 +346,7 @@ mod tests {
         let gw = Gw(vec![PaidSession {
             session_id: "cs_1".into(),
             amount: 100.0,
+            paid_at: None,
         }]);
         assert_eq!(sync_invoice(&conn, id, "2026-08-10", &gw).unwrap(), 0);
         assert_eq!(paid_amount(&conn, id).unwrap(), 0.0);
@@ -489,6 +503,7 @@ mod tests {
             Ok(vec![PaidSession {
                 session_id: format!("cs_{id}"),
                 amount: 100.0,
+                paid_at: None,
             }])
         }
     }
@@ -545,5 +560,67 @@ mod tests {
         assert_eq!(report.recorded, 0);
         assert_eq!(report.invoices_checked, 0);
         assert!(report.failures.is_empty());
+    }
+
+    /// A December payment synced in January is December's — and the invoice is
+    /// still aged against the day the sync ran, not the day the client paid.
+    #[test]
+    fn a_payment_made_before_year_end_is_recorded_in_the_earlier_year() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2025-12-01",
+            Some("2025-12-31"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        set_payment_link(&conn, id, "pl_1", "https://pay/x").unwrap();
+        conn.execute(
+            "UPDATE invoices SET status='sent', published_at='2025-12-01' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+
+        // 2025-12-29T12:00:00Z — a moment that is still December in every zone
+        // a set of books could be kept in.
+        let gw = Gw(vec![PaidSession {
+            session_id: "cs_1".into(),
+            amount: 40.0,
+            paid_at: Some(1_767_009_600),
+        }]);
+        assert_eq!(sync_invoice(&conn, id, "2026-01-08", &gw).unwrap(), 1);
+
+        let recorded = payments(&conn, id).unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(&recorded[0].paid_date[..7], "2025-12", "{recorded:?}");
+        // Partly paid, and months past due on the day the sync ran.
+        assert_eq!(get_invoice(&conn, id).unwrap().status, "overdue");
+    }
+
+    /// No timestamp: the run's own day, which is the only other day this code
+    /// can honestly name.
+    #[test]
+    fn a_session_with_no_timestamp_is_dated_the_day_the_sync_ran() {
+        let (_d, conn) = test_conn();
+        let cid = add_client(&conn, "Acme", None, None, None).unwrap();
+        let id = open_invoice(&conn, cid, "pl_1");
+
+        let gw = Gw(vec![PaidSession {
+            session_id: "cs_1".into(),
+            amount: 40.0,
+            paid_at: None,
+        }]);
+        assert_eq!(sync_invoice(&conn, id, "2026-08-10", &gw).unwrap(), 1);
+        assert_eq!(payments(&conn, id).unwrap()[0].paid_date, "2026-08-10");
     }
 }

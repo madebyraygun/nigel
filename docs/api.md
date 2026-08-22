@@ -294,8 +294,8 @@ table is what `report` holds. The list routes below it answer with a bare array.
 | `/api/csv-profiles` | — | `CsvProfile[]` |
 | `/api/clients` | `includeArchived` | `Client[]` |
 | `/api/clients/{id}` | — | `ClientDetail` |
-| `/api/invoices` | `status`, `clientId` | `InvoiceListRow[]` |
-| `/api/invoices/{number}` | — | `InvoiceDetail` |
+| `/api/invoices` | `status`, `clientId`, `asOf` | `InvoiceListRow[]` |
+| `/api/invoices/{number}` | `asOf` | `InvoiceDetail` |
 | `/api/invoices/aging` | `asOf` | `AgingReport` |
 | `/api/invoices/next-number` | — | `{ number }` |
 
@@ -450,6 +450,16 @@ client has is `404` `client_not_found`, not an empty array — filtering by
 something that does not exist is a wrong question, the same reasoning
 `/api/reports/register` applies to an unknown `account`.
 
+`asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
+today. An invoice past its due date with money owing reads `overdue` on that day
+even when the stored status still says `sent` or `partial`, which is what keeps
+this endpoint and `/api/invoices/aging` agreeing about the same invoice. The
+overlay only ever widens, never narrows: asked about a past day, a status the
+books already recorded is reported as stored, so an invoice a later event marked
+`overdue` reads `overdue` on a day the report still buckets it as current. The
+status filter selects on the same reading, so `?status=overdue` returns what the
+rows are rendered as. Nothing is written by a read.
+
 #### `GET /api/invoices/{number}`
 
 The invoice's own fields flattened, plus everything a detail screen prints:
@@ -488,6 +498,12 @@ re-derive them from `status`** — an edit is blocked by recorded payments as we
 as by status, and so is a delete, and a second copy of that rule is a second
 copy of the guardrails. The flags disable a control; the `409` is what enforces
 it.
+
+`asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
+today. An invoice past its due date with money owing reads `overdue` on that day
+even when the stored status still says `sent` or `partial`, which is what keeps
+this endpoint and `/api/invoices/aging` agreeing about the same invoice. Nothing
+is written by a read.
 
 An unknown number is `404` with `details.reason` = `invoice_not_found`.
 

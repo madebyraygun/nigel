@@ -791,8 +791,16 @@ mod tests {
 
         let open = seed_invoice(&conn, id, "2026-06-01", 100.0);
         publish(&conn, open, "2026-06-01");
-        crate::invoicing::invoices::record_payment(&conn, open, 30.0, "2026-06-10", "ach", None)
-            .unwrap();
+        crate::invoicing::invoices::record_payment(
+            &conn,
+            open,
+            30.0,
+            "2026-06-10",
+            "ach",
+            None,
+            "2026-06-10",
+        )
+        .unwrap();
 
         let settled = seed_invoice(&conn, id, "2026-07-01", 200.0);
         publish(&conn, settled, "2026-07-01");
@@ -803,6 +811,7 @@ mod tests {
             "2026-07-10",
             "ach",
             None,
+            "2026-07-10",
         )
         .unwrap();
 
@@ -882,6 +891,7 @@ mod tests {
             "2026-06-10",
             "ach",
             None,
+            "2026-06-10",
         )
         .unwrap();
 
@@ -1028,8 +1038,16 @@ mod tests {
         let id = seed_client(&conn);
         let open = seed_invoice(&conn, id, "2026-06-01", 100.0);
         publish(&conn, open, "2026-06-01");
-        crate::invoicing::invoices::record_payment(&conn, open, 30.0, "2026-06-10", "ach", None)
-            .unwrap();
+        crate::invoicing::invoices::record_payment(
+            &conn,
+            open,
+            30.0,
+            "2026-06-10",
+            "ach",
+            None,
+            "2026-06-10",
+        )
+        .unwrap();
         seed_invoice(&conn, id, "2026-07-01", 200.0);
 
         let before = client_summary(&conn, id).unwrap();
@@ -1039,7 +1057,7 @@ mod tests {
         assert_eq!(after.outstanding, before.outstanding);
         assert_eq!(after.invoices.len(), before.invoices.len());
         assert_eq!(
-            crate::invoicing::invoices::list_invoices(&conn, None, None)
+            crate::invoicing::invoices::list_invoices(&conn, None, None, "2026-08-10")
                 .unwrap()
                 .len(),
             2
