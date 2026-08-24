@@ -60,6 +60,7 @@ pub fn routes() -> Router<AppState> {
             get(detail).patch(update).delete(destroy),
         )
         .route("/invoices/{number}/send", post(send))
+        .route("/invoices/{number}/duplicate", post(duplicate))
         .route("/invoices/{number}/void", post(void))
         .route("/invoices/{number}/pay", post(pay))
         .route("/invoices/{number}/preview", get(preview_html))
@@ -366,6 +367,26 @@ async fn create(
         // The only thing `create_invoice` looks up is the client.
         .map_err(|e| not_found_because(e, "client_not_found"))?;
         detail_for(conn, inv::get_invoice(conn, id)?, &crate::clock::today())
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(detail)))
+}
+
+/// `POST /api/invoices/{number}/duplicate` — copy an invoice into a fresh draft.
+///
+/// Answers `201` with the whole new `InvoiceDetail`, the way `POST /api/invoices`
+/// does, so a browser can navigate straight to it. The server's own today is the
+/// new issue date, for `void`'s reason: the data layer takes its reference day as
+/// a parameter and this is where that day comes from.
+async fn duplicate(
+    State(state): State<AppState>,
+    ApiPath(number): ApiPath<i64>,
+) -> ApiResult<(StatusCode, Json<InvoiceDetail>)> {
+    let today = crate::clock::today();
+    let detail = with_conn_api(&state, move |conn| {
+        let source = find_invoice(conn, number)?;
+        let id = inv::duplicate_invoice(conn, source.id, &today)?;
+        detail_for(conn, inv::get_invoice(conn, id)?, &today)
     })
     .await?;
     Ok((StatusCode::CREATED, Json(detail)))
@@ -3314,5 +3335,49 @@ mod tests {
             assert_eq!(status, StatusCode::LOCKED, "{uri} while locked: {body}");
             assert_eq!(body["error"]["code"], "locked", "for {uri}");
         }
+    }
+
+    #[tokio::test]
+    async fn duplicating_answers_the_new_draft_at_201() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let source = ok_json(&app, "/api/invoices/1251", &token).await;
+
+        let (status, body) =
+            post_json(&app, "/api/invoices/1251/duplicate", &token, &json!({})).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["number"], 1253, "{body}");
+        assert_eq!(body["status"], "draft", "{body}");
+        assert_eq!(body["clientId"], source["clientId"], "{body}");
+        assert_eq!(body["currency"], source["currency"], "{body}");
+        assert_eq!(body["total"], source["total"], "{body}");
+        assert_eq!(body["publishedAt"], serde_json::Value::Null, "{body}");
+        assert_eq!(body["voidedAt"], serde_json::Value::Null, "{body}");
+        assert_eq!(body["publicUrl"], serde_json::Value::Null, "{body}");
+        assert_eq!(body["canEdit"], true, "{body}");
+
+        let source_items = source["items"].as_array().unwrap();
+        let copied = body["items"].as_array().unwrap();
+        assert_eq!(copied.len(), source_items.len(), "{body}");
+        for (from, to) in source_items.iter().zip(copied) {
+            assert_eq!(to["description"], from["description"]);
+            assert_eq!(to["quantity"], from["quantity"]);
+            assert_eq!(to["unitAmount"], from["unitAmount"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicating_an_invoice_that_is_not_there_is_a_404() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) =
+            post_json(&app, "/api/invoices/9999/duplicate", &token, &json!({})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "invoice_not_found",
+            "{body}"
+        );
     }
 }

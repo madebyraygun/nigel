@@ -3597,6 +3597,318 @@ fn invoice_pay_refuses_a_malformed_date() {
     assert_eq!(payments, 0);
 }
 
+#[test]
+fn invoice_duplicate_creates_a_draft_carrying_the_source_shape() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "1248", "--issue", "2026-09-01"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Duplicated invoice #1248 as draft #1249",
+        ));
+
+    env.cmd()
+        .args(["invoice", "show", "1249"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Acme Co")
+                .and(predicate::str::contains("Consulting"))
+                .and(predicate::str::contains("2026-09-01"))
+                .and(predicate::str::contains("[draft]")),
+        );
+}
+
+#[test]
+fn invoice_duplicate_without_an_issue_date_uses_today() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "1248"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("as draft #1249"));
+
+    let issued: String = env
+        .db()
+        .query_row(
+            "SELECT issue_date FROM invoices WHERE number = 1249",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the duplicate exists");
+    assert_eq!(issued, chrono::Local::now().format("%Y-%m-%d").to_string());
+}
+
+#[test]
+fn invoice_duplicate_names_a_number_that_is_not_there() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args(["invoice", "duplicate", "9999"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("No invoice #9999"));
+}
+
+/// A client and a monthly schedule seeded from explicit items.
+fn init_with_schedule(env: &TestEnv) {
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "client",
+            "add",
+            "Cedar Systems",
+            "--email",
+            "ops@cedar.test",
+        ])
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "add",
+            "--client",
+            "1",
+            "--cadence",
+            "monthly",
+            "--start",
+            "2026-01-01",
+            "--net-days",
+            "30",
+            "--item",
+            "Hosting:1:450",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created schedule 1"));
+}
+
+#[test]
+fn invoice_schedule_add_list_and_show_read_back_what_was_stored() {
+    let env = TestEnv::new();
+    init_with_schedule(&env);
+
+    env.cmd()
+        .args(["invoice", "schedule", "list"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Cedar Systems")
+                .and(predicate::str::contains("monthly"))
+                .and(predicate::str::contains("2026-01-01"))
+                .and(predicate::str::contains("draft")),
+        );
+
+    env.cmd()
+        .args(["invoice", "schedule", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Hosting").and(predicate::str::contains("Net days:  30")));
+}
+
+#[test]
+fn invoice_schedule_add_can_be_seeded_from_an_existing_invoice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "add",
+            "--client",
+            "1",
+            "--cadence",
+            "quarterly",
+            "--start",
+            "2026-01-01",
+            "--from",
+            "1248",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created schedule 1"));
+
+    env.cmd()
+        .args(["invoice", "schedule", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Consulting"));
+}
+
+#[test]
+fn invoice_schedule_run_generates_drafts_and_a_second_run_generates_nothing() {
+    let env = TestEnv::new();
+    init_with_schedule(&env);
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated"));
+
+    let before: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .unwrap();
+    assert!(before > 0, "the first run billed the missed cycles");
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 0 invoice(s)"));
+
+    let after: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before, "a rerun must not bill again");
+}
+
+#[test]
+fn invoice_schedule_pause_resume_and_end_keep_the_schedule_and_its_history() {
+    let env = TestEnv::new();
+    init_with_schedule(&env);
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["invoice", "schedule", "pause", "1"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 0 invoice(s)"));
+
+    env.cmd()
+        .args(["invoice", "schedule", "resume", "1"])
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "edit",
+            "1",
+            "--item",
+            "Hosting:1:495",
+        ])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["invoice", "schedule", "end", "1"])
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["invoice", "schedule", "list", "--all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ended"));
+
+    // History survives: the run rows are still joined to their invoices.
+    env.cmd()
+        .args(["invoice", "schedule", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2026-01-01"));
+}
+
+/// TASK-81 AC #10. The stderr predicate is what matters: reaching the prompt
+/// with no terminal errors with ENXIO, which satisfies a bare `.failure()`.
+/// The timeout is a backstop for a run that inherits a tty and blocks.
+#[test]
+fn invoice_schedule_run_never_prompts_on_an_encrypted_database() {
+    let env = TestEnv::new();
+    init_with_schedule(&env);
+    env.encrypt("hunter2");
+
+    // With the password: it runs unattended.
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated"));
+
+    // Without it: a clear sentence, immediately, and never a prompt.
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .env_remove("NIGEL_DB_PASSWORD")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD")
+                .and(predicate::str::contains("never prompts")),
+        );
+
+    // A wrong password fails fast with the documented sentence.
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .env("NIGEL_DB_PASSWORD", "wrong-password")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
+}
+
+/// F3. `--currency` is a value the operator typed; `--from` only fills in what
+/// they left out, the way `--net-days` already does.
+#[test]
+fn an_explicit_currency_survives_seeding_a_schedule_from_an_invoice() {
+    let env = TestEnv::new();
+    init_with_client_and_invoice(&env);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "add",
+            "--client",
+            "1",
+            "--cadence",
+            "monthly",
+            "--start",
+            "2026-01-01",
+            "--from",
+            "1248",
+            "--currency",
+            "EUR",
+        ])
+        .assert()
+        .success();
+
+    let currency: String = env
+        .db()
+        .query_row(
+            "SELECT currency FROM invoice_schedules WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the schedule exists");
+    assert_eq!(currency, "EUR", "the typed currency is not the source's");
+}
+
 /// An invoice whose due date passed with no event since publish reads `overdue`
 /// on both surfaces — and looking at it does not write to it.
 #[test]

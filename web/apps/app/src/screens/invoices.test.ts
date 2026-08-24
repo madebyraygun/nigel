@@ -577,6 +577,56 @@ describe('nigel-invoices-screen', () => {
     expect(button(draft.el, '[data-delete]').hasAttribute('disabled')).toBe(false);
   });
 
+  it('duplicates an invoice and navigates to the new draft', async () => {
+    const fake = client();
+    fake.invoiceDetails[1251] = detail({ id: 5, number: 1251, status: 'sent' });
+    const toasts: string[] = [];
+    const onToast = (event: Event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener('nc-toast', onToast);
+
+    const { el, routes } = await mount('number=1251', fake);
+    button(el, '[data-duplicate]').click();
+    await settle(el);
+    window.removeEventListener('nc-toast', onToast);
+
+    expect(fake.calls).toContain('duplicateInvoice:1251');
+    expect(routes.at(-1)).toEqual({ screen: 'invoices', params: 'number=1253' });
+    expect(toasts).toEqual(['Duplicated invoice #1251 as draft #1253.']);
+  });
+
+  it('offers Duplicate whatever state the invoice is in', async () => {
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({
+      number: 1252,
+      status: 'void',
+      canEdit: false,
+      canSend: false,
+      canVoid: false,
+      canPay: false,
+      canDelete: false,
+    });
+    const { el } = await mount('number=1252', fake);
+    expect(button(el, '[data-duplicate]').hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders a refused duplicate beside the invoice', async () => {
+    const fake = client();
+    fake.invoiceDetails[1251] = detail({ id: 5, number: 1251, status: 'sent' });
+    fake.duplicateInvoiceError = conflictError('client_archived', {
+      message: "client 'Umbrella Corp' is archived — unarchive it before invoicing",
+    });
+    const { el, routes } = await mount('number=1251', fake);
+    const before = routes.length;
+
+    button(el, '[data-duplicate]').click();
+    await settle(el);
+
+    const notice = el.shadowRoot?.querySelector('[data-action-error]');
+    expect(notice?.getAttribute('message')).toContain('archived');
+    expect(routes.length).toBe(before);
+  });
+
   it('renders a refused delete beside the invoice, in our words', async () => {
     await answerConfirm(true);
     const fake = client();

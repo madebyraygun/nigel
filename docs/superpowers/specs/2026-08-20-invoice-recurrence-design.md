@@ -22,9 +22,10 @@ Duplication is the shared core; the generator is its unattended caller.
   the full nine-key set. `require_email` refuses clients with no address.
 - All invoicing derivations take their reference day as a parameter; nothing
   under `src/invoicing/` reads the clock.
-- **Migration numbering:** two open PRs already contend for migration v10. This
-  branch's schema lands as the next number after both and expects a renumber at
-  merge, same protocol, noted in the PR body.
+- **Migration numbering:** the schedule tables are migration v12, which sits
+  above account classification (v10) and import integrity (v11). The contiguity
+  test in `migrations.rs` fails while v11 is still unmerged — that is the guard
+  holding the merge order, not a defect in this branch.
 
 ## Design
 

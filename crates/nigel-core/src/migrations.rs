@@ -266,6 +266,53 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 12,
+        description: "add recurring invoice schedules, their items and their run history",
+        up: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS invoice_schedules (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    cadence TEXT NOT NULL CHECK (cadence IN ('monthly','quarterly','yearly')),
+                    anchor_day INTEGER NOT NULL CHECK (anchor_day BETWEEN 1 AND 31),
+                    next_period TEXT NOT NULL,
+                    net_days INTEGER,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    notes TEXT,
+                    terms TEXT,
+                    autosend INTEGER NOT NULL DEFAULT 0,
+                    paused INTEGER NOT NULL DEFAULT 0,
+                    ended_at TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (client_id) REFERENCES clients(id)
+                );
+                 CREATE TABLE IF NOT EXISTS invoice_schedule_items (
+                    id INTEGER PRIMARY KEY,
+                    schedule_id INTEGER NOT NULL,
+                    description TEXT NOT NULL,
+                    quantity REAL NOT NULL DEFAULT 1,
+                    unit_amount REAL NOT NULL DEFAULT 0,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (schedule_id) REFERENCES invoice_schedules(id) ON DELETE CASCADE
+                );
+                 CREATE TABLE IF NOT EXISTS invoice_schedule_runs (
+                    id INTEGER PRIMARY KEY,
+                    schedule_id INTEGER NOT NULL,
+                    period TEXT NOT NULL,
+                    invoice_id INTEGER NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    FOREIGN KEY (schedule_id) REFERENCES invoice_schedules(id),
+                    FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+                );
+                 -- Provenance and idempotency in one row: a rerun for a period
+                 -- already generated finds this and writes nothing.
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_schedule_runs_period
+                     ON invoice_schedule_runs(schedule_id, period);",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -950,6 +997,57 @@ mod tests {
     fn the_archive_migration_is_replayable() {
         let (_dir, conn) = test_db();
         run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn v12_creates_the_three_schedule_tables_and_the_period_uniqueness() {
+        let (_dir, conn) = test_db();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+
+        for table in [
+            "invoice_schedules",
+            "invoice_schedule_items",
+            "invoice_schedule_runs",
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(exists, "{table} is missing");
+        }
+
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Acme Co');
+             INSERT INTO invoice_schedules
+                 (client_id, cadence, anchor_day, next_period, currency)
+             VALUES (1, 'monthly', 1, '2026-01-01', 'USD');
+             INSERT INTO invoices (number, client_id, issue_date, token)
+             VALUES (1248, 1, '2026-01-01', 'tok-a');
+             INSERT INTO invoice_schedule_runs (schedule_id, period, invoice_id, generated_at)
+             VALUES (1, '2026-01-01', 1, '2026-01-01');",
+        )
+        .unwrap();
+
+        let second = conn.execute(
+            "INSERT INTO invoice_schedule_runs (schedule_id, period, invoice_id, generated_at)
+             VALUES (1, '2026-01-01', 1, '2026-02-01')",
+            [],
+        );
+        assert!(
+            second.is_err(),
+            "a second row for the same period must be refused"
+        );
+    }
+
+    #[test]
+    fn v12_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "11").unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }

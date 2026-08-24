@@ -411,6 +411,13 @@ export interface ApiClient {
   /** Draft-only, and `items` replaces the whole list when it is present. */
   updateInvoice(number: number, input: InvoicePatch): Promise<InvoiceDetail>;
   /**
+   * Copy an invoice into a fresh draft — same client, items, notes, terms and
+   * issue-to-due term, a new number, nothing published or paid.
+   *
+   * Any state duplicates: this reads the invoice's shape, not its status.
+   */
+  duplicateInvoice(number: number): Promise<InvoiceDetail>;
+  /**
    * Cancel an invoice, and take down what it published.
    *
    * The answer is the refreshed detail plus anything the teardown could not
@@ -821,6 +828,10 @@ export class FetchApiClient implements ApiClient {
 
   updateInvoice(number: number, input: InvoicePatch): Promise<InvoiceDetail> {
     return this.request<InvoiceDetail>('PATCH', `/invoices/${number}`, input);
+  }
+
+  duplicateInvoice(number: number): Promise<InvoiceDetail> {
+    return this.request<InvoiceDetail>('POST', `/invoices/${number}/duplicate`, {});
   }
 
   voidInvoice(number: number): Promise<VoidResult> {

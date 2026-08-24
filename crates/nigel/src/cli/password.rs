@@ -45,6 +45,29 @@ pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
     ))
 }
 
+/// Unlock from `NIGEL_DB_PASSWORD` only — the path for a command that has no
+/// terminal to answer a prompt.
+///
+/// `prompt_password_if_needed`'s environment branch without its fallback: a
+/// scheduled job that reached a prompt would hang until something killed it,
+/// which is worse than failing with a sentence naming what to set.
+pub fn unlock_without_prompting(db_path: &Path) -> Result<()> {
+    if !is_encrypted(db_path)? {
+        return Ok(());
+    }
+    match env_password_if_set(db_path)? {
+        Some(pw) => {
+            set_db_password(Some(pw));
+            Ok(())
+        }
+        None => Err(nigel_core::error::NigelError::Other(format!(
+            "{} is encrypted and this command never prompts. \
+             Set NIGEL_DB_PASSWORD — see \"Automated backups\" in the README.",
+            db_path.display()
+        ))),
+    }
+}
+
 fn prompt_and_confirm(msg: &str) -> Result<String> {
     let pw1 = prompt(msg)?;
     let pw2 = prompt("Confirm password: ")?;

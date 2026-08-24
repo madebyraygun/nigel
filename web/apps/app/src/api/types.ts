@@ -635,6 +635,7 @@ export const CONFLICT_REASONS = [
   'send_misconfigured',
   'client_archived',
   'not_deletable',
+  'from_schedule',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];

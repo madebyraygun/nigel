@@ -18,10 +18,10 @@ use nigel_core::fmt::money;
 use nigel_core::invoicing::clients::{get_client, list_clients, ClientScope};
 use nigel_core::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
 use nigel_core::invoicing::invoices::{
-    create_invoice, delete_blocker, delete_invoice, ensure_not_void, ensure_voidable, get_invoice,
-    is_void, line_items, list_invoices, paid_amount, payment_amount, payments, record_payment,
-    validate_currency, validate_date, validate_items, with_effective_status, InvoiceListRow,
-    NewLineItem, CENT_SLACK,
+    create_invoice, delete_blocker, delete_invoice, duplicate_invoice, ensure_not_void,
+    ensure_voidable, get_invoice, is_void, line_items, list_invoices, paid_amount, payment_amount,
+    payments, record_payment, validate_currency, validate_date, validate_items,
+    with_effective_status, InvoiceListRow, NewLineItem, CENT_SLACK,
 };
 use nigel_core::invoicing::render_html::{load_template, Branding};
 use nigel_core::invoicing::send::{send_invoice, SendOutcome};
@@ -47,6 +47,9 @@ enum Screen {
     /// two-phase one: unlike send and void, delete makes no network call, so
     /// there is no frozen terminal to warn anybody about.
     ConfirmDelete,
+    /// Duplicate, awaiting its answer. `ConfirmDelete`'s shape rather than
+    /// send's: one local transaction, nothing to reach, nothing to warn about.
+    ConfirmDuplicate,
     ConfirmSend,
     Sending,
     /// Void, once it has been confirmed. Like `Sending`, this is a frame the
@@ -487,9 +490,11 @@ impl InvoiceManager {
         match &self.screen {
             Screen::List => self.draw_list(frame),
             Screen::NewInvoice(form) => self.draw_new_form(frame, form),
-            Screen::Detail | Screen::ConfirmVoid | Screen::ConfirmDelete | Screen::ConfirmSend => {
-                self.draw_detail(frame)
-            }
+            Screen::Detail
+            | Screen::ConfirmVoid
+            | Screen::ConfirmDelete
+            | Screen::ConfirmDuplicate
+            | Screen::ConfirmSend => self.draw_detail(frame),
             Screen::PayForm(form) => self.draw_pay_form(frame, form),
             Screen::Sending => self.draw_sending(frame),
             Screen::Voiding => self.draw_voiding(frame),
@@ -944,6 +949,23 @@ impl InvoiceManager {
             )));
         }
 
+        if let Screen::ConfirmDuplicate = &self.screen {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "   Duplicate invoice #{} for {} ({})?",
+                    invoice.number,
+                    detail.client_name(),
+                    money(invoice.total)
+                ),
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.push(Line::from(Span::styled(
+                "   A new draft with the same items and term, under a new number.",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+
         // Clamped here rather than on the key, because how far this scrolls
         // depends on how tall the terminal is.
         let visible = (content_area.height as usize).max(1);
@@ -967,6 +989,11 @@ impl InvoiceManager {
                 Paragraph::new(" y=delete  n=cancel").style(FOOTER_STYLE),
                 hints_area,
             );
+        } else if let Screen::ConfirmDuplicate = &self.screen {
+            frame.render_widget(
+                Paragraph::new(" y=duplicate  n=cancel").style(FOOTER_STYLE),
+                hints_area,
+            );
         } else if let Screen::ConfirmSend = &self.screen {
             frame.render_widget(
                 Paragraph::new(" y=send  n=cancel").style(FOOTER_STYLE),
@@ -977,11 +1004,11 @@ impl InvoiceManager {
             // advertised only for the draft it is for, because it is the one
             // action most invoices refuse.
             let hint = if is_void(invoice) {
-                " Up/Down=scroll  Esc=back  q=quit"
+                " c=duplicate  Up/Down=scroll  Esc=back  q=quit"
             } else if detail.deletable {
-                " s=send  p=record payment  v=void  d=delete  Up/Down=scroll  Esc=back  q=quit"
+                " s=send  p=record payment  c=duplicate  v=void  d=delete  Up/Down=scroll"
             } else {
-                " s=send  p=record payment  v=void  Up/Down=scroll  Esc=back  q=quit"
+                " s=send  p=record payment  c=duplicate  v=void  Up/Down=scroll  Esc=back  q=quit"
             };
             frame.render_widget(Paragraph::new(hint).style(FOOTER_STYLE), hints_area);
         }
@@ -1092,6 +1119,7 @@ impl InvoiceManager {
             Screen::PayForm(_) => self.handle_pay_key(code, conn),
             Screen::ConfirmVoid => self.handle_void_key(code, conn),
             Screen::ConfirmDelete => self.handle_delete_key(code, conn),
+            Screen::ConfirmDuplicate => self.handle_duplicate_key(code, conn),
             Screen::ConfirmSend => self.handle_confirm_send_key(code),
             // Any key dismisses the result and returns to the reloaded detail.
             Screen::ActionResult { .. } => {
@@ -1395,6 +1423,71 @@ impl InvoiceManager {
         }
     }
 
+    fn handle_duplicate_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
+        match code {
+            KeyCode::Char('y') => {
+                self.perform_duplicate(conn, &crate::cli::today());
+                InvoiceAction::Continue
+            }
+            KeyCode::Char('n') | KeyCode::Esc => {
+                self.screen = Screen::Detail;
+                InvoiceAction::Continue
+            }
+            _ => InvoiceAction::Continue,
+        }
+    }
+
+    /// Copy the open invoice and land on the copy.
+    ///
+    /// `perform_delete`'s shape — one local transaction, so it runs on the key
+    /// rather than through `InvoiceAction::Perform`. `today` is a parameter
+    /// because the reference day is the caller's everywhere else too.
+    fn perform_duplicate(&mut self, conn: &Connection, today: &str) {
+        let Some(detail) = &self.detail else {
+            return;
+        };
+        let (source_id, source_number) = (detail.invoice.id, detail.invoice.number);
+        match duplicate_invoice(conn, source_id, today) {
+            Ok(new_id) => {
+                self.reload_list(conn);
+                self.select_invoice(new_id);
+                match self.load_detail(conn, new_id) {
+                    Ok(()) => {
+                        self.detail_scroll = 0;
+                        self.screen = Screen::Detail;
+                        let number = self
+                            .detail
+                            .as_ref()
+                            .map(|d| d.invoice.number)
+                            .unwrap_or_default();
+                        self.set_status(format!(
+                            "Duplicated invoice #{source_number} as draft #{number}."
+                        ));
+                    }
+                    Err(e) => {
+                        self.detail = None;
+                        self.screen = Screen::List;
+                        self.set_status(e.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                // `perform_delete`'s reasoning: the refusal came from the write,
+                // so the row may have moved under this screen. Reload it before
+                // the sentence lands beside it.
+                self.after_mutation(conn, source_id);
+                self.set_status(e.to_string());
+            }
+        }
+    }
+
+    /// Put the cursor on one invoice by row id, if it is in the list.
+    fn select_invoice(&mut self, invoice_id: i64) {
+        if let Some(idx) = self.rows.iter().position(|row| row.id == invoice_id) {
+            self.selection = idx;
+        }
+    }
+
     fn handle_void_key(&mut self, code: KeyCode, conn: &Connection) -> InvoiceAction {
         match code {
             KeyCode::Char('y') => self.begin_void(conn),
@@ -1646,6 +1739,7 @@ impl InvoiceManager {
             KeyCode::PageDown => self.detail_scroll += 10,
             KeyCode::Char('p') => self.open_pay_form(&crate::cli::today()),
             KeyCode::Char('v') => self.open_void_confirmation(conn),
+            KeyCode::Char('c') => self.open_confirmation(Screen::ConfirmDuplicate),
             KeyCode::Char('d') => self.open_delete_confirmation(conn),
             KeyCode::Char('s') => {
                 return self.begin_send(conn, invoicing_config(), &get_data_dir())
@@ -2432,7 +2526,7 @@ mod tests {
         assert!(screen.contains("$750.00"), "{screen}");
         assert!(screen.contains("Pay link  https://pay/x"), "{screen}");
         assert!(
-            screen.contains("s=send  p=record payment  v=void"),
+            screen.contains("s=send  p=record payment  c=duplicate  v=void"),
             "{screen}"
         );
     }
@@ -2902,7 +2996,8 @@ mod tests {
         let id = seed_invoice(&conn, "Acme Co", 1_250.0);
         let mut mgr = manager(&conn);
         mgr.handle_key(KeyCode::Enter, &conn);
-        assert!(rendered(&mut mgr).contains("d=delete"));
+        assert!(rendered(&mut mgr)
+            .contains("s=send  p=record payment  c=duplicate  v=void  d=delete  Up/Down=scroll"));
 
         mark_published(&conn, id, "2026-07-17").unwrap();
         let mut published = manager(&conn);
@@ -4586,5 +4681,141 @@ mod tests {
         let mut mgr = manager(&conn);
 
         assert!(rendered(&mut mgr).contains('\u{2014}'));
+    }
+
+    fn open_duplicate(mgr: &mut InvoiceManager, conn: &Connection) {
+        mgr.handle_key(KeyCode::Enter, conn);
+        mgr.handle_key(KeyCode::Char('c'), conn);
+    }
+
+    #[test]
+    fn c_opens_the_duplicate_confirmation_naming_the_invoice_and_client() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Acme Co", 1_250.0);
+        let mut mgr = manager(&conn);
+        open_duplicate(&mut mgr, &conn);
+
+        assert!(matches!(mgr.screen, Screen::ConfirmDuplicate));
+        let screen = rendered(&mut mgr);
+        assert!(
+            screen.contains("Duplicate invoice #1248 for Acme Co ($1,250.00)?"),
+            "{screen}"
+        );
+        assert!(screen.contains("y=duplicate  n=cancel"), "{screen}");
+    }
+
+    #[test]
+    fn declining_the_duplicate_changes_nothing() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Cedar Systems", 400.0);
+        for key in [KeyCode::Char('n'), KeyCode::Esc] {
+            let mut mgr = manager(&conn);
+            open_duplicate(&mut mgr, &conn);
+            mgr.handle_key(key, &conn);
+            assert!(matches!(mgr.screen, Screen::Detail), "{key:?}");
+            assert_eq!(invoice_count(&conn), 1, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn confirming_the_duplicate_lands_on_the_new_draft() {
+        let (_d, conn) = test_conn();
+        seed_invoice(&conn, "Globex", 900.0);
+        let mut mgr = manager(&conn);
+        open_duplicate(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Char('y'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::Detail));
+        assert_eq!(invoice_count(&conn), 2);
+
+        let detail = mgr.detail.as_ref().expect("the new draft is open");
+        assert_eq!(
+            detail.invoice.number, 1249,
+            "the detail is the copy, not the source"
+        );
+        assert_eq!(detail.invoice.status, "draft");
+        assert_eq!(detail.invoice.total, 900.0);
+        // The cursor moved with the screen, so Esc lands beside the draft.
+        assert_eq!(mgr.rows[mgr.selection].number, 1249);
+        let status = mgr.status_message.as_deref().unwrap_or_default();
+        assert!(
+            status.contains("Duplicated invoice #1248 as draft #1249"),
+            "got: {status}"
+        );
+    }
+
+    #[test]
+    fn the_duplicate_takes_the_reference_day_it_is_given() {
+        let (_d, conn) = test_conn();
+        // Its own source rather than `seed_invoice`'s: that one is due thirty
+        // days from whatever day the suite runs on, and the term a copy
+        // inherits has to be a constant for the arithmetic to be assertable.
+        let client =
+            add_client(&conn, "Juniper Labs", Some("ops@juniper.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "Strategy workshop".into(),
+            quantity: 1.0,
+            unit_amount: 600.0,
+        }];
+        let source = create_invoice(
+            &conn,
+            client,
+            "2026-07-16",
+            Some("2026-08-15"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+        mgr.perform_duplicate(&conn, "2027-01-15");
+
+        let detail = mgr.detail.as_ref().expect("the new draft is open");
+        assert_eq!(detail.invoice.issue_date, "2027-01-15");
+        // Thirty days from issue to due on the source, so thirty on the copy.
+        assert_eq!(detail.invoice.due_date.as_deref(), Some("2027-02-14"));
+        assert_ne!(detail.invoice.id, source);
+    }
+
+    #[test]
+    fn a_refused_duplicate_lands_on_the_status_line_with_the_invoice_still_open() {
+        let (_d, conn) = test_conn();
+        let source = seed_invoice(&conn, "Harbor & Vale", 750.0);
+        let client_id: i64 = conn
+            .query_row(
+                "SELECT client_id FROM invoices WHERE id = ?1",
+                [source],
+                |r| r.get(0),
+            )
+            .unwrap();
+        nigel_core::invoicing::clients::archive_client(&conn, client_id, "2026-08-01").unwrap();
+
+        let mut mgr = manager(&conn);
+        open_duplicate(&mut mgr, &conn);
+        mgr.handle_key(KeyCode::Char('y'), &conn);
+
+        assert!(matches!(mgr.screen, Screen::Detail));
+        assert_eq!(invoice_count(&conn), 1);
+        let status = mgr.status_message.as_deref().unwrap_or_default();
+        assert!(status.contains("archived"), "got: {status}");
+        let detail = mgr.detail.as_ref().expect("the source is still open");
+        assert_eq!(detail.invoice.number, 1248);
+    }
+
+    #[test]
+    fn the_detail_footer_advertises_duplicate_for_every_state() {
+        let (_d, conn) = test_conn();
+        let id = seed_invoice(&conn, "Initech", 300.0);
+        void_invoice(&conn, id, "2026-07-20").unwrap();
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        let screen = rendered(&mut mgr);
+        assert!(
+            screen.contains("c=duplicate"),
+            "a void invoice still copies: {screen}"
+        );
     }
 }
