@@ -366,15 +366,14 @@ pub fn terms_block_text(invoice: &Invoice) -> Option<&str> {
 
 /// How large a stored logo may be, decoded.
 ///
-/// Every byte is base64-inflated by a third into every email body and every
-/// published object, and the page is the email.
+/// Every byte is base64-inflated by a third into the books and into every
+/// preview page, and uploaded once as the object the published page points at.
 pub const MAX_LOGO_BYTES: usize = 128 * 1024;
 
 /// The image types a logo may be.
 ///
-/// SVG is not among them: most mail clients will not render it, and printpdf
-/// cannot embed it, so allowing it would buy a validation branch and two
-/// documents that disagree.
+/// SVG is not among them: printpdf cannot embed it, so allowing it would buy a
+/// validation branch and two documents that disagree.
 const LOGO_MIMES: &[(&str, &[u8])] = &[
     (
         "image/png",

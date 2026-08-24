@@ -120,10 +120,11 @@ crates/
         gateway.rs             # PaymentGateway / AssetPublisher / Mailer traits + shared types
         stripe.rs              # Stripe payment links and paid checkout sessions
         r2.rs                  # Cloudflare R2 publisher (S3 API via rusty-s3)
-        mailgun.rs             # Mailgun sender (HTML body + PDF attachment)
+        mailgun.rs             # Mailgun sender (plain-text body + PDF attachment)
         render_html.rs         # Invoice HTML rendering ({{KEY}} expansion, PayButton, Branding, template loading)
         logo.rs                # The letterhead logo as an object beside the page (once per distinct image)
         render.rs              # render_invoice — the HTML+PDF pair send publishes and preview writes
+        render_text.rs         # The plain-text email body, from the same figures the documents draw
         republish.rs           # Best-effort re-publish of a paid invoice's page and PDF
         templates/             # invoice.html
         send.rs                # Send orchestration (link -> render -> publish -> email -> publish mark)

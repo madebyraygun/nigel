@@ -139,18 +139,15 @@ picker in the browser; either way the bytes are read, checked and stored as a
 `data:` URI, so the image is part of the books and moves with them.
 
 A logo must be a **PNG or a JPEG** and at most **128 KiB**. Nothing else is
-accepted: a stored logo is base64-inflated by a third into every email body and
-every published page, SVG will not render in most mail clients and cannot be
-embedded in the PDF at all, and a file whose extension disagrees with its bytes
-is refused rather than mislabelled into somebody's inbox. A refusal names the
-problem and leaves the stored value alone.
+accepted: a stored logo is base64-inflated by a third into every preview page,
+SVG cannot be embedded in the PDF at all, and a file whose extension disagrees
+with its bytes is refused rather than mislabelled into somebody's inbox. A
+refusal names the problem and leaves the stored value alone.
 
-**The logo is published beside the page.** The page is the email body, and
-Gmail strips a `data:` URI out of one — a Gmail reader would see the business
-name, the image's `alt` text, where the mark should be. So `invoice send`
-uploads the image as its own object next to the invoice and the published page
-points at it with an absolute URL, which every mail client that displays remote
-images renders.
+**The logo is published beside the page.** `invoice send` uploads the image as
+its own object next to the invoice, and the published page points at it with an
+absolute URL — one cached object serves every invoice, rather than each
+published page carrying the bytes inline.
 
 The stored value stays the `data:` URI. `company_logo` is the one source of
 truth and `parse_logo` the one validation path; the publisher derives the bytes
@@ -274,8 +271,8 @@ nobody can correct until it has been imported. A send to that client refuses
 later, by name.
 
 **Everyone on the list receives the same document and can pay it.** One render,
-one message: the identical HTML body and the identical PDF go to the `To` and
-every `Cc`, Pay button included, and the published page at
+one message: the identical text body and the identical PDF go to the `To` and
+every `Cc`, `Pay now` link included, and the published page at
 `public_base_url/i/{token}/` is the same page for all of them. That is
 deliberate — a second, button-less render for the cc list would create an
 artifact that is not what was published, and it would achieve nothing, because
@@ -702,11 +699,17 @@ One command does the whole publish:
    template costs nothing; a logo the upload refuses is a warning, never a failed
    send. The address Nigel hands out names the `index.html` object itself — see
    "Hosting" below.
-4. Emails the client through Mailgun — HTML body, PDF attached, subject
-   `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no business name
-   is set. The name comes from the same setting the dashboard's settings screen
-   edits. The From carries a display name and, when one is configured, a
-   Reply-To — see "Who the email is from" below.
+4. Emails the client through Mailgun — a **plain-text body**, PDF attached,
+   subject `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no
+   business name is set. The body opens with that same line, then carries the
+   metadata rows, the line items and the money lines the page and the PDF draw
+   — built from the same figures, so the three cannot disagree — a
+   `Pay now:` line with the published page's URL, the notes, terms and payment
+   instructions when they are set, and a closing sentence naming the PDF. There
+   is no HTML part at all: mail clients render a full web page badly, and the
+   page itself is one click away. The name comes from the same setting the
+   dashboard's settings screen edits. The From carries a display name and, when
+   one is configured, a Reply-To — see "Who the email is from" below.
 5. Marks the invoice published, which moves it from `draft` to `sent` (or straight
    to `overdue` if its due date has already passed).
 

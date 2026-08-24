@@ -51,6 +51,11 @@ pub struct RenderedInvoice {
     /// `None` only in a build without the `pdf` feature; each caller decides
     /// whether that is fatal (`send`) or a notice (`preview`).
     pub pdf: Option<Vec<u8>>,
+    /// The rows and figures the documents were rendered from, handed up so the
+    /// email body is built from the same load — a third document that asked the
+    /// database again could disagree with the two it rides beside.
+    pub items: Vec<InvoiceLineItem>,
+    pub money: MoneySummary,
 }
 
 /// Render an invoice exactly as `send` publishes it. Reads the database, makes
@@ -122,7 +127,12 @@ pub fn render_with_logo(
         &money,
         branding.payment_instructions,
     )?;
-    Ok(RenderedInvoice { html, pdf })
+    Ok(RenderedInvoice {
+        html,
+        pdf,
+        items,
+        money,
+    })
 }
 
 #[cfg(feature = "pdf")]

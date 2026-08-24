@@ -105,7 +105,7 @@ pub trait Mailer {
         to: &str,
         cc: &[String],
         subject: &str,
-        html: &str,
+        text: &str,
         pdf: &[u8],
     ) -> Result<()>;
 }
