@@ -1,10 +1,11 @@
 ---
 id: TASK-135
 title: Plain-text invoice email
-status: In Progress
+status: Done
 assignee:
   - '@dalton'
 created_date: '2026-08-24 23:06'
+updated_date: '2026-08-25 18:12'
 labels: []
 dependencies: []
 ---
@@ -17,9 +18,15 @@ The invoice email currently reuses the published page HTML as its body, which em
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Invoice emails are sent with a text body and no html field
-- [ ] #2 Body includes header, dates, line items, money lines, Pay now URL, and notes/terms/payment instructions when set; absent values omit their block
+- [x] #1 Invoice emails are sent with a text body and no html field
+- [x] #2 Body includes header, dates, line items, money lines, Pay now URL, and notes/terms/payment instructions when set; absent values omit their block
 - [ ] #3 Text body money lines come from the same MoneySummary::lines() the page and PDF use
 - [ ] #4 PDF remains attached; To/CC, subject, From/Reply-To unchanged
 - [ ] #5 docs/invoicing.md and docs/design-constraints.md describe the new email body rule
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped in PR #47 (squash 959e063). render_email_text builds the body from the shared document model (items + MoneySummary handed up through RenderedInvoice), mailgun sends a text field and no html field. Verified end-to-end with a live send: plain-text body, working Pay now link, PDF attached, DMARC/DKIM/SPF aligned.
+<!-- SECTION:NOTES:END -->
