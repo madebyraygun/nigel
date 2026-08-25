@@ -133,7 +133,7 @@ pub fn message_fields(
     to: &str,
     cc: &[String],
     subject: &str,
-    html: &str,
+    text: &str,
 ) -> Vec<(String, String)> {
     let mut fields = vec![
         (
@@ -142,7 +142,9 @@ pub fn message_fields(
         ),
         ("to".into(), to.to_string()),
         ("subject".into(), subject.to_string()),
-        ("html".into(), html.to_string()),
+        // The body is text/plain and nothing else. Mail clients render a full
+        // web page badly; the page itself is the link this text carries.
+        ("text".into(), text.to_string()),
     ];
     // Mailgun documents a recipient list as one comma-joined field. An empty
     // one emits no field at all rather than an empty header.
@@ -176,13 +178,13 @@ impl Mailer for MailgunClient {
         to: &str,
         cc: &[String],
         subject: &str,
-        html: &str,
+        text: &str,
         pdf: &[u8],
     ) -> Result<()> {
         let url = format!("https://api.mailgun.net/v3/{}/messages", self.domain);
 
         let mut form = reqwest::blocking::multipart::Form::new();
-        for (name, value) in message_fields(&self.envelope, to, cc, subject, html) {
+        for (name, value) in message_fields(&self.envelope, to, cc, subject, text) {
             form = form.text(name, value);
         }
         let part = reqwest::blocking::multipart::Part::bytes(pdf.to_vec())
@@ -216,18 +218,24 @@ mod tests {
     }
 
     #[test]
-    fn message_fields_include_from_to_subject_html() {
+    fn message_fields_include_from_to_subject_and_a_text_body() {
         let f = message_fields(
             &envelope(None, None),
             "a@b.test",
             &[],
             "Invoice #1248",
-            "<p>hi</p>",
+            "Invoice #1248\n\nPay now: https://x.test/i/t/index.html",
         );
         assert!(f.contains(&("from".into(), "billing@mg.example.com".into())));
         assert!(f.contains(&("to".into(), "a@b.test".into())));
         assert!(f.contains(&("subject".into(), "Invoice #1248".into())));
-        assert!(f.contains(&("html".into(), "<p>hi</p>".into())));
+        assert!(f.contains(&(
+            "text".into(),
+            "Invoice #1248\n\nPay now: https://x.test/i/t/index.html".into()
+        )));
+        // The message is text/plain and nothing else: an `html` field would
+        // make Mailgun compose a multipart with a body nobody wrote.
+        assert!(!f.iter().any(|(name, _)| name == "html"));
     }
 
     #[test]

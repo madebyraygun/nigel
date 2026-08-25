@@ -8,6 +8,7 @@ pub mod mailgun;
 pub mod r2;
 pub mod render;
 pub mod render_html;
+pub mod render_text;
 pub mod republish;
 pub mod schedules;
 pub mod send;

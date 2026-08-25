@@ -8,6 +8,7 @@ use crate::invoicing::invoices::{ensure_not_void, get_invoice, mark_published, s
 use crate::invoicing::logo;
 use crate::invoicing::render::{pay_button_for, render_with_logo, usable_logo, RenderedInvoice};
 use crate::invoicing::render_html::Branding;
+use crate::invoicing::render_text::render_email_text;
 use crate::models::Client;
 
 /// What a send that reaches the render step needs and a build without the `pdf`
@@ -306,6 +307,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         if let Ok(RenderedInvoice {
             html,
             pdf: Some(inline),
+            ..
         }) = render(branding)
         {
             rendered.html = html;
@@ -322,14 +324,19 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         "" => format!("Invoice #{}", invoice.number),
         company => format!("Invoice #{} from {company}", invoice.number),
     };
+    // The message a client reads is plain text: the same figures the page and
+    // the PDF draw, the link to the published page, the PDF attached. The page
+    // HTML goes to the bucket and nowhere else.
+    let body = render_email_text(
+        &invoice,
+        &rendered.items,
+        &rendered.money,
+        branding.payment_instructions,
+        &subject,
+        &public_url,
+    );
     mailer
-        .send_invoice(
-            &recipients.to,
-            &recipients.cc,
-            &subject,
-            &rendered.html,
-            &pdf,
-        )
+        .send_invoice(&recipients.to, &recipients.cc, &subject, &body, &pdf)
         .map_err(|e| (Email, e))?;
     trace.done(Email, StepOutcome::Ok);
 
@@ -473,6 +480,7 @@ mod tests {
         /// without a network call.
         to: RefCell<String>,
         cc: RefCell<Vec<String>>,
+        body: RefCell<String>,
     }
     impl Mailer for FakeMail {
         fn send_invoice(
@@ -480,13 +488,14 @@ mod tests {
             to: &str,
             cc: &[String],
             s: &str,
-            _h: &str,
+            text: &str,
             _p: &[u8],
         ) -> Result<()> {
             *self.sent.borrow_mut() += 1;
             *self.subject.borrow_mut() = s.to_string();
             *self.to.borrow_mut() = to.to_string();
             *self.cc.borrow_mut() = cc.to_vec();
+            *self.body.borrow_mut() = text.to_string();
             Ok(())
         }
     }
@@ -524,6 +533,38 @@ mod tests {
         assert_eq!(inv.status, "sent");
         assert_eq!(inv.stripe_payment_link_id.as_deref(), Some("pl_1"));
         assert_eq!(*mail.sent.borrow(), 1);
+    }
+
+    /// The email is plain text: the figures, the page link, and nothing a mail
+    /// client has to render. The page HTML goes to the bucket, never into the
+    /// message.
+    #[test]
+    fn the_email_body_is_plain_text_with_the_page_link() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let outcome = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &brand("billing@example.test"),
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
+
+        let body = mail.body.borrow();
+        assert!(
+            body.contains(&format!("Pay now: {}", outcome.public_url)),
+            "got: {body}"
+        );
+        assert!(body.contains("W  1 x $100.00  $100.00"), "got: {body}");
+        assert!(body.contains("Total: $100.00"), "got: {body}");
+        assert!(!body.contains('<'), "markup reached the email: {body}");
     }
 
     /// AC #3: every contact is reached, the billing one as the `To`.
