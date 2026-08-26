@@ -165,7 +165,10 @@ impl Drop for TempConfigDir {
     }
 }
 
-fn config_dir() -> PathBuf {
+/// The directory nigel's machine-local configuration lives in:
+/// `settings.json`, and the desktop shell's window-state file. Honors
+/// [`set_config_dir_for_tests`] like every path derived from it.
+pub fn config_dir() -> PathBuf {
     #[cfg(any(test, feature = "testutil"))]
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     if let Some(dir) = CONFIG_DIR_OVERRIDE.lock().unwrap().clone() {
