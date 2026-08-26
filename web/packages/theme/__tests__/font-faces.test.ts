@@ -62,8 +62,10 @@ describe('fontFacesCss', () => {
 
   it('composes into nigelTheme, ahead of the tokens that use the family', () => {
     expect(composed).toContain(text);
+    // --wa-font-family-mono is the token that names this family. The sans
+    // stack is the machine's own faces, which need no @font-face at all.
     expect(composed.indexOf('@font-face')).toBeLessThan(
-      composed.indexOf('--wa-font-family-sans'),
+      composed.indexOf('--wa-font-family-mono'),
     );
   });
 });

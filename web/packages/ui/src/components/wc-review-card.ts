@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * The transaction being reviewed.
@@ -16,7 +17,9 @@ import './wc-money.js';
  */
 @customElement('wc-review-card')
 export class WcReviewCard extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       background: var(--wa-color-surface);
@@ -74,7 +77,8 @@ export class WcReviewCard extends LitElement {
       font-size: var(--wa-font-size-s, 13px);
       color: var(--wa-color-muted);
     }
-  `;
+    `,
+  ];
 
   /** `YYYY-MM-DD`. */
   @property({ type: String })
@@ -123,7 +127,7 @@ export class WcReviewCard extends LitElement {
       </div>
       <dl>
         <dt>Date</dt>
-        <dd>${this.date}</dd>
+        <dd class="figure">${this.date}</dd>
         <dt>Account</dt>
         <dd>${this.accountName}</dd>
       </dl>
