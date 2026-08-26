@@ -21,6 +21,7 @@ import {
   EMPTY_IMPORT_PREVIEW,
   FakeApiClient,
 } from '../__mocks__/fake-api-client.js';
+import { requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
 
 /**
  * 423 and 401 are deliberately untested here. The shell gates both before a
@@ -1075,5 +1076,104 @@ describe('the import screen in native mode', () => {
     await settle(el);
 
     expect(dropzone(el).error).toBe("Couldn't read /home/books/cedar-april-2025.csv");
+  });
+});
+
+describe('the pick-import menu intent', () => {
+  afterEach(() => {
+    resetMenuIntent();
+    // Two mounted import screens would race for one intent; the app never has
+    // two, so neither may a test.
+    document.body.innerHTML = '';
+  });
+
+  it('opens the native dialog when the intent was requested before arriving', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+
+    expect(shell.staged).toHaveLength(1);
+    expect(shell.staged[0].filename).toBe('acme-checking.csv');
+  });
+
+  it('does nothing in a browser, where there is no dialog to open', async () => {
+    requestMenuIntent('pick-import');
+    const { el } = await mount();
+    await settle(el);
+    expect(dropzone(el)).toBeTruthy();
+  });
+
+  it('parks the intent while the screen is busy and opens the dialog after', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const pick = source.pick;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.pick = async () => {
+      await gate;
+      return pick();
+    };
+
+    // The first intent holds the screen busy on the gated dialog; the second
+    // arrives while it is and must wait rather than die against the guard.
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+    expect(shell.staged).toHaveLength(0);
+
+    release();
+    await settle(el);
+    expect(shell.staged).toHaveLength(2);
+  });
+
+  it('a parked intent stays parked across navigation and fires on return', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const pick = source.pick;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.pick = async () => {
+      await gate;
+      return pick();
+    };
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+
+    // Navigating away removes the screen; the in-flight dialog then resolves
+    // against the removed element. The parked intent must not fire there — an
+    // OS dialog over whatever screen the user is on now would stage their
+    // pick invisibly.
+    el.remove();
+    release();
+    await settle(el);
+    expect(shell.staged).toHaveLength(1);
+
+    // Same contract as an intent requested before arriving: the next import
+    // screen to mount honors it.
+    const { el: next } = await mount(fake);
+    await settle(next);
+    expect(shell.staged).toHaveLength(2);
   });
 });

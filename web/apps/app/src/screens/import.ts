@@ -36,6 +36,8 @@ import {
   sameImportForm,
   supportedDrop,
 } from './import-data.js';
+import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { consumeMenuIntent } from '../state/menu-intent.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -81,7 +83,7 @@ function busyLabel(busy: Busy): string {
  * delete call would only ever cover the case where someone stayed to click.
  */
 @customElement('nigel-import-screen')
-export class NigelImportScreen extends LitElement {
+export class NigelImportScreen extends SignalWatcher(LitElement) {
   static styles = css`
     :host {
       display: flex;
@@ -215,6 +217,20 @@ export class NigelImportScreen extends LitElement {
     // dropzone paints, and setting reactive state once the update has
     // completed would cost a second one.
     if (!this.hasUpdated) this.source = this.client.importSource();
+    // Parked, not consumed, while busy: taking the intent now would discard
+    // it against the picker guard. `busy` is reactive, so the cycle that
+    // clears it re-runs this read and the dialog opens then. Consuming is a
+    // tracked read — that is what subscribes the signal watcher — and the
+    // pick waits out the update so its state writes schedule a fresh one.
+    //
+    // Connected, because a busy flow finishing after navigation still runs
+    // this update on the removed element: opening the OS dialog over whatever
+    // screen the user is on now would stage their pick invisibly. Parked
+    // instead, the intent keeps the same contract as one requested before
+    // arriving — the next import screen to mount honors it.
+    if (this.isConnected && this.busy === null && consumeMenuIntent('pick-import')) {
+      void this.updateComplete.then(() => this.handlePickRequest());
+    }
   }
 
   firstUpdated(): void {
