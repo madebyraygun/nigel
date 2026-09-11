@@ -1340,8 +1340,9 @@ Line items are held at schedule level and re-read on every run, so **editing a
 schedule changes future invoices and never past ones**. Editing never moves the
 cycle: `next_period` stays where the last run left it.
 
-Pausing stops generation without ending anything. Ending writes a date and stops
-it for good. Neither deletes a row — the schedule, its items and every invoice
+Pausing stops generation without ending anything, and records the day it
+stopped — that date is what separates the cycles a pause covers from arrears
+that predate it. Ending writes a date and stops it for good. Neither deletes a row — the schedule, its items and every invoice
 it produced stay readable through `nigel invoice schedule list --all` and
 `nigel invoice schedule show`.
 
@@ -1396,11 +1397,15 @@ flag.
 would walk the same gap again and invoice periods dated after the day the
 schedule stopped.
 
-**A paused schedule still owes its cycles.** Pausing only holds `next_period`
-still; resuming bills the whole backlog. So ending a paused schedule asks the
-same question, and `--bill` there invoices the months the pause covered. This
-is the one place the list of owed periods and a run disagree — a run skips
-paused and ended schedules entirely.
+**A pause forgives the cycles it covers.** Skipping them is the point of
+pausing, so they are never owed. What a pause does *not* forgive is arrears
+behind it: a schedule already months late when you paused it in March was late
+for reasons the pause says nothing about, and those cycles stay owed. Ending a
+paused schedule therefore offers exactly the arrears, and `--bill` there
+invoices nothing from inside the pause.
+
+A schedule paused before this was recorded has no pause date to work from, and
+an unknown extent forgives nothing — ending it still asks about every cycle.
 
 ### Running it from cron or launchd
 

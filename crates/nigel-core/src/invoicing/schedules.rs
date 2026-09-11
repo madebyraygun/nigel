@@ -94,6 +94,11 @@ pub struct Schedule {
     pub terms: Option<String>,
     pub autosend: bool,
     pub paused: bool,
+    /// The date it was paused on, and `None` when it is not paused.
+    ///
+    /// Also `None` for a schedule already paused before migration v13, where
+    /// the date is not recoverable: a pause of unknown extent forgives nothing.
+    pub paused_at: Option<String>,
     pub ended_at: Option<String>,
 }
 
@@ -133,7 +138,7 @@ pub struct ScheduleRun {
 }
 
 const SCHEDULE_COLS: &str = "id, client_id, cadence, anchor_day, next_period, net_days,
-    currency, notes, terms, autosend, paused, ended_at";
+    currency, notes, terms, autosend, paused, paused_at, ended_at";
 
 fn row_to_schedule(r: &rusqlite::Row) -> rusqlite::Result<Schedule> {
     Ok(Schedule {
@@ -148,7 +153,8 @@ fn row_to_schedule(r: &rusqlite::Row) -> rusqlite::Result<Schedule> {
         terms: r.get(8)?,
         autosend: r.get(9)?,
         paused: r.get(10)?,
-        ended_at: r.get(11)?,
+        paused_at: r.get(11)?,
+        ended_at: r.get(12)?,
     })
 }
 
@@ -332,11 +338,18 @@ pub fn update_schedule(conn: &Connection, id: i64, update: &ScheduleUpdate) -> R
     Ok(())
 }
 
-pub fn pause_schedule(conn: &Connection, id: i64) -> Result<()> {
+/// Stop generating without ending, recording the day it stopped.
+///
+/// `on` is what separates a pause from arrears. A schedule can be behind
+/// *before* it is paused — months worked and never invoiced — and those stay
+/// owed, while the cycles the pause itself covers do not: skipping them was the
+/// point of pausing.
+pub fn pause_schedule(conn: &Connection, id: i64, on: &str) -> Result<()> {
     let _ = get_schedule(conn, id)?;
+    let on = validate_date(on, "pause")?;
     conn.execute(
-        "UPDATE invoice_schedules SET paused = 1 WHERE id = ?1",
-        [id],
+        "UPDATE invoice_schedules SET paused = 1, paused_at = ?2 WHERE id = ?1",
+        rusqlite::params![id, on],
     )?;
     Ok(())
 }
@@ -344,7 +357,7 @@ pub fn pause_schedule(conn: &Connection, id: i64) -> Result<()> {
 pub fn resume_schedule(conn: &Connection, id: i64) -> Result<()> {
     let _ = get_schedule(conn, id)?;
     conn.execute(
-        "UPDATE invoice_schedules SET paused = 0 WHERE id = ?1",
+        "UPDATE invoice_schedules SET paused = 0, paused_at = NULL WHERE id = ?1",
         [id],
     )?;
     Ok(())
@@ -402,11 +415,13 @@ pub enum Settlement {
 /// is not past `on`, skipping anything a run row already claims — so no period
 /// after `on` is reachable.
 ///
-/// It is **not** equivalent to what [`run_due_schedules`] would generate, which
-/// walks [`ScheduleScope::Active`] and so skips paused and ended schedules
-/// entirely. Here a paused schedule still owes what it never billed, because
-/// pausing only holds `next_period` still and resuming bills the backlog. An
-/// ended schedule owes nothing: ending already settled it.
+/// A **paused** schedule owes only what it was already behind on when the pause
+/// began. Cycles the pause itself covers are not owed — skipping them is what
+/// pausing is for — so the walk stops at `paused_at`. A schedule paused before
+/// migration v13 has no recorded date and owes everything, which is the
+/// conservative reading of a pause whose extent is unknown.
+///
+/// An **ended** schedule owes nothing: ending already settled it.
 ///
 /// The list is a preview, not a lock. A concurrent run can bill a period
 /// between this read and any use of the result; [`generate_period`]'s own check
@@ -425,6 +440,15 @@ pub fn unbilled_periods(conn: &Connection, id: i64, on: &str) -> Result<Vec<Stri
     let mut periods = Vec::new();
     let mut cursor = schedule.next_period.clone();
     while cursor <= on {
+        // A pause forgives the cycles it covers, so while one is in force the
+        // walk stops where it began rather than at `on`.
+        if schedule
+            .paused_at
+            .as_ref()
+            .is_some_and(|since| cursor >= *since)
+        {
+            break;
+        }
         let already: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM invoice_schedule_runs
                WHERE schedule_id = ?1 AND period = ?2)",
@@ -1038,7 +1062,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let (_client, id) = seed(&conn);
 
-        pause_schedule(&conn, id).unwrap();
+        pause_schedule(&conn, id, "2026-01-01").unwrap();
         assert!(get_schedule(&conn, id).unwrap().paused);
         assert!(list_schedules(&conn, ScheduleScope::Active)
             .unwrap()
@@ -1122,7 +1146,7 @@ mod tests {
         let (_d, conn) = test_conn();
         for result in [
             get_schedule(&conn, 99).map(|_| ()),
-            pause_schedule(&conn, 99),
+            pause_schedule(&conn, 99, "2026-01-01"),
             resume_schedule(&conn, 99),
             end_schedule(&conn, 99, "2026-08-20", EndDisposition::RefuseIfOwed).map(|_| ()),
             unbilled_periods(&conn, 99, "2026-08-20").map(|_| ()),
@@ -1433,41 +1457,62 @@ mod tests {
     }
 
     #[test]
-    fn a_paused_schedule_still_owes_the_cycles_it_never_billed() {
-        // Pausing defers; it does not forgive. `resume_schedule` only clears the
-        // flag and leaves `next_period` alone, so resuming bills the backlog —
-        // which means those periods are genuinely owed, and ending a paused
-        // schedule has the same question to answer as ending an active one.
+    fn a_pause_forgives_the_cycles_it_covers_but_not_the_arrears_behind_it() {
+        // Skipping those cycles is the point of pausing, so they are never
+        // owed — not on the way out here, and not on a later resume.
         //
-        // This is where `unbilled_periods` and a run diverge: a run walks
-        // `ScheduleScope::Active` and skips a paused schedule entirely.
+        // Arrears are a different thing. A schedule can be behind before it is
+        // paused, and those are months worked and never invoiced; pausing in
+        // March says nothing about January. `paused_at` is what tells them
+        // apart, which is the whole reason the column exists.
         let (_d, conn) = test_conn();
         let (_client, id) = seed(&conn);
-        pause_schedule(&conn, id).unwrap();
+        pause_schedule(&conn, id, "2026-03-01").unwrap();
 
-        assert!(
-            draft_due_schedules(&conn, "2026-05-01")
-                .unwrap()
-                .generated
-                .is_empty(),
-            "a run generates nothing for a paused schedule"
-        );
         assert_eq!(
-            unbilled_periods(&conn, id, "2026-05-01").unwrap().len(),
-            5,
-            "but the cycles are still owed"
+            unbilled_periods(&conn, id, "2026-06-01").unwrap(),
+            ["2026-01-01", "2026-02-01"],
+            "January and February predate the pause; March onward it covers"
         );
 
+        // So ending it offers only the arrears, and billing them invoices
+        // nothing from inside the pause.
+        let outcome = end_schedule(&conn, id, "2026-06-01", EndDisposition::Bill).unwrap();
+        assert_eq!(periods(billed(&outcome)), ["2026-01-01", "2026-02-01"]);
+    }
+
+    #[test]
+    fn a_pause_with_nothing_behind_it_leaves_a_schedule_owing_nothing() {
+        // The ordinary wind-down: a schedule that was current when it was
+        // paused owes nothing, so `end` takes neither flag.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        pause_schedule(&conn, id, "2026-01-01").unwrap();
+
+        assert!(unbilled_periods(&conn, id, "2026-06-01")
+            .unwrap()
+            .is_empty());
+        let outcome = end_schedule(&conn, id, "2026-06-01", EndDisposition::RefuseIfOwed).unwrap();
+        assert!(matches!(settlement(&outcome), Settlement::NothingOwed));
+    }
+
+    #[test]
+    fn a_pause_from_before_the_column_existed_forgives_nothing() {
+        // Migration v13 leaves `paused_at` NULL on a schedule already paused,
+        // because the date is not recoverable. An unknown extent must not write
+        // off a cycle the operator meant to bill, so such a pause forgives
+        // nothing and ending still asks.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        conn.execute(
+            "UPDATE invoice_schedules SET paused = 1, paused_at = NULL WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        assert_eq!(unbilled_periods(&conn, id, "2026-05-01").unwrap().len(), 5);
         let err = end_schedule(&conn, id, "2026-05-01", EndDisposition::RefuseIfOwed).unwrap_err();
         assert!(matches!(err, NigelError::Conflict { .. }));
-
-        // Resuming would have billed exactly these, which is why ending has to
-        // ask rather than assume the pause meant "write them off".
-        resume_schedule(&conn, id).unwrap();
-        assert_eq!(
-            periods(&draft_due_schedules(&conn, "2026-05-01").unwrap()).len(),
-            5
-        );
     }
 
     fn periods(report: &ScheduleRunReport) -> Vec<String> {
@@ -1613,7 +1658,7 @@ mod tests {
     fn paused_and_ended_schedules_generate_nothing() {
         let (_d, conn) = test_conn();
         let (_client, paused) = seed(&conn);
-        pause_schedule(&conn, paused).unwrap();
+        pause_schedule(&conn, paused, "2026-01-01").unwrap();
         assert!(draft_due_schedules(&conn, "2026-06-01")
             .unwrap()
             .generated

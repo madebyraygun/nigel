@@ -239,9 +239,9 @@ pub fn edit(
     Ok(())
 }
 
-pub fn pause(id: i64) -> Result<()> {
+pub fn pause(id: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    pause_schedule(&conn, id)?;
+    pause_schedule(&conn, id, today)?;
     println!("Paused schedule {id}. Nothing is generated until it is resumed.");
     Ok(())
 }
