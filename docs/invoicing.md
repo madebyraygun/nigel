@@ -1370,19 +1370,37 @@ nigel invoice schedule end 1 --bill      # generate what it owed, then end
 nigel invoice schedule end 1 --forgive   # write the periods off, then end
 ```
 
-`--bill` generates exactly what a run on the end date would have generated:
-each missed cycle becomes its own invoice dated by its own period, numbered in
-sequence, and **nothing is dated after the end date**. It always drafts, even
-for an autosend schedule — ending is a deliberate act with you present, so the
-invoices are left for you to review and send. If one of them cannot be
-generated, the schedule is left active rather than ended, so the periods it
-never reached are not stranded.
+`--bill` gives each missed cycle its own invoice, dated by its own period and
+numbered in sequence, and **no invoice is issued for a period after the end
+date**. Only the issue date is bounded: a Net 30 invoice for the last period
+still falls due thirty days later, which is after the schedule ended.
+
+It always drafts, even for an autosend schedule — ending is a deliberate act
+with you present, so the invoices are left for you to review and send.
+
+Each invoice is written on its own, so a walk that stops partway leaves real
+invoices on the books. The schedule is then left **active rather than ended**,
+because ending it would strand the periods the walk never reached with nothing
+left to generate them. Fix whatever stopped it and run `end` again: the
+invoices already created are kept and are not billed twice.
 
 `--forgive` leaves `next_period` where it stands, recording the cycle the
 schedule stopped on.
 
 A schedule that is level with its cycle owes nothing, and `end` takes neither
 flag.
+
+**Ending is terminal.** A schedule that has already ended refuses a second
+`end`, whatever flags it is given. Without that, forgiveness would not stick —
+`--forgive` leaves `next_period` behind the end date, so a later `end --bill`
+would walk the same gap again and invoice periods dated after the day the
+schedule stopped.
+
+**A paused schedule still owes its cycles.** Pausing only holds `next_period`
+still; resuming bills the whole backlog. So ending a paused schedule asks the
+same question, and `--bill` there invoices the months the pause covered. This
+is the one place the list of owed periods and a run disagree — a run skips
+paused and ended schedules entirely.
 
 ### Running it from cron or launchd
 

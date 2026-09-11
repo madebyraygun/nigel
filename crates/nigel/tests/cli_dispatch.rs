@@ -3997,3 +3997,117 @@ fn a_negative_payment_amount_gets_the_apps_own_refusal_either_way() {
         .expect("payments");
     assert_eq!(payments, 0);
 }
+
+/// The three branches of `invoice schedule end` that only exist in the CLI: the
+/// conflict it re-raises with the flag names appended, the flags themselves, and
+/// the clap rule that keeps them apart.
+///
+/// The refusal branch matches on the literal `"schedule_has_unbilled_periods"`.
+/// Rename that code in the core and the match silently stops firing — the flag
+/// hint disappears and the operator has no way to discover `--bill` or
+/// `--forgive`. Nothing else in the suite would notice.
+#[test]
+fn ending_a_schedule_asks_what_to_do_with_the_periods_it_owes() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+
+    // The demo cast already includes an active client; a schedule needs one.
+    let client: i64 = env
+        .db()
+        .query_row(
+            "SELECT id FROM clients WHERE archived_at IS NULL ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("client");
+
+    let make = |start: &str| {
+        env.cmd()
+            .args([
+                "invoice",
+                "schedule",
+                "add",
+                "--client",
+                &client.to_string(),
+                "--cadence",
+                "monthly",
+                "--start",
+                start,
+                "--item",
+                "Hosting & maintenance:1:450",
+            ])
+            .assert()
+            .success();
+        env.db()
+            .query_row(
+                "SELECT id FROM invoice_schedules ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("schedule")
+    };
+
+    // A schedule whose first period is long past owes every cycle since.
+    let owing = make("2020-01-01");
+    env.cmd()
+        .args(["invoice", "schedule", "end", &owing.to_string()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unbilled period"))
+        .stderr(predicate::str::contains("--bill"))
+        .stderr(predicate::str::contains("--forgive"));
+
+    // Refused means refused: nothing ended, nothing billed.
+    let ended: Option<String> = env
+        .db()
+        .query_row(
+            "SELECT ended_at FROM invoice_schedules WHERE id = ?1",
+            [owing],
+            |r| r.get(0),
+        )
+        .expect("schedule");
+    assert_eq!(ended, None);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "end",
+            &owing.to_string(),
+            "--forgive",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("forgiving"));
+
+    // Ending is terminal — a second end cannot re-bill what was forgiven.
+    env.cmd()
+        .args(["invoice", "schedule", "end", &owing.to_string(), "--bill"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("already ended"));
+
+    // Both flags together is a usage error, not a confusing refusal.
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "end",
+            &owing.to_string(),
+            "--bill",
+            "--forgive",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+
+    let invoices: i64 = env
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM invoice_schedule_runs WHERE schedule_id = ?1",
+            [owing],
+            |r| r.get(0),
+        )
+        .expect("runs");
+    assert_eq!(invoices, 0, "nothing was ever billed off this schedule");
+}

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-20 19:21'
-updated_date: '2026-09-11 16:42'
+updated_date: '2026-09-11 17:33'
 labels:
   - invoicing
 dependencies: []
@@ -28,18 +28,20 @@ Whether that is right is a judgement call the original ACs did not make. Forgivi
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Decision: `end` refuses when unbilled periods sit before the end date, and takes --bill or --forgive to say which was meant. Neither outcome happens silently.
+Decision: `end` refuses when unbilled periods sit on or before the end date, and takes --bill or --forgive to say which was meant. Neither outcome happens silently.
 
 Data layer (invoicing/schedules.rs):
-1. `unbilled_periods(conn, id, on) -> Result<Vec<String>>` — walk next_period while cursor <= on, skipping periods with a run row. The same walk run_due_schedules does, so --bill produces exactly what a run on the end date would have produced. This is what pins AC #2: the walk cannot pass ended_at.
-2. `EndDisposition { Forgive, Bill }`, and end_schedule takes Option<EndDisposition>. None refuses with a structured error naming the periods; Forgive ends leaving them ungenerated; Bill generates them then ends, in one transaction.
-3. --bill drafts and never sends, even for an autosend schedule, and says so. Ending is a deliberate interactive act and drafting is the default TASK-81 already chose for generation.
-4. A future `on` is refused — it would bill periods not yet due. The CLI only ever passes today.
-5. --forgive leaves next_period where it is: it records where the schedule stopped, and an ended schedule never runs again.
+1. `unbilled_periods(conn, id, on)` — walk next_period while cursor <= on, skipping periods with a run row. No period after `on` is reachable, which is what pins AC #2. It is NOT equivalent to what a run would generate: a run walks ScheduleScope::Active and skips paused and ended schedules. A paused schedule still owes its cycles here, because pausing only holds next_period still and resuming bills the backlog. An ended schedule owes nothing.
+2. `EndDisposition { RefuseIfOwed, Forgive, Bill }` — three named intents rather than an Option, so the signature states all three and the caller cannot express a fourth.
+3. `EndOutcome { Ended { on, settled }, BillingStopped { billed, owed } }` — an enum, because the outcomes are mutually exclusive and one of them is a failure returned as Ok. A struct of optional fields would let a future HTTP handler answer 200 for a walk that stranded periods.
+4. --bill drafts and never sends, even for an autosend schedule. Ending is a deliberate interactive act and drafting is the default TASK-81 already chose.
+5. Each period commits on its own — generate_period owns the transaction — so a walk that stops partway leaves real invoices. The schedule is then left active rather than ended, and the run rows make a retry skip what landed. describe() failing after a commit is recorded as a failure, never raised with ?, which would discard the record of what was created.
+6. Ending is terminal. --forgive leaves next_period behind the end date, so without a guard a second end would walk the same gap and bill periods dated after the schedule stopped.
+7. No future-date guard: schedules.rs reads no clock by design, so it has no today to compare against. The precondition is documented on unbilled_periods instead, and every caller in the workspace passes today. If TASK-140.2 accepts a request-supplied date, the guard belongs at that boundary.
 
-CLI: End gains --bill and --forgive, conflicting. The refusal lists the periods and the two flags.
+CLI: End gains --bill and --forgive, conflicting. The refusal is re-raised as a Conflict with the flag names appended — not narrowed to Other, which an API layer would answer 500 for.
 
-Docs: docs/invoicing.md and docs/commands.md.
+Docs: docs/invoicing.md, docs/commands.md, docs/architecture.md.
 
-Tests, written first: end with nothing owed is unchanged; end with periods owed refuses and writes nothing; --forgive ends and generates nothing; --bill generates exactly the owed periods dated by their own periods and nothing after ended_at; --bill keeps numbering sequential across several; --bill on an autosend schedule drafts and says it did not send; a future end date is refused.
+Tests: core covers nothing owed, refusal writing nothing, forgive, an end date mid-cycle, quarterly anchor restoration, sequential numbering, autosend still drafting, a stopped walk, an already-billed period, an already-ended schedule, and a paused one. cli_dispatch covers the refusal text, both flags, the terminal guard and the clap conflict.
 <!-- SECTION:PLAN:END -->
