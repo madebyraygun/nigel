@@ -7,3 +7,4 @@ storage
 scratchpads/
 docs/plans/
 crates/nigel-desktop/gen/schemas/
+.orca/
