@@ -9,7 +9,8 @@ use nigel_core::invoicing::render_html::load_template;
 use nigel_core::invoicing::schedules::{
     add_schedule, draft_due_schedules, end_schedule, get_schedule, list_schedules, pause_schedule,
     resume_schedule, run_due_schedules, schedule_items, schedule_runs, update_schedule, Cadence,
-    NewSchedule, Schedule, ScheduleRunReport, ScheduleScope, ScheduleUpdate, Senders,
+    EndDisposition, NewSchedule, Schedule, ScheduleRunReport, ScheduleScope, ScheduleUpdate,
+    Senders,
 };
 use nigel_core::invoicing::wiring::{build_clients, company_profile, contact_email_for_preview};
 use nigel_core::settings::{get_data_dir, invoicing_config, invoicing_status};
@@ -256,10 +257,55 @@ pub fn resume(id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn end(id: i64, today: &str) -> Result<()> {
+/// End a schedule, saying what to do about periods it owed and never billed.
+///
+/// Without `--bill` or `--forgive` a schedule that owes periods is refused
+/// rather than ended one way or the other: writing off work and billing five
+/// months at once are both consequential, and only the operator knows which
+/// they meant.
+pub fn end(id: i64, today: &str, bill: bool, forgive: bool) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    end_schedule(&conn, id, today)?;
-    println!("Ended schedule {id}. Its invoices and its history are kept.");
+    let disposition = match (bill, forgive) {
+        (true, false) => Some(EndDisposition::Bill),
+        (false, true) => Some(EndDisposition::Forgive),
+        // clap's `conflicts_with` rules out both; neither is the refusal path.
+        _ => None,
+    };
+
+    let outcome = match end_schedule(&conn, id, today, disposition) {
+        Err(NigelError::Conflict {
+            code: "schedule_has_unbilled_periods",
+            message,
+        }) => {
+            return Err(NigelError::Other(format!(
+                "{message}\n\n  \
+                 --bill     generate them as drafts, then end\n  \
+                 --forgive  end without billing them"
+            )))
+        }
+        other => other?,
+    };
+
+    if !outcome.billed.generated.is_empty() || !outcome.billed.failures.is_empty() {
+        print_report(&outcome.billed);
+    }
+
+    match outcome.ended_at {
+        None => {
+            return Err(NigelError::Other(format!(
+                "Schedule {id} was not ended: {}. It is still active, so the \
+                 periods it owes can be billed once that is fixed.",
+                incomplete_run_message(&outcome.billed)
+            )))
+        }
+        Some(_) if !outcome.forgiven.is_empty() => println!(
+            "Ended schedule {id}, forgiving {} unbilled period(s): {}. \
+             Its invoices and its history are kept.",
+            outcome.forgiven.len(),
+            outcome.forgiven.join(", ")
+        ),
+        Some(_) => println!("Ended schedule {id}. Its invoices and its history are kept."),
+    }
     Ok(())
 }
 

@@ -673,9 +673,18 @@ pub enum InvoiceScheduleCommands {
         id: i64,
     },
     /// End a schedule for good. Its history is kept.
+    ///
+    /// A schedule that still owes periods is refused until you say which you
+    /// meant, since writing off the work and billing it are both consequential.
     End {
         /// Schedule ID
         id: i64,
+        /// Generate the periods it still owes as drafts, then end
+        #[arg(long)]
+        bill: bool,
+        /// End without billing the periods it still owes
+        #[arg(long, conflicts_with = "bill")]
+        forgive: bool,
     },
     /// Generate every invoice currently due. Built for cron and launchd — it
     /// never prompts.

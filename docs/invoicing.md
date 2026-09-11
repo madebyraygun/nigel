@@ -1345,6 +1345,45 @@ it for good. Neither deletes a row — the schedule, its items and every invoice
 it produced stay readable through `nigel invoice schedule list --all` and
 `nigel invoice schedule show`.
 
+#### Ending a schedule that still owes periods
+
+A schedule that has not run since January and is ended in mid-May has five
+cycles behind it that were never invoiced. Ending is **refused** while that is
+true:
+
+```
+$ nigel invoice schedule end 1
+error: Schedule 1 has 5 unbilled periods on or before 2026-05-15: 2026-01-01,
+2026-02-01, 2026-03-01, 2026-04-01, 2026-05-01. Bill them or forgive them —
+ending cannot decide that for you.
+
+  --bill     generate them as drafts, then end
+  --forgive  end without billing them
+```
+
+Both answers are defensible — you stopped billing that client, or you worked
+the months and never sent the invoices — and the difference is five invoices.
+So neither is taken on your behalf:
+
+```bash
+nigel invoice schedule end 1 --bill      # generate what it owed, then end
+nigel invoice schedule end 1 --forgive   # write the periods off, then end
+```
+
+`--bill` generates exactly what a run on the end date would have generated:
+each missed cycle becomes its own invoice dated by its own period, numbered in
+sequence, and **nothing is dated after the end date**. It always drafts, even
+for an autosend schedule — ending is a deliberate act with you present, so the
+invoices are left for you to review and send. If one of them cannot be
+generated, the schedule is left active rather than ended, so the periods it
+never reached are not stranded.
+
+`--forgive` leaves `next_period` where it stands, recording the cycle the
+schedule stopped on.
+
+A schedule that is level with its cycle owes nothing, and `end` takes neither
+flag.
+
 ### Running it from cron or launchd
 
 `nigel invoice schedule run` is built to run with nobody at the keyboard, so

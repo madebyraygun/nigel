@@ -109,6 +109,8 @@ nigel invoice schedule edit 1 --item "Hosting:1:495"   # Applies to future invoi
 nigel invoice schedule pause 1                    # Stop generating without ending it
 nigel invoice schedule resume 1                   # Start generating again
 nigel invoice schedule end 1                      # End it for good; history is kept
+nigel invoice schedule end 1 --bill               # Bill the periods it still owes, then end
+nigel invoice schedule end 1 --forgive            # Write those periods off, then end
 nigel invoice schedule run                        # Generate everything due (cron/launchd; never prompts)
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
