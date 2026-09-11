@@ -1,11 +1,11 @@
 ---
 id: TASK-81
 title: 'Invoicing: schedule recurring invoices'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-10 21:49'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-09-11 16:32'
 labels:
   - enhancement
   - invoicing
@@ -33,14 +33,14 @@ Other things to settle: catch-up behaviour when a machine was asleep past one or
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A recurring schedule can be created against a client with line items and a cycle
-- [ ] #2 A single command generates everything currently due, suitable for launchd or cron
-- [ ] #3 Running it twice for the same period generates nothing the second time — the generated invoice records its schedule and period
-- [ ] #4 Whether a run drafts or sends is explicit per schedule, and drafting is the default
-- [ ] #5 Catch-up behaviour after missed cycles is defined and documented, not incidental
-- [ ] #6 A monthly cycle behaves correctly at month end and in short months
-- [ ] #7 Generating several at once keeps invoice numbering sequential
-- [ ] #8 A schedule can be paused, edited and ended without deleting its history
-- [ ] #9 A due invoice for an unsendable client is reported rather than silently skipped or half-sent
-- [ ] #10 The command runs unattended on an encrypted database via NIGEL_DB_PASSWORD, and never prompts
+- [x] #1 A recurring schedule can be created against a client with line items and a cycle
+- [x] #2 A single command generates everything currently due, suitable for launchd or cron
+- [x] #3 Running it twice for the same period generates nothing the second time — the generated invoice records its schedule and period
+- [x] #4 Whether a run drafts or sends is explicit per schedule, and drafting is the default
+- [x] #5 Catch-up behaviour after missed cycles is defined and documented, not incidental
+- [x] #6 A monthly cycle behaves correctly at month end and in short months
+- [x] #7 Generating several at once keeps invoice numbering sequential
+- [x] #8 A schedule can be paused, edited and ended without deleting its history
+- [x] #9 A due invoice for an unsendable client is reported rather than silently skipped or half-sent
+- [x] #10 The command runs unattended on an encrypted database via NIGEL_DB_PASSWORD, and never prompts
 <!-- AC:END -->
