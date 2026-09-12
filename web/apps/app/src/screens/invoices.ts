@@ -218,6 +218,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       color: var(--wa-color-muted);
     }
 
+    .link-list a {
+      font-family: var(--wa-font-family-mono, monospace);
+      font-size: var(--wa-font-size-s, 13px);
+      overflow-wrap: anywhere;
+    }
+
     .link-list dd {
       margin: 0 0 var(--wa-space-xs, 6px);
     }

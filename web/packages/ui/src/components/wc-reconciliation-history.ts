@@ -5,6 +5,7 @@ import './wc-money.js';
 import './wc-notice-bar.js';
 import './wc-spinner.js';
 import '../icons/icons.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * One recorded reconciliation, as `GET /api/reconciliations` returns it.
@@ -31,7 +32,9 @@ export interface ReconciliationHistoryRow {
  */
 @customElement('wc-reconciliation-history')
 export class WcReconciliationHistory extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       overflow-x: auto;
@@ -77,8 +80,8 @@ export class WcReconciliationHistory extends LitElement {
       text-align: end;
     }
 
-    td.month {
-      font-variant-numeric: tabular-nums;
+    td.month,
+    td.when {
       white-space: nowrap;
     }
 
@@ -106,7 +109,8 @@ export class WcReconciliationHistory extends LitElement {
       place-items: center;
       padding: var(--wa-space-l, 16px);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   rows: ReconciliationHistoryRow[] = [];
@@ -183,7 +187,7 @@ export class WcReconciliationHistory extends LitElement {
   private renderRow(row: ReconciliationHistoryRow) {
     return html`
       <tr data-row=${row.id}>
-        <td class="month">${row.month}</td>
+        <td class="month figure">${row.month}</td>
         <td class="amount">${amount(row.statementBalance)}</td>
         <td class="amount">${amount(row.calculatedBalance)}</td>
         <td>
@@ -193,7 +197,7 @@ export class WcReconciliationHistory extends LitElement {
               : html`<wc-icon-close inline class="mark"></wc-icon-close>Discrepancy`}
           </span>
         </td>
-        <td class=${row.reconciledAt === null ? 'muted' : ''}>
+        <td class=${row.reconciledAt === null ? 'when figure muted' : 'when figure'}>
           ${row.reconciledAt ?? '—'}
         </td>
       </tr>

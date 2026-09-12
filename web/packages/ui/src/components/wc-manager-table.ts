@@ -2,7 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
-import { controlsCss } from '@nigel/theme';
+import { controlsCss, figuresCss } from '@nigel/theme';
 import './wc-row-badge.js';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
@@ -63,6 +63,7 @@ export interface NcManagerActionDetail {
 export class WcManagerTable extends LitElement {
   static styles = [
     controlsCss,
+    figuresCss,
     css`
       :host {
         display: block;
@@ -106,7 +107,6 @@ export class WcManagerTable extends LitElement {
       td.end,
       th.end {
         text-align: end;
-        font-variant-numeric: tabular-nums;
       }
 
       td.mono {
@@ -204,6 +204,7 @@ export class WcManagerTable extends LitElement {
           const value = row.cells[index] ?? null;
           const classes = [
             column.align === 'end' ? 'end' : '',
+            column.align === 'end' && !column.mono ? 'figure' : '',
             column.mono ? 'mono' : '',
             value === null ? 'muted' : '',
           ]

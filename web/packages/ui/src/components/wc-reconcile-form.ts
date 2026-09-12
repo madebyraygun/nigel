@@ -142,6 +142,7 @@ export class WcReconcileForm extends LitElement {
       }
 
       .prefix {
+        font-family: var(--nc-font-money, ui-monospace, monospace);
         color: var(--wa-color-muted);
         padding-inline-start: var(--wa-space-s, 8px);
       }

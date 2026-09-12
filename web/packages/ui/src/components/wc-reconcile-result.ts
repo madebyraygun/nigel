@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import './wc-panel.js';
 import './wc-notice-bar.js';
 import './wc-money.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * The verdict on one reconciliation, in the two shapes it comes in.
@@ -19,7 +20,9 @@ import './wc-money.js';
  */
 @customElement('wc-reconcile-result')
 export class WcReconcileResult extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
     }
@@ -58,7 +61,8 @@ export class WcReconcileResult extends LitElement {
     dd.difference wc-money {
       color: var(--wa-color-danger);
     }
-  `;
+    `,
+  ];
 
   @property({ type: String })
   account = '';
@@ -91,7 +95,7 @@ export class WcReconcileResult extends LitElement {
           <dd>${this.account}</dd>
 
           <dt>Month</dt>
-          <dd>${this.month}</dd>
+          <dd class="month figure">${this.month}</dd>
 
           <dt>Statement</dt>
           <dd>

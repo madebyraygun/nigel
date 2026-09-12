@@ -104,6 +104,10 @@ export class NigelReportsScreen extends SignalWatcher(LitElement) {
       color: var(--wa-color-text);
     }
 
+    select {
+      font: inherit;
+    }
+
     .lede {
       margin: 0;
       color: var(--wa-color-muted);

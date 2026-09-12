@@ -112,6 +112,12 @@ export class WcPaymentForm extends LitElement {
         color: var(--wa-color-text);
       }
 
+      /* Money reads as money: same face and same digit widths as wc-money. */
+      wa-input[data-amount]::part(input) {
+        font-family: var(--nc-font-money);
+        font-variant-numeric: tabular-nums;
+      }
+
       .fields {
         display: grid;
         gap: var(--wa-space-m, 12px);

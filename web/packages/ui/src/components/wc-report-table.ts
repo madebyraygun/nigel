@@ -3,6 +3,7 @@ import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import { roundHalfEven } from './round-half-even.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * How a cell is formatted, which also decides its default alignment.
@@ -65,7 +66,9 @@ const NUMERIC: ReportCellKind[] = ['money', 'moneyAbs', 'percent', 'count'];
  */
 @customElement('wc-report-table')
 export class WcReportTable extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -218,7 +221,8 @@ export class WcReportTable extends LitElement {
       outline: 2px solid var(--wa-color-focus);
       outline-offset: 2px;
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   columns: ReportColumn[] = [];
@@ -329,7 +333,7 @@ export class WcReportTable extends LitElement {
         </td>
         ${rest.map(
           (column) => html`
-            <td class=${this.alignOf(column) === 'end' ? 'end' : ''}>
+            <td class=${this.alignOf(column) === 'end' ? 'end figure' : ''}>
               ${this.renderValue(
                 WcReportTable.kindOf(row, column),
                 row.cells[column.key] ?? null,

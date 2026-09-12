@@ -34,6 +34,18 @@ describe('wc-app-shell', () => {
     expect(el.shadowRoot?.querySelector('.title')?.textContent).toBe('Register');
   });
 
+  it('leads the header with the menu control', async () => {
+    // Where a title bar's own controls live. The header holds the screen
+    // title and no company name — that is the sidebar's brand row — so the
+    // toggle is the first thing in the band the header owns.
+    const el = await mount({ screenTitle: 'Register' });
+    const heading = el.shadowRoot?.querySelector('.heading');
+    expect([...(heading?.children ?? [])].map((node) => node.className)).toEqual([
+      'nav-toggle',
+      'title',
+    ]);
+  });
+
   it('exposes the sidebar, header-actions, banner and default slots', async () => {
     const el = await mount();
     const names = [...(el.shadowRoot?.querySelectorAll('slot') ?? [])].map((s) =>

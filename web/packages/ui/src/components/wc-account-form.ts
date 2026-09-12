@@ -112,6 +112,13 @@ export class WcAccountForm extends LitElement {
         margin: 0;
       }
 
+      /* The four digits off the card, and the field they are typed into. A
+         name and an institution are prose and stay in the reading face. */
+      .fixed dd.last-four,
+      wa-input[data-last-four]::part(input) {
+        font-family: var(--wa-font-family-mono);
+      }
+
       .hint {
         margin: 0;
         color: var(--wa-color-muted);
@@ -253,7 +260,7 @@ export class WcAccountForm extends LitElement {
         <dt>Institution</dt>
         <dd>${this.value.institution || '—'}</dd>
         <dt>Last four</dt>
-        <dd>${this.value.lastFour || '—'}</dd>
+        <dd class="last-four">${this.value.lastFour || '—'}</dd>
       </dl>
       <p class="hint">
         Type, institution and last four are set when the account is created.
