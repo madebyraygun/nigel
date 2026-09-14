@@ -18,9 +18,8 @@ they were wrong.
 ```bash
 LAB=$(mktemp -d)
 export HOME="$LAB"
-export NIGEL_DATA_DIR="$LAB/books"
 
-nigel init --data-dir "$NIGEL_DATA_DIR" --profile business
+nigel init --data-dir "$LAB/books" --profile business
 nigel client add "Cedar Systems" --email cedar@example.test
 nigel invoice new --client 1 --issue 2026-01-15 --due 2026-02-14 \
   --item "Retainer:1:2400" --item "Hosting:2:45" --notes "Thanks"
@@ -73,7 +72,10 @@ you are not retyping a bill you already got right. Supply `--item` instead to
 type them out; the two are mutually exclusive.
 
 `--net-days 30` is what gives each generated invoice a due date. Leave it off
-and generated invoices carry none, and never go overdue.
+when you typed the items with `--item` and generated invoices carry none, and
+never go overdue. With `--from`, though, the source invoice's own issue-to-due
+term comes across with the rest of its shape — #1248 ran thirty days, so a
+schedule seeded from it bills Net 30 whether or not you say so.
 
 ## 3. Catch-up — the one that surprises people
 
@@ -124,6 +126,9 @@ nigel invoice schedule add --client 1 --cadence monthly \
 nigel invoice schedule run
 ```
 
+A back-dated start bills every period since, so how many rows this prints
+depends on the day you run it. The opening four are the point:
+
 ```
   #1253  Cedar Systems  $500.00  2026-01-31  draft
   #1254  Cedar Systems  $500.00  2026-02-28  draft
@@ -150,8 +155,9 @@ Run `nigel invoice void 1250` to cancel it instead.
 
 A hand-made draft still deletes normally — try `nigel invoice delete 1249 --yes`
 to see the contrast. Confirm the same refusal appears in the TUI
-(`nigel` → Invoices) and in the web UI, since the point is that no screen offers
-an action the database will reject.
+(`nigel` → Invoices), since the point is that no screen offers an action the
+database will reject. The web UI has no schedule surface yet, so its invoice
+screen is the only place to check there.
 
 ## 6. Pause, resume, end
 
@@ -179,9 +185,10 @@ Updated schedule 1. Future invoices use the new figures.
 ```
 
 Invoices already generated keep the old amount; the next period gets the new
-one. On a schedule that had billed three periods at $2,400, `nigel invoice show`
-on any of them still reads $2,400 while `nigel invoice schedule list` now shows
-$2,600 against the next period. That is the intended rule — a rate change should not silently rewrite
+one. On the schedule from step 2, which billed its periods at $2,490, `nigel invoice
+show` on any of them still reads $2,490 while `nigel invoice schedule list` now
+shows $2,600 against the next period — `edit --item` replaces every line rather
+than adding to them. That is the intended rule — a rate change should not silently rewrite
 bills a client has already seen. Confirm it on `nigel invoice schedule show 1`,
 where past periods are listed with the invoices they produced.
 
@@ -196,9 +203,12 @@ echo "exit: $?"
 
 In the lab, with no keys configured:
 
+Numbers here follow on from whatever the earlier steps generated, so yours will
+differ:
+
 ```
-  #1260  Cedar Systems  $1,500.00  2026-05-01  draft — not sent: sending is not configured on this installation
-  #1261  Cedar Systems  $1,500.00  2026-08-01  draft — not sent: sending is not configured on this installation
+  #1261  Cedar Systems  $1,500.00  2026-05-01  draft — not sent: sending is not configured on this installation
+  #1262  Cedar Systems  $1,500.00  2026-08-01  draft — not sent: sending is not configured on this installation
 Error: Some invoices were not sent. See the lines above.
 exit: 1
 ```
