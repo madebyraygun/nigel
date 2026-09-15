@@ -13,6 +13,12 @@ cannot email a client by accident.
 Budget twenty minutes. Steps 3 and 4 are the ones that would cost you money if
 they were wrong.
 
+Steps 3, 4, 5, 7 and 8 also run in CI, in `crates/nigel/tests/cli_dispatch.rs`,
+against the same commands through the real binary — so hand-run them when you
+want to *see* the behaviour, not to establish that it holds. Steps 1, 2 and 6
+are covered by the schedule and duplication tests beside them. What no test can
+do for you is step 10: deciding that what it billed is what you meant.
+
 ## 0. A lab that cannot touch your books or your clients
 
 ```bash
@@ -163,10 +169,22 @@ nigel invoice schedule end 1       # terminal
 nigel invoice schedule list --all  # ended and paused ones appear here
 ```
 
-`end` is final and keeps the history. Note one known gap, already filed as
-TASK-125: ending a schedule forgives periods it had already fallen behind on,
-rather than billing them first. If you end a schedule that is behind, check
-whether you meant to bill those periods and raise them by hand.
+`end` is final and keeps the history. It will not decide what happens to
+periods the schedule already owed — on a schedule that is behind it refuses and
+makes you say which you meant:
+
+```
+Error: Schedule 1 has 5 unbilled periods on or before 2026-05-15: 2026-01-01,
+2026-02-01, 2026-03-01, 2026-04-01, 2026-05-01. Bill them or forgive them —
+ending cannot decide that for you.
+
+  --bill     generate them as drafts, then end
+  --forgive  end without billing them
+```
+
+`--bill` generates exactly what a run on the end date would have produced, as
+drafts, even on an autosend schedule. `--forgive` ends without billing them.
+Ending a schedule with nothing owed still takes neither flag.
 
 ## 7. Editing applies forward only
 
