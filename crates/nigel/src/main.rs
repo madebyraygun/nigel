@@ -361,10 +361,12 @@ fn dispatch(command: Commands) -> error::Result<()> {
                     autosend,
                     no_autosend,
                 ),
-                InvoiceScheduleCommands::Pause { id } => cli::invoice_schedule::pause(id),
+                InvoiceScheduleCommands::Pause { id } => {
+                    cli::invoice_schedule::pause(id, &cli::today())
+                }
                 InvoiceScheduleCommands::Resume { id } => cli::invoice_schedule::resume(id),
-                InvoiceScheduleCommands::End { id } => {
-                    cli::invoice_schedule::end(id, &cli::today())
+                InvoiceScheduleCommands::End { id, bill, forgive } => {
+                    cli::invoice_schedule::end(id, &cli::today(), bill, forgive)
                 }
                 InvoiceScheduleCommands::Run => cli::invoice_schedule::run(&cli::today()),
             },

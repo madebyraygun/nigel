@@ -313,6 +313,28 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 13,
+        description: "record when a schedule was paused, so the pause can be told from arrears",
+        up: |conn| {
+            // v5's probe, for v5's reason: SQLite has no ADD COLUMN IF NOT
+            // EXISTS, and a replay must be harmless.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('invoice_schedules')
+                   WHERE name = 'paused_at'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                conn.execute_batch("ALTER TABLE invoice_schedules ADD COLUMN paused_at TEXT")?;
+            }
+            // Left NULL on a schedule that is already paused. The date it was
+            // paused on is not recoverable, and NULL is the conservative
+            // reading: a pause of unknown extent forgives nothing, so an
+            // upgrade cannot write off a cycle the operator meant to bill.
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -1048,6 +1070,41 @@ mod tests {
     fn v12_is_replayable() {
         let (_dir, conn) = test_db();
         set_metadata(&conn, "schema_version", "11").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn v13_adds_paused_at_and_leaves_an_existing_pause_undated() {
+        let (_dir, conn) = test_db();
+        // A schedule paused before v13 ran: the date it stopped on is gone, and
+        // NULL is how the walk is told a pause of unknown extent forgives
+        // nothing rather than writing off cycles the operator meant to bill.
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Cedar Systems');
+             INSERT INTO invoice_schedules
+                 (client_id, cadence, anchor_day, next_period, currency, paused)
+             VALUES (1, 'monthly', 1, '2026-01-01', 'USD', 1);",
+        )
+        .unwrap();
+        conn.execute_batch("UPDATE invoice_schedules SET paused_at = NULL")
+            .unwrap();
+
+        set_metadata(&conn, "schema_version", "12").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+
+        let paused_at: Option<String> = conn
+            .query_row("SELECT paused_at FROM invoice_schedules", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(paused_at, None);
+    }
+
+    #[test]
+    fn v13_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "12").unwrap();
+        run_migrations(&conn).unwrap();
         run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }

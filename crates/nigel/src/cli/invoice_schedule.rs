@@ -9,7 +9,8 @@ use nigel_core::invoicing::render_html::load_template;
 use nigel_core::invoicing::schedules::{
     add_schedule, draft_due_schedules, end_schedule, get_schedule, list_schedules, pause_schedule,
     resume_schedule, run_due_schedules, schedule_items, schedule_runs, update_schedule, Cadence,
-    NewSchedule, Schedule, ScheduleRunReport, ScheduleScope, ScheduleUpdate, Senders,
+    EndDisposition, EndOutcome, NewSchedule, Schedule, ScheduleRunReport, ScheduleScope,
+    ScheduleUpdate, Senders, Settlement,
 };
 use nigel_core::invoicing::wiring::{build_clients, company_profile, contact_email_for_preview};
 use nigel_core::settings::{get_data_dir, invoicing_config, invoicing_status};
@@ -238,9 +239,9 @@ pub fn edit(
     Ok(())
 }
 
-pub fn pause(id: i64) -> Result<()> {
+pub fn pause(id: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    pause_schedule(&conn, id)?;
+    pause_schedule(&conn, id, today)?;
     println!("Paused schedule {id}. Nothing is generated until it is resumed.");
     Ok(())
 }
@@ -256,10 +257,72 @@ pub fn resume(id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn end(id: i64, today: &str) -> Result<()> {
+/// End a schedule, re-raising the core's refusal with the two flags that
+/// answer it.
+pub fn end(id: i64, today: &str, bill: bool, forgive: bool) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    end_schedule(&conn, id, today)?;
-    println!("Ended schedule {id}. Its invoices and its history are kept.");
+    let disposition = match (bill, forgive) {
+        (true, false) => EndDisposition::Bill,
+        (false, true) => EndDisposition::Forgive,
+        // clap's `conflicts_with` rules out both flags; no flag at all is the
+        // refusal, which is what `RefuseIfOwed` asks for.
+        _ => EndDisposition::RefuseIfOwed,
+    };
+
+    let outcome = match end_schedule(&conn, id, today, disposition) {
+        // Re-raised as a conflict, not narrowed to `Other`: the code is what an
+        // API layer answers 409 with, where `Other` would answer 500.
+        Err(NigelError::Conflict {
+            code: code @ "schedule_has_unbilled_periods",
+            message,
+        }) => {
+            return Err(NigelError::Conflict {
+                code,
+                message: format!(
+                    "{message}\n\n  \
+                     --bill     generate them as drafts, then end\n  \
+                     --forgive  end without billing them"
+                ),
+            })
+        }
+        other => other?,
+    };
+
+    let settled = match outcome {
+        EndOutcome::BillingStopped { billed, owed } => {
+            print_report(&billed);
+            let failure = billed
+                .failures
+                .first()
+                .expect("BillingStopped carries the failure that stopped the walk");
+            return Err(NigelError::Other(format!(
+                "Schedule {id} was not ended. {} of {owed} owed period(s) were billed \
+                 and are no longer outstanding; {} failed: {}. The schedule is still \
+                 active — fix that, then `nigel invoice schedule end {id} --bill` to \
+                 bill the rest, or `--forgive` to write it off.",
+                billed.generated.len(),
+                failure.period,
+                failure.message,
+            )));
+        }
+        EndOutcome::Ended { settled, .. } => settled,
+    };
+
+    match settled {
+        Settlement::NothingOwed => {
+            println!("Ended schedule {id}. It owed nothing. Its invoices and its history are kept.")
+        }
+        Settlement::Forgiven { periods } => println!(
+            "Ended schedule {id}, forgiving {} unbilled period(s): {}. \
+             Its invoices and its history are kept.",
+            periods.len(),
+            periods.join(", ")
+        ),
+        Settlement::Billed { report } => {
+            print_report(&report);
+            println!("Ended schedule {id}. Its invoices and its history are kept.");
+        }
+    }
     Ok(())
 }
 

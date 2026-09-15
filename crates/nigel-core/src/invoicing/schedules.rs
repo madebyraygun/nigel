@@ -94,6 +94,11 @@ pub struct Schedule {
     pub terms: Option<String>,
     pub autosend: bool,
     pub paused: bool,
+    /// The date it was paused on, and `None` when it is not paused.
+    ///
+    /// Also `None` for a schedule already paused before migration v13, where
+    /// the date is not recoverable: a pause of unknown extent forgives nothing.
+    pub paused_at: Option<String>,
     pub ended_at: Option<String>,
 }
 
@@ -133,7 +138,7 @@ pub struct ScheduleRun {
 }
 
 const SCHEDULE_COLS: &str = "id, client_id, cadence, anchor_day, next_period, net_days,
-    currency, notes, terms, autosend, paused, ended_at";
+    currency, notes, terms, autosend, paused, paused_at, ended_at";
 
 fn row_to_schedule(r: &rusqlite::Row) -> rusqlite::Result<Schedule> {
     Ok(Schedule {
@@ -148,7 +153,8 @@ fn row_to_schedule(r: &rusqlite::Row) -> rusqlite::Result<Schedule> {
         terms: r.get(8)?,
         autosend: r.get(9)?,
         paused: r.get(10)?,
-        ended_at: r.get(11)?,
+        paused_at: r.get(11)?,
+        ended_at: r.get(12)?,
     })
 }
 
@@ -332,11 +338,18 @@ pub fn update_schedule(conn: &Connection, id: i64, update: &ScheduleUpdate) -> R
     Ok(())
 }
 
-pub fn pause_schedule(conn: &Connection, id: i64) -> Result<()> {
+/// Stop generating without ending, recording the day it stopped.
+///
+/// `on` is what separates a pause from arrears. A schedule can be behind
+/// *before* it is paused — months worked and never invoiced — and those stay
+/// owed, while the cycles the pause itself covers do not: skipping them was the
+/// point of pausing.
+pub fn pause_schedule(conn: &Connection, id: i64, on: &str) -> Result<()> {
     let _ = get_schedule(conn, id)?;
+    let on = validate_date(on, "pause")?;
     conn.execute(
-        "UPDATE invoice_schedules SET paused = 1 WHERE id = ?1",
-        [id],
+        "UPDATE invoice_schedules SET paused = 1, paused_at = ?2 WHERE id = ?1",
+        rusqlite::params![id, on],
     )?;
     Ok(())
 }
@@ -344,23 +357,216 @@ pub fn pause_schedule(conn: &Connection, id: i64) -> Result<()> {
 pub fn resume_schedule(conn: &Connection, id: i64) -> Result<()> {
     let _ = get_schedule(conn, id)?;
     conn.execute(
-        "UPDATE invoice_schedules SET paused = 0 WHERE id = ?1",
+        "UPDATE invoice_schedules SET paused = 0, paused_at = NULL WHERE id = ?1",
         [id],
     )?;
     Ok(())
 }
 
+/// What to do about periods a schedule owed and never billed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndDisposition {
+    /// End only if the schedule owes nothing, and refuse otherwise.
+    RefuseIfOwed,
+    /// End without billing them: the work is written off.
+    Forgive,
+    /// Generate them as drafts, then end.
+    Bill,
+}
+
+/// What ending a schedule did.
+///
+/// An enum rather than a struct of optional fields because the outcomes are
+/// mutually exclusive, and one of them is a failure returned as `Ok` — the
+/// report of what *was* committed is worth more than an `Err` that discards it.
+/// A caller that has to read an empty vector to learn which happened will
+/// eventually forget to.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum EndOutcome {
+    /// The schedule is ended as of `on`.
+    Ended { on: String, settled: Settlement },
+    /// Nothing was ended. The walk stopped partway, so the schedule is still
+    /// active and can be retried — the invoices already generated are kept, and
+    /// their run rows make the retry skip them.
+    BillingStopped {
+        billed: ScheduleRunReport,
+        /// How many periods were owed when the walk started, so a caller can
+        /// say how much of the backlog is still outstanding.
+        owed: usize,
+    },
+}
+
+/// How a schedule settled the periods it owed on the way out.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "disposition", rename_all = "camelCase")]
+pub enum Settlement {
+    /// It owed nothing, so the disposition never came into it.
+    NothingOwed,
+    /// The periods written off.
+    Forgiven { periods: Vec<String> },
+    /// The drafts generated on the way out.
+    Billed { report: ScheduleRunReport },
+}
+
+/// The periods this schedule still owes on or before `on`.
+///
+/// The walk a run makes over one schedule — from `next_period` while the cursor
+/// is not past `on`, skipping anything a run row already claims — so no period
+/// after `on` is reachable.
+///
+/// A **paused** schedule owes only what it was already behind on when the pause
+/// began. Cycles the pause itself covers are not owed — skipping them is what
+/// pausing is for — so the walk stops at `paused_at`. A schedule paused before
+/// migration v13 has no recorded date and owes everything, which is the
+/// conservative reading of a pause whose extent is unknown.
+///
+/// An **ended** schedule owes nothing: ending already settled it.
+///
+/// The list is a preview, not a lock. A concurrent run can bill a period
+/// between this read and any use of the result; [`generate_period`]'s own check
+/// inside its transaction is the authority.
+///
+/// `on` is trusted. A date in the future reports cycles that are not yet due,
+/// and every caller in this workspace passes today.
+pub fn unbilled_periods(conn: &Connection, id: i64, on: &str) -> Result<Vec<String>> {
+    let schedule = get_schedule(conn, id)?;
+    let on = validate_date(on, "end")?;
+    if schedule.ended_at.is_some() {
+        return Ok(Vec::new());
+    }
+    let cadence = Cadence::parse(&schedule.cadence)?;
+
+    let mut periods = Vec::new();
+    let mut cursor = schedule.next_period.clone();
+    while cursor <= on {
+        // A pause forgives the cycles it covers, so while one is in force the
+        // walk stops where it began rather than at `on`.
+        if schedule
+            .paused_at
+            .as_ref()
+            .is_some_and(|since| cursor >= *since)
+        {
+            break;
+        }
+        let already: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM invoice_schedule_runs
+               WHERE schedule_id = ?1 AND period = ?2)",
+            rusqlite::params![id, cursor],
+            |r| r.get(0),
+        )?;
+        if !already {
+            periods.push(cursor.clone());
+        }
+        cursor = advance_period(cadence, schedule.anchor_day, &cursor)?;
+    }
+    Ok(periods)
+}
+
 /// Stop a schedule for good. A timestamp rather than a delete, the way
 /// `voided_at` and `archived_at` are: the invoices it produced keep their
 /// provenance, and the history stays readable.
-pub fn end_schedule(conn: &Connection, id: i64, on: &str) -> Result<()> {
-    let _ = get_schedule(conn, id)?;
+///
+/// Ending is refused while periods on or before the end date are still
+/// unbilled, and `disposition` is how the caller says which it meant. Both
+/// answers are defensible — you stopped billing them, or you worked the months
+/// and never invoiced — so neither is taken silently on the operator's behalf.
+///
+/// `Bill` drafts and never sends, autosend or not. Ending a schedule is a
+/// deliberate act with someone present, and drafting is the default generation
+/// already takes. Each period commits on its own, so a walk that stops partway
+/// leaves real invoices behind; the schedule is then left active rather than
+/// ended, and the run rows make a retry skip what already landed.
+///
+/// Ending is terminal. A schedule that already carries an `ended_at` is
+/// refused, because a second end would walk the same gap again and bill periods
+/// dated after the day it stopped.
+pub fn end_schedule(
+    conn: &Connection,
+    id: i64,
+    on: &str,
+    disposition: EndDisposition,
+) -> Result<EndOutcome> {
+    let schedule = get_schedule(conn, id)?;
+    if let Some(ended) = &schedule.ended_at {
+        return Err(NigelError::Conflict {
+            code: "schedule_already_ended",
+            message: format!(
+                "Schedule {id} already ended on {ended}. Whatever it owed was \
+                 settled then, and ending again would bill it a second time."
+            ),
+        });
+    }
     let on = validate_date(on, "end")?;
+    let owed = unbilled_periods(conn, id, &on)?;
+
+    if owed.is_empty() {
+        return finish(conn, id, on, Settlement::NothingOwed);
+    }
+
+    match disposition {
+        EndDisposition::RefuseIfOwed => Err(NigelError::Conflict {
+            code: "schedule_has_unbilled_periods",
+            message: format!(
+                "Schedule {id} has {} unbilled period{} on or before {on}: {}. \
+                 Bill them or forgive them — ending cannot decide that for you.",
+                owed.len(),
+                if owed.len() == 1 { "" } else { "s" },
+                owed.join(", "),
+            ),
+        }),
+        EndDisposition::Forgive => finish(conn, id, on, Settlement::Forgiven { periods: owed }),
+        EndDisposition::Bill => {
+            let mut report = ScheduleRunReport::default();
+            for period in &owed {
+                let stopped = match generate_period(conn, &schedule, period, &on) {
+                    Ok(Some(invoice_id)) => {
+                        match describe(conn, &schedule, period, invoice_id) {
+                            Ok(generated) => {
+                                report.generated.push(generated);
+                                None
+                            }
+                            // The invoice is already committed, so this cannot
+                            // unwind with `?`: that would drop the record of
+                            // every invoice this walk has created.
+                            Err(e) => Some(format!(
+                                "invoice {invoice_id} was created but could not be \
+                                 read back: {e}"
+                            )),
+                        }
+                    }
+                    // A run row appeared between `unbilled_periods` and here: a
+                    // concurrent `schedule run` billed this period. The invoice
+                    // exists, so it is no longer owed.
+                    Ok(None) => None,
+                    Err(e) => Some(e.to_string()),
+                };
+                if let Some(message) = stopped {
+                    report.failures.push(ScheduleFailure {
+                        schedule_id: id,
+                        period: period.clone(),
+                        message,
+                    });
+                    // Ending here would strand the periods the walk never
+                    // reached, with nothing left active to generate them.
+                    return Ok(EndOutcome::BillingStopped {
+                        billed: report,
+                        owed: owed.len(),
+                    });
+                }
+            }
+            finish(conn, id, on, Settlement::Billed { report })
+        }
+    }
+}
+
+/// Write the end date and say what it settled.
+fn finish(conn: &Connection, id: i64, on: String, settled: Settlement) -> Result<EndOutcome> {
     conn.execute(
         "UPDATE invoice_schedules SET ended_at = ?2 WHERE id = ?1",
         rusqlite::params![id, on],
     )?;
-    Ok(())
+    Ok(EndOutcome::Ended { on, settled })
 }
 
 /// What a schedule has already produced, oldest period first.
@@ -856,7 +1062,7 @@ mod tests {
         let (_d, conn) = test_conn();
         let (_client, id) = seed(&conn);
 
-        pause_schedule(&conn, id).unwrap();
+        pause_schedule(&conn, id, "2026-01-01").unwrap();
         assert!(get_schedule(&conn, id).unwrap().paused);
         assert!(list_schedules(&conn, ScheduleScope::Active)
             .unwrap()
@@ -870,7 +1076,7 @@ mod tests {
             1
         );
 
-        end_schedule(&conn, id, "2026-08-20").unwrap();
+        end_schedule(&conn, id, "2026-08-20", EndDisposition::Forgive).unwrap();
         let ended = get_schedule(&conn, id).unwrap();
         assert_eq!(ended.ended_at.as_deref(), Some("2026-08-20"));
         assert!(list_schedules(&conn, ScheduleScope::Active)
@@ -940,9 +1146,10 @@ mod tests {
         let (_d, conn) = test_conn();
         for result in [
             get_schedule(&conn, 99).map(|_| ()),
-            pause_schedule(&conn, 99),
+            pause_schedule(&conn, 99, "2026-01-01"),
             resume_schedule(&conn, 99),
-            end_schedule(&conn, 99, "2026-08-20"),
+            end_schedule(&conn, 99, "2026-08-20", EndDisposition::RefuseIfOwed).map(|_| ()),
+            unbilled_periods(&conn, 99, "2026-08-20").map(|_| ()),
         ] {
             assert!(matches!(result.unwrap_err(), NigelError::NotFound(_)));
         }
@@ -950,6 +1157,362 @@ mod tests {
 
     fn numbers(report: &ScheduleRunReport) -> Vec<i64> {
         report.generated.iter().map(|g| g.number).collect()
+    }
+
+    /// The three destructures these tests need, so each asserts the shape it
+    /// expects rather than reading emptiness to infer what happened.
+    fn ended_on(outcome: &EndOutcome) -> &str {
+        match outcome {
+            EndOutcome::Ended { on, .. } => on,
+            other => panic!("expected an ended schedule, got {other:?}"),
+        }
+    }
+
+    fn settlement(outcome: &EndOutcome) -> &Settlement {
+        match outcome {
+            EndOutcome::Ended { settled, .. } => settled,
+            other => panic!("expected an ended schedule, got {other:?}"),
+        }
+    }
+
+    fn billed(outcome: &EndOutcome) -> &ScheduleRunReport {
+        match settlement(outcome) {
+            Settlement::Billed { report } => report,
+            other => panic!("expected a billed settlement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ending_a_schedule_that_owes_nothing_is_unchanged() {
+        // AC #1: the refusal is about owed periods, and a schedule level with
+        // its cycle has none — so every disposition ends it the same way.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        draft_due_schedules(&conn, "2026-04-01").unwrap();
+        assert_eq!(
+            unbilled_periods(&conn, id, "2026-04-01").unwrap(),
+            Vec::<String>::new()
+        );
+
+        let outcome = end_schedule(&conn, id, "2026-04-01", EndDisposition::RefuseIfOwed).unwrap();
+        assert_eq!(ended_on(&outcome), "2026-04-01");
+        assert!(matches!(settlement(&outcome), Settlement::NothingOwed));
+        assert_eq!(
+            get_schedule(&conn, id).unwrap().ended_at.as_deref(),
+            Some("2026-04-01")
+        );
+    }
+
+    #[test]
+    fn ending_with_periods_still_owed_refuses_and_writes_nothing() {
+        // AC #1. The whole point: neither answer is taken on the operator's
+        // behalf, so the schedule is untouched until they say which they meant.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        assert_eq!(
+            unbilled_periods(&conn, id, "2026-05-15").unwrap(),
+            [
+                "2026-01-01",
+                "2026-02-01",
+                "2026-03-01",
+                "2026-04-01",
+                "2026-05-01"
+            ]
+        );
+
+        let err = end_schedule(&conn, id, "2026-05-15", EndDisposition::RefuseIfOwed).unwrap_err();
+        let NigelError::Conflict { code, message } = &err else {
+            panic!("expected a conflict naming the periods, got {err:?}");
+        };
+        assert_eq!(*code, "schedule_has_unbilled_periods");
+        assert_eq!(
+            message,
+            &format!(
+                "Schedule {id} has 5 unbilled periods on or before 2026-05-15: \
+                 2026-01-01, 2026-02-01, 2026-03-01, 2026-04-01, 2026-05-01. \
+                 Bill them or forgive them — ending cannot decide that for you."
+            )
+        );
+
+        let schedule = get_schedule(&conn, id).unwrap();
+        assert_eq!(schedule.ended_at, None, "a refusal ends nothing");
+        assert_eq!(schedule.next_period, "2026-01-01", "and moves nothing");
+        assert!(schedule_runs(&conn, id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn forgiving_ends_the_schedule_and_bills_none_of_what_it_owed() {
+        // AC #1.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        let outcome = end_schedule(&conn, id, "2026-05-01", EndDisposition::Forgive).unwrap();
+        assert_eq!(ended_on(&outcome), "2026-05-01");
+        let Settlement::Forgiven { periods } = settlement(&outcome) else {
+            panic!("expected a forgiven settlement");
+        };
+        assert_eq!(periods.len(), 5);
+
+        assert!(
+            schedule_runs(&conn, id).unwrap().is_empty(),
+            "nothing was billed"
+        );
+        assert_eq!(
+            get_schedule(&conn, id).unwrap().next_period,
+            "2026-01-01",
+            "next_period records where it stopped"
+        );
+        assert!(draft_due_schedules(&conn, "2026-12-01")
+            .unwrap()
+            .generated
+            .is_empty());
+    }
+
+    #[test]
+    fn billing_issues_nothing_for_a_period_after_the_end_date() {
+        // AC #2. The end date deliberately falls mid-cycle: that distinguishes
+        // the real rule from "bill through the end of the cycle it lands in",
+        // which a boundary date cannot tell apart.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        let outcome = end_schedule(&conn, id, "2026-05-15", EndDisposition::Bill).unwrap();
+        assert_eq!(ended_on(&outcome), "2026-05-15");
+        assert_eq!(
+            periods(billed(&outcome)),
+            [
+                "2026-01-01",
+                "2026-02-01",
+                "2026-03-01",
+                "2026-04-01",
+                "2026-05-01"
+            ],
+            "June is a cycle too far even though May 15 sits inside May's"
+        );
+
+        let ended_at = get_schedule(&conn, id).unwrap().ended_at.unwrap();
+        for run in schedule_runs(&conn, id).unwrap() {
+            assert!(
+                run.period <= ended_at,
+                "period {} is dated after the schedule ended on {ended_at}",
+                run.period
+            );
+        }
+        // Only the issue date is bounded. The seed is Net 30, so the last
+        // invoice falls due after the schedule ended — which is correct, and is
+        // why the docs say "no invoice is issued for a period after the end
+        // date" rather than "nothing is dated after it".
+        assert_eq!(
+            issued(&conn, 1248),
+            ("2026-01-01".into(), Some("2026-01-31".into()))
+        );
+        assert_eq!(
+            issued(&conn, 1252),
+            ("2026-05-01".into(), Some("2026-05-31".into()))
+        );
+    }
+
+    #[test]
+    fn billing_a_quarterly_schedule_restores_its_anchor_after_a_short_month() {
+        // The one thing clamping could plausibly get wrong on this path: the
+        // anchor advances, never the clamped day it produced last time.
+        let (_d, conn) = test_conn();
+        let client =
+            add_client(&conn, "Juniper Labs", Some("ap@juniper.test"), None, None).unwrap();
+        let id = add_schedule(
+            &conn,
+            &NewSchedule {
+                client_id: client,
+                cadence: Cadence::Quarterly,
+                anchor_day: 31,
+                start_period: "2025-12-31".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: false,
+                items: sample_items(),
+            },
+        )
+        .unwrap();
+
+        let outcome = end_schedule(&conn, id, "2026-09-30", EndDisposition::Bill).unwrap();
+        assert_eq!(
+            periods(billed(&outcome)),
+            ["2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"]
+        );
+        assert_eq!(
+            get_schedule(&conn, id).unwrap().next_period,
+            "2026-12-31",
+            "the anchor is restored, not stuck on the clamped 30th"
+        );
+    }
+
+    #[test]
+    fn billing_several_at_once_keeps_the_numbering_sequential() {
+        // The property TASK-81 AC #7 pinned for a run, holding on this path too.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+
+        let outcome = end_schedule(&conn, id, "2026-04-01", EndDisposition::Bill).unwrap();
+        assert_eq!(numbers(billed(&outcome)), [1248, 1249, 1250, 1251]);
+    }
+
+    #[test]
+    fn billing_drafts_even_when_the_schedule_autosends() {
+        // Ending is deliberate and someone is present. Drafting is the default
+        // generation already takes, and this path never reaches a mailer.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        update_schedule(
+            &conn,
+            id,
+            &ScheduleUpdate {
+                autosend: Some(true),
+                ..ScheduleUpdate::default()
+            },
+        )
+        .unwrap();
+
+        let outcome = end_schedule(&conn, id, "2026-02-01", EndDisposition::Bill).unwrap();
+        assert_eq!(billed(&outcome).generated.len(), 2);
+        for generated in &billed(&outcome).generated {
+            assert!(!generated.sent, "ending never sends");
+        }
+        for run in schedule_runs(&conn, id).unwrap() {
+            let invoice = crate::invoicing::invoices::get_invoice(&conn, run.invoice_id).unwrap();
+            assert_eq!(invoice.status, "draft");
+        }
+    }
+
+    #[test]
+    fn billing_that_fails_leaves_the_schedule_alive_to_retry() {
+        // Ending on a broken walk would strand the periods it never reached,
+        // with nothing left active to generate them.
+        //
+        // `ensure_client_active` fails uniformly, so this stops on the first
+        // period rather than partway — it pins the not-ended outcome, not the
+        // partial-commit report.
+        let (_d, conn) = test_conn();
+        let (client, id) = seed(&conn);
+        archive_client(&conn, client, "2026-01-01").unwrap();
+
+        let outcome = end_schedule(&conn, id, "2026-05-01", EndDisposition::Bill).unwrap();
+        let EndOutcome::BillingStopped { billed, owed } = &outcome else {
+            panic!("expected the walk to stop, got {outcome:?}");
+        };
+        assert_eq!(*owed, 5, "the caller can say how much is still outstanding");
+        assert_eq!(billed.failures.len(), 1);
+        assert_eq!(get_schedule(&conn, id).unwrap().ended_at, None);
+    }
+
+    #[test]
+    fn a_period_already_billed_is_not_owed_a_second_time() {
+        // The run row is the authority here exactly as it is in a run.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        draft_due_schedules(&conn, "2026-02-01").unwrap();
+
+        assert_eq!(
+            unbilled_periods(&conn, id, "2026-04-01").unwrap(),
+            ["2026-03-01", "2026-04-01"]
+        );
+        let outcome = end_schedule(&conn, id, "2026-04-01", EndDisposition::Bill).unwrap();
+        assert_eq!(periods(billed(&outcome)), ["2026-03-01", "2026-04-01"]);
+        assert_eq!(schedule_runs(&conn, id).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn ending_an_already_ended_schedule_is_refused() {
+        // Forgiving leaves `next_period` where it stood, so without this guard
+        // a second end walks the same gap again — billing periods dated after
+        // the day the schedule stopped, and moving `ended_at` forward to cover
+        // them. Forgiveness has to be durable.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        end_schedule(&conn, id, "2026-05-01", EndDisposition::Forgive).unwrap();
+
+        for disposition in [
+            EndDisposition::RefuseIfOwed,
+            EndDisposition::Forgive,
+            EndDisposition::Bill,
+        ] {
+            let err = end_schedule(&conn, id, "2026-08-01", disposition).unwrap_err();
+            let NigelError::Conflict { code, .. } = &err else {
+                panic!("expected a conflict, got {err:?}");
+            };
+            assert_eq!(*code, "schedule_already_ended");
+        }
+
+        let schedule = get_schedule(&conn, id).unwrap();
+        assert_eq!(schedule.ended_at.as_deref(), Some("2026-05-01"));
+        assert!(schedule_runs(&conn, id).unwrap().is_empty());
+        // And the query says so too, rather than reporting a backlog nobody
+        // can act on.
+        assert!(unbilled_periods(&conn, id, "2026-08-01")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_pause_forgives_the_cycles_it_covers_but_not_the_arrears_behind_it() {
+        // Skipping those cycles is the point of pausing, so they are never
+        // owed — not on the way out here, and not on a later resume.
+        //
+        // Arrears are a different thing. A schedule can be behind before it is
+        // paused, and those are months worked and never invoiced; pausing in
+        // March says nothing about January. `paused_at` is what tells them
+        // apart, which is the whole reason the column exists.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        pause_schedule(&conn, id, "2026-03-01").unwrap();
+
+        assert_eq!(
+            unbilled_periods(&conn, id, "2026-06-01").unwrap(),
+            ["2026-01-01", "2026-02-01"],
+            "January and February predate the pause; March onward it covers"
+        );
+
+        // So ending it offers only the arrears, and billing them invoices
+        // nothing from inside the pause.
+        let outcome = end_schedule(&conn, id, "2026-06-01", EndDisposition::Bill).unwrap();
+        assert_eq!(periods(billed(&outcome)), ["2026-01-01", "2026-02-01"]);
+    }
+
+    #[test]
+    fn a_pause_with_nothing_behind_it_leaves_a_schedule_owing_nothing() {
+        // The ordinary wind-down: a schedule that was current when it was
+        // paused owes nothing, so `end` takes neither flag.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        pause_schedule(&conn, id, "2026-01-01").unwrap();
+
+        assert!(unbilled_periods(&conn, id, "2026-06-01")
+            .unwrap()
+            .is_empty());
+        let outcome = end_schedule(&conn, id, "2026-06-01", EndDisposition::RefuseIfOwed).unwrap();
+        assert!(matches!(settlement(&outcome), Settlement::NothingOwed));
+    }
+
+    #[test]
+    fn a_pause_from_before_the_column_existed_forgives_nothing() {
+        // Migration v13 leaves `paused_at` NULL on a schedule already paused,
+        // because the date is not recoverable. An unknown extent must not write
+        // off a cycle the operator meant to bill, so such a pause forgives
+        // nothing and ending still asks.
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        conn.execute(
+            "UPDATE invoice_schedules SET paused = 1, paused_at = NULL WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        assert_eq!(unbilled_periods(&conn, id, "2026-05-01").unwrap().len(), 5);
+        let err = end_schedule(&conn, id, "2026-05-01", EndDisposition::RefuseIfOwed).unwrap_err();
+        assert!(matches!(err, NigelError::Conflict { .. }));
     }
 
     fn periods(report: &ScheduleRunReport) -> Vec<String> {
@@ -1095,14 +1658,14 @@ mod tests {
     fn paused_and_ended_schedules_generate_nothing() {
         let (_d, conn) = test_conn();
         let (_client, paused) = seed(&conn);
-        pause_schedule(&conn, paused).unwrap();
+        pause_schedule(&conn, paused, "2026-01-01").unwrap();
         assert!(draft_due_schedules(&conn, "2026-06-01")
             .unwrap()
             .generated
             .is_empty());
 
         resume_schedule(&conn, paused).unwrap();
-        end_schedule(&conn, paused, "2026-01-01").unwrap();
+        end_schedule(&conn, paused, "2026-01-01", EndDisposition::Forgive).unwrap();
         assert!(draft_due_schedules(&conn, "2026-06-01")
             .unwrap()
             .generated

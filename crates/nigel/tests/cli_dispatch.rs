@@ -3997,3 +3997,464 @@ fn a_negative_payment_amount_gets_the_apps_own_refusal_either_way() {
         .expect("payments");
     assert_eq!(payments, 0);
 }
+
+/// The three branches of `invoice schedule end` that only exist in the CLI: the
+/// conflict it re-raises with the flag names appended, the flags themselves, and
+/// the clap rule that keeps them apart.
+///
+/// The refusal branch matches on the literal `"schedule_has_unbilled_periods"`.
+/// Rename that code in the core and the match silently stops firing — the flag
+/// hint disappears and the operator has no way to discover `--bill` or
+/// `--forgive`. Nothing else in the suite would notice.
+#[test]
+fn ending_a_schedule_asks_what_to_do_with_the_periods_it_owes() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+
+    // The demo cast already includes an active client; a schedule needs one.
+    let client: i64 = env
+        .db()
+        .query_row(
+            "SELECT id FROM clients WHERE archived_at IS NULL ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("client");
+
+    let make = |start: &str| {
+        env.cmd()
+            .args([
+                "invoice",
+                "schedule",
+                "add",
+                "--client",
+                &client.to_string(),
+                "--cadence",
+                "monthly",
+                "--start",
+                start,
+                "--item",
+                "Hosting & maintenance:1:450",
+            ])
+            .assert()
+            .success();
+        env.db()
+            .query_row(
+                "SELECT id FROM invoice_schedules ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("schedule")
+    };
+
+    // A schedule whose first period is long past owes every cycle since.
+    let owing = make("2020-01-01");
+    env.cmd()
+        .args(["invoice", "schedule", "end", &owing.to_string()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("unbilled period"))
+        .stderr(predicate::str::contains("--bill"))
+        .stderr(predicate::str::contains("--forgive"));
+
+    // Refused means refused: nothing ended, nothing billed.
+    let ended: Option<String> = env
+        .db()
+        .query_row(
+            "SELECT ended_at FROM invoice_schedules WHERE id = ?1",
+            [owing],
+            |r| r.get(0),
+        )
+        .expect("schedule");
+    assert_eq!(ended, None);
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "end",
+            &owing.to_string(),
+            "--forgive",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("forgiving"));
+
+    // Ending is terminal — a second end cannot re-bill what was forgiven.
+    env.cmd()
+        .args(["invoice", "schedule", "end", &owing.to_string(), "--bill"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("already ended"));
+
+    // Both flags together is a usage error, not a confusing refusal.
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "end",
+            &owing.to_string(),
+            "--bill",
+            "--forgive",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+
+    let invoices: i64 = env
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM invoice_schedule_runs WHERE schedule_id = ?1",
+            [owing],
+            |r| r.get(0),
+        )
+        .expect("runs");
+    assert_eq!(invoices, 0, "nothing was ever billed off this schedule");
+}
+
+// ---------------------------------------------------------------------------
+// `docs/runbooks/verify-invoice-recurrence.md`, executed.
+//
+// The runbook is a twenty-minute hand-run in a scratch HOME. These cover the
+// steps that cost money when they regress: catch-up billing, the anchor day,
+// the delete guard, forward-only edits, and what an autosend run does with no
+// mailer behind it. Every schedule here starts far enough back that the periods
+// under test are settled history, so the assertions read the same on any day
+// the suite runs — the CLI takes its reference day from the wall clock and has
+// no seam to pin it.
+// ---------------------------------------------------------------------------
+
+/// `init` plus the one client the runbook's lab bills — its step 0, minus the
+/// scratch HOME that [`TestEnv`] already provides.
+fn runbook_lab(env: &TestEnv) {
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.cmd()
+        .args([
+            "client",
+            "add",
+            "Cedar Systems",
+            "--email",
+            "cedar@example.test",
+        ])
+        .assert()
+        .success();
+}
+
+/// Add a schedule for client 1 and hand back its id.
+fn add_schedule(env: &TestEnv, args: &[&str]) -> i64 {
+    let mut cmd = env.cmd();
+    cmd.args(["invoice", "schedule", "add", "--client", "1"]);
+    cmd.args(args).assert().success();
+    env.db()
+        .query_row(
+            "SELECT id FROM invoice_schedules ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("schedule")
+}
+
+/// What a schedule has generated, oldest period first: the period, the issue
+/// date of the invoice it produced, and that invoice's total.
+fn generated(env: &TestEnv, schedule: i64) -> Vec<(String, String, f64)> {
+    env.db()
+        .prepare(
+            "SELECT r.period, i.issue_date, i.total
+               FROM invoice_schedule_runs r
+               JOIN invoices i ON i.id = r.invoice_id
+              WHERE r.schedule_id = ?1
+              ORDER BY r.period",
+        )
+        .expect("prepare")
+        .query_map([schedule], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("query")
+        .map(|row| row.expect("row"))
+        .collect()
+}
+
+#[test]
+fn a_back_dated_schedule_bills_every_period_it_missed_each_dated_its_own() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-01",
+            "--net-days",
+            "30",
+            "--item",
+            "Hosting:1:450",
+        ],
+    );
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated"));
+
+    let billed = generated(&env, id);
+    assert!(
+        billed.len() > 12,
+        "a start in 2020 owes years of periods, got {}",
+        billed.len()
+    );
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let mut previous = String::new();
+    for (period, issue_date, _) in &billed {
+        assert_eq!(
+            issue_date, period,
+            "an invoice is dated its own period, not the day of the run"
+        );
+        assert!(
+            period.as_str() <= today.as_str(),
+            "a period ahead of today was billed: {period}"
+        );
+        assert!(
+            period.as_str() > previous.as_str(),
+            "periods are billed in order: {previous} then {period}"
+        );
+        previous = period.clone();
+    }
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 0 invoice(s)"));
+    assert_eq!(
+        generated(&env, id).len(),
+        billed.len(),
+        "a rerun must not bill a period twice"
+    );
+}
+
+#[test]
+fn the_anchor_day_clamps_to_a_short_month_and_returns_to_the_full_one() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-31",
+            "--net-days",
+            "15",
+            "--item",
+            "Support:1:500",
+        ],
+    );
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success();
+
+    let periods: Vec<String> = generated(&env, id).into_iter().map(|(p, _, _)| p).collect();
+    let opening: Vec<&str> = periods.iter().take(4).map(String::as_str).collect();
+    assert_eq!(
+        opening,
+        ["2020-01-31", "2020-02-29", "2020-03-31", "2020-04-30"],
+        "February clamps to the 29th and March returns to the 31st — a walk from \
+         the last invoice would have stuck on the short month"
+    );
+}
+
+#[test]
+fn an_invoice_a_schedule_generated_refuses_to_delete_while_a_hand_made_draft_does_not() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-01",
+            "--item",
+            "Hosting:1:450",
+        ],
+    );
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success();
+
+    let from_schedule: i64 = env
+        .db()
+        .query_row(
+            "SELECT i.number
+               FROM invoice_schedule_runs r
+               JOIN invoices i ON i.id = r.invoice_id
+              WHERE r.schedule_id = ?1
+              ORDER BY r.period LIMIT 1",
+            [id],
+            |r| r.get(0),
+        )
+        .expect("a generated invoice");
+
+    env.cmd()
+        .args(["invoice", "delete", &from_schedule.to_string(), "--yes"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(format!(
+            "generated by schedule {id}"
+        )))
+        .stderr(predicate::str::contains("void it instead"));
+
+    let survived: i64 = env
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM invoices WHERE number = ?1",
+            [from_schedule],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(
+        survived, 1,
+        "a refused delete leaves the invoice where it was"
+    );
+
+    env.cmd()
+        .args([
+            "invoice",
+            "new",
+            "--client",
+            "1",
+            "--issue",
+            "2026-03-01",
+            "--item",
+            "One off:1:100",
+        ])
+        .assert()
+        .success();
+    let by_hand: i64 = env
+        .db()
+        .query_row(
+            "SELECT number FROM invoices
+              WHERE id NOT IN (SELECT invoice_id FROM invoice_schedule_runs)
+              ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("a hand-made draft");
+
+    env.cmd()
+        .args(["invoice", "delete", &by_hand.to_string(), "--yes"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn editing_a_schedule_leaves_the_invoices_it_already_generated_alone() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-01",
+            "--item",
+            "Support:1:500",
+        ],
+    );
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success();
+
+    let before = generated(&env, id);
+    assert_eq!(before[0].2, 500.0, "the lab bills $500 a period to start");
+
+    env.cmd()
+        .args([
+            "invoice",
+            "schedule",
+            "edit",
+            &id.to_string(),
+            "--item",
+            "Support:1:600",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Future invoices use the new figures",
+        ));
+
+    assert_eq!(
+        generated(&env, id),
+        before,
+        "a rate change rewrites no bill a client has already seen"
+    );
+
+    env.cmd()
+        .args(["invoice", "schedule", "show", &id.to_string()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("$600.00"));
+}
+
+#[test]
+fn an_autosend_schedule_with_nothing_configured_still_drafts_and_exits_nonzero() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "quarterly",
+            "--start",
+            "2025-05-01",
+            "--item",
+            "Audit:1:1500",
+            "--autosend",
+        ],
+    );
+
+    // Nothing is configured, so this refuses before it builds a mailer; anything
+    // reaching the network would hang into TEST_TIMEOUT instead.
+    env.cmd()
+        .timeout(TEST_TIMEOUT)
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "not sent: sending is not configured on this installation",
+        ))
+        .stderr(predicate::str::contains("Some invoices were not sent"));
+
+    assert!(
+        !generated(&env, id).is_empty(),
+        "the invoice is written even though it could not go out"
+    );
+    let sent: i64 = env
+        .db()
+        .query_row(
+            "SELECT COUNT(*)
+               FROM invoice_schedule_runs r
+               JOIN invoices i ON i.id = r.invoice_id
+              WHERE r.schedule_id = ?1 AND i.published_at IS NOT NULL",
+            [id],
+            |r| r.get(0),
+        )
+        .expect("count");
+    assert_eq!(sent, 0, "a run that could not send marks nothing sent");
+
+    // A run with nothing due exits 0, so cron hears only about real failures.
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 0 invoice(s)"));
+}

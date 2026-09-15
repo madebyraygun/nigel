@@ -1340,10 +1340,72 @@ Line items are held at schedule level and re-read on every run, so **editing a
 schedule changes future invoices and never past ones**. Editing never moves the
 cycle: `next_period` stays where the last run left it.
 
-Pausing stops generation without ending anything. Ending writes a date and stops
-it for good. Neither deletes a row — the schedule, its items and every invoice
+Pausing stops generation without ending anything, and records the day it
+stopped — that date is what separates the cycles a pause covers from arrears
+that predate it. Ending writes a date and stops it for good. Neither deletes a row — the schedule, its items and every invoice
 it produced stay readable through `nigel invoice schedule list --all` and
 `nigel invoice schedule show`.
+
+#### Ending a schedule that still owes periods
+
+A schedule that has not run since January and is ended in mid-May has five
+cycles behind it that were never invoiced. Ending is **refused** while that is
+true:
+
+```
+$ nigel invoice schedule end 1
+error: Schedule 1 has 5 unbilled periods on or before 2026-05-15: 2026-01-01,
+2026-02-01, 2026-03-01, 2026-04-01, 2026-05-01. Bill them or forgive them —
+ending cannot decide that for you.
+
+  --bill     generate them as drafts, then end
+  --forgive  end without billing them
+```
+
+Both answers are defensible — you stopped billing that client, or you worked
+the months and never sent the invoices — and the difference is five invoices.
+So neither is taken on your behalf:
+
+```bash
+nigel invoice schedule end 1 --bill      # generate what it owed, then end
+nigel invoice schedule end 1 --forgive   # write the periods off, then end
+```
+
+`--bill` gives each missed cycle its own invoice, dated by its own period and
+numbered in sequence, and **no invoice is issued for a period after the end
+date**. Only the issue date is bounded: a Net 30 invoice for the last period
+still falls due thirty days later, which is after the schedule ended.
+
+It always drafts, even for an autosend schedule — ending is a deliberate act
+with you present, so the invoices are left for you to review and send.
+
+Each invoice is written on its own, so a walk that stops partway leaves real
+invoices on the books. The schedule is then left **active rather than ended**,
+because ending it would strand the periods the walk never reached with nothing
+left to generate them. Fix whatever stopped it and run `end` again: the
+invoices already created are kept and are not billed twice.
+
+`--forgive` leaves `next_period` where it stands, recording the cycle the
+schedule stopped on.
+
+A schedule that is level with its cycle owes nothing, and `end` takes neither
+flag.
+
+**Ending is terminal.** A schedule that has already ended refuses a second
+`end`, whatever flags it is given. Without that, forgiveness would not stick —
+`--forgive` leaves `next_period` behind the end date, so a later `end --bill`
+would walk the same gap again and invoice periods dated after the day the
+schedule stopped.
+
+**A pause forgives the cycles it covers.** Skipping them is the point of
+pausing, so they are never owed. What a pause does *not* forgive is arrears
+behind it: a schedule already months late when you paused it in March was late
+for reasons the pause says nothing about, and those cycles stay owed. Ending a
+paused schedule therefore offers exactly the arrears, and `--bill` there
+invoices nothing from inside the pause.
+
+A schedule paused before this was recorded has no pause date to work from, and
+an unknown extent forgives nothing — ending it still asks about every cycle.
 
 ### Running it from cron or launchd
 
