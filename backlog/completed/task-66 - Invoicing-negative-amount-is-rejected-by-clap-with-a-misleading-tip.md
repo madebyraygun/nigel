@@ -1,11 +1,11 @@
 ---
 id: TASK-66
 title: 'Invoicing: negative --amount is rejected by clap with a misleading tip'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 23:09'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-09-15 16:06'
 labels:
   - invoicing
   - bug
@@ -26,5 +26,5 @@ Found during pre-merge testing of PR #172.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 invoice pay --amount -5 (space-separated) reports the app's greater-than-zero validation error, not a clap parse error
+- [x] #1 invoice pay --amount -5 (space-separated) reports the app's greater-than-zero validation error, not a clap parse error
 <!-- AC:END -->

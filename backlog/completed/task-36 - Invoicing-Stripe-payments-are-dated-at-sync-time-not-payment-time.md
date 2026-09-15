@@ -1,11 +1,11 @@
 ---
 id: TASK-36
 title: 'Invoicing: Stripe payments are dated at sync time, not payment time'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06 19:14'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-09-15 16:06'
 labels:
   - bug
   - invoicing
@@ -28,9 +28,9 @@ Carried over from the review ledger of PR #172.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `PaidSession` carries the Stripe session completion timestamp
-- [ ] #2 `invoice sync` records paid_date from that timestamp, not from the sync date
-- [ ] #3 A payment completed before year end but synced after it is recorded in the earlier year
-- [ ] #4 Sync falls back to a defined, documented date when Stripe returns no timestamp, rather than silently using today
-- [ ] #5 Parser tests cover the timestamp field, including its absence
+- [x] #1 `PaidSession` carries the Stripe session completion timestamp
+- [x] #2 `invoice sync` records paid_date from that timestamp, not from the sync date
+- [x] #3 A payment completed before year end but synced after it is recorded in the earlier year
+- [x] #4 Sync falls back to a defined, documented date when Stripe returns no timestamp, rather than silently using today
+- [x] #5 Parser tests cover the timestamp field, including its absence
 <!-- AC:END -->

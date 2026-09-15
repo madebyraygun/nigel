@@ -1,11 +1,11 @@
 ---
 id: TASK-50
 title: A zero-row import spends the file's checksum permanently
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-08-19 19:58'
+updated_date: '2026-09-15 16:06'
 labels:
   - bug
   - importer
@@ -35,8 +35,8 @@ The escape hatch today is DELETE /api/imports/:id, which the user has no reason 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A zero-row import writes no imports row and no checksum
-- [ ] #2 The same file can be re-imported after the format or mapping is corrected
-- [ ] #3 The CLI reports why nothing was imported rather than reporting success
-- [ ] #4 A regression test covers import-nothing then import-again on one file
+- [x] #1 A zero-row import writes no imports row and no checksum
+- [x] #2 The same file can be re-imported after the format or mapping is corrected
+- [x] #3 The CLI reports why nothing was imported rather than reporting success
+- [x] #4 A regression test covers import-nothing then import-again on one file
 <!-- AC:END -->

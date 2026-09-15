@@ -1,11 +1,11 @@
 ---
 id: TASK-52
 title: Malformed import rows are dropped without a record
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-08-19 19:58'
+updated_date: '2026-09-15 16:06'
 labels:
   - bug
   - importer
@@ -29,7 +29,7 @@ Pre-existing on main. Minimum useful fix is persisting the malformed count on th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The malformed count is persisted with the import and visible in the import history
-- [ ] #2 The rejected rows are recoverable well enough to diagnose why they failed
-- [ ] #3 nigel status or a report surfaces that an account's books have dropped rows
+- [x] #1 The malformed count is persisted with the import and visible in the import history
+- [x] #2 The rejected rows are recoverable well enough to diagnose why they failed
+- [x] #3 nigel status or a report surfaces that an account's books have dropped rows
 <!-- AC:END -->

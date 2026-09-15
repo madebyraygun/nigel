@@ -1,11 +1,11 @@
 ---
 id: TASK-35
 title: 'Invoicing: overdue status goes stale between events'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-06 19:14'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-09-15 16:06'
 labels:
   - bug
   - invoicing
@@ -26,8 +26,8 @@ Carried over from the review ledger of PR #172.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `invoice list` and `invoice show` report an invoice as overdue once its due date has passed, without requiring an intervening payment or publish event
-- [ ] #2 Status shown by list/show agrees with the bucket the same invoice falls into on the aging report
-- [ ] #3 Invoices with no due date are never marked overdue
-- [ ] #4 A test covers an invoice whose due date passed with no events since publish
+- [x] #1 `invoice list` and `invoice show` report an invoice as overdue once its due date has passed, without requiring an intervening payment or publish event
+- [x] #2 Status shown by list/show agrees with the bucket the same invoice falls into on the aging report
+- [x] #3 Invoices with no due date are never marked overdue
+- [x] #4 A test covers an invoice whose due date passed with no events since publish
 <!-- AC:END -->

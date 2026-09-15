@@ -1,11 +1,11 @@
 ---
 id: TASK-51
 title: The import sequence is not atomic
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-08-19 19:58'
+updated_date: '2026-09-15 16:06'
 labels:
   - bug
   - importer
@@ -29,7 +29,7 @@ Pre-existing on main. Wrapping the import and categorize steps in one transactio
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A failure during import or categorize leaves the database as it was before the import
-- [ ] #2 A partial import cannot be misreported as a duplicate on retry
-- [ ] #3 A test covers a failure injected between the import and the categorize step
+- [x] #1 A failure during import or categorize leaves the database as it was before the import
+- [x] #2 A partial import cannot be misreported as a duplicate on retry
+- [x] #3 A test covers a failure injected between the import and the categorize step
 <!-- AC:END -->
