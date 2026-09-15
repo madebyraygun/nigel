@@ -4458,3 +4458,66 @@ fn an_autosend_schedule_with_nothing_configured_still_drafts_and_exits_nonzero()
         .success()
         .stdout(predicate::str::contains("Generated 0 invoice(s)"));
 }
+
+#[test]
+fn resuming_a_schedule_forgives_the_cycles_the_pause_covered_and_show_says_which() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-01",
+            "--item",
+            "Hosting:1:450",
+        ],
+    );
+
+    // Paused in March 2020 and never resumed: written straight to the row
+    // because `pause` dates itself today, and the point is a pause taken long
+    // enough ago that what it forgave is settled history.
+    env.cmd()
+        .args(["invoice", "schedule", "pause", &id.to_string()])
+        .assert()
+        .success();
+    env.db()
+        .execute(
+            "UPDATE invoice_schedules SET paused_at = '2020-03-01' WHERE id = ?1",
+            [id],
+        )
+        .expect("backdate the pause");
+
+    env.cmd()
+        .args(["invoice", "schedule", "resume", &id.to_string()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("The pause forgave"))
+        .stdout(predicate::str::contains("2020-03-01"));
+
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success();
+
+    let billed: Vec<String> = generated(&env, id).into_iter().map(|(p, _, _)| p).collect();
+    assert_eq!(
+        billed,
+        ["2020-01-01", "2020-02-01"],
+        "only the arrears behind the pause are billed"
+    );
+
+    env.cmd()
+        .args(["invoice", "schedule", "show", &id.to_string()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipped (paused 2020-03-01)"));
+
+    // A forgiven cycle stays forgiven: a later run cannot pick it up.
+    env.cmd()
+        .args(["invoice", "schedule", "run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generated 0 invoice(s)"));
+}

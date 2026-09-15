@@ -1,9 +1,10 @@
 ---
 id: TASK-143
 title: Resuming a schedule still bills the cycles the pause covered
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-11 19:25'
+updated_date: '2026-09-15 16:52'
 labels:
   - invoicing
   - bug
@@ -30,11 +31,11 @@ Once resume writes those rows, the `paused_at` check in `unbilled_periods` cover
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The first run after a resume generates nothing for any cycle the pause covered
-- [ ] #2 Arrears that predate the pause are still generated
-- [ ] #3 A skipped period is recorded rather than merely absent, and cannot be billed later by a second run
-- [ ] #4 `nigel invoice schedule show` distinguishes a skipped period from a billed one
-- [ ] #5 A schedule paused before migration v13 has no pause date and so forgives nothing on resume
-- [ ] #6 Ending and resuming agree about what a paused schedule owes
-- [ ] #7 docs/invoicing.md and docs/architecture.md describe the skip rows
+- [x] #1 The first run after a resume generates nothing for any cycle the pause covered
+- [x] #2 Arrears that predate the pause are still generated
+- [x] #3 A skipped period is recorded rather than merely absent, and cannot be billed later by a second run
+- [x] #4 `nigel invoice schedule show` distinguishes a skipped period from a billed one
+- [x] #5 A schedule paused before migration v13 has no pause date and so forgives nothing on resume
+- [x] #6 Ending and resuming agree about what a paused schedule owes
+- [x] #7 docs/invoicing.md and docs/architecture.md describe the skip rows
 <!-- AC:END -->

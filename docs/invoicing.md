@@ -1407,6 +1407,40 @@ invoices nothing from inside the pause.
 A schedule paused before this was recorded has no pause date to work from, and
 an unknown extent forgives nothing — ending it still asks about every cycle.
 
+#### Resuming records what the pause forgave
+
+Resuming writes the forgiven cycles down rather than leaving them to be
+inferred. Each one becomes a **skip row** in the schedule's history: the same
+row a generated period writes, with no invoice behind it and the pause date as
+its reason. Since a run already generates nothing for a period it finds a row
+for, a resumed schedule cannot bill the months it was paused through — and
+ending it and resuming it now answer from the same rows rather than from two
+rules kept in step.
+
+Arrears behind the pause get no rows and stay owed, which is what makes the
+first run after a resume bill January and February on a schedule that was late
+since January, paused in March and resumed in May:
+
+```
+$ nigel invoice schedule resume 1
+Resumed schedule 1. The pause forgave 3 cycle(s): 2026-03-01, 2026-04-01, 2026-05-01.
+The next run generates from 2026-01-01.
+```
+
+`nigel invoice schedule show` lists a forgiven cycle beside the billed ones — a
+gap in the periods would read as a schedule that had lost track of them:
+
+```
+Period      | Invoice                    | Generated
+2026-01-01  | #1248                      | 2026-05-15
+2026-02-01  | #1249                      | 2026-05-15
+2026-03-01  | skipped (paused 2026-03-01)| 2026-05-15
+```
+
+A pause with no date forgives nothing here too: resuming it writes no skip rows,
+and the next run bills every cycle since. Billing a month the operator meant to
+skip is the recoverable mistake; writing one off silently is not.
+
 ### Running it from cron or launchd
 
 `nigel invoice schedule run` is built to run with nobody at the keyboard, so

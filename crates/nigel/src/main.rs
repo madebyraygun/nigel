@@ -364,7 +364,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 InvoiceScheduleCommands::Pause { id } => {
                     cli::invoice_schedule::pause(id, &cli::today())
                 }
-                InvoiceScheduleCommands::Resume { id } => cli::invoice_schedule::resume(id),
+                InvoiceScheduleCommands::Resume { id } => {
+                    cli::invoice_schedule::resume(id, &cli::today())
+                }
                 InvoiceScheduleCommands::End { id, bill, forgive } => {
                     cli::invoice_schedule::end(id, &cli::today(), bill, forgive)
                 }

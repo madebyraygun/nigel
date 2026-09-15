@@ -335,6 +335,59 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 14,
+        description: "record the periods a pause forgave, so a resume cannot bill them",
+        up: |conn| {
+            // A skip row is a run row with no invoice behind it, which is what
+            // lets one walk answer both questions: `invoice_schedule_runs`
+            // already decides what a run may generate, so a forgiven period
+            // becomes unbillable by carrying a row rather than by a second rule
+            // kept in step with the first.
+            //
+            // `invoice_id` is NOT NULL as v12 wrote it and SQLite cannot drop a
+            // NOT NULL in place, so the table is rebuilt. It is the child of
+            // both its foreign keys and nothing references it, so the rebuild
+            // holds with `foreign_keys=ON` — which it is, and which a migration
+            // inside a SAVEPOINT could not turn off anyway.
+            let already: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('invoice_schedule_runs')
+                   WHERE name = 'skipped_reason'",
+                [],
+                |r| r.get(0),
+            )?;
+            if already {
+                return Ok(());
+            }
+            conn.execute_batch(
+                "CREATE TABLE invoice_schedule_runs_v14 (
+                    id INTEGER PRIMARY KEY,
+                    schedule_id INTEGER NOT NULL,
+                    period TEXT NOT NULL,
+                    invoice_id INTEGER,
+                    generated_at TEXT NOT NULL,
+                    skipped_reason TEXT,
+                    -- A row is either an invoice or a skip, never both and
+                    -- never neither: the invariant belongs to the database
+                    -- rather than to remembering to check it at each writer.
+                    CHECK ((invoice_id IS NULL) <> (skipped_reason IS NULL)),
+                    FOREIGN KEY (schedule_id) REFERENCES invoice_schedules(id),
+                    FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+                 );
+                 INSERT INTO invoice_schedule_runs_v14
+                     (id, schedule_id, period, invoice_id, generated_at, skipped_reason)
+                 SELECT id, schedule_id, period, invoice_id, generated_at, NULL
+                   FROM invoice_schedule_runs;
+                 DROP TABLE invoice_schedule_runs;
+                 ALTER TABLE invoice_schedule_runs_v14 RENAME TO invoice_schedule_runs;
+                 -- Provenance and idempotency in one row: a rerun for a period
+                 -- already generated *or* forgiven finds this and writes nothing.
+                 CREATE UNIQUE INDEX idx_invoice_schedule_runs_period
+                     ON invoice_schedule_runs(schedule_id, period);",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -1098,6 +1151,65 @@ mod tests {
             .query_row("SELECT paused_at FROM invoice_schedules", [], |r| r.get(0))
             .unwrap();
         assert_eq!(paused_at, None);
+    }
+
+    #[test]
+    fn v14_keeps_the_runs_it_already_had_and_opens_the_table_to_skips() {
+        let (_dir, conn) = test_db();
+        // A run row as v12 wrote it: an invoice, and no way to say a period was
+        // forgiven rather than billed.
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Cedar Systems');
+             INSERT INTO invoice_schedules
+                 (client_id, cadence, anchor_day, next_period, currency)
+             VALUES (1, 'monthly', 1, '2026-03-01', 'USD');
+             INSERT INTO invoices (number, client_id, issue_date, token)
+                 VALUES (1248, 1, '2026-01-01', 'tok-1248');
+             INSERT INTO invoice_schedule_runs
+                 (schedule_id, period, invoice_id, generated_at)
+             VALUES (1, '2026-01-01', 1, '2026-01-01');",
+        )
+        .unwrap();
+
+        set_metadata(&conn, "schema_version", "13").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+
+        let (period, invoice_id, reason): (String, Option<i64>, Option<String>) = conn
+            .query_row(
+                "SELECT period, invoice_id, skipped_reason FROM invoice_schedule_runs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (period.as_str(), invoice_id, reason),
+            ("2026-01-01", Some(1), None)
+        );
+
+        // The rebuilt table takes a skip, and the period is still unique.
+        conn.execute_batch(
+            "INSERT INTO invoice_schedule_runs
+                 (schedule_id, period, invoice_id, generated_at, skipped_reason)
+             VALUES (1, '2026-02-01', NULL, '2026-03-01', 'paused 2026-02-01');",
+        )
+        .unwrap();
+        assert!(conn
+            .execute_batch(
+                "INSERT INTO invoice_schedule_runs
+                     (schedule_id, period, invoice_id, generated_at, skipped_reason)
+                 VALUES (1, '2026-02-01', NULL, '2026-03-01', 'paused 2026-02-01');",
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn v14_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "13").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
 
     #[test]
