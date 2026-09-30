@@ -5,11 +5,16 @@ import { fileURLToPath } from 'node:url';
 import { ICON_TAGS } from '../icons/icons.js';
 
 /**
- * IBM Plex Mono is the app's primary face and has no glyph for any of these
- * eight characters — a property of the complete upstream release, not of the
- * subset in `@nigel/theme`, so a wider subset would not fix it. Drawn as text
- * they each come from whatever fallback face the browser finds, which puts two
- * typefaces on one line.
+ * IBM Plex Mono is the app's bundled face — figures, the wordmark, the company
+ * name, and every code-shaped field — and it has no glyph for any of these
+ * eight characters. That is a property of the complete upstream release, not
+ * of the subset in `@nigel/theme`, so a wider subset would not fix it. Drawn
+ * as text they each come from whatever fallback face the browser finds, which
+ * puts two typefaces on one line.
+ *
+ * The ban is on typing them anywhere rather than only in the places Plex
+ * draws, because which token a string ends up under is a property of the
+ * component that renders it and can change under a character that stayed put.
  *
  * They are drawn as `wc-icon-*` SVGs instead, and this is what keeps the next
  * component from typing one back in: online it would look plausible on the

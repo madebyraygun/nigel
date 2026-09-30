@@ -67,6 +67,67 @@ all — the user agent already shows the pointer on anchors — so the only
 components that carry a `cursor` declaration are the ones whose element is
 not a link.
 
+## The face the machine already uses
+
+A native app draws its chrome in the system face, and using anything else is
+the loudest of the remaining tells — louder than a cursor or a scrollbar,
+because every label on screen carries it. `--wa-font-family-sans` is a
+`system-ui` stack for exactly that reason, and it is what a component gets by
+asking for nothing.
+
+IBM Plex Mono is bundled into the binary and is asked for by job, never
+inherited. `--nc-font-figures` (aliased `--nc-font-money`) is for a column of
+digits that has to land above the column below it — an amount, a count, a
+percentage, a date. `tabular-nums` gets a proportional face most of the way,
+but only a mono keeps the separators and the currency symbol aligned too.
+`--nc-font-brand` is the wordmark and the company name, wherever it appears:
+the sidebar's brand row and the unlock gate alike. `--wa-font-family-mono` is
+for the code-shaped strings — a pattern, an account code, a column index, a
+filename, an invoice number, a keyboard hint. An identifier is read character
+by character and is not a quantity, which is why it takes the code face rather
+than the figures one even though both resolve to the same stack.
+
+A `ch` budget measures the element's own zero, so a width reserved in `ch` and
+the face that fills it have to be the same one. `wc-period-nav`'s label and
+`wc-balance-list`'s amount column both set the figures face for that reason.
+
+On paper the sans token goes back to the bundled stack. A system face is
+whatever the machine has, and a report printed from two machines has to be one
+document.
+
+No component names a family. `packages/ui/src/__tests__/font-stack-guard.test.ts`
+fails the build on a `font-family` that does not resolve through a token,
+because a hardcoded stack renders perfectly well and would keep its old face
+through a change made everywhere else.
+
+## Chrome that moves has to move
+
+Putting the sidebar away is a change of shape, and a native window animates it
+rather than cutting to the result. Which element animates depends on the width,
+and only one of the two rules is live at a time.
+
+Above 48rem the sidebar is a docked column and `wc-nav-sidebar` transitions its
+own `width` between 232px and the 56px rail over `--nc-transition-base`. The
+transition exists only while a toggle holds `data-animating` on the host, so a
+window resize — including one dragged across the breakpoint, in either
+direction — changes the width in a single frame; only a gesture slides. Labels
+keep their layout in both states and the moving edge crops them, which is what
+makes collapse read as expand run backwards: rows hold their line, a label is
+ellipsised rather than wrapped, and the full text stays reachable as the
+button's `title`.
+
+Below 48rem there is no rail — the sidebar is a drawer, and `wc-app-shell`
+slides the whole thing off-canvas with `transform`. That rule is written in the
+shell's tree against `::slotted()`, and an outer-tree rule beats the inner
+tree's `:host` for the same property whatever the specificity, so the shell
+decides at this width and the sidebar cancels even a gesture's width transition
+to say so.
+
+Reduced motion is answered in `@nigel/theme`: every `--nc-transition-*` and
+`--nc-duration-*` collapses to zero under `prefers-reduced-motion: reduce`, so
+a component that reads a token gets the preference without asking. Both sliding
+surfaces state the cancel in their own media query as well.
+
 ## Spellcheck on data fields
 
 A red squiggle under an account code, a regex pattern or a currency code is

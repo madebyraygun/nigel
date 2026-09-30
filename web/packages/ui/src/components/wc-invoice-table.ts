@@ -1,8 +1,9 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import './wc-invoice-status.js';
+import { figuresCss } from '@nigel/theme';
 
 /** One invoice as the list shows it. */
 export interface InvoiceTableRow {
@@ -37,7 +38,9 @@ export interface InvoiceTableRow {
  */
 @customElement('wc-invoice-table')
 export class WcInvoiceTable extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -86,8 +89,17 @@ export class WcInvoiceTable extends LitElement {
       text-align: end;
     }
 
+    /* An invoice number is an identifier read character by character, not a
+       quantity — the same class of thing as an account code, so it takes the
+       code face rather than the figures one. Both resolve to Plex today; the
+       distinction is what a later change would need to tell them apart by. */
     td.number {
+      font-family: var(--wa-font-family-mono);
       font-variant-numeric: tabular-nums;
+    }
+
+    td.due {
+      white-space: nowrap;
     }
 
     td.client {
@@ -117,7 +129,8 @@ export class WcInvoiceTable extends LitElement {
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s, 13px);
     }
-  `;
+    `,
+  ];
 
   @property({ attribute: false })
   rows: InvoiceTableRow[] = [];
@@ -196,7 +209,7 @@ export class WcInvoiceTable extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td class=${row.dueDate === null ? 'muted' : nothing}>${row.dueDate ?? '—'}</td>
+        <td class=${row.dueDate === null ? 'due figure muted' : 'due figure'}>${row.dueDate ?? '—'}</td>
       </tr>
     `;
   }

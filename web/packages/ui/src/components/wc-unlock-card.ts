@@ -47,8 +47,12 @@ export class WcUnlockCard extends LitElement {
         color: var(--wa-color-brand);
       }
 
+      /* The company name, the same as the sidebar's brand row shows once the
+         books are open. The gate is the first thing anyone sees, so it is the
+         one place the brand cannot be in a different face from itself. */
       .heading {
         margin: 0;
+        font-family: var(--nc-font-brand);
         font-size: var(--wa-font-size-lg, 16px);
         font-weight: var(--wa-font-weight-semibold, 600);
       }
