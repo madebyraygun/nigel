@@ -77,10 +77,12 @@ nigel accounts list
 Read down the Class column. What you want to see:
 
 - Credit cards and lines of credit → **liability**
-- Checking, savings, payroll, everything else → **asset**
+- Checking, payroll, everything else → **asset**
 
-Anything with an unusual account type fell through to `asset` by default, so a
-loan or a card recorded under a custom type is the thing to look for.
+The type vocabulary is `checking`, `credit_card`, `line_of_credit`, `payroll`,
+and every surface enforces it, so a row outside that set can only have arrived
+by import or by hand. Anything holding one fell through to `asset` by default,
+which is what to look for if you carried a loan across from another tool.
 
 Fix one:
 
@@ -89,7 +91,9 @@ nigel accounts edit 3 --class liability
 ```
 
 `accounts edit` is a partial update — it changes only what you pass, and leaves
-the name, institution, and last four alone.
+the name, institution, and last four alone. Name and class are the only things
+it edits; institution and last four are set when the account is added and
+cannot be changed from any surface.
 
 **What it costs if wrong:** a liability sitting as an asset inflates your cash
 position by its balance. It is visible on `nigel report balance` immediately.
@@ -116,10 +120,11 @@ menu, select the category, and edit it. The form comes pre-filled with the
 values already on the row, so setting the class leaves the tax line and form
 line untouched.
 
-**The command-line way — read this before you use it.** `categories update` is
-a full replace, not a partial one. Every field you omit is written as empty,
-including `--tax-line` and `--form-line`. Copy those two values out of
-`categories list` first and restate them:
+**The command-line way — read this before you use it.** `categories update`
+writes `--tax-line` and `--form-line` on every run: omit either and it is
+written empty. Copy both values out of `categories list` first and restate them.
+The class is the exception — leave `--class` off and the existing one is kept,
+so setting a tax line does not silently reclassify anything:
 
 ```bash
 nigel categories update 42 "Owner Distributions" \
@@ -135,8 +140,8 @@ harmless.
 **What it costs if wrong:** this is the bug the whole change exists to kill. A
 distributions category classed as `expense` is money you paid yourself being
 deducted from business income — it understates your profit, overstates your
-deductions, and reports `Distributions: 0` on the K-1 worksheet. Which brings
-us to the next step.
+deductions, and puts owner money in the deductions tables on the K-1 worksheet
+instead of under Schedule K. Which brings us to the next step.
 
 ## 4. Confirm the K-1 worksheet sees your distributions
 
@@ -144,13 +149,14 @@ us to the next step.
 nigel report k1 --year 2026 | cat
 ```
 
-Two things to check:
+The worksheet prints no distributions total of its own, so the check is on
+where your equity categories land:
 
-1. **Distributions is not zero** — assuming you took any this year. If it reads
-   zero and you know better, go back to step 3: an equity category is still
-   sitting on `expense`.
-2. **Your equity categories appear under Schedule K items**, not under
-   deductions.
+1. **Your equity categories appear under Schedule K items**, with the amounts
+   you took, and not under Deductions by Line or Line 19.
+2. **They are absent from Total Deductions.** If a distributions category is
+   still sitting on `expense` it shows up as a deduction instead, and Ordinary
+   Business Income is understated by that amount — go back to step 3.
 
 The class is now read first and it is final. A category classed `equity` is a
 Schedule K item no matter what form line it carries — an equity row pointing at
@@ -203,8 +209,9 @@ Two things to know about that footnote:
 
 - **It is year-to-date only.** Uncategorized transactions dated in a prior year
   are not in the figure and not in the note.
-- **`No transactions found (uncategorized)` means there is nothing to
-  disclose**, and the absent footnote is correct rather than broken.
+- **`No transactions found.` means there is nothing to disclose**, and the
+  absent footnote is correct rather than broken. Piped, the sentence does not
+  name the filter; the interactive viewer's version does.
 
 ## 7. Write down what you checked
 
