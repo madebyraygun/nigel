@@ -183,9 +183,16 @@ pub fn show(id: i64) -> Result<()> {
     let mut history = Table::new();
     history.set_header(vec!["Period", "Invoice", "Generated"]);
     for run in runs {
+        // A forgiven cycle is listed rather than merely absent: a gap in the
+        // periods would read as a schedule that lost track of them.
+        let settlement = match (run.number, run.skipped_reason.as_deref()) {
+            (Some(number), _) => format!("#{number}"),
+            (None, Some(reason)) => format!("skipped ({reason})"),
+            (None, None) => "skipped".to_string(),
+        };
         history.add_row(vec![
             Cell::new(run.period),
-            Cell::new(format!("#{}", run.number)),
+            Cell::new(settlement),
             Cell::new(run.generated_at),
         ]);
     }
@@ -241,19 +248,33 @@ pub fn edit(
 
 pub fn pause(id: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let before = get_schedule(&conn, id)?;
     pause_schedule(&conn, id, today)?;
-    println!("Paused schedule {id}. Nothing is generated until it is resumed.");
+    if before.paused {
+        match before.paused_at {
+            Some(since) => println!("Schedule {id} is already paused, since {since}."),
+            None => println!("Schedule {id} is already paused."),
+        }
+    } else {
+        println!("Paused schedule {id}. Nothing is generated until it is resumed.");
+    }
     Ok(())
 }
 
-pub fn resume(id: i64) -> Result<()> {
+pub fn resume(id: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    resume_schedule(&conn, id)?;
+    let skipped = resume_schedule(&conn, id, today)?;
     let schedule = get_schedule(&conn, id)?;
-    println!(
-        "Resumed schedule {id}. The next run generates from {}.",
-        schedule.next_period
-    );
+    if !skipped.is_empty() {
+        println!(
+            "Resumed schedule {id}. The pause forgave {} cycle(s): {}.",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    } else {
+        println!("Resumed schedule {id}.");
+    }
+    println!("The next run generates from {}.", schedule.next_period);
     Ok(())
 }
 
