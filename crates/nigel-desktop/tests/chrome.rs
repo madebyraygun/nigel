@@ -108,3 +108,28 @@ fn the_fallback_only_reveals_a_window_nothing_else_showed() {
         "unwrap_or(true) inverts the fallback: a visibility error would skip the show"
     );
 }
+
+#[test]
+fn a_late_ready_does_not_reshow_a_closed_window() {
+    let chrome = fs::read_to_string("src/chrome.rs").expect("read chrome.rs");
+    let ready = &chrome[chrome.find("fn frontend_ready").expect("the ready command")..];
+    let ready = &ready[..ready.find("\n}\n").expect("end of frontend_ready")];
+
+    let guard_at = ready
+        .find("if shown.first()")
+        .expect("ready shows unconditionally: a late ready would reopen a closed window");
+    assert!(
+        guard_at < ready.find("window.show()").expect("ready shows the window"),
+        "the show is not behind the first-show guard"
+    );
+
+    let main = main_rs();
+    let reopen = &main[main.find("tauri::RunEvent::Reopen").expect("reopen arm")..];
+    let marked_at = reopen.find("app.state::<chrome::Shown>().first()").expect(
+        "a Reopen show is not recorded: a late ready or the fallback could reshow a closed window",
+    );
+    assert!(
+        marked_at < reopen.find("window.show()").expect("reopen shows"),
+        "the Reopen show is not recorded before it happens"
+    );
+}

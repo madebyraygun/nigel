@@ -112,6 +112,7 @@ fn main() {
                             // ignores show and focus until it is
                             // deminiaturized.
                             let _ = window.unminimize();
+                            app.state::<chrome::Shown>().first();
                             let _ = window.show();
                             let _ = window.set_focus();
                         }

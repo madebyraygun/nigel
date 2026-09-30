@@ -7,9 +7,10 @@ use tauri::webview::Color;
 
 /// Whether the main window has ever been shown, managed as tauri state.
 ///
-/// The show fallback consults it so it only ever reveals a window nothing
-/// else managed to show: without the distinction, a fallback firing after
-/// the user closed (hid) the window would bring it back uninvited.
+/// Every show records itself here, and the two deferred ones — the ready
+/// signal and the fallback timer — only reveal a window nothing else has
+/// shown: without the distinction, whichever fired second after the user
+/// closed (hid) the window would bring it back uninvited.
 #[derive(Default)]
 pub struct Shown(AtomicBool);
 
@@ -43,12 +44,15 @@ pub fn background_for(theme: tauri::Theme) -> Color {
     Color(r, g, b, 255)
 }
 
-/// Show the window: the SPA settled its first update.
+/// Show the window: the SPA settled its first update. Only a window nothing
+/// has shown yet — a ready that arrives after the fallback showed the window
+/// and the user closed it must not bring it back.
 #[tauri::command]
 pub fn frontend_ready(window: tauri::WebviewWindow, shown: tauri::State<Shown>) {
-    shown.first();
-    let _ = window.show();
-    let _ = window.set_focus();
+    if shown.first() {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Keep the window's own background on the SPA's resolved palette, so a
