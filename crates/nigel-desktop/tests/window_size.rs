@@ -12,8 +12,14 @@ fn the_window_declares_a_minimum_size() {
     let main = fs::read_to_string("src/main.rs").expect("read main.rs");
 
     assert!(
-        main.contains(".min_inner_size(900.0, 700.0)"),
-        "src/main.rs does not set a minimum inner size"
+        main.contains(".min_inner_size(window_state::MIN_WIDTH, window_state::MIN_HEIGHT)"),
+        "src/main.rs does not set the minimum inner size from the shared consts"
+    );
+    // A fresh window's size comes from `plan_launch`, whose unit tests pin
+    // it to the shared default consts.
+    assert!(
+        main.contains(".inner_size(plan.inner_width, plan.inner_height)"),
+        "src/main.rs does not take the window's size from the launch plan"
     );
     let min_at = main.find(".min_inner_size").expect("min_inner_size");
     let build_at = main.find(".build()?").expect("build()");

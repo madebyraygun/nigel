@@ -6,6 +6,7 @@ pub mod db;
 pub mod imports;
 pub mod save;
 pub mod transport;
+pub mod window_state;
 
 /// The scheme the SPA and the API are both served from.
 pub const SCHEME: &str = "nigel";
