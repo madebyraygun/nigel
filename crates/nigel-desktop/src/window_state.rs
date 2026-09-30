@@ -154,6 +154,54 @@ pub fn plan_restore(saved: &WindowGeometry, monitors: &[Rect], space_scale: f64)
     }
 }
 
+/// How a new window opens: its logical content size, the frame origin to
+/// apply after the build (in the caller's clamp space, `None` to let the OS
+/// place it), and whether it opens maximized.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LaunchPlan {
+    pub inner_width: f64,
+    pub inner_height: f64,
+    pub frame: Option<(f64, f64)>,
+    pub maximized: bool,
+}
+
+/// The launch geometry for whatever the state file held.
+///
+/// With monitors to validate against, the saved state goes through
+/// [`plan_restore`]. Without them the saved size and maximized flag still
+/// apply, but the position does not — a saved position nothing can validate
+/// may be entirely off-screen. With no saved state the window opens at the
+/// default size wherever the OS puts it.
+pub fn plan_launch(
+    saved: Option<&WindowGeometry>,
+    monitors: &[Rect],
+    space_scale: f64,
+) -> LaunchPlan {
+    match saved {
+        Some(geometry) if !monitors.is_empty() => {
+            let plan = plan_restore(geometry, monitors, space_scale);
+            LaunchPlan {
+                inner_width: plan.inner_width,
+                inner_height: plan.inner_height,
+                frame: Some((plan.frame_x, plan.frame_y)),
+                maximized: plan.maximized,
+            }
+        }
+        Some(geometry) => LaunchPlan {
+            inner_width: geometry.width.max(MIN_WIDTH),
+            inner_height: geometry.height.max(MIN_HEIGHT),
+            frame: None,
+            maximized: geometry.maximized,
+        },
+        None => LaunchPlan {
+            inner_width: DEFAULT_WIDTH,
+            inner_height: DEFAULT_HEIGHT,
+            frame: None,
+            maximized: false,
+        },
+    }
+}
+
 /// The frame-rectangle clamp under [`plan_restore`]: floored at `min_*`,
 /// then confined to the host monitor.
 ///
@@ -262,16 +310,22 @@ impl GeometrySaver {
     /// Write the current state synchronously — the close path, where the
     /// process may not outlive the settle window.
     pub fn save_now(&self) {
-        if let Some(geometry) = *self.last.lock().expect("geometry lock") {
+        if let Some(geometry) = snapshot(&self.last) {
             save_to(&self.path, geometry);
         }
     }
 }
 
+/// The latest observation, copied out so the lock is released before any
+/// file I/O — the event thread observes through the same lock.
+fn snapshot(last: &Mutex<Option<WindowGeometry>>) -> Option<WindowGeometry> {
+    *last.lock().expect("geometry lock")
+}
+
 fn write_after_settle(nudged: Receiver<()>, path: &Path, last: &Mutex<Option<WindowGeometry>>) {
     while nudged.recv().is_ok() {
         while nudged.recv_timeout(SETTLE).is_ok() {}
-        if let Some(geometry) = *last.lock().expect("geometry lock") {
+        if let Some(geometry) = snapshot(last) {
             save_to(path, geometry);
         }
     }
@@ -464,6 +518,46 @@ mod tests {
     }
 
     #[test]
+    fn launch_with_no_state_opens_the_default_window() {
+        let plan = plan_launch(None, &[screen()], 1.0);
+        assert_eq!(
+            plan,
+            LaunchPlan {
+                inner_width: DEFAULT_WIDTH,
+                inner_height: DEFAULT_HEIGHT,
+                frame: None,
+                maximized: false,
+            }
+        );
+    }
+
+    #[test]
+    fn launch_with_monitors_places_the_restored_frame() {
+        let geometry = saved(1200.0, 820.0, 100.0, 50.0);
+        let plan = plan_launch(Some(&geometry), &[screen()], 1.0);
+        assert_eq!(plan.frame, Some((100.0, 50.0)));
+        assert_eq!((plan.inner_width, plan.inner_height), (1200.0, 820.0));
+    }
+
+    #[test]
+    fn launch_without_monitors_keeps_size_and_maximized_but_not_position() {
+        let geometry = WindowGeometry {
+            maximized: true,
+            ..saved(400.0, 900.0, 5000.0, 5000.0)
+        };
+        let plan = plan_launch(Some(&geometry), &[], 1.0);
+        assert_eq!(
+            plan,
+            LaunchPlan {
+                inner_width: MIN_WIDTH,
+                inner_height: 900.0,
+                frame: None,
+                maximized: true,
+            }
+        );
+    }
+
+    #[test]
     fn restore_caps_to_a_smaller_monitor_but_never_below_minimum() {
         let laptop = Rect {
             x: 0.0,
@@ -541,5 +635,48 @@ mod tests {
         saver.observe_maximized();
         saver.save_now();
         assert_eq!(load_from(&path), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_slow_write_does_not_block_observation() {
+        // A FIFO with no reader blocks the writer in open(), standing in
+        // for a stalled disk: observing must not wait on it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        let saver = Arc::new(GeometrySaver::spawn(path.clone()));
+        saver.observe_frame(saved(1200.0, 820.0, 40.0, 60.0));
+        let status = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo failed");
+
+        let writer = {
+            let saver = Arc::clone(&saver);
+            std::thread::spawn(move || saver.save_now())
+        };
+        std::thread::sleep(Duration::from_millis(100));
+
+        let (done, observed) = std::sync::mpsc::channel();
+        {
+            let saver = Arc::clone(&saver);
+            std::thread::spawn(move || {
+                saver.observe_frame(saved(1200.0, 820.0, 80.0, 90.0));
+                let _ = done.send(());
+            });
+        }
+        let returned = observed.recv_timeout(Duration::from_secs(2)).is_ok();
+
+        // Drain the FIFO so every blocked writer finishes.
+        let reader = std::thread::spawn(move || loop {
+            match std::fs::read(&path) {
+                Ok(_) if writer.is_finished() => break,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        });
+        let _ = reader.join();
+        assert!(returned, "observe_frame blocked on an in-flight write");
     }
 }

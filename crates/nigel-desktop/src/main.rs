@@ -21,6 +21,8 @@ fn main() {
         window_state::state_path(),
     ));
     let exit_saver = Arc::clone(&saver);
+    #[cfg(target_os = "macos")]
+    let fullscreen_close = FullscreenClose::default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -45,8 +47,11 @@ fn main() {
                 // AppKit's `terminate:`, which raises no window event and
                 // no ExitRequested, so waiting for close would miss the
                 // most common quit path entirely.
-                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                tauri::WindowEvent::Moved(_) => observe(&saver, window),
+                tauri::WindowEvent::Resized(_) => {
                     observe(&saver, window);
+                    #[cfg(target_os = "macos")]
+                    fullscreen_close.resized();
                 }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     observe(&saver, window);
@@ -58,7 +63,11 @@ fn main() {
                     #[cfg(target_os = "macos")]
                     {
                         api.prevent_close();
-                        let _ = window.hide();
+                        if window.is_fullscreen().unwrap_or(false) {
+                            fullscreen_close.begin(window);
+                        } else {
+                            let _ = window.hide();
+                        }
                     }
                     #[cfg(not(target_os = "macos"))]
                     let _ = api;
@@ -126,51 +135,72 @@ fn main() {
 /// Restore is planned in the platform's one coherent coordinate space and
 /// applied with `set_position` — the same frame-top-left convention the
 /// saved reading used — because the builder's `position` means the content
-/// origin on macOS and would land the frame a title bar too high.
+/// origin on macOS and would land the frame a title bar too high. The window
+/// is built hidden and shown only once its geometry is applied, so it never
+/// flashes at the default spot first.
 fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let saved = window_state::load_from(&window_state::state_path());
     let monitors = monitor_areas(app);
+    let plan = window_state::plan_launch(
+        saved.as_ref(),
+        &monitors,
+        saved.as_ref().map_or(1.0, restore_space_scale),
+    );
 
-    let plan = match &saved {
-        Some(geometry) if !monitors.is_empty() => Some(window_state::plan_restore(
-            geometry,
-            &monitors,
-            restore_space_scale(geometry),
-        )),
-        _ => None,
-    };
-
-    let builder = WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         "main",
         WebviewUrl::CustomProtocol(scheme_url().parse().expect("scheme url")),
     )
     .title("Nigel")
-    .min_inner_size(window_state::MIN_WIDTH, window_state::MIN_HEIGHT);
+    .visible(false)
+    .min_inner_size(window_state::MIN_WIDTH, window_state::MIN_HEIGHT)
+    .inner_size(plan.inner_width, plan.inner_height)
+    .build()?;
 
-    let builder = match (&plan, &saved) {
-        (Some(plan), _) => builder.inner_size(plan.inner_width, plan.inner_height),
-        // No monitor information: keep the size, let the OS place the
-        // window — a saved position nothing can validate may be entirely
-        // off-screen.
-        (None, Some(geometry)) => builder.inner_size(
-            geometry.width.max(window_state::MIN_WIDTH),
-            geometry.height.max(window_state::MIN_HEIGHT),
-        ),
-        (None, None) => {
-            builder.inner_size(window_state::DEFAULT_WIDTH, window_state::DEFAULT_HEIGHT)
-        }
-    };
+    if let Some((x, y)) = plan.frame {
+        let _ = window.set_position(frame_position(x, y));
+    }
+    if plan.maximized {
+        let _ = window.maximize();
+    }
+    window.show()?;
+    let _ = window.set_focus();
+    Ok(())
+}
 
-    let window = builder.build()?;
+/// A close that arrives while the window is fullscreen. Hiding it there
+/// would strand an empty fullscreen Space, so the window leaves fullscreen
+/// first and hides once the exit transition's resizes have settled — a hide
+/// mid-transition strands the Space just the same. Tauri raises no
+/// transition-finished event, so quiet stands in for done, bounded in case
+/// no resize arrives at all.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct FullscreenClose(std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>);
 
-    if let Some(plan) = plan {
-        let _ = window.set_position(frame_position(&plan));
-        if plan.maximized {
-            let _ = window.maximize();
+#[cfg(target_os = "macos")]
+impl FullscreenClose {
+    const FIRST_RESIZE: std::time::Duration = std::time::Duration::from_secs(2);
+    const SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
+    fn begin(&self, window: &tauri::Window) {
+        let (resized, resizes) = std::sync::mpsc::channel();
+        *self.0.lock().expect("fullscreen close lock") = Some(resized);
+        let hiding = window.clone();
+        std::thread::spawn(move || {
+            let _ = resizes.recv_timeout(Self::FIRST_RESIZE);
+            while resizes.recv_timeout(Self::SETTLE).is_ok() {}
+            let _ = hiding.hide();
+        });
+        let _ = window.set_fullscreen(false);
+    }
+
+    fn resized(&self) {
+        if let Some(resized) = self.0.lock().expect("fullscreen close lock").as_ref() {
+            let _ = resized.send(());
         }
     }
-    Ok(())
 }
 
 /// The clamp space for a restore; see [`window_state::plan_restore`].
@@ -183,16 +213,16 @@ fn restore_space_scale(geometry: &window_state::WindowGeometry) -> f64 {
     geometry.scale
 }
 
-/// A plan's frame origin as the position type its clamp space implies.
+/// A planned frame origin as the position type its clamp space implies.
 #[cfg(target_os = "macos")]
-fn frame_position(plan: &window_state::RestorePlan) -> tauri::Position {
-    tauri::Position::Logical(tauri::LogicalPosition::new(plan.frame_x, plan.frame_y))
+fn frame_position(x: f64, y: f64) -> tauri::Position {
+    tauri::Position::Logical(tauri::LogicalPosition::new(x, y))
 }
 #[cfg(not(target_os = "macos"))]
-fn frame_position(plan: &window_state::RestorePlan) -> tauri::Position {
+fn frame_position(x: f64, y: f64) -> tauri::Position {
     tauri::Position::Physical(tauri::PhysicalPosition::new(
-        plan.frame_x.round() as i32,
-        plan.frame_y.round() as i32,
+        x.round() as i32,
+        y.round() as i32,
     ))
 }
 

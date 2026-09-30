@@ -129,8 +129,18 @@ fn geometry_is_saved_where_it_is_restored_from() {
     // Quit raises no window event on macOS, so geometry must be observed
     // as the window moves and resizes, not only at close.
     assert!(
-        main.contains("tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)"),
+        main.contains("tauri::WindowEvent::Moved(_) => observe(&saver, window)"),
         "geometry is no longer observed as the window moves"
+    );
+    let resized_at = main
+        .find("tauri::WindowEvent::Resized(_) => {")
+        .expect("a resize arm");
+    assert!(
+        main[resized_at..]
+            .trim_start_matches("tauri::WindowEvent::Resized(_) => {")
+            .trim_start()
+            .starts_with("observe(&saver, window);"),
+        "geometry is no longer observed as the window resizes"
     );
 
     // Each flush is asserted inside its own arm's span, so neither can
@@ -155,5 +165,54 @@ fn geometry_is_saved_where_it_is_restored_from() {
     assert!(
         main[exit_at..].starts_with("tauri::RunEvent::Exit => exit_saver.save_now()"),
         "loop teardown no longer flushes the saver"
+    );
+}
+
+#[test]
+fn the_window_is_built_hidden_and_shown_once_placed() {
+    let main = main_rs();
+    let build = &main[main
+        .find("fn build_main_window")
+        .expect("build_main_window")..];
+    let build = &build[..build.find("\n}\n").expect("end of build_main_window")];
+
+    let hidden_at = build
+        .find(".visible(false)")
+        .expect("the window is built hidden");
+    let position_at = build
+        .find("window.set_position(")
+        .expect("the frame is placed");
+    let maximize_at = build
+        .find("window.maximize()")
+        .expect("maximized is restored");
+    let show_at = build.find("window.show()").expect("the window is shown");
+    assert!(
+        hidden_at < position_at && position_at < show_at && maximize_at < show_at,
+        "the window is shown before its geometry is applied"
+    );
+}
+
+#[test]
+fn a_fullscreen_close_leaves_fullscreen_before_hiding() {
+    let main = main_rs();
+    let close = &main[main
+        .find("tauri::WindowEvent::CloseRequested")
+        .expect("a close arm")..];
+    let fullscreen_at = close
+        .find("window.is_fullscreen()")
+        .expect("the close checks for fullscreen");
+    let hide_at = close.find("window.hide()").expect("the close hides");
+    assert!(
+        fullscreen_at < hide_at,
+        "a fullscreen window is hidden in place"
+    );
+
+    let begin = &main[main.find("fn begin(").expect("the fullscreen close")..];
+    let leave_at = begin
+        .find("set_fullscreen(false)")
+        .expect("fullscreen is left");
+    assert!(
+        leave_at < begin.find("fn resized").expect("end of begin"),
+        "the fullscreen close does not leave fullscreen"
     );
 }
