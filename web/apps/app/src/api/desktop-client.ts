@@ -78,8 +78,10 @@ export class DesktopApiClient extends FetchApiClient {
       // Fire-and-forget like the drag subscription: a refused invoke leaves
       // the fallback timer to show the window, which works.
       ready: () => void Promise.resolve(this.invoke('frontend_ready', {})).catch(() => {}),
-      background: (mode) =>
-        void Promise.resolve(this.invoke('set_chrome_background', { mode })).catch(() => {}),
+      background: (mode, source) =>
+        void Promise.resolve(this.invoke('set_chrome_background', { mode, source })).catch(
+          () => {},
+        ),
     };
   }
 

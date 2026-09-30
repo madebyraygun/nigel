@@ -140,7 +140,20 @@ canvas constants are pinned against `@nigel/theme`'s canvas token by
 `tests/chrome.rs`) and then kept on the SPA's actually-resolved palette by
 the `set_chrome_background` command, which
 `web/apps/app/src/chrome-bridge.ts` drives from the theme package's
-color-mode contract at boot and on every palette change.
+color-mode contract at boot and on every palette change. Each report carries
+the resolved mode and its source: `explicit` when a color-mode class is an
+in-app choice, `system` when the OS preference decides. On macOS the window
+color does not reach the webview layer, and WebKit's default background
+follows the window's appearance instead — so the command also pins the
+window's appearance (`set_theme`) to an explicit in-app theme, and releases
+it to the OS for `system`. With the appearance matching the palette, the
+resize edges stay on theme even when the in-app theme and the OS disagree.
+The appearance is app-wide on macOS and Linux, which a single-window app
+does not notice, and native dialogs follow it too. On macOS the webview's
+`prefers-color-scheme` follows the pinned appearance, which an explicit
+class outranks anyway; on a switch back to `system` the release fires a
+preference change and the bridge re-reports from the OS. Anything other than `light`/`dark` and `explicit`/`system`
+is refused and leaves the chrome as it was.
 
 ## Exports
 

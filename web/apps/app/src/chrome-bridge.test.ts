@@ -2,12 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DARK_CLASS, LIGHT_CLASS } from '@nigel/theme';
 
 import {
+  paletteSource,
   resolvedMode,
   signalReadyWhenSettled,
   wireShellChrome,
   type DarkPreference,
 } from './chrome-bridge.js';
-import type { ShellChrome } from './api/client.js';
+import type { PaletteSource, ShellChrome } from './api/client.js';
 
 function recorder(): ShellChrome & { readyCount: number; backgrounds: string[] } {
   const record = {
@@ -16,8 +17,8 @@ function recorder(): ShellChrome & { readyCount: number; backgrounds: string[] }
     ready() {
       record.readyCount += 1;
     },
-    background(mode: 'light' | 'dark') {
-      record.backgrounds.push(mode);
+    background(mode: 'light' | 'dark', source: PaletteSource) {
+      record.backgrounds.push(`${mode}/${source}`);
     },
   };
   return record;
@@ -56,11 +57,27 @@ describe('resolvedMode', () => {
   });
 });
 
+describe('paletteSource', () => {
+  it('calls a color-mode class an explicit choice', () => {
+    const root = document.createElement('div');
+    root.classList.add(DARK_CLASS);
+    expect(paletteSource(root)).toBe('explicit');
+    root.className = LIGHT_CLASS;
+    expect(paletteSource(root)).toBe('explicit');
+  });
+
+  it('calls no class following the system', () => {
+    const root = document.createElement('div');
+    root.classList.add('some-app-state');
+    expect(paletteSource(root)).toBe('system');
+  });
+});
+
 describe('wireShellChrome', () => {
   it('reports the palette immediately', () => {
     const chrome = recorder();
     const unwire = wireShellChrome(chrome, document, darkPreference(true));
-    expect(chrome.backgrounds).toEqual(['dark']);
+    expect(chrome.backgrounds).toEqual(['dark/system']);
     unwire();
   });
 
@@ -68,24 +85,24 @@ describe('wireShellChrome', () => {
     const chrome = recorder();
     const preference = darkPreference(false);
     const unwire = wireShellChrome(chrome, document, preference);
-    expect(chrome.backgrounds).toEqual(['light']);
+    expect(chrome.backgrounds).toEqual(['light/system']);
 
     document.documentElement.classList.add(DARK_CLASS);
     await settle();
-    expect(chrome.backgrounds.at(-1)).toBe('dark');
+    expect(chrome.backgrounds.at(-1)).toBe('dark/explicit');
 
     document.documentElement.classList.remove(DARK_CLASS);
     await settle();
     preference.matches = true;
     preference.fire();
-    expect(chrome.backgrounds.at(-1)).toBe('dark');
+    expect(chrome.backgrounds.at(-1)).toBe('dark/system');
     unwire();
   });
 
   it('skips class churn that lands on the same palette', async () => {
     const chrome = recorder();
     const unwire = wireShellChrome(chrome, document, darkPreference(false));
-    expect(chrome.backgrounds).toEqual(['light']);
+    expect(chrome.backgrounds).toEqual(['light/system']);
 
     // An unrelated class toggling notifies the observer but changes no
     // palette; the shell hears nothing.
@@ -93,7 +110,22 @@ describe('wireShellChrome', () => {
     await settle();
     document.documentElement.classList.remove('some-app-state');
     await settle();
-    expect(chrome.backgrounds).toEqual(['light']);
+    expect(chrome.backgrounds).toEqual(['light/system']);
+    unwire();
+  });
+
+  it('reports a switch between an explicit choice and the system on the same palette', async () => {
+    // A light OS with an explicit light choice: the palette never changes,
+    // but the shell must still hear the source flip so the window's
+    // appearance can be pinned or released.
+    const chrome = recorder();
+    const unwire = wireShellChrome(chrome, document, darkPreference(false));
+
+    document.documentElement.classList.add(LIGHT_CLASS);
+    await settle();
+    document.documentElement.classList.remove(LIGHT_CLASS);
+    await settle();
+    expect(chrome.backgrounds).toEqual(['light/system', 'light/explicit', 'light/system']);
     unwire();
   });
 

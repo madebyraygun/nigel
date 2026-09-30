@@ -6,7 +6,7 @@ import {
   type ResolvedMode,
 } from '@nigel/theme';
 
-import type { ShellChrome } from './api/client.js';
+import type { PaletteSource, ShellChrome } from './api/client.js';
 
 /**
  * Keeps a native window's chrome in step with the SPA.
@@ -35,6 +35,13 @@ export function resolvedMode(root: Element, prefersDark: boolean): ResolvedMode 
   return resolveMode('system', { matches: prefersDark });
 }
 
+/** An explicit class is an in-app choice; without one the OS decides. */
+export function paletteSource(root: Element): PaletteSource {
+  return root.classList.contains(DARK_CLASS) || root.classList.contains(LIGHT_CLASS)
+    ? 'explicit'
+    : 'system';
+}
+
 function osDarkPreference(): DarkPreference {
   // jsdom has no matchMedia; tests inject, and the fallback never listens.
   return (
@@ -55,14 +62,17 @@ export function wireShellChrome(
   doc: Document = document,
   prefersDark: DarkPreference = osDarkPreference(),
 ): () => void {
-  let reported: ResolvedMode | undefined;
+  let reported: string | undefined;
   const report = () => {
-    const mode = resolvedMode(doc.documentElement, prefersDark.matches);
+    const root = doc.documentElement;
+    const mode = resolvedMode(root, prefersDark.matches);
+    const source = paletteSource(root);
     // Class churn that lands on the same palette is not a change the
-    // window's own color needs to hear about.
-    if (mode === reported) return;
-    reported = mode;
-    chrome.background(mode);
+    // window's chrome needs to hear about.
+    const key = `${mode}/${source}`;
+    if (key === reported) return;
+    reported = key;
+    chrome.background(mode, source);
   };
   report();
 

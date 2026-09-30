@@ -133,3 +133,23 @@ fn a_late_ready_does_not_reshow_a_closed_window() {
         "the Reopen show is not recorded before it happens"
     );
 }
+
+#[test]
+fn the_palette_report_sets_the_window_appearance() {
+    let chrome = fs::read_to_string("src/chrome.rs").expect("read chrome.rs");
+    let command = &chrome[chrome
+        .find("pub fn set_chrome_background")
+        .expect("the background command")..];
+    let command = &command[..command.find("\n}\n").expect("end of set_chrome_background")];
+
+    // WKWebView's default background follows the window's appearance, not
+    // the window color, so on macOS the appearance is what covers the edges.
+    assert!(
+        command.contains("window.set_theme(palette.appearance)"),
+        "the window appearance no longer follows the in-app theme"
+    );
+    assert!(
+        command.contains("window.set_background_color("),
+        "the window color no longer follows the palette"
+    );
+}

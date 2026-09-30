@@ -55,18 +55,48 @@ pub fn frontend_ready(window: tauri::WebviewWindow, shown: tauri::State<Shown>) 
     }
 }
 
-/// Keep the window's own background on the SPA's resolved palette, so a
-/// resize that outruns the webview shows theme background at the edges.
-#[tauri::command]
-pub fn set_chrome_background(window: tauri::WebviewWindow, mode: String) {
-    let theme = match mode.as_str() {
+/// What the window takes from the SPA's palette: its own color, and its
+/// appearance — pinned to an explicit in-app choice, or `None` to follow
+/// the OS.
+///
+/// The appearance is what reaches the resize edges on macOS: WKWebView's
+/// default background follows the window's appearance, and the window color
+/// does not reach the webview layer there. Pinned to the in-app theme, the
+/// two agree even when the OS is set the other way.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Palette {
+    pub mode: tauri::Theme,
+    pub appearance: Option<tauri::Theme>,
+}
+
+/// A palette report from the SPA: `mode` is the resolved `light` or
+/// `dark`, `source` is `explicit` for an in-app choice or `system` for one
+/// that follows the OS. Anything else is a frontend bug and answers `None`.
+pub fn palette_for(mode: &str, source: &str) -> Option<Palette> {
+    let mode = match mode {
         "dark" => tauri::Theme::Dark,
         "light" => tauri::Theme::Light,
-        // An unknown mode is a frontend bug; keeping the current color is
-        // the whole of the right response.
-        _ => return,
+        _ => return None,
     };
-    let _ = window.set_background_color(Some(background_for(theme)));
+    let appearance = match source {
+        "explicit" => Some(mode),
+        "system" => None,
+        _ => return None,
+    };
+    Some(Palette { mode, appearance })
+}
+
+/// Keep the window on the SPA's resolved palette, so a resize that outruns
+/// the webview shows theme background at the edges.
+#[tauri::command]
+pub fn set_chrome_background(window: tauri::WebviewWindow, mode: String, source: String) {
+    // An unknown report is a frontend bug; keeping the current chrome is the
+    // whole of the right response.
+    let Some(palette) = palette_for(&mode, &source) else {
+        return;
+    };
+    let _ = window.set_theme(palette.appearance);
+    let _ = window.set_background_color(Some(background_for(palette.mode)));
 }
 
 /// `#rrggbb` to components. Only ever fed the constants above, so a
@@ -93,6 +123,45 @@ mod tests {
         assert!(!shown.first(), "a second show is not the first");
         shown.reset();
         assert!(shown.first(), "a rebuilt window starts unshown");
+    }
+
+    #[test]
+    fn an_explicit_choice_pins_the_appearance_and_system_releases_it() {
+        assert_eq!(
+            palette_for("dark", "explicit"),
+            Some(Palette {
+                mode: tauri::Theme::Dark,
+                appearance: Some(tauri::Theme::Dark),
+            })
+        );
+        assert_eq!(
+            palette_for("light", "explicit"),
+            Some(Palette {
+                mode: tauri::Theme::Light,
+                appearance: Some(tauri::Theme::Light),
+            })
+        );
+        assert_eq!(
+            palette_for("dark", "system"),
+            Some(Palette {
+                mode: tauri::Theme::Dark,
+                appearance: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_malformed_palette_report_is_refused() {
+        for (mode, source) in [
+            ("Dark", "explicit"),
+            ("system", "system"),
+            ("", "explicit"),
+            ("dark", "Explicit"),
+            ("dark", ""),
+            ("light", "override"),
+        ] {
+            assert_eq!(palette_for(mode, source), None, "{mode:?}/{source:?}");
+        }
     }
 
     #[test]

@@ -242,12 +242,18 @@ export type DragDropEvent =
  * `ready` tells the shell the SPA is ready to be seen, so the hidden native
  * window can show already painted. `background` keeps the window's own
  * color on the SPA's resolved palette, so a fast resize shows theme
- * background at the edges rather than the webview's default white.
+ * background at the edges rather than the webview's default white; its
+ * `source` says whether that palette is an explicit in-app choice, which
+ * the window's appearance then follows, or the OS preference, which it
+ * leaves the appearance to.
  */
 export interface ShellChrome {
   ready(): void;
-  background(mode: 'light' | 'dark'): void;
+  background(mode: 'light' | 'dark', source: PaletteSource): void;
 }
+
+/** Whether the resolved palette is an in-app choice or the OS preference. */
+export type PaletteSource = 'explicit' | 'system';
 
 /**
  * Where a statement comes from in this client, in the shape of

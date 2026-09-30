@@ -226,6 +226,33 @@ describe('DesktopApiClient importSource', () => {
   });
 });
 
+describe('DesktopApiClient shellChrome', () => {
+  it('sends the palette and its source to the shell', async () => {
+    const invoked: Array<[string, Record<string, unknown>]> = [];
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async (cmd, args) => {
+        invoked.push([cmd, args]);
+        return null;
+      },
+    });
+
+    const chrome = client.shellChrome();
+    if (!chrome) throw new Error('expected native chrome');
+    chrome.background('dark', 'explicit');
+    chrome.background('light', 'system');
+    chrome.ready();
+    await Promise.resolve();
+
+    expect(invoked).toEqual([
+      ['set_chrome_background', { mode: 'dark', source: 'explicit' }],
+      ['set_chrome_background', { mode: 'light', source: 'system' }],
+      ['frontend_ready', {}],
+    ]);
+  });
+});
+
 describe('createApiClient', () => {
   it('answers a browser client when there is no Tauri global', () => {
     expect(createApiClient()).toBeInstanceOf(FetchApiClient);
