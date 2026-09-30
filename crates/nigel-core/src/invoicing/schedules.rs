@@ -347,11 +347,18 @@ pub fn update_schedule(conn: &Connection, id: i64, update: &ScheduleUpdate) -> R
 /// *before* it is paused — months worked and never invoiced — and those stay
 /// owed, while the cycles the pause itself covers do not: skipping them was the
 /// point of pausing.
+///
+/// Pausing a schedule that is already paused keeps the first date: moving it
+/// later would hand the cycles between the two back to the next run as owed.
+/// An undated pause stays undated for the same reason.
 pub fn pause_schedule(conn: &Connection, id: i64, on: &str) -> Result<()> {
     let _ = get_schedule(conn, id)?;
     let on = validate_date(on, "pause")?;
     conn.execute(
-        "UPDATE invoice_schedules SET paused = 1, paused_at = ?2 WHERE id = ?1",
+        "UPDATE invoice_schedules
+            SET paused_at = CASE WHEN paused = 1 THEN paused_at ELSE ?2 END,
+                paused = 1
+          WHERE id = ?1",
         rusqlite::params![id, on],
     )?;
     Ok(())
@@ -374,11 +381,27 @@ pub fn pause_schedule(conn: &Connection, id: i64, on: &str) -> Result<()> {
 /// March onward. One cursor cannot express a gap in the middle, which is why
 /// this is rows rather than an advanced `next_period`.
 ///
+/// The span a pause covers is half-open, `[paused_at, on)`: a cycle falling on
+/// the day the schedule resumes is billed, so pausing and resuming on the same
+/// day forgives nothing.
+///
 /// A schedule paused before migration v13 carries no `paused_at` and so
 /// forgives nothing: the extent of that pause is not recoverable, and billing a
 /// cycle the operator meant to skip is the recoverable mistake of the two.
+///
+/// An ended schedule is refused: whatever it owed was settled when it ended,
+/// and skip rows past that date would describe cycles it never had.
 pub fn resume_schedule(conn: &Connection, id: i64, on: &str) -> Result<Vec<String>> {
     let schedule = get_schedule(conn, id)?;
+    if let Some(ended) = &schedule.ended_at {
+        return Err(NigelError::Conflict {
+            code: "schedule_already_ended",
+            message: format!(
+                "Schedule {id} ended on {ended}. Ending is terminal, so there \
+                 is nothing to resume."
+            ),
+        });
+    }
     let on = validate_date(on, "resume")?;
     let mut skipped = Vec::new();
 
@@ -387,7 +410,7 @@ pub fn resume_schedule(conn: &Connection, id: i64, on: &str) -> Result<Vec<Strin
         let cadence = Cadence::parse(&schedule.cadence)?;
         let reason = format!("paused {paused_at}");
         let mut cursor = schedule.next_period.clone();
-        while cursor.as_str() <= on.as_str() {
+        while cursor.as_str() < on.as_str() {
             if cursor.as_str() >= paused_at {
                 let written = tx.execute(
                     "INSERT OR IGNORE INTO invoice_schedule_runs
@@ -1837,6 +1860,86 @@ mod tests {
             owed_if_ended,
             "and what a run bills is exactly what ending would have offered"
         );
+    }
+
+    #[test]
+    fn resuming_on_a_billing_day_bills_that_days_cycle() {
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        draft_due_schedules(&conn, "2026-04-15").unwrap();
+
+        pause_schedule(&conn, id, "2026-05-01").unwrap();
+        let skipped = resume_schedule(&conn, id, "2026-05-01").unwrap();
+        assert!(
+            skipped.is_empty(),
+            "a same-day pause and resume covers no cycle"
+        );
+        assert_eq!(
+            periods(&draft_due_schedules(&conn, "2026-05-01").unwrap()),
+            ["2026-05-01"]
+        );
+
+        pause_schedule(&conn, id, "2026-05-10").unwrap();
+        let skipped = resume_schedule(&conn, id, "2026-07-01").unwrap();
+        assert_eq!(
+            skipped,
+            ["2026-06-01"],
+            "the cycle on the resume day is billed, not forgiven"
+        );
+        assert_eq!(
+            periods(&draft_due_schedules(&conn, "2026-07-01").unwrap()),
+            ["2026-07-01"]
+        );
+    }
+
+    #[test]
+    fn pausing_again_keeps_the_first_pause_date() {
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        draft_due_schedules(&conn, "2026-06-05").unwrap();
+
+        pause_schedule(&conn, id, "2026-06-10").unwrap();
+        pause_schedule(&conn, id, "2026-08-10").unwrap();
+        assert_eq!(
+            get_schedule(&conn, id).unwrap().paused_at.as_deref(),
+            Some("2026-06-10")
+        );
+
+        let skipped = resume_schedule(&conn, id, "2026-09-15").unwrap();
+        assert_eq!(skipped, ["2026-07-01", "2026-08-01", "2026-09-01"]);
+        assert!(draft_due_schedules(&conn, "2026-09-15")
+            .unwrap()
+            .generated
+            .is_empty());
+    }
+
+    #[test]
+    fn pausing_an_undated_pause_again_leaves_it_undated() {
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        conn.execute(
+            "UPDATE invoice_schedules SET paused = 1, paused_at = NULL WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+
+        pause_schedule(&conn, id, "2026-03-01").unwrap();
+        assert_eq!(get_schedule(&conn, id).unwrap().paused_at, None);
+    }
+
+    #[test]
+    fn resuming_an_ended_schedule_is_refused() {
+        let (_d, conn) = test_conn();
+        let (_client, id) = seed(&conn);
+        pause_schedule(&conn, id, "2026-01-01").unwrap();
+        end_schedule(&conn, id, "2026-02-15", EndDisposition::RefuseIfOwed).unwrap();
+
+        let err = resume_schedule(&conn, id, "2026-06-01").unwrap_err();
+        let NigelError::Conflict { code, .. } = &err else {
+            panic!("expected Conflict, got {err:?}");
+        };
+        assert_eq!(*code, "schedule_already_ended");
+        assert!(schedule_runs(&conn, id).unwrap().is_empty());
     }
 
     #[test]

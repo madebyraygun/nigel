@@ -1413,9 +1413,14 @@ Resuming writes the forgiven cycles down rather than leaving them to be
 inferred. Each one becomes a **skip row** in the schedule's history: the same
 row a generated period writes, with no invoice behind it and the pause date as
 its reason. Since a run already generates nothing for a period it finds a row
-for, a resumed schedule cannot bill the months it was paused through — and
-ending it and resuming it now answer from the same rows rather than from two
-rules kept in step.
+for, a resumed schedule cannot bill the months it was paused through. A
+schedule still paused has no rows yet; ending it stops counting what it owes at
+the pause date, so it forgives the same cycles a resume would have.
+
+The pause covers every cycle from the day it began up to, but not including,
+the day it lifts: a cycle falling on the resume day is billed, so pausing and
+resuming on the same day forgives nothing. Pausing a schedule that is already
+paused keeps the original pause date, and an ended schedule cannot be resumed.
 
 Arrears behind the pause get no rows and stay owed, which is what makes the
 first run after a resume bill January and February on a schedule that was late
@@ -1431,10 +1436,12 @@ The next run generates from 2026-01-01.
 gap in the periods would read as a schedule that had lost track of them:
 
 ```
-Period      | Invoice                    | Generated
-2026-01-01  | #1248                      | 2026-05-15
-2026-02-01  | #1249                      | 2026-05-15
-2026-03-01  | skipped (paused 2026-03-01)| 2026-05-15
+Period      | Invoice                     | Generated
+2026-01-01  | #1248                       | 2026-05-15
+2026-02-01  | #1249                       | 2026-05-15
+2026-03-01  | skipped (paused 2026-03-01) | 2026-05-15
+2026-04-01  | skipped (paused 2026-03-01) | 2026-05-15
+2026-05-01  | skipped (paused 2026-03-01) | 2026-05-15
 ```
 
 A pause with no date forgives nothing here too: resuming it writes no skip rows,

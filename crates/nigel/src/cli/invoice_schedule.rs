@@ -248,8 +248,16 @@ pub fn edit(
 
 pub fn pause(id: i64, today: &str) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let before = get_schedule(&conn, id)?;
     pause_schedule(&conn, id, today)?;
-    println!("Paused schedule {id}. Nothing is generated until it is resumed.");
+    if before.paused {
+        match before.paused_at {
+            Some(since) => println!("Schedule {id} is already paused, since {since}."),
+            None => println!("Schedule {id} is already paused."),
+        }
+    } else {
+        println!("Paused schedule {id}. Nothing is generated until it is resumed.");
+    }
     Ok(())
 }
 

@@ -4521,3 +4521,46 @@ fn resuming_a_schedule_forgives_the_cycles_the_pause_covered_and_show_says_which
         .success()
         .stdout(predicate::str::contains("Generated 0 invoice(s)"));
 }
+
+#[test]
+fn pausing_twice_keeps_the_first_date_and_an_ended_schedule_cannot_resume() {
+    let env = TestEnv::new();
+    runbook_lab(&env);
+    let id = add_schedule(
+        &env,
+        &[
+            "--cadence",
+            "monthly",
+            "--start",
+            "2020-01-01",
+            "--item",
+            "Hosting:1:450",
+        ],
+    );
+
+    env.cmd()
+        .args(["invoice", "schedule", "pause", &id.to_string()])
+        .assert()
+        .success();
+    env.db()
+        .execute(
+            "UPDATE invoice_schedules SET paused_at = '2020-03-01' WHERE id = ?1",
+            [id],
+        )
+        .expect("backdate the pause");
+    env.cmd()
+        .args(["invoice", "schedule", "pause", &id.to_string()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already paused, since 2020-03-01"));
+
+    env.cmd()
+        .args(["invoice", "schedule", "end", &id.to_string(), "--forgive"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["invoice", "schedule", "resume", &id.to_string()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing to resume"));
+}
