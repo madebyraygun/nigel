@@ -2,11 +2,9 @@
 
 use std::sync::Arc;
 
-#[cfg(target_os = "macos")]
-use tauri::Manager;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{db, imports, save, scheme_url, transport, window_state, SCHEME};
+use nigel_desktop::{chrome, db, imports, save, scheme_url, transport, window_state, SCHEME};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
@@ -29,7 +27,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             save::save_export,
             imports::stage_import,
-            imports::pick_import_file
+            imports::pick_import_file,
+            chrome::frontend_ready,
+            chrome::set_chrome_background
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |_ctx, request, responder| {
             let router = router.clone();
@@ -76,7 +76,9 @@ fn main() {
             }
         })
         .setup(|app| {
+            app.manage(chrome::Shown::default());
             build_main_window(app.handle())?;
+            spawn_show_fallback(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -110,6 +112,7 @@ fn main() {
                             // ignores show and focus until it is
                             // deminiaturized.
                             let _ = window.unminimize();
+                            app.state::<chrome::Shown>().first();
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
@@ -118,9 +121,12 @@ fn main() {
                         // app that cannot rebuild would strand the
                         // user, so that failure exits.
                         None => {
+                            app.state::<chrome::Shown>().reset();
                             if let Err(error) = build_main_window(app) {
                                 eprintln!("nigel: could not rebuild the main window: {error}");
                                 app.exit(1);
+                            } else {
+                                spawn_show_fallback(app.clone());
                             }
                         }
                     }
@@ -130,14 +136,32 @@ fn main() {
         });
 }
 
+/// A wedged frontend must not leave an invisible process: a window that has
+/// still never been shown four seconds from now shows as it is. One that
+/// HAS shown is left alone — on macOS the user may since have closed
+/// (hidden) it, and a fallback that fired then would bring it back
+/// uninvited. An unreadable visibility is treated as hidden: this fallback
+/// exists to guarantee something shows.
+fn spawn_show_fallback(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        if let Some(window) = handle.get_webview_window("main") {
+            if handle.state::<chrome::Shown>().first() && !window.is_visible().unwrap_or(false) {
+                let _ = window.show();
+            }
+        }
+    });
+}
+
 /// The main window, restored to where its last close left it.
 ///
 /// Restore is planned in the platform's one coherent coordinate space and
 /// applied with `set_position` — the same frame-top-left convention the
 /// saved reading used — because the builder's `position` means the content
 /// origin on macOS and would land the frame a title bar too high. The window
-/// is built hidden and shown only once its geometry is applied, so it never
-/// flashes at the default spot first.
+/// is built hidden and placed while hidden; it shows once the SPA signals it
+/// has painted (`chrome::frontend_ready`), so it never flashes at the
+/// default spot or as a blank canvas first.
 fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let saved = window_state::load_from(&window_state::state_path());
     let monitors = monitor_areas(app);
@@ -164,8 +188,11 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     if plan.maximized {
         let _ = window.maximize();
     }
-    window.show()?;
-    let _ = window.set_focus();
+    // The OS theme is the best signal before the SPA's first frame; the
+    // frontend refines this through set_chrome_background once it has
+    // resolved any stored override.
+    let theme = window.theme().unwrap_or(tauri::Theme::Light);
+    let _ = window.set_background_color(Some(chrome::background_for(theme)));
     Ok(())
 }
 

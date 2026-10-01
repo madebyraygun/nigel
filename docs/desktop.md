@@ -113,11 +113,47 @@ decorations included — in the platform's one coherent coordinate space
 monitor and the 900×700 floor, and applies it with `set_position`, the
 frame-top-left convention the reading used. With no monitor information the
 saved size and maximized flag still apply but the position does not. The
-window is built hidden and shown once its geometry is applied, so it never
-appears at the default spot first. `src/window_state.rs` owns the
-arithmetic. The file is a convenience: absent, corrupt, or unwritable all
-degrade silently to the 1200×820 default, and the next clean close rewrites
-it.
+window is built hidden and placed while hidden, so it never appears at the
+default spot first; [Launch paint](#launch-paint) covers when it shows.
+`src/window_state.rs` owns the arithmetic. The file is a convenience:
+absent, corrupt, or unwritable all degrade silently to the 1200×820 default,
+and the next clean close rewrites it.
+
+## Launch paint
+
+The window is built hidden and shows when the SPA reports itself ready
+through the `frontend_ready` command, so first paint is the app rather than
+a white sheet. Ready means the root component's first update settled — never
+a `requestAnimationFrame` handshake, because a hidden webview gets no
+rendering opportunities at all and would wait forever for the very show the
+signal triggers. `main.ts` owns the wiring: the app component renders the
+same everywhere, and only the entry point knows it is the page of a window
+that starts hidden. A four-second fallback covers a wedged frontend, armed at
+setup and again when Reopen rebuilds after a webview crash. Every show —
+ready, fallback, Reopen — records itself in `chrome::Shown`, and ready and
+the fallback only reveal a window nothing has shown yet, so whichever
+arrives late cannot bring back a window the user has since closed.
+
+The window's own background — what shows at the edges when a resize outruns
+the webview — is set from the OS theme at build (`src/chrome.rs`, whose
+canvas constants are pinned against `@nigel/theme`'s canvas token by
+`tests/chrome.rs`) and then kept on the SPA's actually-resolved palette by
+the `set_chrome_background` command, which
+`web/apps/app/src/chrome-bridge.ts` drives from the theme package's
+color-mode contract at boot and on every palette change. Each report carries
+the resolved mode and its source: `explicit` when a color-mode class is an
+in-app choice, `system` when the OS preference decides. On macOS the window
+color does not reach the webview layer, and WebKit's default background
+follows the window's appearance instead — so the command also pins the
+window's appearance (`set_theme`) to an explicit in-app theme, and releases
+it to the OS for `system`. With the appearance matching the palette, the
+resize edges stay on theme even when the in-app theme and the OS disagree.
+The appearance is app-wide on macOS and Linux, which a single-window app
+does not notice, and native dialogs follow it too. On macOS the webview's
+`prefers-color-scheme` follows the pinned appearance, which an explicit
+class outranks anyway; on a switch back to `system` the release fires a
+preference change and the bridge re-reports from the OS. Anything other than `light`/`dark` and `explicit`/`system`
+is refused and leaves the chrome as it was.
 
 ## Exports
 

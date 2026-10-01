@@ -169,7 +169,7 @@ fn geometry_is_saved_where_it_is_restored_from() {
 }
 
 #[test]
-fn the_window_is_built_hidden_and_shown_once_placed() {
+fn the_window_is_placed_while_hidden_and_left_for_ready_to_show() {
     let main = main_rs();
     let build = &main[main
         .find("fn build_main_window")
@@ -179,16 +179,27 @@ fn the_window_is_built_hidden_and_shown_once_placed() {
     let hidden_at = build
         .find(".visible(false)")
         .expect("the window is built hidden");
+    let built_at = build.find(".build()?").expect("the window is built");
     let position_at = build
         .find("window.set_position(")
         .expect("the frame is placed");
     let maximize_at = build
         .find("window.maximize()")
         .expect("maximized is restored");
-    let show_at = build.find("window.show()").expect("the window is shown");
     assert!(
-        hidden_at < position_at && position_at < show_at && maximize_at < show_at,
-        "the window is shown before its geometry is applied"
+        hidden_at < built_at && built_at < position_at && built_at < maximize_at,
+        "the window is not placed after a hidden build"
+    );
+    assert!(
+        !build.contains(".show()"),
+        "build_main_window shows the window before the SPA has painted"
+    );
+
+    let chrome = fs::read_to_string("src/chrome.rs").expect("read chrome.rs");
+    let ready = &chrome[chrome.find("fn frontend_ready").expect("the ready command")..];
+    assert!(
+        ready[..ready.find("\n}\n").expect("end of frontend_ready")].contains("window.show()"),
+        "nothing shows the window once the SPA is ready"
     );
 }
 
