@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{
-    chrome, db, imports, menu, save, scheme_url, transport, window_state, SCHEME,
-};
+use nigel_desktop::{chrome, db, imports, menu, save, scheme_url, transport, window_state, SCHEME};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
