@@ -6,7 +6,7 @@ import { dispatchNcToast, narrowViewport } from '@nigel/ui';
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { appUnauthorized, type ApiClient, type MenuCommand } from '../api/index.js';
 import { createApiClient } from '../api/desktop-client.js';
-import { requestMenuIntent } from '../state/menu-intent.js';
+import { dropMenuIntentUnlessFor, requestMenuIntent } from '../state/menu-intent.js';
 import {
   getAppStore,
   initializeAppStore,
@@ -119,8 +119,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
    * Navigation validates the screen id here rather than in the api layer,
    * which does not know the registry; an id this build has never heard of is
    * dropped, so a newer shell degrades to inert items rather than a blank
-   * screen. `find` and `import` land on their screens as one-shot intents the
-   * screen consumes — a route parameter could not re-fire on a repeated chord.
+   * screen. `find` (on the register only) and `import` reach their screens as
+   * one-shot intents the screen consumes — a route parameter could not re-fire
+   * on a repeated chord.
    */
   private handleMenuCommand = (command: MenuCommand): void => {
     // The gates and the boot screen render without the shell: no sidebar to
@@ -138,10 +139,10 @@ export class NigelApp extends SignalWatcher(LitElement) {
         this.navigate('invoices', new URLSearchParams({ new: '1' }));
         return;
       case 'find':
-        // Focusing search must not cost a filtered register its filters: the
-        // bare-hash navigate is only for arriving from somewhere else.
-        if (this.route.screen !== 'register') this.navigate('register');
-        requestMenuIntent('find');
+        // Find searches the screen in front of the user; only the register
+        // has a search box, and navigating there from elsewhere would throw
+        // away whatever that screen held, an unsaved invoice draft included.
+        if (this.route.screen === 'register') requestMenuIntent('find');
         return;
       case 'import':
         this.navigate('import');
@@ -160,6 +161,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
     // goes with it rather than staying up over a screen nobody navigated to.
     this.closeSnake();
     this.syncRouteFromHash();
+    // An intent belongs to the screen it was raised for; one still parked
+    // when the user leaves for another screen must not fire on a later visit.
+    dropMenuIntentUnlessFor(this.route.screen);
   };
 
   protected willUpdate(): void {

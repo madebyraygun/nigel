@@ -225,9 +225,10 @@ export class NigelImportScreen extends SignalWatcher(LitElement) {
     //
     // Connected, because a busy flow finishing after navigation still runs
     // this update on the removed element: opening the OS dialog over whatever
-    // screen the user is on now would stage their pick invisibly. Parked
-    // instead, the intent keeps the same contract as one requested before
-    // arriving — the next import screen to mount honors it.
+    // screen the user is on now would stage their pick invisibly. The route
+    // change that removed the screen is also what drops the parked intent
+    // (`dropMenuIntentUnlessFor` in the root container), so a later visit does
+    // not open a dialog nobody asked for.
     if (this.isConnected && this.busy === null && consumeMenuIntent('pick-import')) {
       void this.updateComplete.then(() => this.handlePickRequest());
     }

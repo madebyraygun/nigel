@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { requestMenuIntent, consumeMenuIntent, resetMenuIntent } from './menu-intent.js';
+import {
+  requestMenuIntent,
+  consumeMenuIntent,
+  dropMenuIntentUnlessFor,
+  resetMenuIntent,
+} from './menu-intent.js';
 
 describe('menu intent', () => {
   beforeEach(() => {
@@ -28,5 +33,19 @@ describe('menu intent', () => {
   it('answers nothing when nothing was requested', () => {
     expect(consumeMenuIntent('find')).toBe(false);
     expect(consumeMenuIntent('pick-import')).toBe(false);
+  });
+
+  it('survives a route change to its own screen and dies on any other', () => {
+    requestMenuIntent('pick-import');
+    dropMenuIntentUnlessFor('import');
+    expect(consumeMenuIntent('pick-import')).toBe(true);
+
+    requestMenuIntent('pick-import');
+    dropMenuIntentUnlessFor('reports');
+    expect(consumeMenuIntent('pick-import')).toBe(false);
+
+    requestMenuIntent('find');
+    dropMenuIntentUnlessFor('dashboard');
+    expect(consumeMenuIntent('find')).toBe(false);
   });
 });

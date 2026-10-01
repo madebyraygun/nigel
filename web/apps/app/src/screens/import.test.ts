@@ -21,7 +21,11 @@ import {
   EMPTY_IMPORT_PREVIEW,
   FakeApiClient,
 } from '../__mocks__/fake-api-client.js';
-import { requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
+import {
+  dropMenuIntentUnlessFor,
+  requestMenuIntent,
+  resetMenuIntent,
+} from '../state/menu-intent.js';
 
 /**
  * 423 and 401 are deliberately untested here. The shell gates both before a
@@ -1138,7 +1142,7 @@ describe('the pick-import menu intent', () => {
     expect(shell.staged).toHaveLength(2);
   });
 
-  it('a parked intent stays parked across navigation and fires on return', async () => {
+  it('a parked intent never fires on the removed screen, nor on a later visit', async () => {
     const fake = client();
     const shell = nativeSource(fake);
     shell.willPick('/statements/acme-checking.csv');
@@ -1170,10 +1174,11 @@ describe('the pick-import menu intent', () => {
     await settle(el);
     expect(shell.staged).toHaveLength(1);
 
-    // Same contract as an intent requested before arriving: the next import
-    // screen to mount honors it.
+    // The route change that removed the screen drops the intent in the root
+    // container, so the next visit opens no dialog of its own accord.
+    dropMenuIntentUnlessFor('dashboard');
     const { el: next } = await mount(fake);
     await settle(next);
-    expect(shell.staged).toHaveLength(2);
+    expect(shell.staged).toHaveLength(1);
   });
 });

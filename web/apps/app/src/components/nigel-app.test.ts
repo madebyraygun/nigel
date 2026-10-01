@@ -3,7 +3,7 @@ import './nigel-app.js';
 import type { NigelApp } from './nigel-app.js';
 import { appLocked, appUnauthorized, ApiError } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
-import { consumeMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
+import { consumeMenuIntent, requestMenuIntent, resetMenuIntent } from '../state/menu-intent.js';
 import type { MenuCommand } from '../api/index.js';
 import {
   FakeApiClient,
@@ -590,20 +590,39 @@ describe('the menu bar', () => {
     expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
   });
 
-  it('lands find and import on their screens as one-shot intents', async () => {
+  it('lands import on its screen as a one-shot intent', async () => {
     const el = await mount(shellClient());
 
     // Consumed synchronously here, before the screen can: this test owns the
-    // translation; the register and import screen tests own the delivery.
-    send({ kind: 'find' });
-    expect(consumeMenuIntent('find')).toBe(true);
-    await settled(el);
-    expect(window.location.hash).toBe('#/register');
-
+    // translation; the import screen tests own the delivery.
     send({ kind: 'import' });
     expect(consumeMenuIntent('pick-import')).toBe(true);
     await settled(el);
     expect(window.location.hash).toBe('#/import');
+  });
+
+  it('ignores find anywhere but the register', async () => {
+    window.location.hash = '#/invoices?new=1';
+    const el = await mount(shellClient());
+
+    send({ kind: 'find' });
+    await settled(el);
+
+    // Navigating away would discard the screen's state, a draft included.
+    expect(window.location.hash).toBe('#/invoices?new=1');
+    expect(consumeMenuIntent('find')).toBe(false);
+  });
+
+  it('drops a parked intent when the user leaves for another screen', async () => {
+    window.location.hash = '#/reports';
+    const el = await mount(shellClient());
+
+    // What the import screen leaves behind when a busy import defers the pick.
+    requestMenuIntent('pick-import');
+
+    window.location.hash = '#/dashboard';
+    await settled(el);
+    expect(consumeMenuIntent('pick-import')).toBe(false);
   });
 
   it('leaves a filtered register alone when find fires on it', async () => {

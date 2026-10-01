@@ -1,4 +1,5 @@
 import { signal, type Signal } from '../mixins/signal-watcher.js';
+import type { ScreenId } from '../screens/registry.js';
 
 /**
  * What a menu selection asks of the screen it lands on.
@@ -32,6 +33,22 @@ export function consumeMenuIntent(request: MenuIntent): boolean {
   if (intent.get() !== request) return false;
   intent.set(null);
   return true;
+}
+
+/** The screen that consumes each intent. */
+const TARGET_SCREEN: Record<MenuIntent, ScreenId> = {
+  find: 'register',
+  'pick-import': 'import',
+};
+
+/**
+ * Drop the intent in flight unless `screen` is the one it was raised for.
+ * The root container calls this on every route change, so an intent a screen
+ * deferred (an import still running) dies with the visit that deferred it.
+ */
+export function dropMenuIntentUnlessFor(screen: string): void {
+  const pending = intent.get();
+  if (pending !== null && TARGET_SCREEN[pending] !== screen) intent.set(null);
 }
 
 /** Test seam: start a test with nothing in flight. */
