@@ -4368,10 +4368,16 @@ fn resuming_a_schedule_forgives_the_cycles_the_pause_covered_and_show_says_which
         .assert()
         .success();
 
+    // The pause covers up to but not including the resume day, so on the 1st
+    // that day's cycle is billed alongside the arrears.
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let mut expected = vec!["2020-01-01".to_string(), "2020-02-01".to_string()];
+    if today.ends_with("-01") {
+        expected.push(today);
+    }
     let billed: Vec<String> = generated(&env, id).into_iter().map(|(p, _, _)| p).collect();
     assert_eq!(
-        billed,
-        ["2020-01-01", "2020-02-01"],
+        billed, expected,
         "only the arrears behind the pause are billed"
     );
 
