@@ -2539,7 +2539,11 @@ mod tests {
         let (_dir, db_path) = seeded_db();
         let (app, token) = app_for(&db_path);
 
-        for uri in PREVIEW_ROUTES.map(|route| route.replace("1248", "9999")) {
+        for uri in PREVIEW_ROUTES
+            .iter()
+            .filter(|route| route.starts_with("/api/invoices/"))
+            .map(|route| route.replace("1248", "9999"))
+        {
             let (status, body) = get_json(&app, &uri, &token).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {body}");
             assert_eq!(body["error"]["details"]["reason"], "invoice_not_found");

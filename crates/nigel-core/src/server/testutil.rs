@@ -272,7 +272,7 @@ pub async fn ok_json(app: &Router, uri: &str, token: &str) -> serde_json::Value 
 /// Every route that reads the database, for tests that must hold across all of
 /// them — the locked guard especially, where a route mounted in the wrong place
 /// would silently answer while the database is still encrypted.
-pub const DATA_ROUTES: [&str; 24] = [
+pub const DATA_ROUTES: [&str; 27] = [
     "/api/settings/app",
     "/api/reports/pnl",
     "/api/reports/expenses",
@@ -297,14 +297,19 @@ pub const DATA_ROUTES: [&str; 24] = [
     "/api/invoices/1248",
     "/api/invoices/aging",
     "/api/invoices/next-number",
+    "/api/documents",
+    "/api/documents/1",
+    "/api/document-kinds",
 ];
 
-/// The two invoice preview routes. Kept out of [`DATA_ROUTES`] for the reason
-/// [`EXPORT_ROUTES`] is: a successful preview is a document, not JSON — only
-/// the failures share a shape with the rest of the API.
-pub const PREVIEW_ROUTES: [&str; 2] = [
+/// The invoice and document preview routes. Kept out of [`DATA_ROUTES`] for
+/// the reason [`EXPORT_ROUTES`] is: a successful preview is a page or a PDF,
+/// not JSON — only the failures share a shape with the rest of the API.
+pub const PREVIEW_ROUTES: [&str; 4] = [
     "/api/invoices/1248/preview",
     "/api/invoices/1248/preview.pdf",
+    "/api/documents/1/preview",
+    "/api/documents/1/preview.pdf",
 ];
 
 /// Every export route, named without the `format` each of them requires. They
@@ -437,6 +442,18 @@ pub fn seeded_db() -> (tempfile::TempDir, PathBuf) {
     let (dir, db_path) = temp_db();
     let conn = crate::db::open_connection(&db_path, None).expect("open db");
     seed(&conn);
+    crate::documents::store::file_document(
+        &conn,
+        db_path.parent().unwrap(),
+        &crate::documents::store::NewDocument {
+            client_id: 1,
+            kind: "Proposal",
+            title: "Website rebuild",
+        },
+        &crate::documents::testing::fixture_pdf("seed"),
+        "2026-10-05",
+    )
+    .expect("document");
     drop(conn);
     (dir, db_path)
 }
