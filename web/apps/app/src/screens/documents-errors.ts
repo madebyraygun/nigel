@@ -124,8 +124,8 @@ const STEP_HEADLINES: Record<DocumentSendStep, (service: string) => string> = {
  * A document send failure, turned into the strings the dialog renders.
  *
  * Our words for what failed, the upstream's own for why. `retryable` is false
- * for a refusal that would refuse again identically and once any address was
- * emailed: the send rolled back, so those links are dead and a second send is
+ * for a refusal that would refuse again identically, for a build that cannot
+ * render PDFs (501), and once any address was emailed: the send rolled back, so those links are dead and a second send is
  * a fresh decision rather than a repeat.
  */
 export function documentSendFailureMessage(error: unknown, title: string): SendFailureView {

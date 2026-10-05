@@ -166,10 +166,10 @@ pub struct DocumentSendOutcome {
     pub warnings: Vec<String>,
 }
 
-/// A send that stopped, and where. Every failure has been rolled back: the
-/// version is unsent with no recipients, and an opened manifest was closed
-/// unless `cleanup_warnings` says otherwise. `emailed` lists the addresses
-/// that already received their link.
+/// A send that stopped, and where. The version is left unsent: its recipients
+/// are removed and an opened manifest closed, unless `cleanup_warnings` says
+/// otherwise. The PDF and pages already published stay in R2. `emailed` lists
+/// the addresses that already received their link.
 #[derive(Debug)]
 pub struct DocumentSendFailure {
     pub step: DocumentSendStep,

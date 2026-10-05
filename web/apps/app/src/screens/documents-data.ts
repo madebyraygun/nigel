@@ -176,7 +176,7 @@ export function documentSendStepViews(options: {
   }));
 }
 
-/** The newest version that has been sent, or null for a document still in draft. */
+/** The newest version that has been sent, or null when no version has been sent. */
 export function latestSentVersion(detail: DocumentDetail): DocumentVersionDetail | null {
   const sent = detail.versions.filter((version) => version.sentAt !== null);
   if (sent.length === 0) return null;

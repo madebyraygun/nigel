@@ -1,4 +1,5 @@
-//! Filing a PDF as a document, and every read of the rows around it.
+//! Filing a PDF as a document, editing a draft's title or kind, and every read
+//! of the rows around it.
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension, Row};

@@ -638,7 +638,7 @@ pub enum DocumentCommands {
         #[arg(long)]
         yes: bool,
     },
-    /// Replace the PDF with a new version: live pages show "being revised" until it is sent.
+    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent.
     Revise {
         id: i64,
         #[arg(long)]
@@ -1087,11 +1087,12 @@ pub enum BrowseCommands {
     },
 }
 
-/// Whether a command may reconcile Stripe payments before it runs. `restore`
-/// overwrites the database a sync would write to, `invoice sync` does the same
-/// work itself, `serve` may have a locked database and should not block on a
-/// network poll, and the previews and templates are defined to make no network
-/// call at all.
+/// Whether a command may run the launch syncs (Stripe payments and document
+/// responses) before it runs. `restore` overwrites the database a sync would
+/// write to, `invoice sync` and `document sync` do the same work themselves,
+/// `serve` may have a locked database and should not block on a network poll,
+/// and the previews (`document preview` included) and templates are defined to
+/// make no network call at all.
 pub fn launch_sync_allowed(command: &Commands) -> bool {
     !matches!(
         command,

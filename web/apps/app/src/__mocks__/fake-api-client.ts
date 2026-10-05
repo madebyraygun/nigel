@@ -328,7 +328,7 @@ export function documentFlags(status: DocumentStatus): Pick<
   };
 }
 
-/** The refusal the server's `ensure_allowed` answers for a status. */
+/** The reason code the server's `ensure_allowed` answers for a status. */
 function documentRefusal(id: number, status: DocumentStatus): ApiError {
   if (status === 'withdrawn' || status === 'executed' || status === 'declined') {
     return conflictError('document_terminal', {

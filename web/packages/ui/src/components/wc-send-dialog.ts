@@ -251,7 +251,7 @@ export class WcSendDialog extends LitElement {
   @property({ type: Boolean, reflect: true })
   open = false;
 
-  /** What is being sent. Invoice is the original behaviour; document drops the money. */
+  /** What is being sent. `document` leaves out the amount and the payment link. */
   @property({ type: String, reflect: true })
   mode: 'invoice' | 'document' = 'invoice';
 

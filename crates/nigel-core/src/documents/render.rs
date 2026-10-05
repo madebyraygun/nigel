@@ -1,6 +1,6 @@
 //! Recipient pages, notices and email text. Preview and send both come through
-//! here, so what an operator previews is what a client receives. Every
-//! interpolated value is escaped with the invoicing `esc`; the inline script is
+//! here, so what an operator previews is what a client receives. Every value
+//! interpolated into HTML is escaped with the invoicing `esc`; the inline script is
 //! fixed text that reads its values from `data-*` attributes.
 use super::model::RecipientRole;
 use crate::invoicing::render_html::esc;

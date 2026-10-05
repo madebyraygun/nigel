@@ -236,7 +236,8 @@ struct Checked {
 }
 
 /// Refuses a response that does not answer exactly this version for exactly
-/// this recipient, or that carries a name or note unfit to record. An address
+/// this recipient, or that carries a name or note unfit to record, no consent
+/// or an unreadable `receivedAt`. An address
 /// that is not an IP, or an over-long or control-laden user agent, is dropped
 /// rather than refused. Nothing the response carries is echoed beyond what
 /// gets recorded.

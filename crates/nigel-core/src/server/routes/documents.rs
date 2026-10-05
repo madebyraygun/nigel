@@ -141,7 +141,7 @@ struct RecipientDetail {
     #[serde(flatten)]
     recipient: Recipient,
     /// The recipient's published page, or `null` when the version was never
-    /// sent or no documents base URL is configured.
+    /// sent or there is no valid documents base URL.
     page_url: Option<String>,
 }
 
@@ -588,7 +588,7 @@ async fn send(
     Ok(Json(result))
 }
 
-/// The send with its three collaborators passed in, so the orchestration runs
+/// The send with its publisher, mailer and response source passed in, so the orchestration runs
 /// against fakes in tests and against the configured clients in `send`.
 #[allow(clippy::too_many_arguments)]
 fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
@@ -840,9 +840,9 @@ async fn sync(State(state): State<AppState>) -> ApiResult<Json<DocumentSyncRepor
     Ok(Json(report))
 }
 
-/// Sync with the collaborators passed in, so a test drives the route's
+/// Sync with its response source and publisher passed in, so a test drives the route's
 /// orchestration over fakes. Per-document failures ride back in the report; only
-/// a run where every document failed is an error.
+/// a run where every document it reached failed is an error.
 fn sync_with<R: ResponseSource, P: DocumentPublisher>(
     conn: &Connection,
     company: &str,

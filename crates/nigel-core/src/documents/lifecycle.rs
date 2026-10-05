@@ -1,4 +1,4 @@
-//! Revise and withdraw. The change is committed first; closing the response
+//! Revise, withdraw and the republish after any change. The change is committed first; closing the response
 //! manifest and rewriting the published pages follow best-effort, and whatever
 //! could not be reached comes back as warnings.
 use std::path::Path;

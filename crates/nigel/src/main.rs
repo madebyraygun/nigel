@@ -204,13 +204,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
         nigel_core::db::init_db(&conn)?;
     }
 
-    // Reconcile Stripe payments for commands that read or write the books.
-    // `restore` is excluded because it overwrites the database a sync would
-    // write to, `invoice sync` because it does the same work itself, and
-    // `serve` because its database may still be locked (no stdin to prompt on)
-    // and its startup shouldn't block on a network poll. `invoice preview` is
-    // defined to make no network call at all, and a launch sync would make that
-    // false on any machine with a Stripe key configured.
+    // Reconcile Stripe payments and document responses; `cli::launch_sync_allowed`
+    // says which commands skip it and why.
     if cli::launch_sync_allowed(&command) {
         sync_invoice_payments();
         sync_document_responses();

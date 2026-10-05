@@ -1528,8 +1528,8 @@ export interface DocumentSendResult {
 }
 
 /**
- * `error.details` on a document send that stopped. `emailed` names who
- * already has the link, which is what decides whether a retry is safe.
+ * `error.details` on a document send that stopped. `emailed` names who was
+ * mailed a link before it stopped; the rollback closed those links.
  */
 export interface DocumentSendErrorDetails {
   reason?: string;

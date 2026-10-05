@@ -1752,12 +1752,12 @@ or the recipient already answered that version (409), the link is not a
 recipient's or a collaborator tries to accept (403), the version or checksum is
 stale (409), the typed name does not match the signer's, consent is missing or
 the note is unusable (422), or the recipient is over 10 requests a minute (429).
-The typed name matches without regard to case or spacing.
+The typed name matches ignoring case and leading, trailing or repeated spaces.
 
 ### Filing, previewing and sending
 
 ```bash
-nigel document kinds                       # Proposal, Statement of Work, …
+nigel document kinds                       # Proposal, Estimate, Agreement, …
 nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf
 nigel document preview 3                   # Writes the pages and PDF locally; no network, no configuration
 nigel document send 3                      # Confirm, then publish and email
@@ -1768,7 +1768,7 @@ document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`
 and `kinds deactivate <id>` manage them. `list` takes `--client`, `--status` and
 `--kind`, and `show` prints every version, its recipients and every response.
 
-`preview` writes `<data_dir>/previews/document-<id>/` (or `--output-dir`): one
+`preview` writes `<data_dir>/previews/document-<id>/` (or `<output-dir>/document-<id>/`): one
 page per recipient role, filled in with the client's billing contact as a
 stand-in, and the PDF at `v<n>/document.pdf`. It is the page a recipient will
 receive, rendered by the code `send` publishes with.

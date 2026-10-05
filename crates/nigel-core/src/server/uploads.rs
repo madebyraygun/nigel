@@ -44,7 +44,7 @@ impl UploadArea {
     /// For statements, what the importers can read. The extension is not
     /// decoration: Gusto's detector refuses anything not named `.xlsx`, and
     /// calamine picks its reader from the extension, so this is also what the
-    /// stored file must keep.
+    /// stored file must keep. For documents, a PDF only.
     pub fn allowed_extensions(self) -> &'static [&'static str] {
         match self {
             UploadArea::Statement => &["csv", "xlsx", "xls"],

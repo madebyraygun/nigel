@@ -1676,7 +1676,7 @@ its own words instead of parsing ours:
 | `client_archived` | `step` (on send) | Filing, revising or sending a document for an archived client |
 | `duplicate_document` | — | Filing a PDF already filed for that client on a document that is not withdrawn or declined |
 | `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
-| `kind_inactive` | — | Filing or retitling to a document kind that is no longer in use |
+| `kind_inactive` | — | Filing or changing a draft to a kind that is no longer in use |
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
 | `signer_count` | `step` | Sending to anything but exactly one signer |
 | `signer_name_required` | `step` | Sending to a signer with no name to type when accepting |

@@ -516,7 +516,7 @@ export interface ApiClient {
   updateDocument(id: number, input: DocumentPatch): Promise<DocumentDetail>;
   /**
    * Freeze, publish, email and record — in one blocking request. Takes no
-   * `confirm` argument for `sendInvoice`'s reason.
+   * `confirm` argument: reaching this method means the confirmation resolved.
    */
   sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult>;
   /** Add a new draft version from a PDF. Sent as multipart. */
@@ -532,11 +532,11 @@ export interface ApiClient {
   /** Fetch and record the responses signers left online. */
   syncDocuments(): Promise<DocumentSyncResult>;
 
-  /** Where a document's signer page or latest PDF lives, as `invoicePreviewUrl`. */
+  /** Where a document's signer page or latest PDF lives, for an `<iframe>` or a download. */
   documentPreviewUrl(id: number, format: 'html' | 'pdf'): string;
   /** The latest version's PDF, in the form the running client can use. */
   documentPreviewTarget(id: number): ExportTarget;
-  /** The signer's page as HTML, for `invoicePreviewHtml`'s reason. */
+  /** The signer's page as HTML: an iframe cannot report a failed load, bytes can. */
   documentPreviewHtml(id: number): Promise<string>;
 }
 

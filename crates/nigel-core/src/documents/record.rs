@@ -1,7 +1,9 @@
 //! The transitions that write rows: new versions, the frozen recipient set,
 //! sending, manual and online responses, decline, countersign and withdraw.
-//! Every one is refused by the guard table before it writes, and none writes a
-//! status: the status is derived from the rows.
+//! The response, decline, countersign and withdraw writes are refused by the
+//! guard table before they write; the recipient and send writes require the
+//! latest version to be unsent. None writes a status: the status is derived
+//! from the rows.
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -307,7 +309,7 @@ pub enum RecordOutcome {
     AlreadyRecorded,
 }
 
-/// The published form takes responses only while the version is `sent`. A
+/// The published form takes responses only while the document is `sent`. A
 /// change request closes it, so an acceptance that arrives in the same sync
 /// window is refused rather than recorded over the outstanding request; the
 /// manual verbs keep the wider guard table.

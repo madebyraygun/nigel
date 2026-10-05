@@ -716,7 +716,7 @@ struct SendResult {
     warnings: Vec<String>,
 }
 
-/// The refusal a send or sync gets when its settings are not all named.
+/// The refusal a send or sync gets when a setting it needs is not set.
 ///
 /// Key names only — the values never leave the process, and the names are
 /// already public in `docs/invoicing.md`.
@@ -734,10 +734,10 @@ pub(super) fn not_configured(what: &str, step: &str, missing: &[&'static str]) -
     )
 }
 
-/// `build_clients` and `build_document_clients` can refuse a *set but wrong* value — a display name or a
-/// reply-to carrying a line break, which is header injection. That is a
-/// different thing to say than "you have not set a key", so it gets its own
-/// reason word beside `send_not_configured`, at the same step.
+/// `build_clients` and `build_document_clients` can refuse a *set but wrong*
+/// value — a display name or a reply-to carrying a line break, which is header
+/// injection. That is a different thing to say than "you have not set a key",
+/// so it gets its own reason word beside `send_not_configured`, at the same step.
 pub(super) fn misconfigured(err: NigelError, step: &str) -> ApiError {
     match err {
         NigelError::Invalid(message) => ApiError::conflict(

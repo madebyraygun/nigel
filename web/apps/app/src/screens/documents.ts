@@ -80,7 +80,7 @@ function pageLinkLabel(link: RecipientLink): string {
   return `${link.name} (${link.role}) — ${link.email}`;
 }
 
-/** The document a route names, or null when it names none it could fetch. */
+/** The document a route names, or null when it is absent or not a positive integer. */
 function idOf(params: URLSearchParams): number | null {
   const raw = params.get('id');
   if (raw === null || raw.trim() === '') return null;
@@ -101,7 +101,7 @@ function activeStatusFilter(params: URLSearchParams): string {
   return documentListParams(params).status ?? 'all';
 }
 
-/** One line per recorded, refused or warned-about response, as the CLI prints them. */
+/** One line per recorded, refused or warned-about response. */
 function syncReportLines(result: DocumentSyncResult): string[] {
   const lines: string[] = [];
   for (const line of result.lines) {
@@ -251,8 +251,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   @state() private error: string | null = null;
   /**
    * A refused action on data that loaded fine — a duplicate filing, a sync the
-   * settings do not allow. It lands in a notice above the list, never in place
-   * of it.
+   * settings do not allow. It lands in a notice above the list or the
+   * document, never in place of it.
    */
   @state() private actionError: string | null = null;
   @state() private syncReport: string[] | null = null;
