@@ -386,7 +386,7 @@ pub const EXPORT_ROUTES: [&str; 8] = [
 /// — `rules/test` and `imports/preview` are dry runs — and a rule stated as
 /// "the ones that write" invites the next dry run to be left out of a list the
 /// guard still has to cover.
-pub const WRITE_ROUTES: [(&str, &str, &str); 37] = [
+pub const WRITE_ROUTES: [(&str, &str, &str); 43] = [
     ("POST", "/api/clients", r#"{"name":"X"}"#),
     ("PATCH", "/api/clients/1", r#"{"name":"X"}"#),
     ("DELETE", "/api/clients/1", ""),
@@ -461,6 +461,16 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 37] = [
     ("POST", "/api/rules/test", r#"{"pattern":"X"}"#),
     ("PATCH", "/api/documents/1", r#"{"title":"X"}"#),
     ("POST", "/api/documents/1/send", r#"{"confirm":true}"#),
+    ("POST", "/api/documents/1/accept", r#"{"name":"X"}"#),
+    (
+        "POST",
+        "/api/documents/1/request-changes",
+        r#"{"name":"X","note":"X"}"#,
+    ),
+    ("POST", "/api/documents/1/decline", "{}"),
+    ("POST", "/api/documents/1/countersign", r#"{"name":"X"}"#),
+    ("POST", "/api/documents/1/withdraw", "{}"),
+    ("POST", "/api/documents/sync", "{}"),
     ("DELETE", "/api/imports/1", ""),
     // The guard runs before the extractors, so these bodies only have to reach
     // the router — the upload route never gets as far as wanting multipart.

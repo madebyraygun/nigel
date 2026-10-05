@@ -279,8 +279,9 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
             }
         }
     }
-    let received_at = validate_moment(&r.received_at, "response time")
-        .map_err(|e| format!("{name}'s response was not recorded: {e}"))?;
+    let Ok(received_at) = validate_moment(&r.received_at, "response time") else {
+        return refuse("it carries an invalid receivedAt.".into());
+    };
     let ip =
         r.ip.as_deref()
             .and_then(|ip| ip.parse::<std::net::IpAddr>().ok())
@@ -684,6 +685,20 @@ mod tests {
         let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
         let refused = &report.lines[0].refused[0];
         assert!(refused.contains("a different checksum than version 1"));
+        assert!(!refused.contains("pwned") && !refused.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn a_hostile_received_at_is_never_echoed() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        let hostile = "\u{1b}]0;pwned\u{7}not a time";
+        src.put_response(&s.token, 1, &s.signer.token, accept_from(&s, hostile));
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert_eq!((report.recorded, report.lines[0].refused.len()), (0, 1));
+        let refused = &report.lines[0].refused[0];
+        assert!(refused.contains("invalid receivedAt"), "{refused}");
         assert!(!refused.contains("pwned") && !refused.contains('\u{1b}'));
     }
 

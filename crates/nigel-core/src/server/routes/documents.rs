@@ -1,6 +1,6 @@
 //! Documents: the list, one document in full, the active kinds, the sandboxed
 //! preview of the page a signer would receive, filing, editing and revising,
-//! and the send.
+//! the send, the manual responses, withdrawal and the response sync.
 //!
 //! A filed or revised PDF arrives as multipart and goes through the uploads
 //! spool like a statement does: its name is sanitized, its bytes must open with
@@ -17,6 +17,7 @@
 //! emailed; those are the only places a recipient's address appears.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use axum::body::{Body, Bytes};
 use axum::extract::multipart::MultipartRejection;
@@ -30,10 +31,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::documents::guards::{can, ensure_client_active_for_documents, Action};
 use crate::documents::kinds::list_kinds;
-use crate::documents::lifecycle::revise_with_republish;
+use crate::documents::lifecycle::{
+    republish_after_change, revise_with_republish, withdraw_with_teardown,
+};
 use crate::documents::model::{
-    ChangeRequest, Document, DocumentKind, DocumentListRow, DocumentStatus, DocumentVersion,
-    NewRecipient, Recipient, RecipientRole, Signature,
+    validate_moment, ChangeRequest, Document, DocumentKind, DocumentListRow, DocumentStatus,
+    DocumentVersion, NewRecipient, Recipient, RecipientRole, Signature,
+};
+use crate::documents::record::{
+    record_countersign, record_decline, record_manual_accept, record_manual_change_request,
 };
 use crate::documents::render::{
     attachment_name, render_recipient_page, PageContext, PageRecipient, PageState,
@@ -46,6 +52,7 @@ use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
     update_document, DocumentFilter, DocumentUpdate, NewDocument,
 };
+use crate::documents::sync::{sync_documents, DocumentSyncReport};
 use crate::error::NigelError;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
@@ -55,7 +62,7 @@ use crate::invoicing::wiring::{
 };
 use crate::settings::DocumentsConfig;
 
-use super::super::error::{ApiError, ApiResult};
+use super::super::error::{ApiError, ApiErrorCode, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
 use super::super::state::AppState;
 use super::super::uploads::{self, UploadArea};
@@ -71,7 +78,13 @@ pub fn routes() -> Router<AppState> {
             get(list).merge(post(file).layer(upload_limit())),
         )
         .route("/documents/{id}", get(detail).patch(edit))
+        .route("/documents/sync", post(sync))
         .route("/documents/{id}/send", post(send))
+        .route("/documents/{id}/accept", post(accept))
+        .route("/documents/{id}/request-changes", post(request_changes))
+        .route("/documents/{id}/decline", post(decline))
+        .route("/documents/{id}/countersign", post(countersign))
+        .route("/documents/{id}/withdraw", post(withdraw))
         .route("/documents/{id}/revise", post(revise).layer(upload_limit()))
         .route("/documents/{id}/preview", get(preview_html))
         .route("/documents/{id}/preview.pdf", get(preview_pdf))
@@ -628,6 +641,229 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         links: outcome.links,
         config_warnings: Vec::new(),
         warnings: outcome.warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Manual responses and withdrawal
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AcceptRequest {
+    name: String,
+    date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RequestChangesRequest {
+    name: String,
+    note: String,
+    date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeclineRequest {
+    note: Option<String>,
+    date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WithdrawRequest {}
+
+/// The day a response is dated: the one given, validated, or today. Checked
+/// before anything is recorded.
+fn response_date(date: Option<String>) -> ApiResult<String> {
+    let date = date.unwrap_or_else(crate::clock::today);
+    Ok(validate_moment(&date, "date")?)
+}
+
+/// Record a response, then correct the published pages best-effort: the
+/// response stands whatever the republish does, and what could not be
+/// published comes back as `warnings`.
+async fn record_and_republish(
+    state: &AppState,
+    id: i64,
+    record: impl FnOnce(&Connection) -> crate::error::Result<()> + Send + 'static,
+) -> ApiResult<Json<ActionResult>> {
+    let config = crate::settings::documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    let result = with_conn_api(state, move |conn| {
+        record(conn).map_err(|e| not_found_because(e, "document_not_found"))?;
+        let warnings = republish_after_change(
+            conn,
+            id,
+            &company_name(conn),
+            publisher.as_ref(),
+            source.as_ref(),
+        );
+        Ok(ActionResult {
+            document: detail_for(conn, id)?,
+            warnings,
+        })
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+/// `POST /api/documents/{id}/accept` — record an acceptance given outside the
+/// published page.
+async fn accept(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<AcceptRequest>,
+) -> ApiResult<Json<ActionResult>> {
+    let date = response_date(request.date)?;
+    record_and_republish(&state, id, move |conn| {
+        record_manual_accept(conn, id, &request.name, &date)
+    })
+    .await
+}
+
+/// `POST /api/documents/{id}/request-changes` — record a change request given
+/// outside the published page.
+async fn request_changes(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<RequestChangesRequest>,
+) -> ApiResult<Json<ActionResult>> {
+    let date = response_date(request.date)?;
+    record_and_republish(&state, id, move |conn| {
+        record_manual_change_request(conn, id, &request.name, &request.note, &date)
+    })
+    .await
+}
+
+/// `POST /api/documents/{id}/decline` — record that the client declined.
+async fn decline(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<DeclineRequest>,
+) -> ApiResult<Json<ActionResult>> {
+    let date = response_date(request.date)?;
+    record_and_republish(&state, id, move |conn| {
+        record_decline(conn, id, request.note.as_deref(), &date)
+    })
+    .await
+}
+
+/// `POST /api/documents/{id}/countersign` — countersign an accepted document.
+async fn countersign(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<AcceptRequest>,
+) -> ApiResult<Json<ActionResult>> {
+    let date = response_date(request.date)?;
+    record_and_republish(&state, id, move |conn| {
+        record_countersign(conn, id, &request.name, &date)
+    })
+    .await
+}
+
+/// `POST /api/documents/{id}/withdraw` — replace every published page with a
+/// withdrawn notice. The withdrawal stands whatever the teardown does; what it
+/// could not remove comes back as `warnings`.
+async fn withdraw(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(WithdrawRequest {}): ApiJson<WithdrawRequest>,
+) -> ApiResult<Json<ActionResult>> {
+    let today = crate::clock::today();
+    let config = crate::settings::documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    let result = with_conn_api(&state, move |conn| {
+        let warnings = withdraw_with_teardown(
+            conn,
+            id,
+            &today,
+            &company_name(conn),
+            publisher.as_ref(),
+            source.as_ref(),
+        )
+        .map_err(|e| not_found_because(e, "document_not_found"))?;
+        Ok(ActionResult {
+            document: detail_for(conn, id)?,
+            warnings,
+        })
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// Sync
+// ---------------------------------------------------------------------------
+
+/// How long a sync request may spend at R2 in total. Documents the budget did
+/// not reach come back as failures, and a second call picks up where this one
+/// stopped.
+const SYNC_BUDGET: Duration = Duration::from_secs(60);
+
+const SYNC_KEYS: [&str; 4] = [
+    "r2_account_id",
+    "r2_access_key",
+    "r2_secret_key",
+    "r2_private_bucket",
+];
+
+/// The refusal an unconfigured sync gets, naming key names only.
+fn sync_not_configured() -> ApiError {
+    ApiError::conflict(
+        format!(
+            "Document sync is not configured: set {} (in settings.json or the matching NIGEL_ env var)",
+            SYNC_KEYS.join(", ")
+        ),
+        serde_json::json!({
+            "reason": "sync_not_configured",
+            "step": DocumentSendStep::Config.as_str(),
+            "missing": SYNC_KEYS,
+        }),
+    )
+}
+
+/// `POST /api/documents/sync` — fetch the responses signers left online and
+/// record them.
+async fn sync(State(state): State<AppState>) -> ApiResult<Json<DocumentSyncReport>> {
+    let config = crate::settings::documents_config();
+    if !crate::settings::documents_status(&config).sync_configured {
+        return Err(sync_not_configured());
+    }
+    let publisher = optional_document_publisher(&config);
+    let Some(source) = optional_response_source(&config) else {
+        return Err(sync_not_configured());
+    };
+    let report = with_conn_api(&state, move |conn| {
+        sync_with(conn, &company_name(conn), &source, publisher.as_ref())
+    })
+    .await?;
+    Ok(Json(report))
+}
+
+/// Sync with the collaborators passed in, so a test drives the route's
+/// orchestration over fakes. Per-document failures ride back in the report; only
+/// a run where every document failed is an error.
+fn sync_with<R: ResponseSource, P: DocumentPublisher>(
+    conn: &Connection,
+    company: &str,
+    source: &R,
+    publisher: Option<&P>,
+) -> ApiResult<DocumentSyncReport> {
+    sync_documents(
+        conn,
+        company,
+        source,
+        publisher,
+        Some(Instant::now() + SYNC_BUDGET),
+    )
+    .map_err(|err| match err {
+        NigelError::Db(_) => ApiError::from(err),
+        other => ApiError::new(ApiErrorCode::UpstreamFailed, other.to_string())
+            .with_details(serde_json::json!({ "service": "r2" })),
     })
 }
 
@@ -1370,5 +1606,274 @@ mod tests {
         );
         assert_eq!(details["documentStatus"], "draft", "{json}");
         assert_eq!(details["cleanupWarnings"], serde_json::json!([]));
+    }
+    async fn post_ok(
+        app: &axum::Router,
+        token: &str,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let (status, json) = post_json(app, uri, token, &body).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {json}");
+        json
+    }
+
+    #[tokio::test]
+    async fn accept_then_countersign_reaches_executed_and_the_flags_follow() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+
+        let before = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+        assert_eq!(before["canCountersign"], false, "{before}");
+        assert_eq!(before["canAccept"], true, "{before}");
+
+        let accepted = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/accept"),
+            serde_json::json!({ "name": "Pat Example", "date": "2026-10-06" }),
+        )
+        .await;
+        assert_eq!(accepted["status"], "accepted", "{accepted}");
+        assert_eq!(accepted["canCountersign"], true, "{accepted}");
+        assert_eq!(accepted["canAccept"], false, "{accepted}");
+        assert!(accepted["warnings"].is_array(), "{accepted}");
+        let signature = &accepted["versions"][0]["signatures"][0];
+        assert_eq!(signature["method"], "manual", "{accepted}");
+        assert_eq!(signature["signedAt"], "2026-10-06", "{accepted}");
+
+        let executed = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/countersign"),
+            serde_json::json!({ "name": "Sam Example" }),
+        )
+        .await;
+        assert_eq!(executed["status"], "executed", "{executed}");
+        assert_eq!(executed["canCountersign"], false, "{executed}");
+        assert_eq!(executed["canWithdraw"], false, "{executed}");
+    }
+
+    #[tokio::test]
+    async fn decline_from_accepted_is_a_409_document_accepted() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/accept"),
+            serde_json::json!({ "name": "Pat Example" }),
+        )
+        .await;
+
+        let (status, body) = post_json(
+            &app,
+            &format!("/api/documents/{id}/decline"),
+            &token,
+            &serde_json::json!({ "note": "Changed our minds" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_accepted");
+        let detail = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+        assert_eq!(detail["status"], "accepted", "{detail}");
+    }
+
+    #[tokio::test]
+    async fn decline_records_the_note_and_the_status() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let declined = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/decline"),
+            serde_json::json!({ "note": "Budget moved" }),
+        )
+        .await;
+        assert_eq!(declined["status"], "declined", "{declined}");
+        assert_eq!(declined["declineNote"], "Budget moved", "{declined}");
+    }
+
+    #[tokio::test]
+    async fn request_changes_with_an_empty_note_is_a_400() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{id}/request-changes");
+
+        let (status, body) = post_json(
+            &app,
+            &uri,
+            &token,
+            &serde_json::json!({ "name": "Pat Example", "note": "  " }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let changed = post_ok(
+            &app,
+            &token,
+            &uri,
+            serde_json::json!({ "name": "Pat Example", "note": "Fix the dates" }),
+        )
+        .await;
+        assert_eq!(changed["status"], "changes_requested", "{changed}");
+    }
+
+    #[tokio::test]
+    async fn a_bad_date_or_unknown_field_is_a_400_and_records_nothing() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{id}/accept");
+
+        for body in [
+            serde_json::json!({ "name": "Pat Example", "date": "March" }),
+            serde_json::json!({ "name": "Pat Example", "status": "executed" }),
+        ] {
+            let (status, json) = post_json(&app, &uri, &token, &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {json}");
+        }
+        let detail = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+        assert_eq!(detail["status"], "sent", "{detail}");
+    }
+
+    #[tokio::test]
+    async fn withdraw_answers_its_teardown_warnings_as_data() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{id}/withdraw");
+
+        let (status, body) = post_json(&app, &uri, &token, &serde_json::json!({ "x": 1 })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let withdrawn = post_ok(&app, &token, &uri, serde_json::json!({})).await;
+        assert_eq!(withdrawn["status"], "withdrawn", "{withdrawn}");
+        assert_eq!(withdrawn["canWithdraw"], false, "{withdrawn}");
+        assert!(
+            !withdrawn["warnings"]
+                .as_array()
+                .expect("warnings")
+                .is_empty(),
+            "no publisher is configured, so the teardown warns: {withdrawn}"
+        );
+
+        let (status, body) = post_json(&app, &uri, &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_terminal");
+    }
+
+    #[tokio::test]
+    async fn a_manual_verb_on_an_unknown_document_is_a_404() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let (status, body) = post_json(
+            &app,
+            "/api/documents/9999/accept",
+            &token,
+            &serde_json::json!({ "name": "Pat Example" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_not_found");
+    }
+
+    #[tokio::test]
+    async fn sync_with_nothing_configured_is_a_409_naming_the_keys() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) =
+            post_json(&app, "/api/documents/sync", &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{json}");
+        let details = &json["error"]["details"];
+        assert_eq!(details["reason"], "sync_not_configured", "{json}");
+        assert_eq!(
+            details["missing"],
+            serde_json::json!([
+                "r2_account_id",
+                "r2_access_key",
+                "r2_secret_key",
+                "r2_private_bucket"
+            ]),
+            "{json}"
+        );
+    }
+
+    fn sent_with_online_accept(
+        conn: &rusqlite::Connection,
+        dir: &std::path::Path,
+    ) -> (i64, FakeDocumentPublisher, FakeResponseSource) {
+        use crate::documents::store::{get_document, latest_version, recipients};
+        let (id, publisher, source) = sent_document_with_fakes(conn, dir);
+        let doc = get_document(conn, id).unwrap();
+        let version = latest_version(conn, id).unwrap();
+        let signer = recipients(conn, version.id).unwrap().remove(0);
+        source.put_response(
+            &doc.token,
+            1,
+            &signer.token,
+            crate::documents::wire::DocumentResponse {
+                action: crate::documents::wire::ResponseAction::Accept,
+                version: 1,
+                checksum: version.checksum.clone(),
+                recipient_token: signer.token.clone(),
+                typed_name: Some("Pat Example".into()),
+                consent: Some(true),
+                note: None,
+                received_at: "2026-10-05T17:04:11Z".into(),
+                ip: None,
+                user_agent: None,
+            },
+        );
+        (id, publisher, source)
+    }
+
+    #[test]
+    fn sync_with_records_an_online_accept() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let (id, publisher, source) = sent_with_online_accept(&conn, db_path.parent().unwrap());
+
+        let report = super::sync_with(&conn, "Initech", &source, Some(&publisher)).expect("syncs");
+        assert_eq!((report.documents_checked, report.recorded), (1, 1));
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["lines"][0]["documentId"], id, "{json}");
+        assert_eq!(json["lines"][0]["status"], "accepted", "{json}");
+        assert_eq!(json["failures"], serde_json::json!([]), "{json}");
+    }
+
+    #[tokio::test]
+    async fn a_sync_where_every_document_failed_is_a_502_naming_r2() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let (_, publisher, mut source) = sent_with_online_accept(&conn, db_path.parent().unwrap());
+        source.fail_fetch = true;
+
+        let err = super::sync_with(&conn, "Initech", &source, Some(&publisher))
+            .expect_err("the only document fails");
+        let (status, json) = {
+            use axum::response::IntoResponse;
+            let response = err.into_response();
+            let status = response.status();
+            (status, json_body(response).await)
+        };
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{json}");
+        assert_eq!(json["error"]["code"], "upstream_failed", "{json}");
+        assert_eq!(json["error"]["details"]["service"], "r2", "{json}");
     }
 }
