@@ -201,6 +201,16 @@ export {
   type TimelineRecipient,
   type TimelineVersion,
 } from './wc-document-timeline.js';
+export {
+  WcRecipientEditor,
+  defaultRecipients,
+  validateRecipients,
+  type NcRecipientsChangeDetail,
+  type RecipientContactOption,
+  type RecipientEditorValue,
+  type RecipientErrors,
+  type RecipientValue,
+} from './wc-recipient-editor.js';
 export { WcInvoiceSummary } from './wc-invoice-summary.js';
 export {
   WcPaymentList,
