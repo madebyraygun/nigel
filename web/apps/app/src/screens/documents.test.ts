@@ -544,6 +544,23 @@ describe('nigel-documents-screen', () => {
     expect(sent?.pageLinks[0].label).toContain('Pat Example');
   });
 
+  it('a send whose reload failed still shows its links and the warning, never a failure', async () => {
+    const fake = withDetail(documentDetail());
+    fake.clientContacts[1] = CEDAR_CONTACTS;
+    fake.sendDocumentReloadFails = true;
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-action="send"]').click();
+    await settle(el);
+    sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+    await settle(el);
+
+    const sent = sendDialog(el);
+    expect(sent?.phase).toBe('sent');
+    expect(sent?.pageLinks).toHaveLength(1);
+    expect(sent?.configWarnings.some((w) => w.includes('refresh to see it'))).toBe(true);
+  });
+
   it('a send failure after an email went out offers no retry', async () => {
     const fake = withDetail(documentDetail());
     fake.sendDocumentError = new ApiError({

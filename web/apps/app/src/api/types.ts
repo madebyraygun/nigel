@@ -1520,7 +1520,8 @@ export interface RecipientLink {
 }
 
 export interface DocumentSendResult {
-  document: DocumentDetail;
+  /** `null` when the reload after the committed send failed; `warnings` says so. */
+  document: DocumentDetail | null;
   steps: { step: DocumentSendStep; outcome: SendStepOutcome }[];
   links: RecipientLink[];
   configWarnings: string[];
@@ -1566,11 +1567,13 @@ export interface CountersignRequest {
 
 /**
  * A document after an action whose republish is best-effort: the action
- * stood, and `warnings` says what could not be published.
+ * stood, and `warnings` says what could not be published. The document's
+ * fields are absent when the reload after the action failed, which
+ * `warnings` then says.
  */
-export interface DocumentActionResult extends DocumentDetail {
+export type DocumentActionResult = Partial<DocumentDetail> & {
   warnings: string[];
-}
+};
 
 export interface DocumentSyncLine {
   documentId: number;

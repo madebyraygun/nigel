@@ -1394,7 +1394,10 @@ A completed send answers:
 
 `links` is each recipient's page **as it was emailed**. `configWarnings` carries
 configuration the send went ahead with, such as a From address off the Mailgun
-domain. Both arrays are always present.
+domain. Both arrays are always present. A send that committed is never an
+error: if reloading the document afterwards fails, `document` is `null` and
+`warnings` says to refresh, so the links are not lost and nothing invites a
+second send.
 
 A failure says where it stopped. `config` is the caller's step, before anything
 is built; the other seven are the steps above, in order. The step decides the
@@ -1469,7 +1472,8 @@ recorded, and only then are the published pages corrected — an accepted page, 
 changes-requested page, a withdrawn notice — and the manifest closed where the
 document can no longer take responses. Nothing afterwards can undo the record: a
 failure is a `200` carrying a correct document plus a sentence in `warnings`
-naming what a person still has to do. These routes **may make network calls**
+naming what a person still has to do. If reloading the document after the
+commit fails, the `200` carries only `warnings`, one of which says to refresh. These routes **may make network calls**
 and hold the database while they do, each bounded by the 30s call timeout.
 
 #### Syncing responses

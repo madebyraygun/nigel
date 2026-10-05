@@ -413,10 +413,13 @@ fn record_then_republish(
     let date = validate_moment(date, "date")?;
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     record(&conn, &date)?;
-    println!(
-        "Recorded: document #{id} is {}.",
-        get_document(&conn, id)?.status.as_str()
-    );
+    match get_document(&conn, id) {
+        Ok(document) => println!("Recorded: document #{id} is {}.", document.status.as_str()),
+        Err(e) => {
+            println!("Recorded: document #{id}.");
+            eprintln!("Warning: could not reload the document ({e}).");
+        }
+    }
     let config = documents_config();
     let publisher = optional_document_publisher(&config);
     let source = optional_response_source(&config);

@@ -843,7 +843,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       this.sendWarnings = [...result.configWarnings, ...result.warnings];
       this.sendLinks = result.links;
       this.sendPhase = 'sent';
-      if (this.detail?.id === detail.id) this.detail = result.document;
+      if (result.document && this.detail?.id === detail.id) this.detail = result.document;
     } catch (error) {
       this.sendSteps = documentSendStepViews({ running: false, error });
       this.sendFailure = documentSendFailureMessage(error, detail.title);

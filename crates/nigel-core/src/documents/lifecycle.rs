@@ -41,9 +41,10 @@ pub fn revise_with_republish<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Result<ReviseOutcome> {
-    let version = add_version(conn, data_dir, id, pdf, today)?;
     let document = get_document(conn, id)?;
-    let warnings = match latest_sent(conn, id)? {
+    let sent = latest_sent(conn, id)?;
+    let version = add_version(conn, data_dir, id, pdf, today)?;
+    let warnings = match sent {
         Some(sent) => close_and_republish(
             conn,
             &document,
@@ -66,12 +67,12 @@ pub fn withdraw_with_teardown<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Result<Vec<String>> {
-    record_withdrawal(conn, id, today)?;
     let document = get_document(conn, id)?;
     let sent: Vec<DocumentVersion> = versions(conn, id)?
         .into_iter()
         .filter(|v| v.sent_at.is_some())
         .collect();
+    record_withdrawal(conn, id, today)?;
     let newest = sent.len().saturating_sub(1);
     let mut warnings = Vec::new();
     for (i, version) in sent.iter().enumerate() {

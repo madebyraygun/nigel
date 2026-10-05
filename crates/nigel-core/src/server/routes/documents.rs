@@ -120,9 +120,18 @@ struct DocumentDetail {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ActionResult {
+    /// Absent when the reload after the committed write failed; `warnings`
+    /// then says so.
     #[serde(flatten)]
-    document: DocumentDetail,
+    document: Option<DocumentDetail>,
     warnings: Vec<String>,
+}
+
+impl ActionResult {
+    fn after_commit(conn: &Connection, id: i64, mut warnings: Vec<String>) -> Self {
+        let document = detail_after_commit(conn, id, &mut warnings);
+        ActionResult { document, warnings }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +169,26 @@ fn documents_base() -> Option<String> {
     )?;
     crate::invoicing::r2::validate_public_base_url(&base).ok()?;
     Some(base)
+}
+
+/// The detail after a write has committed. The write stands whatever the
+/// reload does, so a failed reload is a warning and never an error: an error
+/// would invite a retry of something already done.
+fn detail_after_commit(
+    conn: &Connection,
+    id: i64,
+    warnings: &mut Vec<String>,
+) -> Option<DocumentDetail> {
+    match detail_for(conn, id) {
+        Ok(detail) => Some(detail),
+        Err(e) => {
+            warnings.push(format!(
+                "Warning: that went through, but Nigel could not reload the document ({}); refresh to see it.",
+                e.message()
+            ));
+            None
+        }
+    }
 }
 
 fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
@@ -450,10 +479,7 @@ async fn revise(
                     source.as_ref(),
                 )
                 .map_err(|e| not_found_because(e, "document_not_found"))?;
-                Ok(ActionResult {
-                    document: detail_for(conn, id)?,
-                    warnings: outcome.warnings,
-                })
+                Ok(ActionResult::after_commit(conn, id, outcome.warnings))
             })
         }
     })
@@ -503,7 +529,9 @@ struct SendStepResult {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SendResult {
-    document: DocumentDetail,
+    /// `null` when the reload after the committed send failed; `warnings` then
+    /// says so, and the send still stands.
+    document: Option<DocumentDetail>,
     steps: Vec<SendStepResult>,
     links: Vec<RecipientLink>,
     config_warnings: Vec<String>,
@@ -625,10 +653,10 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         response_url,
         today,
     };
-    let outcome = send_document_traced(conn, id, &recipients, &ctx, publisher, mailer, source)?;
+    let mut outcome = send_document_traced(conn, id, &recipients, &ctx, publisher, mailer, source)?;
 
     Ok(SendResult {
-        document: detail_for(conn, id)?,
+        document: detail_after_commit(conn, id, &mut outcome.warnings),
         steps: outcome
             .steps
             .into_iter()
@@ -697,10 +725,7 @@ async fn record_and_republish(
             publisher.as_ref(),
             source.as_ref(),
         );
-        Ok(ActionResult {
-            document: detail_for(conn, id)?,
-            warnings,
-        })
+        Ok(ActionResult::after_commit(conn, id, warnings))
     })
     .await?;
     Ok(Json(result))
@@ -782,10 +807,7 @@ async fn withdraw(
             source.as_ref(),
         )
         .map_err(|e| not_found_because(e, "document_not_found"))?;
-        Ok(ActionResult {
-            document: detail_for(conn, id)?,
-            warnings,
-        })
+        Ok(ActionResult::after_commit(conn, id, warnings))
     })
     .await?;
     Ok(Json(result))
@@ -1585,6 +1607,67 @@ mod tests {
         assert_eq!(json["configWarnings"], serde_json::json!([]));
         assert_eq!(json["warnings"], serde_json::json!([]));
         assert_eq!(mailer.sent.borrow().len(), 2);
+    }
+
+    /// Mails through a `FakeMailer`, and on the last expected message breaks a
+    /// table the detail reads but the record step does not, so the send
+    /// commits and only the reload after it fails.
+    struct BreakAfterMailer {
+        inner: FakeMailer,
+        db: rusqlite::Connection,
+        break_on: usize,
+    }
+
+    impl crate::invoicing::gateway::Mailer for BreakAfterMailer {
+        fn send(
+            &self,
+            mail: &crate::invoicing::gateway::OutgoingMail<'_>,
+        ) -> crate::error::Result<()> {
+            self.inner.send(mail)?;
+            if self.inner.sent.borrow().len() == self.break_on {
+                self.db
+                    .execute_batch("ALTER TABLE document_change_requests RENAME TO gone")?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_send_whose_reload_fails_still_answers_its_links_with_a_warning() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let mailer = BreakAfterMailer {
+            inner: FakeMailer::default(),
+            db: crate::db::open_connection(&db_path, None).unwrap(),
+            break_on: 2,
+        };
+
+        let result = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            send_request(&[("Sam Example", "sam@acme.test")]),
+            "Initech",
+            None,
+            "2026-10-05",
+            &FakeDocumentPublisher::default(),
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .expect("the send committed, so it answers success");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        assert_eq!(json["document"], serde_json::Value::Null, "{json}");
+        assert_eq!(json["links"].as_array().unwrap().len(), 2, "{json}");
+        let warnings = json["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("refresh to see it")),
+            "{json}"
+        );
+        assert_eq!(mailer.inner.sent.borrow().len(), 2);
     }
 
     #[tokio::test]

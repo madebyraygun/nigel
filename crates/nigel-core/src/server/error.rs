@@ -159,6 +159,10 @@ impl ApiError {
         self.code
     }
 
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     /// Tag a refusal raised outside the orchestration with the step it belongs
     /// to, so every answer a send can give carries `details.step`.
     pub(crate) fn at_step(self, step: SendStep) -> Self {

@@ -1610,6 +1610,8 @@ export class FakeApiClient implements ApiClient {
   createDocumentError: Error | null = null;
   updateDocumentError: Error | null = null;
   sendDocumentError: Error | null = null;
+  /** The send commits, but the server's reload of the document fails. */
+  sendDocumentReloadFails = false;
   reviseDocumentError: Error | null = null;
   acceptDocumentError: Error | null = null;
   requestDocumentChangesError: Error | null = null;
@@ -1720,8 +1722,10 @@ export class FakeApiClient implements ApiClient {
       })),
     );
     const sent = document.versions[document.versions.length - 1];
+    const reloadWarning =
+      'Warning: that went through, but Nigel could not reload the document (Database error: database is locked); refresh to see it.';
     return {
-      document,
+      document: this.sendDocumentReloadFails ? null : document,
       steps: DOCUMENT_SEND_STEPS.map((step) => ({ step, outcome: 'ok' as const })),
       links: sent.recipients.map((recipient) => ({
         role: recipient.role,
@@ -1730,7 +1734,9 @@ export class FakeApiClient implements ApiClient {
         url: recipient.pageUrl ?? '',
       })),
       configWarnings: this.documentSendConfigWarnings,
-      warnings: this.documentWarnings,
+      warnings: this.sendDocumentReloadFails
+        ? [...this.documentWarnings, reloadWarning]
+        : this.documentWarnings,
     };
   }
 
