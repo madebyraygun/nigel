@@ -83,6 +83,15 @@ describe('invoicingGuardrailMessage', () => {
     );
   });
 
+  it('counts the documents blocking a client delete, and pluralizes', () => {
+    expect(
+      invoicingGuardrailMessage(conflict('has_documents', { count: 2 }), 'client'),
+    ).toBe('This client has 2 documents. Nigel will not delete a client that has documents filed.');
+    expect(
+      invoicingGuardrailMessage(conflict('has_documents', { count: 1 }), 'client'),
+    ).toContain('This client has 1 document.');
+  });
+
   it('names the duplicate client', () => {
     expect(
       invoicingGuardrailMessage(conflict('duplicate_name', { name: 'Acme Co' }), 'client'),
