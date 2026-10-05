@@ -257,6 +257,12 @@ fn dispatch(command: Commands) -> error::Result<()> {
             DocumentCommands::Preview { id, output_dir } => {
                 cli::document::preview(id, output_dir.as_deref())
             }
+            DocumentCommands::Send {
+                id,
+                signer,
+                collaborators,
+                yes,
+            } => cli::document::send(id, signer.as_deref(), &collaborators, yes, &cli::today()),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

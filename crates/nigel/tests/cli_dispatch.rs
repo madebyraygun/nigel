@@ -4694,3 +4694,38 @@ fn document_preview_writes_files_without_any_configuration() {
         .join("previews/document-1/collaborator/index.html")
         .exists());
 }
+
+#[test]
+fn document_send_without_yes_on_a_pipe_refuses_and_sends_nothing() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "send", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Pass --yes"));
+    let sent: Option<String> = env
+        .db()
+        .query_row(
+            "SELECT sent_at FROM document_versions WHERE document_id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(sent.is_none());
+}
+
+#[test]
+fn document_send_with_nothing_configured_names_every_missing_key() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "send", "1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Sending documents is not configured: missing")
+                .and(predicate::str::contains("mailgun_api_key"))
+                .and(predicate::str::contains("r2_private_bucket")),
+        );
+}

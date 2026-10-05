@@ -625,6 +625,19 @@ pub enum DocumentCommands {
         #[arg(long)]
         output_dir: Option<String>,
     },
+    /// Publish a document and email the signer and any collaborators their own links.
+    Send {
+        id: i64,
+        /// "Name <email>" (default: the client's billing contact)
+        #[arg(long)]
+        signer: Option<String>,
+        /// "Name <email>", repeatable
+        #[arg(long = "collaborator")]
+        collaborators: Vec<String>,
+        /// Send without confirmation (required when stdin is not a TTY)
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]

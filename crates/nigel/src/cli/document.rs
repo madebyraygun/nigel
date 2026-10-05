@@ -3,21 +3,28 @@ use std::path::Path;
 use comfy_table::{Cell, Table};
 
 use nigel_core::db::get_connection;
+use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
 use nigel_core::documents::model::{
-    DocumentKind, DocumentListRow, DocumentRecord, DocumentStatus, Method, SignatureRole,
+    parse_recipient, DocumentKind, DocumentListRow, DocumentRecord, DocumentStatus, Method,
+    NewRecipient, RecipientRole, SignatureRole,
 };
-use nigel_core::documents::send::write_preview;
+use nigel_core::documents::send::{
+    default_signer, send_document_traced, write_preview, DocumentSendFailure, SendContext,
+};
 use nigel_core::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, DocumentFilter,
     NewDocument,
 };
 use nigel_core::error::{NigelError, Result};
-use nigel_core::invoicing::clients::ensure_client_exists;
-use nigel_core::invoicing::wiring::company_name;
-use nigel_core::settings::{documents_config, get_data_dir};
+use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
+use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
+use nigel_core::invoicing::wiring::{build_document_clients, company_name};
+use nigel_core::settings::{documents_config, documents_status, get_data_dir};
+use rusqlite::Connection;
 
-use crate::cli::DocumentKindsCommands;
+use crate::cli::invoice::publish_host;
+use crate::cli::{confirm_or_refuse, DocumentKindsCommands};
 
 pub fn add(client: i64, kind: &str, title: &str, file: &Path, today: &str) -> Result<()> {
     let pdf = std::fs::read(file)
@@ -114,6 +121,187 @@ pub fn preview(id: i64, output_dir: Option<&str>) -> Result<()> {
     }
     println!("{}", files.pdf.display());
     Ok(())
+}
+
+pub(crate) fn resolve_recipients(
+    conn: &Connection,
+    client_id: i64,
+    signer: Option<&str>,
+    collaborators: &[String],
+) -> Result<Vec<NewRecipient>> {
+    let signer = match signer {
+        Some(raw) => parse_recipient(raw, RecipientRole::Signer)?,
+        None => default_signer(conn, client_id)?,
+    };
+    let mut recipients = vec![signer];
+    for raw in collaborators {
+        recipients.push(parse_recipient(raw, RecipientRole::Collaborator)?);
+    }
+    Ok(recipients)
+}
+
+pub fn format_send_summary(
+    title: &str,
+    client: &str,
+    version: i64,
+    recipients: &[NewRecipient],
+    publish_host: Option<&str>,
+    response_form: bool,
+) -> String {
+    let mut out = format!("Document: {title} ({client}), version {version}\nRecipients:\n");
+    for r in recipients {
+        out.push_str(&format!(
+            "  {} <{}> ({})\n",
+            r.name,
+            r.email,
+            r.role.as_str()
+        ));
+    }
+    let host = match publish_host {
+        Some(host) => format!("publishes each recipient's page and the PDF to {host}"),
+        None => "publishes each recipient's page and the PDF".to_string(),
+    };
+    let response = if response_form {
+        "Recipients can accept or request changes on their page."
+    } else {
+        "There is no response form configured, so recipients can only read it."
+    };
+    out.push_str(&format!(
+        "Sending {host} and emails each their own link. {response} This cannot be undone."
+    ));
+    out
+}
+
+pub(crate) fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
+    conn: &Connection,
+    id: i64,
+    recipients: &[NewRecipient],
+    ctx: &SendContext<'_>,
+    publisher: &P,
+    mailer: &M,
+    source: &R,
+) -> Result<String> {
+    let outcome = match send_document_traced(conn, id, recipients, ctx, publisher, mailer, source) {
+        Ok(outcome) => outcome,
+        Err(failure) => {
+            eprintln!("{}", format_send_failure(&failure));
+            return Err(failure.source);
+        }
+    };
+    let mut out = format!("Sent document #{id} v{}:\n", outcome.version);
+    for link in &outcome.links {
+        out.push_str(&format!(
+            "  {:<12}  {} <{}>  {}\n",
+            link.role.as_str(),
+            link.name,
+            link.email,
+            link.url
+        ));
+    }
+    for warning in &outcome.warnings {
+        out.push_str(&format!("notice: {warning}\n"));
+    }
+    Ok(out.trim_end().to_string())
+}
+
+pub fn format_send_failure(failure: &DocumentSendFailure) -> String {
+    let mut out = format!(
+        "Sending the document failed at the {} step; the version is unsent.",
+        failure.step.as_str()
+    );
+    if !failure.emailed.is_empty() {
+        out.push_str(&format!(
+            "\nAlready emailed: {}. Their links are no longer live; tell them to disregard that email.",
+            failure.emailed.join(", ")
+        ));
+    }
+    for warning in &failure.cleanup_warnings {
+        out.push('\n');
+        out.push_str(warning);
+    }
+    out
+}
+
+pub fn send(
+    id: i64,
+    signer: Option<&str>,
+    collaborators: &[String],
+    yes: bool,
+    today: &str,
+) -> Result<()> {
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let document = get_document(&conn, id)?;
+    ensure_allowed(id, document.status, Action::Send)?;
+    ensure_client_active_for_documents(&conn, document.client_id)?;
+    let version = latest_version(&conn, id)?;
+    let client = get_client(&conn, document.client_id)?;
+    let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
+
+    let config = documents_config();
+    if !yes {
+        confirm_unless_piped(id)?;
+        let host = config
+            .invoicing
+            .public_base_url
+            .as_deref()
+            .and_then(publish_host);
+        println!(
+            "{}",
+            format_send_summary(
+                &document.title,
+                &client.name,
+                version.number,
+                &recipients,
+                host.as_deref(),
+                config.document_response_url.is_some(),
+            )
+        );
+        if !confirm_or_refuse("Send it? [y/N]", "", false)? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let status = documents_status(&config);
+    if !status.missing.is_empty() {
+        return Err(NigelError::Invalid(format!(
+            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
+            status.missing.join(", ")
+        )));
+    }
+    let company = company_name(&conn);
+    let clients = build_document_clients(config, &company)?;
+    for warning in clients.warnings() {
+        eprintln!("notice: {warning}");
+    }
+    let ctx = SendContext {
+        data_dir: &data_dir,
+        company: &company,
+        response_url: clients.response_url(),
+        today,
+    };
+    let out = send_with(
+        &conn,
+        id,
+        &recipients,
+        &ctx,
+        clients.publisher(),
+        clients.mail(),
+        clients.source(),
+    )?;
+    println!("{out}");
+    Ok(())
+}
+
+fn confirm_unless_piped(id: i64) -> Result<()> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    Err(NigelError::Other(format!(
+        "Refusing to send document #{id} without confirmation. Pass --yes."
+    )))
 }
 
 fn parse_status(value: &str) -> Result<DocumentStatus> {
@@ -234,9 +422,107 @@ pub fn format_document_show(record: &DocumentRecord) -> String {
 mod tests {
     use super::*;
     use nigel_core::documents::model::{
-        ChangeRequest, Document, DocumentVersion, Method, Recipient, RecipientRole, Signature,
-        SignatureRole, VersionRecord,
+        ChangeRequest, Document, DocumentVersion, Method, Recipient, Signature, VersionRecord,
     };
+    use nigel_core::documents::send::DocumentSendStep;
+    use nigel_core::documents::testing::{
+        pat, sam, seed_client, seed_document, test_conn, FakeDocumentPublisher, FakeMailer,
+        FakeResponseSource,
+    };
+
+    #[test]
+    fn send_with_prints_each_recipients_link() {
+        let _config = nigel_core::settings::TempConfigDir::new();
+        let (dir, conn) = test_conn();
+        let id = seed_document(
+            &conn,
+            dir.path(),
+            seed_client(&conn, "Cedar Systems"),
+            "Website rebuild",
+        );
+        let ctx = SendContext {
+            data_dir: dir.path(),
+            company: "Initech",
+            response_url: None,
+            today: "2026-10-05",
+        };
+        let (p, m, s) = (
+            FakeDocumentPublisher::default(),
+            FakeMailer::default(),
+            FakeResponseSource::default(),
+        );
+        let out = send_with(&conn, id, &[pat(), sam()], &ctx, &p, &m, &s).unwrap();
+        assert!(out.starts_with("Sent document #1 v1:"));
+        assert_eq!(out.matches("/index.html").count(), 2);
+        assert!(out.contains("signer") && out.contains("collaborator"));
+    }
+
+    #[test]
+    fn recipients_default_to_the_billing_contact_and_take_collaborators() {
+        let (_dir, conn) = test_conn();
+        let client = seed_client(&conn, "Cedar Systems");
+        assert_eq!(
+            resolve_recipients(
+                &conn,
+                client,
+                None,
+                &["Sam Example <sam@cedar.test>".into()]
+            )
+            .unwrap(),
+            vec![pat(), sam()]
+        );
+        let lee =
+            resolve_recipients(&conn, client, Some("Lee Example <lee@cedar.test>"), &[]).unwrap();
+        assert_eq!(
+            (lee.len(), lee[0].name.as_str(), lee[0].role),
+            (1, "Lee Example", RecipientRole::Signer)
+        );
+    }
+
+    #[test]
+    fn the_summary_says_what_sending_will_do() {
+        let out = format_send_summary(
+            "Website rebuild",
+            "Cedar Systems",
+            1,
+            &[pat(), sam()],
+            Some("docs.example.test"),
+            false,
+        );
+        assert!(out.contains("Pat Example <pat@cedar.test> (signer)"));
+        assert!(out.contains("docs.example.test"));
+        assert!(out.contains("no response form"));
+    }
+
+    #[test]
+    fn a_failure_after_emailing_names_who_was_emailed_and_that_their_links_are_dead() {
+        let failure = DocumentSendFailure {
+            step: DocumentSendStep::Record,
+            completed: vec![],
+            emailed: vec!["pat@cedar.test".into(), "sam@cedar.test".into()],
+            document_status: None,
+            cleanup_warnings: vec!["Warning: manifest not closed.".into()],
+            source: NigelError::Other("disk full".into()),
+        };
+        let out = format_send_failure(&failure);
+        assert!(out.contains("record step"));
+        assert!(out.contains("pat@cedar.test, sam@cedar.test"));
+        assert!(out.contains("no longer live"));
+        assert!(out.contains("Warning: manifest not closed."));
+    }
+
+    #[test]
+    fn a_failure_before_any_email_does_not_mention_emails() {
+        let failure = DocumentSendFailure {
+            step: DocumentSendStep::Publish,
+            completed: vec![],
+            emailed: vec![],
+            document_status: None,
+            cleanup_warnings: vec![],
+            source: NigelError::Other("boom".into()),
+        };
+        assert!(!format_send_failure(&failure).contains("emailed"));
+    }
 
     #[test]
     fn the_kind_list_marks_inactive_rows() {
