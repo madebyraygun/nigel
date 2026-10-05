@@ -1502,7 +1502,8 @@ whose status changed has its pages republished, with what could not be reaching
 the line's `warnings`.
 
 Per-document failures are data, not an error. Only a run where every document
-it reached failed answers with an error: `502 upstream_failed`,
+it reached failed answers with an error: `500` when any of those failures was
+local (a database error, say), otherwise `502 upstream_failed`,
 `service: "r2"`. With any of the four keys unset it is `409`
 `sync_not_configured`, `details.missing` naming them, `details.step` `config`.
 

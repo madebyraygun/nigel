@@ -57,6 +57,8 @@ fn reached_deadline(deadline: Option<Instant>) -> bool {
 /// Checks every `sent` or `changes_requested` document, oldest change first.
 /// A document whose responses could not be fetched is a failure and the run
 /// moves on; the run is an error only when every document it reached failed.
+/// That error is the first local one (a database error, say) when there was
+/// one, and otherwise an `Other` summing up the R2 failures.
 pub fn sync_documents<R: ResponseSource, P: DocumentPublisher>(
     conn: &Connection,
     company: &str,
@@ -77,6 +79,7 @@ pub fn sync_documents<R: ResponseSource, P: DocumentPublisher>(
 
     let mut report = DocumentSyncReport::default();
     let mut reached_failures = 0;
+    let mut local_error = None;
     for (index, row) in open.iter().enumerate() {
         if reached_deadline(deadline) {
             report
@@ -99,11 +102,17 @@ pub fn sync_documents<R: ResponseSource, P: DocumentPublisher>(
                     document_id: row.id,
                     message: e.to_string(),
                 });
+                if !matches!(e, NigelError::Other(_)) && local_error.is_none() {
+                    local_error = Some(e);
+                }
             }
         }
     }
 
     if report.documents_checked > 0 && reached_failures == report.documents_checked {
+        if let Some(e) = local_error {
+            return Err(e);
+        }
         let detail = report
             .failures
             .iter()
@@ -820,6 +829,16 @@ mod tests {
             ..Default::default()
         };
         assert!(sync_documents(&conn, "Initech", &failing, Some(&p), None).is_err());
+    }
+
+    #[test]
+    fn every_document_failing_on_the_database_keeps_the_database_error() {
+        let (dir, conn) = test_conn();
+        let (_, p, s) = sent_document_with_fakes(&conn, dir.path());
+        conn.execute_batch("ALTER TABLE document_recipients RENAME TO gone")
+            .unwrap();
+        let err = sync_documents(&conn, "Initech", &s, Some(&p), None).unwrap_err();
+        assert!(matches!(err, NigelError::Db(_)), "{err:?}");
     }
 
     #[test]

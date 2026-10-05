@@ -857,9 +857,9 @@ fn sync_with<R: ResponseSource, P: DocumentPublisher>(
         Some(Instant::now() + SYNC_BUDGET),
     )
     .map_err(|err| match err {
-        NigelError::Db(_) => ApiError::from(err),
-        other => ApiError::new(ApiErrorCode::UpstreamFailed, other.to_string())
+        NigelError::Other(message) => ApiError::new(ApiErrorCode::UpstreamFailed, message)
             .with_details(serde_json::json!({ "service": "r2" })),
+        local => ApiError::from(local),
     })
 }
 
@@ -1955,6 +1955,28 @@ mod tests {
         assert_eq!(json["lines"][0]["documentId"], id, "{json}");
         assert_eq!(json["lines"][0]["status"], "accepted", "{json}");
         assert_eq!(json["failures"], serde_json::json!([]), "{json}");
+    }
+
+    #[tokio::test]
+    async fn a_sync_where_every_document_failed_on_the_database_is_a_500() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let (_, publisher, source) = sent_with_online_accept(&conn, db_path.parent().unwrap());
+        conn.execute_batch("ALTER TABLE document_recipients RENAME TO gone")
+            .unwrap();
+
+        let err = super::sync_with(&conn, "Initech", &source, Some(&publisher))
+            .expect_err("the only document fails");
+        let (status, json) = {
+            use axum::response::IntoResponse;
+            let response = err.into_response();
+            let status = response.status();
+            (status, json_body(response).await)
+        };
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{json}");
+        assert_eq!(json["error"]["code"], "internal", "{json}");
+        assert!(json["error"]["details"].get("service").is_none(), "{json}");
     }
 
     #[tokio::test]
