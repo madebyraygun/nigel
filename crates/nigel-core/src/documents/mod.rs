@@ -6,5 +6,6 @@ pub mod guards;
 pub mod kinds;
 pub mod model;
 pub mod status;
+pub mod store;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
