@@ -86,7 +86,10 @@ pub async fn pick_import_file(app: tauri::AppHandle) -> Result<Option<StagedUplo
     let Some(picked) = app
         .dialog()
         .file()
-        .add_filter("Statements", uploads::UploadArea::Statement.allowed_extensions())
+        .add_filter(
+            "Statements",
+            uploads::UploadArea::Statement.allowed_extensions(),
+        )
         .blocking_pick_file()
     else {
         return Ok(None);
