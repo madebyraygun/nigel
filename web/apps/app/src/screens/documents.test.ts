@@ -1,7 +1,13 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import './documents.js';
 import type { NigelDocumentsScreen } from './documents.js';
-import type { WcDocumentTable, WcDropzone } from '@nigel/ui';
+import type {
+  WcDocumentTable,
+  WcDocumentTimeline,
+  WcDropzone,
+  WcRecipientEditor,
+  WcSendDialog,
+} from '@nigel/ui';
 
 import { ApiError } from '../api/index.js';
 import {
@@ -10,7 +16,12 @@ import {
   FakeApiClient,
 } from '../__mocks__/fake-api-client.js';
 import { initializeAppStore, resetAppStore } from '../state/app-store.js';
-import type { Client, DocumentDetail, DocumentListRow } from '../api/types.js';
+import type {
+  Client,
+  ClientContact,
+  DocumentDetail,
+  DocumentListRow,
+} from '../api/types.js';
 import type { ScreenId } from './registry.js';
 
 const CEDAR: Client = {
@@ -39,6 +50,27 @@ const HARBOR: Client = {
   notes: null,
   archivedAt: '2026-09-01',
 };
+
+const CEDAR_CONTACTS: ClientContact[] = [
+  {
+    id: 1,
+    clientId: 1,
+    name: 'Pat Example',
+    email: 'pat@cedar.test',
+    title: null,
+    isBilling: true,
+    position: 0,
+  },
+  {
+    id: 2,
+    clientId: 1,
+    name: 'Sam Example',
+    email: 'sam@cedar.test',
+    title: null,
+    isBilling: false,
+    position: 1,
+  },
+];
 
 const ROWS: DocumentListRow[] = [
   {
@@ -113,6 +145,59 @@ function pick(control: Element, value: string): void {
   control.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 }
 
+async function answerConfirm(answer: boolean): Promise<void> {
+  const ui = await import('@nigel/ui');
+  vi.spyOn(ui, 'confirmDialog').mockResolvedValue(answer);
+}
+
+function documentDetail(overrides: Partial<DocumentDetail> = {}): DocumentDetail {
+  return {
+    id: 12,
+    clientId: 1,
+    kindId: 1,
+    kind: 'Proposal',
+    title: 'Website redesign proposal',
+    declinedAt: null,
+    declineNote: null,
+    withdrawnAt: null,
+    createdAt: '2026-09-28',
+    updatedAt: '2026-10-01',
+    status: 'draft',
+    clientName: 'Cedar Systems',
+    versions: [
+      {
+        id: 40,
+        documentId: 12,
+        number: 1,
+        checksum: `sha256:${'a'.repeat(64)}`,
+        sentAt: null,
+        createdAt: '2026-09-28',
+        recipients: [],
+        signatures: [],
+        changeRequests: [],
+      },
+    ],
+    ...documentFlags('draft'),
+    ...overrides,
+  };
+}
+
+function withDetail(detail: DocumentDetail): FakeApiClient {
+  const fake = client();
+  fake.documentDetails[detail.id] = detail;
+  return fake;
+}
+
+function sendDialog(el: NigelDocumentsScreen): WcSendDialog | null {
+  return el.shadowRoot?.querySelector<WcSendDialog>('wc-send-dialog') ?? null;
+}
+
+function actions(el: NigelDocumentsScreen): string[] {
+  return [...(el.shadowRoot?.querySelectorAll('[data-action]') ?? [])].map(
+    (action) => action.getAttribute('data-action') ?? '',
+  );
+}
+
 async function fillFiling(el: NigelDocumentsScreen): Promise<void> {
   find(el, 'wc-dropzone').dispatchEvent(
     new CustomEvent('nc-file-select', {
@@ -136,6 +221,7 @@ describe('nigel-documents-screen', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     resetAppStore();
+    vi.restoreAllMocks();
   });
 
   it('lists documents with their status', async () => {
@@ -338,5 +424,284 @@ describe('nigel-documents-screen', () => {
     expect(el.shadowRoot?.querySelector('[data-back]')?.getAttribute('href')).toBe(
       '#/documents',
     );
+  });
+
+  it('actions follow the can flags, never the status word', async () => {
+    const none = await mount(
+      'id=12',
+      withDetail(
+        documentDetail({
+          status: 'sent',
+          canEdit: false,
+          canSend: false,
+          canRevise: false,
+          canAccept: false,
+          canRequestChanges: false,
+          canDecline: false,
+          canCountersign: false,
+          canWithdraw: false,
+        }),
+      ),
+    );
+    expect(none.el.shadowRoot?.querySelector('wc-document-status')).toBeTruthy();
+    expect(actions(none.el)).toEqual([]);
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const draft = await mount('id=12', withDetail(documentDetail()));
+    expect(actions(draft.el)).toEqual(['send', 'edit', 'withdraw']);
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const accepted = await mount(
+      'id=12',
+      withDetail(documentDetail({ status: 'accepted', ...documentFlags('accepted') })),
+    );
+    expect(actions(accepted.el)).toEqual(['countersign']);
+  });
+
+  it('shows the kind, the client and the preview with its PDF link', async () => {
+    const { el, fake } = await mount('id=12', withDetail(documentDetail()));
+
+    const header = find(el, 'header');
+    expect(header.textContent).toContain('Proposal');
+    expect(header.textContent).toContain('Cedar Systems');
+    expect(el.shadowRoot?.querySelector('wc-document-frame')).toBeNull();
+    expect(find(el, '[data-pdf-link]').getAttribute('href')).toBe('/document-preview/12.pdf');
+
+    find(el, '[data-preview-toggle]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('documentPreviewHtml:12');
+    expect((find(el, 'wc-document-frame') as HTMLElement & { srcdoc: string }).srcdoc).toBe(
+      '<h1>Website redesign proposal</h1>',
+    );
+  });
+
+  it('send posts the recipient editor’s value', async () => {
+    const fake = withDetail(documentDetail());
+    fake.clientContacts[1] = CEDAR_CONTACTS;
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-action="send"]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('getClient:1');
+    const dialog = sendDialog(el);
+    expect(dialog?.mode).toBe('document');
+    const editor = find<WcRecipientEditor>(el, 'wc-send-dialog > wc-recipient-editor');
+    expect(editor.getAttribute('slot')).toBe('recipients');
+    expect(editor.value).toEqual({
+      signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+      collaborators: [],
+    });
+    expect(dialog?.blocked).toBe('');
+
+    editor.dispatchEvent(
+      new CustomEvent('nc-recipients-change', {
+        detail: { value: { signer: { name: '', email: 'pat@cedar.test' }, collaborators: [] } },
+      }),
+    );
+    await settle(el);
+    expect(sendDialog(el)?.blocked).not.toBe('');
+    sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+    await settle(el);
+    expect(fake.calls.some((call) => call.startsWith('sendDocument'))).toBe(false);
+
+    editor.dispatchEvent(
+      new CustomEvent('nc-recipients-change', {
+        detail: {
+          value: {
+            signer: { name: 'Pat Example ', email: 'pat@cedar.test' },
+            collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+          },
+        },
+      }),
+    );
+    await settle(el);
+    expect(sendDialog(el)?.recipientCount).toBe(2);
+    sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+    await settle(el);
+
+    expect(fake.calls).toContain(
+      `sendDocument:12:${JSON.stringify({
+        signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+        collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+      })}`,
+    );
+    const sent = sendDialog(el);
+    expect(sent?.phase).toBe('sent');
+    expect(sent?.steps.every((step) => step.state === 'ok')).toBe(true);
+    expect(sent?.pageLinks.map((link) => link.href)).toEqual([
+      'https://docs.example.test/d/doc12/r0/index.html',
+      'https://docs.example.test/d/doc12/r1/index.html',
+    ]);
+    expect(sent?.pageLinks[0].label).toContain('Pat Example');
+  });
+
+  it('a send failure after an email went out offers no retry', async () => {
+    const fake = withDetail(documentDetail());
+    fake.sendDocumentError = new ApiError({
+      code: 'upstream_failed',
+      rawCode: 'upstream_failed',
+      message: 'mailgun 500: internal error',
+      status: 502,
+      details: {
+        reason: 'send_failed',
+        step: 'email',
+        service: 'mailgun',
+        completed: ['config', 'load', 'render', 'freeze', 'publish', 'manifest'],
+        emailed: ['pat@cedar.test'],
+        documentStatus: 'draft',
+      },
+    });
+    fake.clientContacts[1] = CEDAR_CONTACTS;
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-action="send"]').click();
+    await settle(el);
+    sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+    await settle(el);
+
+    const dialog = sendDialog(el);
+    expect(dialog?.phase).toBe('failed');
+    expect(dialog?.failure?.retryable).toBe(false);
+    expect(dialog?.failure?.note).toContain('Already emailed: pat@cedar.test');
+    expect(dialog?.steps.find((step) => step.step === 'email')?.state).toBe('failed');
+    expect(dialog?.steps.find((step) => step.step === 'publish')?.state).toBe('ok');
+  });
+
+  it('withdraw shows its teardown warnings', async () => {
+    const fake = withDetail(
+      documentDetail({ status: 'sent', ...documentFlags('sent') }),
+    );
+    fake.documentWarnings = [
+      'Could not replace the page for Pat Example: r2 403',
+      'Could not close the response manifest: r2 403',
+    ];
+    const { el } = await mount('id=12', fake);
+
+    await answerConfirm(false);
+    find(el, '[data-action="withdraw"]').click();
+    await settle(el);
+    expect(fake.calls).not.toContain('withdrawDocument:12');
+
+    await answerConfirm(true);
+    find(el, '[data-action="withdraw"]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('withdrawDocument:12');
+    const warnings = [...(el.shadowRoot?.querySelectorAll('[data-action-warning]') ?? [])];
+    expect(warnings.map((warning) => warning.getAttribute('message'))).toEqual(
+      fake.documentWarnings,
+    );
+    expect(find(el, 'wc-document-status').getAttribute('status')).toBe('withdrawn');
+
+    warnings[0].dispatchEvent(new CustomEvent('nc-notice-action'));
+    await settle(el);
+    expect(el.shadowRoot?.querySelectorAll('[data-action-warning]')).toHaveLength(1);
+  });
+
+  it('a wrong-state refusal says so and refreshes the detail', async () => {
+    const fake = withDetail(documentDetail({ status: 'sent', ...documentFlags('sent') }));
+    const { el } = await mount('id=12', fake);
+    fake.documentDetails[12] = documentDetail({ status: 'withdrawn', ...documentFlags('withdrawn') });
+    fake.withdrawDocumentError = conflictError('document_wrong_state');
+
+    await answerConfirm(true);
+    find(el, '[data-action="withdraw"]').click();
+    await settle(el);
+
+    expect(find(el, '[data-action-error]').getAttribute('message')).toBe(
+      'This document is not in a state that allows that. The view has been refreshed.',
+    );
+    expect(fake.calls.filter((call) => call === 'getDocument:12')).toHaveLength(2);
+    expect(find(el, 'wc-document-status').getAttribute('status')).toBe('withdrawn');
+    expect(actions(el)).toEqual([]);
+  });
+
+  it('accept collects the name and date, then confirms', async () => {
+    const fake = withDetail(documentDetail({ status: 'sent', ...documentFlags('sent') }));
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-action="accept"]').click();
+    await settle(el);
+    const dialog = find(el, 'wc-manager-dialog');
+    expect(dialog.textContent).toContain('not a legal e-signature');
+
+    const name = find(el, '[data-field-name]') as HTMLElement & { value: string };
+    name.value = 'Pat Example';
+    name.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    const date = find(el, '[data-field-date]') as HTMLElement & { value: string };
+    date.value = '2026-10-03';
+    date.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    await settle(el);
+
+    await answerConfirm(true);
+    dialog.dispatchEvent(new CustomEvent('nc-manager-save'));
+    await settle(el);
+
+    expect(fake.calls).toContain(
+      `acceptDocument:12:${JSON.stringify({ name: 'Pat Example', date: '2026-10-03' })}`,
+    );
+    expect(find(el, 'wc-document-status').getAttribute('status')).toBe('accepted');
+    expect(el.shadowRoot?.querySelector('wc-manager-dialog')).toBeNull();
+  });
+
+  it('notes in the timeline render as text', async () => {
+    const note = '<b>Bold</b> & <img src=x onerror=alert(1)> scope';
+    const fake = withDetail(
+      documentDetail({
+        status: 'changes_requested',
+        ...documentFlags('changes_requested'),
+        versions: [
+          {
+            id: 40,
+            documentId: 12,
+            number: 1,
+            checksum: `sha256:${'a'.repeat(64)}`,
+            sentAt: '2026-10-01',
+            createdAt: '2026-09-28',
+            recipients: [
+              {
+                id: 1,
+                versionId: 40,
+                role: 'signer',
+                name: 'Pat Example',
+                email: 'pat@cedar.test',
+                position: 0,
+                pageUrl: null,
+              },
+            ],
+            signatures: [],
+            changeRequests: [
+              {
+                id: 5,
+                versionId: 40,
+                recipientId: 1,
+                name: 'Pat Example',
+                email: 'pat@cedar.test',
+                method: 'online',
+                requestedAt: '2026-10-02T09:00:00Z',
+                note,
+                ip: '192.0.2.1',
+                userAgent: 'Example/1.0',
+                checksum: `sha256:${'a'.repeat(64)}`,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const { el } = await mount('id=12', fake);
+
+    const timeline = find<WcDocumentTimeline>(el, 'wc-document-timeline');
+    await timeline.updateComplete;
+    expect(timeline.versions).toHaveLength(1);
+    const rendered = timeline.shadowRoot?.querySelector('.note');
+    expect(rendered?.textContent).toContain(note);
+    expect(rendered?.querySelector('b, img')).toBeNull();
   });
 });
