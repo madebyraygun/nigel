@@ -428,6 +428,20 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
+pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
+    report
+        .failures
+        .iter()
+        .map(|failure| {
+            format!(
+                "notice: document sync failed for #{}: {}",
+                failure.document_id,
+                printable(&failure.message)
+            )
+        })
+        .collect()
+}
+
 pub fn format_sync_report(report: &DocumentSyncReport) -> String {
     let mut out = String::new();
     for line in &report.lines {
@@ -450,13 +464,6 @@ pub fn format_sync_report(report: &DocumentSyncReport) -> String {
             out.push_str(&format!("  warning: {}\n", printable(warning)));
         }
     }
-    for failure in &report.failures {
-        out.push_str(&format!(
-            "notice: document sync failed for #{}: {}\n",
-            failure.document_id,
-            printable(&failure.message)
-        ));
-    }
     out.push_str(&format!("Recorded {} new response(s)", report.recorded));
     out
 }
@@ -468,6 +475,9 @@ pub(crate) fn sync_with<R: ResponseSource, P: DocumentPublisher>(
     publisher: Option<&P>,
 ) -> Result<String> {
     let report = sync_documents(conn, company, source, publisher, None)?;
+    for notice in format_sync_failures(&report) {
+        eprintln!("{notice}");
+    }
     Ok(format_sync_report(&report))
 }
 
@@ -672,6 +682,11 @@ mod tests {
         assert!(out.contains("#3 Website rebuild: Pat Example accepted version 2 → accepted"));
         assert!(out.contains("  refused: a response for version 1"));
         assert!(out.contains("Recorded 1 new response(s)"));
+        assert!(!out.contains("sync failed"), "{out}");
+        assert_eq!(
+            format_sync_failures(&report),
+            vec!["notice: document sync failed for #4: r2 403: denied".to_string()]
+        );
     }
 
     #[test]
