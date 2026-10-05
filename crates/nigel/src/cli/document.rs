@@ -5,10 +5,15 @@ use comfy_table::{Cell, Table};
 use nigel_core::db::get_connection;
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
-use nigel_core::documents::lifecycle::{revise_with_republish, withdraw_with_teardown};
+use nigel_core::documents::lifecycle::{
+    republish_after_change, revise_with_republish, withdraw_with_teardown,
+};
 use nigel_core::documents::model::{
-    parse_recipient, DocumentKind, DocumentListRow, DocumentRecord, DocumentStatus, Method,
-    NewRecipient, RecipientRole, SignatureRole,
+    parse_recipient, validate_moment, DocumentKind, DocumentListRow, DocumentRecord,
+    DocumentStatus, Method, NewRecipient, RecipientRole, SignatureRole,
+};
+use nigel_core::documents::record::{
+    record_countersign, record_decline, record_manual_accept, record_manual_change_request,
 };
 use nigel_core::documents::send::{
     default_signer, send_document_traced, write_preview, DocumentSendFailure, SendContext,
@@ -385,6 +390,53 @@ pub fn withdraw(id: i64, yes: bool, today: &str) -> Result<()> {
         eprintln!("{warning}");
     }
     Ok(())
+}
+
+fn record_then_republish(
+    id: i64,
+    date: &str,
+    record: impl FnOnce(&Connection, &str) -> Result<()>,
+) -> Result<()> {
+    let date = validate_moment(date, "date")?;
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    record(&conn, &date)?;
+    println!(
+        "Recorded: document #{id} is {}.",
+        get_document(&conn, id)?.status.as_str()
+    );
+    let config = documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    for warning in republish_after_change(
+        &conn,
+        id,
+        &company_name(&conn),
+        publisher.as_ref(),
+        source.as_ref(),
+    ) {
+        eprintln!("{warning}");
+    }
+    Ok(())
+}
+
+pub fn accept(id: i64, name: &str, date: &str) -> Result<()> {
+    record_then_republish(id, date, |conn, at| {
+        record_manual_accept(conn, id, name, at)
+    })
+}
+
+pub fn request_changes(id: i64, name: &str, note: &str, date: &str) -> Result<()> {
+    record_then_republish(id, date, |conn, at| {
+        record_manual_change_request(conn, id, name, note, at)
+    })
+}
+
+pub fn decline(id: i64, note: Option<&str>, date: &str) -> Result<()> {
+    record_then_republish(id, date, |conn, at| record_decline(conn, id, note, at))
+}
+
+pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
+    record_then_republish(id, date, |conn, at| record_countersign(conn, id, name, at))
 }
 
 fn confirm_unless_piped(id: i64) -> Result<()> {

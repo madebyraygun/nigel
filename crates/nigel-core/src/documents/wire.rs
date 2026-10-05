@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::documents::model::RecipientRole;
+use crate::documents::model::{DocumentVersion, Recipient, RecipientRole};
 use crate::invoicing::r2::{object_key, KeyPrefix};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +66,26 @@ pub fn response_key(token: &str, version: i64, recipient_token: &str) -> String 
         token,
         &format!("v{version}/{recipient_token}.json"),
     )
+}
+
+pub fn manifest_for(
+    version: &DocumentVersion,
+    recipients: &[Recipient],
+    state: ManifestState,
+) -> Manifest {
+    Manifest {
+        version: version.number,
+        checksum: version.checksum.clone(),
+        state,
+        recipients: recipients
+            .iter()
+            .map(|r| ManifestRecipient {
+                token: r.token.clone(),
+                role: r.role,
+                name: r.name.clone(),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]

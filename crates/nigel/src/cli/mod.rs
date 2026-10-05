@@ -650,6 +650,41 @@ pub enum DocumentCommands {
         #[arg(long)]
         yes: bool,
     },
+    /// Record the client's acceptance received outside the response page.
+    Accept {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Record a change request received outside the response page.
+    #[command(name = "request-changes")]
+    RequestChanges {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        note: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Record the client's decline received outside the response page.
+    Decline {
+        id: i64,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Record your countersignature on an accepted document.
+    Countersign {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

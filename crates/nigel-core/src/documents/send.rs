@@ -13,7 +13,7 @@ use super::render::{
     render_document_pages, PageContext, PageRecipient, PageState,
 };
 use super::store::{get_document, latest_version, read_version_pdf};
-use super::wire::{Manifest, ManifestRecipient, ManifestState};
+use super::wire::{manifest_for, Manifest, ManifestState};
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::{get_client, list_contacts};
 use crate::invoicing::gateway::{
@@ -403,19 +403,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     }
     trace.done(Step::Publish);
 
-    let manifest = Manifest {
-        version: version.number,
-        checksum: version.checksum.clone(),
-        state: ManifestState::Open,
-        recipients: frozen
-            .iter()
-            .map(|r| ManifestRecipient {
-                token: r.token.clone(),
-                role: r.role,
-                name: r.name.clone(),
-            })
-            .collect(),
-    };
+    let manifest = manifest_for(&version, &frozen, ManifestState::Open);
     source
         .put_manifest(&document.token, &manifest)
         .map_err(|e| (Step::Manifest, e))?;

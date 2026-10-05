@@ -4778,3 +4778,89 @@ fn document_revise_files_version_two() {
         .stdout(predicate::str::contains("version 2 is a draft"))
         .stderr(predicate::str::is_empty());
 }
+
+#[test]
+fn manual_accept_and_countersign_carry_a_document_to_executed() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args(["document", "accept", "1", "--name", "Pat Example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is accepted"));
+    env.cmd()
+        .args(["document", "decline", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only step left is to countersign"));
+    env.cmd()
+        .args(["document", "countersign", "1", "--name", "Sam Example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is executed"));
+    env.cmd()
+        .args(["document", "withdraw", "1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing more can be done"));
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("accepted by Pat Example (manual)").and(
+                predicate::str::contains("countersigned by Sam Example (manual)"),
+            ),
+        );
+}
+
+#[test]
+fn request_changes_needs_a_note() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "request-changes",
+            "1",
+            "--name",
+            "Sam Example",
+            "--note",
+            "",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1 to 4000"));
+}
+
+#[test]
+fn a_bad_date_is_refused_before_anything_is_recorded() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "accept",
+            "1",
+            "--name",
+            "Pat Example",
+            "--date",
+            "yesterday",
+        ])
+        .assert()
+        .failure();
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("accepted by").not());
+}

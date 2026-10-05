@@ -5,14 +5,14 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::model::{Document, DocumentVersion};
+use super::model::{Document, DocumentStatus, DocumentVersion, SignatureRole};
 use super::record::{add_version, record_withdrawal};
 use super::render::{
     relative_pdf_href, render_recipient_page, withdrawn_page_html, PageContext, PageRecipient,
     PageState,
 };
-use super::store::{get_document, recipients, versions};
-use super::wire::{Manifest, ManifestRecipient, ManifestState};
+use super::store::{get_document, recipients, signatures, versions};
+use super::wire::{manifest_for, ManifestState};
 use crate::error::Result;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, ResponseSource};
@@ -88,6 +88,56 @@ pub fn withdraw_with_teardown<P: DocumentPublisher, R: ResponseSource>(
     Ok(warnings)
 }
 
+type Stamp = (SignatureRole, String, String);
+type Loaded = (Document, DocumentVersion, Vec<Stamp>);
+
+pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
+    conn: &Connection,
+    id: i64,
+    company: &str,
+    publisher: Option<&P>,
+    source: Option<&R>,
+) -> Vec<String> {
+    let load = || -> Result<Option<Loaded>> {
+        let document = get_document(conn, id)?;
+        let Some(version) = latest_sent(conn, id)? else {
+            return Ok(None);
+        };
+        let stamps = signatures(conn, version.id)?
+            .into_iter()
+            .map(|s| (s.role, s.name, s.signed_at.chars().take(10).collect()))
+            .collect();
+        Ok(Some((document, version, stamps)))
+    };
+    let (document, version, stamps) = match load() {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) => return Vec::new(),
+        Err(e) => return vec![format!("Warning: could not load the document ({e}).")],
+    };
+    let stamp = |role: SignatureRole| {
+        stamps
+            .iter()
+            .find(|(r, _, _)| *r == role)
+            .map(|(_, name, date)| (name.as_str(), date.as_str()))
+    };
+    let state = match (document.status, stamp(SignatureRole::Client)) {
+        (DocumentStatus::Accepted, Some((name, date))) => PageState::Accepted { name, date },
+        (DocumentStatus::Executed, Some(client)) => match stamp(SignatureRole::Countersign) {
+            Some(countersign) => PageState::Executed {
+                client,
+                countersign,
+            },
+            None => return Vec::new(),
+        },
+        (DocumentStatus::ChangesRequested, _) => PageState::ChangesRequested,
+        (DocumentStatus::Declined, _) => PageState::Declined,
+        _ => return Vec::new(),
+    };
+    close_and_republish(
+        conn, &document, &version, company, &state, publisher, source,
+    )
+}
+
 pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     document: &Document,
@@ -147,19 +197,7 @@ fn teardown<P: DocumentPublisher, R: ResponseSource>(
                 "Warning: r2_private_bucket is not configured, so version {n}'s response manifest is still open."
             )),
             Some(source) => {
-                let manifest = Manifest {
-                    version: n,
-                    checksum: version.checksum.clone(),
-                    state: ManifestState::Closed,
-                    recipients: frozen
-                        .iter()
-                        .map(|r| ManifestRecipient {
-                            token: r.token.clone(),
-                            role: r.role,
-                            name: r.name.clone(),
-                        })
-                        .collect(),
-                };
+                let manifest = manifest_for(version, &frozen, ManifestState::Closed);
                 if let Err(e) = source.put_manifest(&document.token, &manifest) {
                     warnings.push(format!("Warning: could not close the response manifest ({e})."));
                 }
@@ -196,9 +234,11 @@ fn teardown<P: DocumentPublisher, R: ResponseSource>(
 mod tests {
     use super::*;
     use crate::documents::model::{DocumentStatus, RecipientRole};
-    use crate::documents::record::record_manual_change_request;
+    use crate::documents::record::{
+        record_countersign, record_manual_accept, record_manual_change_request,
+    };
     use crate::documents::send::{send_document, SendContext};
-    use crate::documents::store::{get_document, latest_version, recipients, versions};
+    use crate::documents::store::{get_document, latest_version, recipients, signatures, versions};
     use crate::documents::testing::{
         fixture_pdf, pat, sam, seed_client, seed_document, sent_document_with_fakes, test_conn,
         FakeDocumentPublisher, FakeMailer, FakeResponseSource,
@@ -349,5 +389,66 @@ mod tests {
                 .is_empty()
         );
         assert!(p.keys().is_empty() && s.manifests.borrow().is_empty());
+    }
+
+    #[test]
+    fn accepting_republishes_every_page_stamped_and_without_a_form() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        assert!(republish_after_change(&conn, id, "Initech", Some(&p), Some(&s)).is_empty());
+        let doc = get_document(&conn, id).unwrap();
+        assert_eq!(
+            s.last_manifest(&doc.token).unwrap().state,
+            ManifestState::Closed
+        );
+        for r in recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap() {
+            let page = p.page(&doc.token, &r.token).unwrap();
+            assert!(
+                page.contains("Accepted by Pat Example on 2026-10-06") && !page.contains("<form")
+            );
+        }
+    }
+
+    #[test]
+    fn countersigning_stamps_both_signatures() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        republish_after_change(&conn, id, "Initech", Some(&p), Some(&s));
+        let doc = get_document(&conn, id).unwrap();
+        let signer = &recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap()[0];
+        let page = p.page(&doc.token, &signer.token).unwrap();
+        assert!(
+            page.contains("Pat Example")
+                && page.contains("Sam Example")
+                && page.contains("2026-10-07")
+        );
+    }
+
+    #[test]
+    fn a_failed_republish_never_loses_the_signature() {
+        let (dir, conn) = test_conn();
+        let (id, _, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        let failing = FakeDocumentPublisher {
+            fail_when_key_contains: Some("index.html".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            republish_after_change(&conn, id, "Initech", Some(&failing), Some(&s)).len(),
+            2
+        );
+        assert_eq!(
+            get_document(&conn, id).unwrap().status,
+            DocumentStatus::Accepted
+        );
+        assert_eq!(
+            signatures(&conn, latest_version(&conn, id).unwrap().id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
