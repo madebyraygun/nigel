@@ -183,6 +183,12 @@ export {
   type InvoiceStatusWord,
 } from './wc-invoice-status.js';
 export {
+  WcDocumentStatus,
+  DOCUMENT_STATUS_WORDS,
+  documentStatusLabel,
+  type DocumentStatusWord,
+} from './wc-document-status.js';
+export {
   WcAgingBars,
   agingBarHeights,
   type AgingBucketView,
