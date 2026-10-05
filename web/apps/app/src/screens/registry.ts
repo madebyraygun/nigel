@@ -13,6 +13,7 @@ import { renderCategories } from './categories.js';
 import { renderRules } from './rules.js';
 import { renderClients } from './clients.js';
 import { renderInvoices } from './invoices.js';
+import { renderDocuments } from './documents.js';
 import { renderReconcile } from './reconcile.js';
 import { renderUndo } from './undo.js';
 import { renderSettings } from './settings.js';
@@ -30,6 +31,7 @@ export type ScreenId =
   | 'rules'
   | 'clients'
   | 'invoices'
+  | 'documents'
   | 'reconcile'
   | 'undo'
   | 'settings'
@@ -143,6 +145,14 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-invoice',
     inNav: true,
     render: renderInvoices,
+  },
+  documents: {
+    id: 'documents',
+    title: 'Documents',
+    navLabel: 'Documents',
+    icon: 'wc-icon-edit',
+    inNav: true,
+    render: renderDocuments,
   },
   reconcile: {
     id: 'reconcile',
