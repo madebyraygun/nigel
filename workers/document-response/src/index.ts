@@ -38,6 +38,13 @@ async function readCapped(request: Request): Promise<string | null> {
   }
 }
 
+function isManifest(value: unknown): value is Manifest {
+  if (typeof value !== 'object' || value === null) return false;
+  const m = value as Record<string, unknown>;
+  return typeof m.version === 'number' && typeof m.checksum === 'string' && typeof m.state === 'string'
+    && Array.isArray(m.recipients) && m.recipients.every((r) => typeof r === 'object' && r !== null);
+}
+
 function userAgent(request: Request): string | null {
   const ua = request.headers.get('User-Agent');
   return ua === null ? null : [...ua].slice(0, USER_AGENT_MAX).join('');
@@ -63,7 +70,13 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
   const { success } = await env.RATE_LIMITER.limit({ key: parsed.recipientToken });
   if (!success) return reply({ status: 429, code: 'rate_limited', message: 'Too many attempts. Wait a minute and try again.' });
   const stored = await env.PRIVATE.get(manifestKey(parsed.token));
-  const manifest = stored ? await stored.json<Manifest>() : null;
+  let manifest: Manifest | null = null;
+  if (stored) {
+    manifest = await stored.json<Manifest>().catch(() => null);
+    if (!isManifest(manifest)) {
+      return reply({ status: 503, code: 'unavailable', message: 'This document cannot take responses right now.' });
+    }
+  }
   const refusal = checkRequest(parsed, manifest);
   if (refusal) return reply(refusal);
   const record = {

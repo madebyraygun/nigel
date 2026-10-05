@@ -117,6 +117,24 @@ describe('hostile and malformed input', () => {
     expect((await res.json()).code).toBe('name_invalid');
     expect(responses()).toHaveLength(0);
   });
+  it('refuses a typed name with a tab or newline that Nigel would refuse, and writes nothing', async () => {
+    for (const typedName of ['pat\texample', 'pat\nexample']) {
+      const res = await post({ ...ACCEPT, typedName });
+      expect(res.status, JSON.stringify(typedName)).toBe(422);
+      expect((await res.json()).code).toBe('name_invalid');
+    }
+    expect(responses()).toHaveLength(0);
+    expect((await post(ACCEPT)).status).toBe(200);
+  });
+  it('answers a malformed manifest with the standard envelope', async () => {
+    for (const manifest of ['{', 'null', '{"state":"open"}', '{"version":2,"checksum":"sha256:ab","state":"open","recipients":[null]}']) {
+      bucket.objects.set(manifestKey(DOC), manifest);
+      const res = await post(ACCEPT);
+      expect(res.status, manifest).toBe(503);
+      expect(await res.json()).toEqual({ code: 'unavailable', message: 'This document cannot take responses right now.' });
+    }
+    expect(responses()).toHaveLength(0);
+  });
   it('matches an NFD-typed signer name against an NFC manifest name', async () => {
     bucket.objects.set(manifestKey(DOC), JSON.stringify({ ...MANIFEST, recipients: [{ token: SIGNER, role: 'signer', name: 'Zoë Example' }] }));
     expect((await post({ ...ACCEPT, typedName: 'zoë example' })).status).toBe(200);

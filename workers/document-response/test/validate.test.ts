@@ -27,13 +27,18 @@ describe('the role matrix', () => {
 
 describe('names', () => {
   it('names_match_across_case_whitespace_and_normalization_but_not_letters', () => {
-    for (const typed of ['zoë example', '  ZOË   Example ', 'Zoë Example', 'Zoë\tExample']) {
+    for (const typed of ['zoë example', '  ZOË   Example ', 'Zoë Example']) {
       expect(checkRequest({ ...accept, typedName: typed }, manifest), typed).toBeNull();
     }
     for (const typed of ['Zoe Example', 'Zoë Exampl', '']) {
       expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, typed).toBe('name_mismatch');
     }
     expect(normalizeName('STRASSE')).toBe(normalizeName('straße'));
+  });
+  it('refuses a typed name carrying a control character', () => {
+    for (const typed of ['Zoë\tExample', 'Zoë\nExample', 'Zoë\u0085Example', 'Zoë Example\u0000']) {
+      expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, JSON.stringify(typed)).toBe('name_invalid');
+    }
   });
 });
 
