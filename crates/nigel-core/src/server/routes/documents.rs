@@ -1,5 +1,6 @@
 //! Documents: the list, one document in full, the active kinds, the sandboxed
-//! preview of the page a signer would receive, and filing, editing and revising.
+//! preview of the page a signer would receive, filing, editing and revising,
+//! and the send.
 //!
 //! A filed or revised PDF arrives as multipart and goes through the uploads
 //! spool like a statement does: its name is sanitized, its bytes must open with
@@ -12,7 +13,8 @@
 //! it predicts.
 //!
 //! No token crosses the wire as a field. A sent version's recipients carry the
-//! computed `pageUrl`, which is the one place a recipient's address appears.
+//! computed `pageUrl`, and a send answers each recipient's link as it was
+//! emailed; those are the only places a recipient's address appears.
 
 use std::path::Path;
 
@@ -31,21 +33,27 @@ use crate::documents::kinds::list_kinds;
 use crate::documents::lifecycle::revise_with_republish;
 use crate::documents::model::{
     ChangeRequest, Document, DocumentKind, DocumentListRow, DocumentStatus, DocumentVersion,
-    Recipient, Signature,
+    NewRecipient, Recipient, RecipientRole, Signature,
 };
 use crate::documents::render::{
     attachment_name, render_recipient_page, PageContext, PageRecipient, PageState,
 };
-use crate::documents::send::preview_recipients;
+use crate::documents::send::{
+    default_signer, preview_recipients, send_document_traced, DocumentSendStep, RecipientLink,
+    SendContext,
+};
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
     update_document, DocumentFilter, DocumentUpdate, NewDocument,
 };
 use crate::error::NigelError;
 use crate::invoicing::clients::get_client;
+use crate::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
+use crate::invoicing::send::StepOutcome;
 use crate::invoicing::wiring::{
-    company_name, optional_document_publisher, optional_response_source,
+    build_document_clients, company_name, optional_document_publisher, optional_response_source,
 };
+use crate::settings::DocumentsConfig;
 
 use super::super::error::{ApiError, ApiResult};
 use super::super::extract::{ApiJson, ApiPath};
@@ -62,6 +70,7 @@ pub fn routes() -> Router<AppState> {
             get(list).merge(post(file).layer(upload_limit())),
         )
         .route("/documents/{id}", get(detail).patch(edit))
+        .route("/documents/{id}/send", post(send))
         .route("/documents/{id}/revise", post(revise).layer(upload_limit()))
         .route("/documents/{id}/preview", get(preview_html))
         .route("/documents/{id}/preview.pdf", get(preview_pdf))
@@ -439,6 +448,211 @@ async fn revise(
 }
 
 // ---------------------------------------------------------------------------
+// Send
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SendRecipient {
+    name: String,
+    email: String,
+}
+
+impl SendRecipient {
+    fn into_recipient(self, role: RecipientRole) -> NewRecipient {
+        NewRecipient {
+            role,
+            name: self.name,
+            email: self.email,
+        }
+    }
+}
+
+/// The whole body of a send request. With no `signer`, the client's billing
+/// contact signs.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SendRequest {
+    /// Absent or `false` refuses the request and sends nothing.
+    #[serde(default)]
+    confirm: bool,
+    signer: Option<SendRecipient>,
+    #[serde(default)]
+    collaborators: Vec<SendRecipient>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SendStepResult {
+    step: DocumentSendStep,
+    outcome: StepOutcome,
+}
+
+/// A completed send: the refreshed detail, the trace, and each recipient's
+/// page as it was emailed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SendResult {
+    document: DocumentDetail,
+    steps: Vec<SendStepResult>,
+    links: Vec<RecipientLink>,
+    config_warnings: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn not_configured(missing: &[&'static str]) -> ApiError {
+    ApiError::conflict(
+        format!(
+            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
+            missing.join(", ")
+        ),
+        serde_json::json!({
+            "reason": "send_not_configured",
+            "step": DocumentSendStep::Config.as_str(),
+            "missing": missing,
+        }),
+    )
+}
+
+fn misconfigured(err: NigelError) -> ApiError {
+    match err {
+        NigelError::Invalid(message) => ApiError::conflict(
+            message,
+            serde_json::json!({
+                "reason": "send_misconfigured",
+                "step": DocumentSendStep::Config.as_str(),
+            }),
+        ),
+        other => other.into(),
+    }
+}
+
+/// The documents base refused in the key-and-defect wording, never quoting the
+/// configured value.
+fn invalid_documents_base(config: &DocumentsConfig) -> Option<ApiError> {
+    let base = crate::settings::derive_documents_base(
+        config.documents_base_url.as_deref(),
+        config.invoicing.public_base_url.as_deref(),
+    )?;
+    crate::invoicing::r2::validate_public_base_url(&base).err()?;
+    let message = match config.documents_base_url {
+        Some(_) => "documents_base_url is not an absolute http(s) address. Set it to the address \
+             your bucket serves documents at, including the scheme — for example \
+             https://billing.example.com/d."
+            .to_string(),
+        None => crate::invoicing::r2::PUBLIC_BASE_URL_DEFECT.to_string(),
+    };
+    Some(ApiError::conflict(
+        message,
+        serde_json::json!({
+            "reason": "invalid_public_base_url",
+            "step": DocumentSendStep::Config.as_str(),
+        }),
+    ))
+}
+
+/// `POST /api/documents/{id}/send` — the whole publish, inside the request,
+/// refused without `confirm: true` before any setting is read.
+async fn send(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<SendRequest>,
+) -> ApiResult<Json<SendResult>> {
+    if !request.confirm {
+        return Err(ApiError::bad_request(
+            "Sending a document requires an explicit confirmation: post {\"confirm\": true}.",
+        )
+        .with_details(serde_json::json!({ "reason": "confirmation_required" })));
+    }
+
+    let config = crate::settings::documents_config();
+    let status = crate::settings::documents_status(&config);
+    if !status.send_configured {
+        return Err(not_configured(&status.missing));
+    }
+    if let Some(err) = invalid_documents_base(&config) {
+        return Err(err);
+    }
+    let company = with_conn(&state, |conn| Ok(company_name(conn))).await?;
+    let clients = build_document_clients(config, &company).map_err(misconfigured)?;
+    let today = crate::clock::today();
+    let warnings = clients.warnings().to_vec();
+
+    let mut result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            send_with(
+                conn,
+                &state.data_dir(),
+                id,
+                request,
+                &company,
+                clients.response_url(),
+                &today,
+                clients.publisher(),
+                clients.mail(),
+                clients.source(),
+            )
+        }
+    })
+    .await?;
+    result.config_warnings = warnings;
+    Ok(Json(result))
+}
+
+/// The send with its three collaborators passed in, so the orchestration runs
+/// against fakes in tests and against the configured clients in `send`.
+#[allow(clippy::too_many_arguments)]
+fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    request: SendRequest,
+    ctx_company: &str,
+    response_url: Option<&str>,
+    today: &str,
+    publisher: &P,
+    mailer: &M,
+    source: &R,
+) -> ApiResult<SendResult> {
+    let at_load =
+        |e| not_found_because(e, "document_not_found").at_document_step(DocumentSendStep::Load);
+    let document = get_document(conn, id).map_err(at_load)?;
+    let signer = match request.signer {
+        Some(signer) => signer.into_recipient(RecipientRole::Signer),
+        None => default_signer(conn, document.client_id).map_err(at_load)?,
+    };
+    let recipients: Vec<NewRecipient> = std::iter::once(signer)
+        .chain(
+            request
+                .collaborators
+                .into_iter()
+                .map(|c| c.into_recipient(RecipientRole::Collaborator)),
+        )
+        .collect();
+
+    let ctx = SendContext {
+        data_dir,
+        company: ctx_company,
+        response_url,
+        today,
+    };
+    let outcome = send_document_traced(conn, id, &recipients, &ctx, publisher, mailer, source)?;
+
+    Ok(SendResult {
+        document: detail_for(conn, id)?,
+        steps: outcome
+            .steps
+            .into_iter()
+            .map(|(step, outcome)| SendStepResult { step, outcome })
+            .collect(),
+        links: outcome.links,
+        config_warnings: Vec::new(),
+        warnings: outcome.warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Preview
 // ---------------------------------------------------------------------------
 
@@ -526,7 +740,10 @@ async fn preview_pdf(
 
 #[cfg(test)]
 mod tests {
-    use crate::documents::testing::{fixture_pdf, sent_document_with_fakes};
+    use crate::documents::testing::{
+        fixture_pdf, sent_document_with_fakes, FakeDocumentPublisher, FakeMailer,
+        FakeResponseSource,
+    };
     use crate::server::testutil::*;
     use axum::http::{header, StatusCode};
 
@@ -1000,5 +1217,179 @@ mod tests {
             assert_eq!(status, StatusCode::LOCKED, "{uri}: {body}");
             assert_eq!(body["error"]["code"], "locked", "{uri}");
         }
+    }
+
+    fn send_request(collaborators: &[(&str, &str)]) -> super::SendRequest {
+        super::SendRequest {
+            confirm: true,
+            signer: Some(super::SendRecipient {
+                name: "Pat Example".into(),
+                email: "pat@acme.test".into(),
+            }),
+            collaborators: collaborators
+                .iter()
+                .map(|(name, email)| super::SendRecipient {
+                    name: (*name).into(),
+                    email: (*email).into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_without_confirmation_is_a_400_and_sends_nothing() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({ "confirm": false }),
+        ] {
+            let (status, json) = post_json(&app, "/api/documents/1/send", &token, &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {json}");
+            assert_eq!(json["error"]["details"]["reason"], "confirmation_required");
+            assert_eq!(
+                json["error"]["message"],
+                "Sending a document requires an explicit confirmation: post {\"confirm\": true}."
+            );
+        }
+
+        let detail = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(detail["status"], "draft", "{detail}");
+    }
+
+    #[tokio::test]
+    async fn send_with_no_configuration_is_a_409_naming_the_missing_keys() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, json) = post_json(
+            &app,
+            "/api/documents/1/send",
+            &token,
+            &serde_json::json!({ "confirm": true }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::CONFLICT, "{json}");
+        let details = &json["error"]["details"];
+        assert_eq!(details["reason"], "send_not_configured", "{json}");
+        assert_eq!(details["step"], "config", "{json}");
+        let missing = details["missing"]
+            .as_array()
+            .expect("the missing key names");
+        assert_eq!(missing.len(), 9, "{json}");
+        for key in ["mailgun_api_key", "r2_private_bucket", "documents_base_url"] {
+            assert!(missing.contains(&serde_json::json!(key)), "{key}: {json}");
+        }
+        let detail = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(detail["status"], "draft", "{detail}");
+    }
+
+    #[test]
+    fn send_with_answers_the_detail_steps_and_links() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let (publisher, mailer, source) = (
+            FakeDocumentPublisher::default(),
+            FakeMailer::default(),
+            FakeResponseSource::default(),
+        );
+
+        let result = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            send_request(&[("Sam Example", "sam@acme.test")]),
+            "Initech",
+            Some("https://docs.example.test/d/respond"),
+            "2026-10-05",
+            &publisher,
+            &mailer,
+            &source,
+        )
+        .expect("sends");
+
+        let json = serde_json::to_value(&result).expect("serializes");
+        let steps: Vec<&str> = json["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["step"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            steps,
+            ["load", "render", "freeze", "publish", "manifest", "email", "record"]
+        );
+        assert!(json["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["outcome"] == "ok"));
+        assert_eq!(json["document"]["status"], "sent", "{json}");
+        assert_eq!(json["document"]["canSend"], false, "{json}");
+        let links = json["links"].as_array().expect("links");
+        assert_eq!(links.len(), 2, "{json}");
+        assert_eq!(links[0]["role"], "signer");
+        assert_eq!(links[0]["email"], "pat@acme.test");
+        assert_eq!(links[1]["role"], "collaborator");
+        for link in links {
+            assert!(
+                link["url"].as_str().unwrap().ends_with("/index.html"),
+                "{link}"
+            );
+            assert!(link.get("token").is_none(), "{link}");
+        }
+        assert_eq!(json["configWarnings"], serde_json::json!([]));
+        assert_eq!(json["warnings"], serde_json::json!([]));
+        assert_eq!(mailer.sent.borrow().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_mail_failure_is_a_502_naming_mailgun_and_who_was_emailed() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let mailer = FakeMailer {
+            fail_on_call: Some(1),
+            ..FakeMailer::default()
+        };
+
+        let err = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            send_request(&[("Sam Example", "sam@acme.test")]),
+            "Initech",
+            None,
+            "2026-10-05",
+            &FakeDocumentPublisher::default(),
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .expect_err("the second email fails");
+
+        let (status, json) = {
+            use axum::response::IntoResponse;
+            let response = err.into_response();
+            let status = response.status();
+            (status, json_body(response).await)
+        };
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{json}");
+        assert_eq!(json["error"]["code"], "upstream_failed", "{json}");
+        let details = &json["error"]["details"];
+        assert_eq!(details["service"], "mailgun", "{json}");
+        assert_eq!(details["step"], "email", "{json}");
+        assert_eq!(details["reason"], "send_failed", "{json}");
+        assert_eq!(details["emailed"], serde_json::json!(["pat@acme.test"]));
+        assert_eq!(
+            details["completed"],
+            serde_json::json!(["load", "render", "freeze", "publish", "manifest"])
+        );
+        assert_eq!(details["documentStatus"], "draft", "{json}");
+        assert_eq!(details["cleanupWarnings"], serde_json::json!([]));
     }
 }
