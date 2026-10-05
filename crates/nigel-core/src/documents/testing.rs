@@ -238,3 +238,53 @@ pub fn sam() -> crate::documents::model::NewRecipient {
         email: "sam@cedar.test".into(),
     }
 }
+
+const FIXTURE_CAST: [&str; 6] = [
+    "Cedar Systems",
+    "Juniper Labs",
+    "Harbor & Vale",
+    "Acme",
+    "Globex",
+    "Initech",
+];
+
+/// Files "Website rebuild" for the first fixture-cast client not yet in
+/// `clients` and sends it to `pat()` and `sam()` through the fakes.
+pub fn sent_document_with_fakes(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+) -> (i64, FakeDocumentPublisher, FakeResponseSource) {
+    let taken: Vec<String> = conn
+        .prepare("SELECT name FROM clients")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let name = FIXTURE_CAST
+        .iter()
+        .find(|n| !taken.iter().any(|t| t == **n))
+        .expect("every fixture-cast client is taken");
+    let id = seed_document(conn, dir, seed_client(conn, name), "Website rebuild");
+    let (publisher, source) = (
+        FakeDocumentPublisher::default(),
+        FakeResponseSource::default(),
+    );
+    let ctx = crate::documents::send::SendContext {
+        data_dir: dir,
+        company: "Initech",
+        response_url: Some("https://docs.example.test/d/respond"),
+        today: "2026-10-05",
+    };
+    crate::documents::send::send_document(
+        conn,
+        id,
+        &[pat(), sam()],
+        &ctx,
+        &publisher,
+        &FakeMailer::default(),
+        &source,
+    )
+    .unwrap();
+    (id, publisher, source)
+}

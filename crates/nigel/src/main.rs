@@ -263,6 +263,12 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 collaborators,
                 yes,
             } => cli::document::send(id, signer.as_deref(), &collaborators, yes, &cli::today()),
+            DocumentCommands::Revise { id, file } => {
+                cli::document::revise(id, &file, &cli::today())
+            }
+            DocumentCommands::Withdraw { id, yes } => {
+                cli::document::withdraw(id, yes, &cli::today())
+            }
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

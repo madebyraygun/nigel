@@ -4729,3 +4729,52 @@ fn document_send_with_nothing_configured_names_every_missing_key() {
                 .and(predicate::str::contains("r2_private_bucket")),
         );
 }
+
+#[test]
+fn document_withdraw_without_yes_on_a_pipe_refuses() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "withdraw", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Pass --yes"));
+    let withdrawn: Option<String> = env
+        .db()
+        .query_row("SELECT withdrawn_at FROM documents WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(withdrawn.is_none());
+}
+
+#[test]
+fn document_revise_of_a_draft_is_refused() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    let pdf = write_pdf(&env, "v2.pdf", "second");
+    env.cmd()
+        .args(["document", "revise", "1", "--file", pdf.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be revised"));
+}
+
+#[test]
+fn document_revise_files_version_two() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute(
+            "UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1",
+            [],
+        )
+        .unwrap();
+    let pdf = write_pdf(&env, "v2.pdf", "second");
+    env.cmd()
+        .args(["document", "revise", "1", "--file", pdf.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("version 2 is a draft"))
+        .stderr(predicate::str::is_empty());
+}

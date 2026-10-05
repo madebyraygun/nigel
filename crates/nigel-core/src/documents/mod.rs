@@ -4,6 +4,7 @@
 //! user agent, bound to a SHA-256 checksum of the exact PDF.
 pub mod guards;
 pub mod kinds;
+pub mod lifecycle;
 pub mod model;
 pub mod record;
 pub mod render;

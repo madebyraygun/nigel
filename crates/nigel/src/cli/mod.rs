@@ -638,6 +638,18 @@ pub enum DocumentCommands {
         #[arg(long)]
         yes: bool,
     },
+    /// Replace the PDF with a new version: live pages show "being revised" until it is sent.
+    Revise {
+        id: i64,
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Withdraw a document. Terminal — its pages are replaced with a withdrawn notice.
+    Withdraw {
+        id: i64,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]

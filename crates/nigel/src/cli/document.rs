@@ -5,6 +5,7 @@ use comfy_table::{Cell, Table};
 use nigel_core::db::get_connection;
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
+use nigel_core::documents::lifecycle::{revise_with_republish, withdraw_with_teardown};
 use nigel_core::documents::model::{
     parse_recipient, DocumentKind, DocumentListRow, DocumentRecord, DocumentStatus, Method,
     NewRecipient, RecipientRole, SignatureRole,
@@ -19,7 +20,9 @@ use nigel_core::documents::store::{
 use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
-use nigel_core::invoicing::wiring::{build_document_clients, company_name};
+use nigel_core::invoicing::wiring::{
+    build_document_clients, company_name, optional_document_publisher, optional_response_source,
+};
 use nigel_core::settings::{documents_config, documents_status, get_data_dir};
 use rusqlite::Connection;
 
@@ -294,6 +297,96 @@ pub fn send(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn revise_with<P: DocumentPublisher, R: ResponseSource>(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    pdf: &[u8],
+    today: &str,
+    company: &str,
+    publisher: Option<&P>,
+    source: Option<&R>,
+) -> Result<(String, Vec<String>)> {
+    let outcome =
+        revise_with_republish(conn, data_dir, id, pdf, today, company, publisher, source)?;
+    Ok((
+        format!(
+            "Revised document #{id}: version {} is a draft.",
+            outcome.version
+        ),
+        outcome.warnings,
+    ))
+}
+
+pub(crate) fn withdraw_with<P: DocumentPublisher, R: ResponseSource>(
+    conn: &Connection,
+    id: i64,
+    today: &str,
+    company: &str,
+    publisher: Option<&P>,
+    source: Option<&R>,
+) -> Result<(String, Vec<String>)> {
+    let warnings = withdraw_with_teardown(conn, id, today, company, publisher, source)?;
+    Ok((format!("Withdrew document #{id}."), warnings))
+}
+
+pub fn revise(id: i64, file: &Path, today: &str) -> Result<()> {
+    let pdf = std::fs::read(file)
+        .map_err(|e| NigelError::Invalid(format!("Could not read {}: {e}", file.display())))?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let config = documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    let (message, warnings) = revise_with(
+        &conn,
+        &data_dir,
+        id,
+        &pdf,
+        today,
+        &company_name(&conn),
+        publisher.as_ref(),
+        source.as_ref(),
+    )?;
+    println!("{message}");
+    for warning in warnings {
+        eprintln!("{warning}");
+    }
+    Ok(())
+}
+
+pub fn withdraw(id: i64, yes: bool, today: &str) -> Result<()> {
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let document = get_document(&conn, id)?;
+    ensure_allowed(id, document.status, Action::Withdraw)?;
+    let question = format!(
+        "Withdraw document #{id} ({})? Its pages are replaced with a withdrawn notice and this cannot be undone. [y/N]",
+        document.title
+    );
+    let refusal = format!("Refusing to withdraw document #{id} without confirmation. Pass --yes.");
+    if !confirm_or_refuse(&question, &refusal, yes)? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let config = documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    let (message, warnings) = withdraw_with(
+        &conn,
+        id,
+        today,
+        &company_name(&conn),
+        publisher.as_ref(),
+        source.as_ref(),
+    )?;
+    println!("{message}");
+    for warning in warnings {
+        eprintln!("{warning}");
+    }
+    Ok(())
+}
+
 fn confirm_unless_piped(id: i64) -> Result<()> {
     use std::io::IsTerminal;
     if std::io::stdin().is_terminal() {
@@ -426,8 +519,8 @@ mod tests {
     };
     use nigel_core::documents::send::DocumentSendStep;
     use nigel_core::documents::testing::{
-        pat, sam, seed_client, seed_document, test_conn, FakeDocumentPublisher, FakeMailer,
-        FakeResponseSource,
+        fixture_pdf, pat, sam, seed_client, seed_document, sent_document_with_fakes, test_conn,
+        FakeDocumentPublisher, FakeMailer, FakeResponseSource,
     };
 
     #[test]
@@ -455,6 +548,39 @@ mod tests {
         assert!(out.starts_with("Sent document #1 v1:"));
         assert_eq!(out.matches("/index.html").count(), 2);
         assert!(out.contains("signer") && out.contains("collaborator"));
+    }
+
+    #[test]
+    fn revise_with_and_withdraw_with_report_and_surface_warnings() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        let (msg, warnings) = revise_with(
+            &conn,
+            dir.path(),
+            id,
+            &fixture_pdf("v2"),
+            "2026-10-06",
+            "Initech",
+            Some(&p),
+            Some(&s),
+        )
+        .unwrap();
+        assert_eq!(
+            msg,
+            format!("Revised document #{id}: version 2 is a draft.")
+        );
+        assert!(warnings.is_empty());
+        let (msg, warnings) = withdraw_with::<FakeDocumentPublisher, FakeResponseSource>(
+            &conn,
+            id,
+            "2026-10-07",
+            "Initech",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(msg, format!("Withdrew document #{id}."));
+        assert_eq!(warnings.len(), 2);
     }
 
     #[test]
