@@ -595,7 +595,7 @@ A document is a PDF filed for a client, sent to one signer and any
 collaborators, answered online or recorded by hand, revised and countersigned.
 Its **status** is derived from the rows on every read and is never stored:
 `draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
-`withdrawn`. Document kinds are managed from the CLI (`nigel document kind`);
+`withdrawn`. Document kinds are managed from the CLI (`nigel document kinds`);
 the API serves documents only, and `GET /api/document-kinds` is the read a
 filing form needs.
 
@@ -1453,6 +1453,11 @@ the published page:
 does not parse is `400`, checked before anything is recorded. A manual response
 is bound to the SHA-256 checksum of the latest sent version, as an online one
 is.
+
+An acceptance or countersignature, online or manual, is **recorded assent, not
+a legal e-signature**: a typed name, a time and, online, consent, an IP address
+and a user agent, bound to the checksum of the exact PDF — see
+[Documents](invoicing.md#documents).
 
 **These commit first and republish best-effort.** The response or withdrawal is
 recorded, and only then are the published pages corrected — an accepted page, a
