@@ -153,3 +153,72 @@ impl crate::invoicing::gateway::Mailer for FakeMailer {
         Ok(())
     }
 }
+
+/// An in-memory private store. `fail_fetch_for` fails fetches for one document
+/// token only.
+#[derive(Default)]
+pub struct FakeResponseSource {
+    pub responses: std::cell::RefCell<
+        std::collections::HashMap<String, crate::documents::wire::DocumentResponse>,
+    >,
+    pub manifests: std::cell::RefCell<Vec<(String, crate::documents::wire::Manifest)>>,
+    pub fail_fetch: bool,
+    pub fail_fetch_for: Option<String>,
+    pub fail_put: bool,
+}
+
+impl FakeResponseSource {
+    pub fn put_response(
+        &self,
+        token: &str,
+        version: i64,
+        rt: &str,
+        r: crate::documents::wire::DocumentResponse,
+    ) {
+        self.responses
+            .borrow_mut()
+            .insert(crate::documents::wire::response_key(token, version, rt), r);
+    }
+
+    pub fn last_manifest(&self, token: &str) -> Option<crate::documents::wire::Manifest> {
+        self.manifests
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(t, _)| t == token)
+            .map(|(_, m)| m.clone())
+    }
+}
+
+impl crate::invoicing::gateway::ResponseSource for FakeResponseSource {
+    fn fetch(
+        &self,
+        token: &str,
+        version: i64,
+        recipient_token: &str,
+    ) -> crate::error::Result<Option<crate::documents::wire::DocumentResponse>> {
+        if self.fail_fetch || self.fail_fetch_for.as_deref() == Some(token) {
+            return Err(crate::error::NigelError::Other(
+                "r2 500: fake fetch refused".into(),
+            ));
+        }
+        let key = crate::documents::wire::response_key(token, version, recipient_token);
+        Ok(self.responses.borrow().get(&key).cloned())
+    }
+
+    fn put_manifest(
+        &self,
+        token: &str,
+        manifest: &crate::documents::wire::Manifest,
+    ) -> crate::error::Result<()> {
+        if self.fail_put {
+            return Err(crate::error::NigelError::Other(
+                "r2 500: fake put refused".into(),
+            ));
+        }
+        self.manifests
+            .borrow_mut()
+            .push((token.to_string(), manifest.clone()));
+        Ok(())
+    }
+}

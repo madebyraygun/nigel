@@ -10,3 +10,4 @@ pub mod status;
 pub mod store;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
+pub mod wire;

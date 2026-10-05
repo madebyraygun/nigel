@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
+use crate::documents::wire::{manifest_key, response_key, DocumentResponse, Manifest};
 use crate::error::{NigelError, Result};
-use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher};
+use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher, ResponseSource};
 
 /// The top-level directory a family of published objects lives under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,27 +236,133 @@ pub struct R2Publisher {
     pub public_base_url: String,
 }
 
+fn r2_bucket(account_id: &str, bucket: &str) -> Result<Bucket> {
+    let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com")
+        .parse()
+        .map_err(|e| NigelError::Other(format!("r2 endpoint: {e}")))?;
+    Bucket::new(endpoint, UrlStyle::Path, bucket.to_string(), "auto")
+        .map_err(|e| NigelError::Other(format!("r2 bucket: {e}")))
+}
+
+fn put_object(
+    account_id: &str,
+    access_key: &str,
+    secret_key: &str,
+    bucket: &str,
+    key: &str,
+    body: &[u8],
+    content_type: &str,
+) -> Result<()> {
+    let bucket = r2_bucket(account_id, bucket)?;
+    let creds = Credentials::new(access_key.to_string(), secret_key.to_string());
+    let signed = bucket
+        .put_object(Some(&creds), key)
+        .sign(Duration::from_secs(300));
+
+    let resp = crate::invoicing::http_client()
+        .put(signed)
+        .header("content-type", content_type)
+        .body(body.to_vec())
+        .send()
+        .map_err(|e| NigelError::Other(format!("r2 put: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| NigelError::Other(e.to_string()))?;
+    ensure_success(status, &text)
+}
+
+fn get_object(
+    account_id: &str,
+    access_key: &str,
+    secret_key: &str,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<Vec<u8>>> {
+    let bucket = r2_bucket(account_id, bucket)?;
+    let creds = Credentials::new(access_key.to_string(), secret_key.to_string());
+    let signed = bucket
+        .get_object(Some(&creds), key)
+        .sign(Duration::from_secs(300));
+
+    let resp = crate::invoicing::http_client()
+        .get(signed)
+        .send()
+        .map_err(|e| NigelError::Other(format!("r2 get: {e}")))?;
+    let status = resp.status();
+    let body = resp
+        .bytes()
+        .map_err(|e| NigelError::Other(e.to_string()))?
+        .to_vec();
+    object_body(status, body)
+}
+
+/// A missing object is an answer (`None`); any other refusal is an error.
+fn object_body(status: reqwest::StatusCode, body: Vec<u8>) -> Result<Option<Vec<u8>>> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    ensure_success(status, &String::from_utf8_lossy(&body))?;
+    Ok(Some(body))
+}
+
 impl R2Publisher {
     fn put(&self, key: &str, body: &[u8], content_type: &str) -> Result<()> {
-        let endpoint = format!("https://{}.r2.cloudflarestorage.com", self.account_id)
-            .parse()
-            .map_err(|e| NigelError::Other(format!("r2 endpoint: {e}")))?;
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, self.bucket.clone(), "auto")
-            .map_err(|e| NigelError::Other(format!("r2 bucket: {e}")))?;
-        let creds = Credentials::new(self.access_key.clone(), self.secret_key.clone());
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            key,
+            body,
+            content_type,
+        )
+    }
+}
 
-        let action = bucket.put_object(Some(&creds), key);
-        let signed = action.sign(Duration::from_secs(300));
+/// The bucket the Worker writes responses to. It is never served publicly.
+pub struct R2PrivateStore {
+    pub account_id: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub bucket: String,
+}
 
-        let resp = crate::invoicing::http_client()
-            .put(signed)
-            .header("content-type", content_type)
-            .body(body.to_vec())
-            .send()
-            .map_err(|e| NigelError::Other(format!("r2 put: {e}")))?;
-        let status = resp.status();
-        let text = resp.text().map_err(|e| NigelError::Other(e.to_string()))?;
-        ensure_success(status, &text)
+impl ResponseSource for R2PrivateStore {
+    fn fetch(
+        &self,
+        token: &str,
+        version: i64,
+        recipient_token: &str,
+    ) -> Result<Option<DocumentResponse>> {
+        let key = response_key(token, version, recipient_token);
+        let Some(body) = get_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &key,
+        )?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&body).map(Some).map_err(|e| {
+            NigelError::Other(format!(
+                "response object {key} is not a valid response: {e}"
+            ))
+        })
+    }
+
+    fn put_manifest(&self, token: &str, manifest: &Manifest) -> Result<()> {
+        let body = serde_json::to_vec(manifest)
+            .map_err(|e| NigelError::Other(format!("manifest: {e}")))?;
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &manifest_key(token),
+            &body,
+            "application/json",
+        )
     }
 }
 
@@ -532,6 +639,24 @@ mod tests {
         assert!(
             msg.contains("SignatureDoesNotMatch"),
             "r2 message missing from {msg:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_object_is_none_and_a_refusal_is_an_error() {
+        assert_eq!(
+            object_body(reqwest::StatusCode::NOT_FOUND, b"".to_vec()).unwrap(),
+            None
+        );
+        assert_eq!(
+            object_body(reqwest::StatusCode::OK, b"{}".to_vec()).unwrap(),
+            Some(b"{}".to_vec())
+        );
+        assert!(
+            object_body(reqwest::StatusCode::FORBIDDEN, b"denied".to_vec())
+                .unwrap_err()
+                .to_string()
+                .contains("r2 403")
         );
     }
 

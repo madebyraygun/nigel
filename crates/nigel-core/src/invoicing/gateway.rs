@@ -43,6 +43,18 @@ pub trait DocumentPublisher {
     fn public_base(&self) -> &str;
 }
 
+/// Reads the Worker's responses and writes the manifest it checks them against.
+pub trait ResponseSource {
+    /// `None` when the recipient has not responded to that version.
+    fn fetch(
+        &self,
+        token: &str,
+        version: i64,
+        recipient_token: &str,
+    ) -> Result<Option<crate::documents::wire::DocumentResponse>>;
+    fn put_manifest(&self, token: &str, manifest: &crate::documents::wire::Manifest) -> Result<()>;
+}
+
 pub trait AssetPublisher {
     fn publish(&self, token: &str, html: &[u8], pdf: &[u8]) -> Result<String>;
     /// Replace the published page, leaving every other object under the token
