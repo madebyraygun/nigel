@@ -1209,6 +1209,34 @@ mod tests {
         .await
     }
 
+    #[tokio::test]
+    async fn an_unknown_kind_is_a_404_naming_the_kind_on_filing_and_patch() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_multipart(
+            &app,
+            "/api/documents",
+            &token,
+            &[("clientId", "1"), ("kind", "Memo"), ("title", "Phase two")],
+            Some(("phase two.pdf", &new_pdf())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "kind_not_found");
+
+        let (status, body) = patch_json(
+            &app,
+            "/api/documents/1",
+            &token,
+            &serde_json::json!({ "kind": "Memo" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "kind_not_found");
+    }
+
     fn sent_document(db_path: &std::path::Path) -> i64 {
         let conn = crate::db::open_connection(db_path, None).unwrap();
         let (id, _, _) = sent_document_with_fakes(&conn, db_path.parent().unwrap());

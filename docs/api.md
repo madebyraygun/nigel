@@ -1334,8 +1334,8 @@ no R2 configuration reaches nothing and answers an empty list or a warning that
 the manifest is still open.
 
 `PATCH /api/documents/{id}` retitles or rekinds a **draft**; an unrecognized
-field is `400`. An unknown `kind` is `404` — on this route with reason
-`document_not_found`, and on filing with `client_not_found`.
+field is `400`. Here and on filing, a `kind` that names no kind at all is `404`
+with reason `kind_not_found`.
 
 #### Sending a document
 

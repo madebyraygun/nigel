@@ -82,6 +82,19 @@ describe('documentsGuardrailMessage', () => {
     expect(documentsGuardrailMessage(error)).toBe('This document no longer exists.');
   });
 
+  it('explains an unknown kind from a 404 reason', () => {
+    const error = new ApiError({
+      code: 'not_found',
+      rawCode: 'not_found',
+      message: 'Document kind not found: Memo',
+      status: 404,
+      details: { reason: 'kind_not_found' },
+    });
+    expect(documentsGuardrailMessage(error)).toBe(
+      'That document kind does not exist. Choose another.',
+    );
+  });
+
   it('renders the server’s message for a 400, which names the offending value', () => {
     const error = new ApiError({
       code: 'bad_request',

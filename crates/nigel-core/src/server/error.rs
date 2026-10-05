@@ -201,6 +201,9 @@ impl From<NigelError> for ApiError {
             NigelError::UnknownCategory(_) => {
                 Self::not_found_because(err.to_string(), "category_not_found")
             }
+            NigelError::UnknownDocumentKind(_) => {
+                Self::not_found_because(err.to_string(), "kind_not_found")
+            }
             NigelError::NotFound(_) => Self::not_found(err.to_string()),
             // A file that parsed to nothing is the caller's to fix — the wrong
             // format, or a column mapping off by one — so the parts go in
@@ -773,6 +776,9 @@ mod tests {
             category.details,
             Some(json!({ "reason": "category_not_found" }))
         );
+
+        let kind = ApiError::from(NigelError::UnknownDocumentKind("Memo".into()));
+        assert_eq!(kind.details, Some(json!({ "reason": "kind_not_found" })));
     }
 
     #[test]

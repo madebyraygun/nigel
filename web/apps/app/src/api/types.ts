@@ -711,6 +711,7 @@ export const NOT_FOUND_REASONS = [
   'invoice_not_found',
   'client_not_found',
   'document_not_found',
+  'kind_not_found',
 ] as const;
 
 export type NotFoundReason = (typeof NOT_FOUND_REASONS)[number];

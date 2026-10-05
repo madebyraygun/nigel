@@ -40,8 +40,10 @@ export function documentsGuardrailMessage(error: unknown): string {
   }
 
   if (error instanceof ApiError) {
-    if (error.status === 404 && notFoundReason(error) === 'document_not_found') {
-      return 'This document no longer exists.';
+    if (error.status === 404) {
+      const reason = notFoundReason(error);
+      if (reason === 'document_not_found') return 'This document no longer exists.';
+      if (reason === 'kind_not_found') return 'That document kind does not exist. Choose another.';
     }
     return error.message;
   }

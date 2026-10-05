@@ -117,7 +117,7 @@ pub fn active_kind_by_name(conn: &Connection, name: &str) -> Result<DocumentKind
         )
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
-                NigelError::NotFound(format!("Document kind not found: {name}"))
+                NigelError::UnknownDocumentKind(name.to_owned())
             }
             other => other.into(),
         })?;
@@ -161,7 +161,7 @@ mod tests {
         ));
         assert!(matches!(
             active_kind_by_name(&conn, "Memo"),
-            Err(NigelError::NotFound(_))
+            Err(NigelError::UnknownDocumentKind(_))
         ));
     }
 

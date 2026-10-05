@@ -229,6 +229,9 @@ pub enum NigelError {
     #[error("Unknown category: {0}")]
     UnknownCategory(String),
 
+    #[error("Document kind not found: {0}")]
+    UnknownDocumentKind(String),
+
     #[error("Settings error: {0}")]
     Settings(String),
 
