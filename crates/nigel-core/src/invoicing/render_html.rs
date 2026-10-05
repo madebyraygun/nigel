@@ -69,7 +69,7 @@ fn satisfies(found: &[&str], key: &str) -> bool {
 
 const MAX_TEMPLATE_BYTES: usize = 1024 * 1024;
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
