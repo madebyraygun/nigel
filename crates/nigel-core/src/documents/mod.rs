@@ -11,6 +11,7 @@ pub mod render;
 pub mod send;
 pub mod status;
 pub mod store;
+pub mod sync;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
 pub mod wire;
