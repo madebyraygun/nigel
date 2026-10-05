@@ -172,8 +172,13 @@ pub fn format_send_summary(
         Some(host) => format!("publishes each recipient's page and the PDF to {host}"),
         None => "publishes each recipient's page and the PDF".to_string(),
     };
-    let response = if response_form {
-        "Recipients can accept or request changes on their page."
+    let has_collaborators = recipients
+        .iter()
+        .any(|r| r.role == RecipientRole::Collaborator);
+    let response = if response_form && has_collaborators {
+        "The signer can accept or request changes on their page; collaborators can request changes."
+    } else if response_form {
+        "The signer can accept or request changes on their page."
     } else {
         "There is no response form configured, so recipients can only read it."
     };
@@ -843,6 +848,31 @@ mod tests {
         assert!(out.contains("Pat Example <pat@cedar.test> (signer)"));
         assert!(out.contains("docs.example.test"));
         assert!(out.contains("no response form"));
+    }
+
+    #[test]
+    fn the_summary_says_only_the_signer_can_accept() {
+        let out = format_send_summary(
+            "Website rebuild",
+            "Cedar Systems",
+            1,
+            &[pat(), sam()],
+            None,
+            true,
+        );
+        assert!(
+            out.contains(
+                "The signer can accept or request changes on their page; collaborators can request changes."
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("Recipients can accept"), "{out}");
+        let alone =
+            format_send_summary("Website rebuild", "Cedar Systems", 1, &[pat()], None, true);
+        assert!(
+            alone.contains("The signer can accept or request changes on their page. This"),
+            "{alone}"
+        );
     }
 
     #[test]
