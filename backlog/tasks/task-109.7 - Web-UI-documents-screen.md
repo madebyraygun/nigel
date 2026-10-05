@@ -1,15 +1,18 @@
 ---
 id: TASK-109.7
 title: 'Web UI: documents screen'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-05 15:16'
 labels:
   - documents
   - spa
 milestone: m-1
 dependencies: []
+references:
+  - docs/superpowers/specs/2026-10-05-documents-signing-design.md
 parent_task_id: TASK-109
 priority: medium
 ---
@@ -30,8 +33,9 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A document can be drafted, edited, filed, sent, revised and carried to executed entirely in the browser, with versions and both signature records shown on the detail
-- [ ] #2 Every new component ships with a co-located preview and passing describePreviewA11y, reads theme tokens, and adopts controlsCss where it renders a wa-* primitive
-- [ ] #3 Guardrails render from details.reason with the two deliberate fallbacks (a 400 and an unrecognized 409 render the server's sentence)
-- [ ] #4 All server access goes through src/api and the guard test stays green
+- [ ] #1 Every new component ships with a co-located preview and passing describePreviewA11y, reads theme tokens, and adopts controlsCss where it renders a wa-* primitive
+- [ ] #2 Guardrails render from details.reason with the two deliberate fallbacks (a 400 and an unrecognized 409 render the server's sentence)
+- [ ] #3 All server access goes through src/api and the guard test stays green
+- [ ] #4 A filed PDF can be filed, sent to a signer and collaborators, revised after a change request, accepted and countersigned to executed entirely in the browser; drafting and wc-markdown-editor are deferred to 109.9
+- [ ] #5 The detail shows a per-version timeline of recipients, signatures and change-request notes (notes rendered as text), and send uses a wc-recipient-editor with exactly one signer
 <!-- AC:END -->

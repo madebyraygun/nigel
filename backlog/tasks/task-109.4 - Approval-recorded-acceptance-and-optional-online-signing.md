@@ -1,14 +1,17 @@
 ---
 id: TASK-109.4
 title: 'Approval: acceptance, countersigning and optional online signing'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-05 15:16'
 labels:
   - documents
 milestone: m-1
 dependencies: []
+references:
+  - docs/superpowers/specs/2026-10-05-documents-signing-design.md
 parent_task_id: TASK-109
 priority: medium
 ---
@@ -26,10 +29,10 @@ The epic's point. Two signatures, one record each, both bound to the sent versio
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Manual accept and decline record name, date and method against the sent version, refuse non-sent and terminal documents in the data layer, and status derives from the timestamps
-- [ ] #2 Countersign records the operator's name, date and method against the same version, is admitted only from accepted, and carries the document to executed; executed is terminal
-- [ ] #3 Accepting or countersigning a published document republishes the page stamped with every signature recorded so far and without the accept form; a failed republish is a warning, never a lost signature
-- [ ] #4 The Worker script is generic (no operator-specific content), committed with deploy docs, and writes only an acceptance object
-- [ ] #5 nigel document sync is idempotent — re-running records nothing twice — and reports per-document results as data
-- [ ] #6 With no accept endpoint configured the published page carries no accept form, and every other path still works
+- [ ] #1 Countersign records the operator's name, date and method against the same version, is admitted only from accepted, and carries the document to executed; executed is terminal
+- [ ] #2 Accepting or countersigning a published document republishes the page stamped with every signature recorded so far and without the accept form; a failed republish is a warning, never a lost signature
+- [ ] #3 With no accept endpoint configured the published page carries no accept form, and every other path still works
+- [ ] #4 Manual accept, request-changes and decline record name, date, method (and note) against the latest sent version per the spec's transition table
+- [ ] #5 The generic Worker (workers/document-response) validates role, version, checksum, typed name (signer accept) or note (request changes) against the private manifest, writes the response once per recipient per version, and rate-limits per recipient token; vitest covers each refusal
+- [ ] #6 nigel document sync reads responses through a ResponseSource trait, refuses version/checksum mismatches, records each response once (re-running records nothing twice), closes the manifest, republishes pages, and reports per document as data
 <!-- AC:END -->

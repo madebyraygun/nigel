@@ -1,14 +1,17 @@
 ---
 id: TASK-109.1
 title: Documents data layer and operator-defined kinds
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-05 15:16'
 labels:
   - documents
 milestone: m-1
 dependencies: []
+references:
+  - docs/superpowers/specs/2026-10-05-documents-signing-design.md
 parent_task_id: TASK-109
 priority: medium
 ---
@@ -28,10 +31,11 @@ The foundation: `documents`, `document_kinds` and `document_versions` tables, in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The migration creates documents, document_kinds and document_versions and seeds Proposal, Estimate and Agreement exactly once; re-running init or the migration never reseeds
-- [ ] #2 Kinds are rows: adding, renaming and deactivating a kind are data operations exercised by tests, and no Rust enum mirrors the kind list
-- [ ] #3 Status is derived by one function from the stored timestamps, including executed from countersigned_at; no code path writes status directly, pinned by a test
-- [ ] #4 Versions are immutable once written, carry a checksum, and the acceptance and countersign records reference the version they bind to, pinned by tests
-- [ ] #5 Terminal-state, accepted-admits-countersign-only, draft-only-edit and archived-client guards are data-layer functions raising typed NigelError variants, and client delete is blocked while documents exist, with the count in the DeleteBlock
-- [ ] #6 All fixtures use the fictional cast
+- [ ] #1 Kinds are rows: adding, renaming and deactivating a kind are data operations exercised by tests, and no Rust enum mirrors the kind list
+- [ ] #2 Terminal-state, accepted-admits-countersign-only, draft-only-edit and archived-client guards are data-layer functions raising typed NigelError variants, and client delete is blocked while documents exist, with the count in the DeleteBlock
+- [ ] #3 All fixtures use the fictional cast
+- [ ] #4 Migration v15 creates document_kinds, documents, document_versions, document_recipients, document_signatures and document_change_requests, and seeds Proposal, Estimate and Agreement exactly once
+- [ ] #5 Status (draft, sent, changes_requested, accepted, declined, executed, withdrawn) is derived by one function from the rows per the spec's status table; a test pins that nothing writes status
+- [ ] #6 Versions are immutable once sent and carry a SHA-256 checksum; every signature and change request references the version (and recipient, when online) it binds to and records the checksum the respondent saw
+- [ ] #7 A version is sent with exactly one signer; at most one online response per recipient per version is enforced across signatures and change requests
 <!-- AC:END -->

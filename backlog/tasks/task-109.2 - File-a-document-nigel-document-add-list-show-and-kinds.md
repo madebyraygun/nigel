@@ -1,10 +1,11 @@
 ---
 id: TASK-109.2
 title: 'File a document: nigel document add, list, show and kinds'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-05 15:16'
 labels:
   - documents
 milestone: m-1

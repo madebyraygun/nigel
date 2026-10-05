@@ -1,14 +1,17 @@
 ---
 id: TASK-109.5
 title: 'HTTP API: /api/documents'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-05 15:16'
 labels:
   - documents
 milestone: m-1
 dependencies: []
+references:
+  - docs/superpowers/specs/2026-10-05-documents-signing-design.md
 parent_task_id: TASK-109
 priority: medium
 ---
@@ -34,6 +37,6 @@ The route family, on the invoices routes' rules:
 - [ ] #2 Send requires confirm:true at the wire level, answering 400 confirmation_required without it
 - [ ] #3 token never crosses the wire; a computed publicUrl carries the address instead
 - [ ] #4 Upload reuses the uploads spool (sanitized name, 0600/0700, purge rules) and refuses non-PDF content; drafted creation and PATCH edits refuse non-draft states with the data layer's sentence
-- [ ] #5 The detail carries versions, both signature records and can* flags that call the data-layer guards, pinned by tests
-- [ ] #6 docs/api.md documents the new routes
+- [ ] #5 docs/api.md documents the new routes
+- [ ] #6 The detail carries versions, recipients, signatures, change requests and can* flags that call the data-layer guards; drafted (Markdown) create is deferred to 109.9
 <!-- AC:END -->
