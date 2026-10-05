@@ -15,6 +15,7 @@ pub enum BlockReason {
     HasTransactions(i64),
     HasActiveRules(i64),
     HasInvoices(i64),
+    HasDocuments(i64),
     /// The row is not the freshly-entered draft this delete is for: it has been
     /// published, paid or voided.
     NotDeletable,
@@ -56,6 +57,13 @@ impl DeleteBlock {
         }
     }
 
+    pub fn documents(subject: &'static str, count: i64) -> Self {
+        Self {
+            subject,
+            reason: BlockReason::HasDocuments(count),
+        }
+    }
+
     pub fn not_deletable(subject: &'static str) -> Self {
         Self {
             subject,
@@ -75,6 +83,7 @@ impl DeleteBlock {
             BlockReason::HasTransactions(_) => "has_transactions",
             BlockReason::HasActiveRules(_) => "has_active_rules",
             BlockReason::HasInvoices(_) => "has_invoices",
+            BlockReason::HasDocuments(_) => "has_documents",
             BlockReason::NotDeletable => "not_deletable",
             BlockReason::FromSchedule(_) => "from_schedule",
         }
@@ -85,7 +94,8 @@ impl DeleteBlock {
         match self.reason {
             BlockReason::HasTransactions(n)
             | BlockReason::HasActiveRules(n)
-            | BlockReason::HasInvoices(n) => Some(n),
+            | BlockReason::HasInvoices(n)
+            | BlockReason::HasDocuments(n) => Some(n),
             // A schedule id is an identifier, not a tally: putting it in
             // `count` would render as "has 3 …" wherever a count is printed.
             BlockReason::NotDeletable | BlockReason::FromSchedule(_) => None,
@@ -116,6 +126,13 @@ impl fmt::Display for DeleteBlock {
                 write!(
                     f,
                     "Cannot delete: {subject} has {count} invoice{}",
+                    plural(count)
+                )
+            }
+            BlockReason::HasDocuments(count) => {
+                write!(
+                    f,
+                    "Cannot delete: {subject} has {count} document{}",
                     plural(count)
                 )
             }
@@ -291,6 +308,14 @@ mod tests {
                 "Cannot delete: client has 3 invoices",
             ),
             (
+                DeleteBlock::documents("client", 1),
+                "Cannot delete: client has 1 document",
+            ),
+            (
+                DeleteBlock::documents("client", 2),
+                "Cannot delete: client has 2 documents",
+            ),
+            (
                 DeleteBlock::not_deletable("invoice"),
                 "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
             ),
@@ -320,6 +345,10 @@ mod tests {
             "has_invoices"
         );
         assert_eq!(
+            DeleteBlock::documents("client", 1).reason_code(),
+            "has_documents"
+        );
+        assert_eq!(
             DeleteBlock::not_deletable("invoice").reason_code(),
             "not_deletable"
         );
@@ -336,6 +365,7 @@ mod tests {
         assert_eq!(DeleteBlock::transactions("account", 12).count(), Some(12));
         assert_eq!(DeleteBlock::active_rules("category", 3).count(), Some(3));
         assert_eq!(DeleteBlock::invoices("client", 1).count(), Some(1));
+        assert_eq!(DeleteBlock::documents("client", 2).count(), Some(2));
         assert_eq!(DeleteBlock::not_deletable("invoice").count(), None);
         assert_eq!(DeleteBlock::from_schedule("invoice", 3).count(), None);
     }
