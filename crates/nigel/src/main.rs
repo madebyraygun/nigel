@@ -263,6 +263,12 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 title,
                 file,
             } => cli::document::add(client, &kind, &title, &file, &cli::today()),
+            DocumentCommands::List {
+                client,
+                status,
+                kind,
+            } => cli::document::list(client, status.as_deref(), kind.as_deref()),
+            DocumentCommands::Show { id } => cli::document::show(id),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

@@ -4548,6 +4548,70 @@ fn document_add_twice_names_the_existing_document() {
 }
 
 #[test]
+fn document_list_and_show_after_add() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "list");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "list", "--client", &client, "--status", "draft"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Website rebuild").and(predicate::str::contains("v1")));
+    env.cmd()
+        .args(["document", "list", "--status", "sent"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Website rebuild").not());
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Document #1  [draft]  Proposal")
+                .and(predicate::str::contains("Client:   Cedar Systems"))
+                .and(predicate::str::contains("Version 1  sha256:")),
+        );
+}
+
+#[test]
+fn document_list_rejects_an_unknown_status_and_a_missing_client() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "list", "--status", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Unknown status: bogus. Use one of: draft, sent",
+        ));
+    env.cmd()
+        .args(["document", "list", "--client", "99999"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Client not found"));
+    env.cmd()
+        .args(["document", "show", "99999"])
+        .assert()
+        .failure();
+}
+
+#[test]
 fn document_kinds_add_rename_deactivate_round_trip() {
     let env = TestEnv::new();
     env.init_and_demo();

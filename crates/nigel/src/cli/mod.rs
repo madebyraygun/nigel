@@ -607,6 +607,17 @@ pub enum DocumentCommands {
         #[arg(long)]
         file: std::path::PathBuf,
     },
+    /// List documents.
+    List {
+        #[arg(long)]
+        client: Option<i64>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Show one document: every version, its recipients and every response.
+    Show { id: i64 },
 }
 
 #[derive(Subcommand)]
