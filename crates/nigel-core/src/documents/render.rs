@@ -44,6 +44,7 @@ pub enum PageState<'a> {
 const REPLY_BY_EMAIL: &str = "To respond, reply to the email this link came in.";
 
 const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach(function (form) {
+  form.hidden = false;
   form.addEventListener('submit', function (event) {
     event.preventDefault();
     var d = form.dataset, f = new FormData(form), status = form.querySelector('[data-status]');
@@ -105,15 +106,15 @@ fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -
     let mut out = String::new();
     if recipient.role == RecipientRole::Signer {
         out.push_str(&format!(
-            "<form {}><h2>Accept</h2>\
+            "<form method=\"post\" hidden {}><h2>Accept</h2>\
 <label>Your full name <input type=\"text\" name=\"typedName\" required maxlength=\"200\" autocomplete=\"name\"></label>\
-<label><input type=\"checkbox\" name=\"consent\" required> I have read this document and agree to it.</label>\
+<label><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
 <button type=\"submit\">Accept</button><p data-status role=\"status\"></p></form>\n",
             data_attrs(ctx, recipient, endpoint, "accept")
         ));
     }
     out.push_str(&format!(
-        "<form {}><h2>Request changes</h2>\
+        "<form method=\"post\" hidden {}><h2>Request changes</h2>\
 <label>What should change? <textarea name=\"note\" rows=\"5\" maxlength=\"4000\" required></textarea></label>\
 <button type=\"submit\">Request changes</button><p data-status role=\"status\"></p></form>\n\
 <p id=\"received\" hidden>Received: thank you</p>\n<script>{SCRIPT}</script>\n\
@@ -307,7 +308,17 @@ mod tests {
             assert!(page.contains("<meta name=\"robots\" content=\"noindex\">"));
             assert!(page.contains("sha256:ab") && page.contains("../v2/document.pdf"));
             assert!(page.contains("not a certified electronic signature"));
+            assert!(page.contains(
+                "<noscript><p>To respond, reply to the email this link came in.</p></noscript>"
+            ));
+            assert_eq!(
+                page.matches("<form method=\"post\" hidden data-endpoint=")
+                    .count(),
+                page.matches("<form").count()
+            );
         }
+        assert!(signer.contains("I agree to sign electronically"));
+        assert_eq!(signer.matches("<form").count(), 2);
     }
 
     #[test]
@@ -429,6 +440,21 @@ mod tests {
         assert_eq!(
             pages.iter().map(|p| p.0.as_str()).collect::<Vec<_>>(),
             ["rs", "rc"]
+        );
+        assert!(!pages[1].1.contains("\"rs\""));
+        let notice = |state| render_recipient_page(&ctx(), &SIGNER, &state);
+        assert!(notice(PageState::Revising)
+            .contains("This document is being revised. A new version will be sent to you."));
+        assert!(notice(PageState::ChangesRequested)
+            .contains("Changes requested: a revised version is on its way."));
+        assert!(notice(PageState::Declined).contains("This document was declined."));
+        let executed = notice(PageState::Executed {
+            client: ("Pat Example", "2026-10-06"),
+            countersign: ("Sam Example", "2026-10-07"),
+        });
+        assert!(
+            executed.contains("Accepted by Pat Example on 2026-10-06")
+                && executed.contains("Countersigned by Sam Example on 2026-10-07")
         );
         assert!(withdrawn_page_html("Initech", "<b>x</b>").contains("noindex"));
         assert_eq!(relative_pdf_href(3), "../v3/document.pdf");
