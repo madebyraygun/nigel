@@ -29,7 +29,9 @@ use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
 use nigel_core::invoicing::wiring::{
     build_document_clients, company_name, optional_document_publisher, optional_response_source,
 };
-use nigel_core::settings::{documents_config, documents_status, get_data_dir};
+use nigel_core::settings::{
+    derive_documents_base, documents_config, documents_status, get_data_dir, DocumentsConfig,
+};
 use rusqlite::Connection;
 
 use crate::cli::invoice::publish_host;
@@ -181,6 +183,15 @@ pub fn format_send_summary(
     out
 }
 
+fn send_publish_host(config: &DocumentsConfig) -> Option<String> {
+    derive_documents_base(
+        config.documents_base_url.as_deref(),
+        config.invoicing.public_base_url.as_deref(),
+    )
+    .as_deref()
+    .and_then(publish_host)
+}
+
 pub(crate) fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     conn: &Connection,
     id: i64,
@@ -250,11 +261,7 @@ pub fn send(
     let config = documents_config();
     if !yes {
         confirm_unless_piped(id)?;
-        let host = config
-            .invoicing
-            .public_base_url
-            .as_deref()
-            .and_then(publish_host);
+        let host = send_publish_host(&config);
         println!(
             "{}",
             format_send_summary(
@@ -836,6 +843,26 @@ mod tests {
         assert!(out.contains("Pat Example <pat@cedar.test> (signer)"));
         assert!(out.contains("docs.example.test"));
         assert!(out.contains("no response form"));
+    }
+
+    #[test]
+    fn the_summary_names_the_documents_host_not_the_invoice_host() {
+        let mut config = nigel_core::settings::DocumentsConfig::default();
+        config.invoicing.public_base_url = Some("https://billing.example.test/i".into());
+        assert_eq!(
+            send_publish_host(&config).as_deref(),
+            Some("billing.example.test")
+        );
+        config.documents_base_url = Some("https://docs.example.test/d".into());
+        assert_eq!(
+            send_publish_host(&config).as_deref(),
+            Some("docs.example.test")
+        );
+        config.invoicing.public_base_url = None;
+        assert_eq!(
+            send_publish_host(&config).as_deref(),
+            Some("docs.example.test")
+        );
     }
 
     #[test]
