@@ -213,6 +213,58 @@ pub fn multipart_body(field: &str, filename: &str, content: &[u8]) -> (String, V
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }
 
+/// A `multipart/form-data` body with text fields and, optionally, a file
+/// field named `file`.
+pub fn multipart_form(fields: &[(&str, &str)], file: Option<(&str, &[u8])>) -> (String, Vec<u8>) {
+    const BOUNDARY: &str = "----nigeltestboundary";
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\n\
+                 Content-Disposition: form-data; name=\"{name}\"\r\n\r\n\
+                 {value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    if let Some((filename, content)) = file {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\n\
+                 Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
+                 Content-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(content);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+
+    (format!("multipart/form-data; boundary={BOUNDARY}"), body)
+}
+
+/// POST a [`multipart_form`] with a valid session.
+pub async fn post_multipart(
+    app: &Router,
+    uri: &str,
+    token: &str,
+    fields: &[(&str, &str)],
+    file: Option<(&str, &[u8])>,
+) -> (StatusCode, serde_json::Value) {
+    let (content_type, body) = multipart_form(fields, file);
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::HOST, HOST)
+        .header(header::COOKIE, format!("nigel_session={token}"))
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(body))
+        .expect("request");
+    send(app, request).await
+}
+
 /// POST a file to an upload route with a valid session.
 pub async fn upload_file(
     app: &Router,
@@ -334,7 +386,7 @@ pub const EXPORT_ROUTES: [&str; 8] = [
 /// — `rules/test` and `imports/preview` are dry runs — and a rule stated as
 /// "the ones that write" invites the next dry run to be left out of a list the
 /// guard still has to cover.
-pub const WRITE_ROUTES: [(&str, &str, &str); 35] = [
+pub const WRITE_ROUTES: [(&str, &str, &str); 36] = [
     ("POST", "/api/clients", r#"{"name":"X"}"#),
     ("PATCH", "/api/clients/1", r#"{"name":"X"}"#),
     ("DELETE", "/api/clients/1", ""),
@@ -407,6 +459,7 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 35] = [
     ("DELETE", "/api/categories/1", ""),
     ("POST", "/api/rules", r#"{"pattern":"X","categoryId":1}"#),
     ("POST", "/api/rules/test", r#"{"pattern":"X"}"#),
+    ("PATCH", "/api/documents/1", r#"{"title":"X"}"#),
     ("DELETE", "/api/imports/1", ""),
     // The guard runs before the extractors, so these bodies only have to reach
     // the router — the upload route never gets as far as wanting multipart.

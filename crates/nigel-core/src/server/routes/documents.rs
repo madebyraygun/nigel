@@ -1,5 +1,10 @@
-//! Documents: the list, one document in full, the active kinds, and the
-//! sandboxed preview of the page a signer would receive.
+//! Documents: the list, one document in full, the active kinds, the sandboxed
+//! preview of the page a signer would receive, and filing, editing and revising.
+//!
+//! A filed or revised PDF arrives as multipart and goes through the uploads
+//! spool like a statement does: its name is sanitized, its bytes must open with
+//! the PDF header, and it is parked owner-only on disk, read back, handed to the
+//! data layer and removed whatever the outcome.
 //!
 //! Every `can*` flag the detail response reports is `guards::can` — the table
 //! the data layer enforces — plus the archived-client check for the two actions
@@ -9,17 +14,21 @@
 //! No token crosses the wire as a field. A sent version's recipients carry the
 //! computed `pageUrl`, which is the one place a recipient's address appears.
 
-use axum::body::Body;
-use axum::extract::{Query, State};
-use axum::http::header;
+use std::path::Path;
+
+use axum::body::{Body, Bytes};
+use axum::extract::multipart::MultipartRejection;
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::guards::{can, ensure_client_active_for_documents, Action};
 use crate::documents::kinds::list_kinds;
+use crate::documents::lifecycle::revise_with_republish;
 use crate::documents::model::{
     ChangeRequest, Document, DocumentKind, DocumentListRow, DocumentStatus, DocumentVersion,
     Recipient, Signature,
@@ -29,19 +38,31 @@ use crate::documents::render::{
 };
 use crate::documents::send::preview_recipients;
 use crate::documents::store::{
-    document_record, get_document, latest_version, list_documents, read_version_pdf, DocumentFilter,
+    document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
+    update_document, DocumentFilter, DocumentUpdate, NewDocument,
 };
+use crate::error::NigelError;
 use crate::invoicing::clients::get_client;
+use crate::invoicing::wiring::{
+    company_name, optional_document_publisher, optional_response_source,
+};
 
 use super::super::error::{ApiError, ApiResult};
-use super::super::extract::ApiPath;
+use super::super::extract::{ApiJson, ApiPath};
 use super::super::state::AppState;
+use super::super::uploads::{self, UploadArea};
+use super::imports::multipart_error;
 use super::{not_found_because, with_conn, with_conn_api};
 
 pub fn routes() -> Router<AppState> {
+    let upload_limit = || DefaultBodyLimit::max(uploads::MAX_UPLOAD_BYTES);
     Router::new()
-        .route("/documents", get(list))
-        .route("/documents/{id}", get(detail))
+        .route(
+            "/documents",
+            get(list).merge(post(file).layer(upload_limit())),
+        )
+        .route("/documents/{id}", get(detail).patch(edit))
+        .route("/documents/{id}/revise", post(revise).layer(upload_limit()))
         .route("/documents/{id}/preview", get(preview_html))
         .route("/documents/{id}/preview.pdf", get(preview_pdf))
         .route("/document-kinds", get(kinds))
@@ -69,6 +90,16 @@ struct DocumentDetail {
     can_decline: bool,
     can_countersign: bool,
     can_withdraw: bool,
+}
+
+/// A document after an action whose follow-up work is best-effort: the action
+/// stood, and `warnings` says what could not be published.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionResult {
+    #[serde(flatten)]
+    document: DocumentDetail,
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +253,189 @@ async fn detail(
 async fn kinds(State(state): State<AppState>) -> ApiResult<Json<Vec<DocumentKind>>> {
     let kinds = with_conn(&state, |conn| list_kinds(conn, false)).await?;
     Ok(Json(kinds))
+}
+
+// ---------------------------------------------------------------------------
+// Filing, editing and revising
+// ---------------------------------------------------------------------------
+
+/// The text fields and the one file of a multipart form.
+struct Form {
+    fields: Vec<(String, String)>,
+    file: Option<(String, Bytes)>,
+}
+
+impl Form {
+    fn field(&self, name: &str) -> ApiResult<&str> {
+        self.fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, value)| value.as_str())
+            .ok_or_else(|| {
+                ApiError::bad_request(format!("Expected a multipart form field named `{name}`."))
+            })
+    }
+
+    /// The file, with its name sanitized and its bytes checked as a PDF.
+    fn pdf(self) -> ApiResult<(String, Bytes)> {
+        let Some((raw_name, bytes)) = self.file else {
+            return Err(ApiError::bad_request(
+                "Expected a multipart form with a file field named `file`.",
+            ));
+        };
+        let filename = uploads::sanitize_filename_for(&raw_name, UploadArea::Document)
+            .map_err(ApiError::bad_request)?;
+        uploads::check_content(UploadArea::Document, &bytes).map_err(ApiError::bad_request)?;
+        Ok((filename, bytes))
+    }
+}
+
+async fn read_form(multipart: Result<Multipart, MultipartRejection>) -> ApiResult<Form> {
+    let mut multipart = multipart.map_err(|r| ApiError::bad_request(r.body_text()))?;
+    let mut form = Form {
+        fields: Vec::new(),
+        file: None,
+    };
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
+        let name = field.name().unwrap_or_default().to_owned();
+        match field.file_name().map(str::to_owned) {
+            Some(filename) if form.file.is_none() => {
+                let bytes = field.bytes().await.map_err(multipart_error)?;
+                form.file = Some((filename, bytes));
+            }
+            Some(_) => {}
+            None => {
+                let value = field.text().await.map_err(multipart_error)?;
+                form.fields.push((name, value));
+            }
+        }
+    }
+    Ok(form)
+}
+
+/// Park the upload in the spool, hand what is read back from disk to `work`,
+/// and remove it whether or not `work` succeeded.
+fn through_spool<T>(
+    db_path: &Path,
+    filename: &str,
+    bytes: &[u8],
+    work: impl FnOnce(&[u8]) -> ApiResult<T>,
+) -> ApiResult<T> {
+    let dir = uploads::uploads_dir(db_path);
+    uploads::purge_stale(&dir, uploads::MAX_AGE);
+    let stored = uploads::store(&dir, filename, bytes)?;
+    let result = std::fs::read(&stored.path)
+        .map_err(|e| ApiError::from(NigelError::from(e)))
+        .and_then(|pdf| work(&pdf));
+    uploads::delete(&dir, &stored.id);
+    result
+}
+
+/// `POST /api/documents` — file a PDF for a client as a new draft.
+async fn file(
+    State(state): State<AppState>,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> ApiResult<(StatusCode, Json<DocumentDetail>)> {
+    let form = read_form(multipart).await?;
+    let raw_client = form.field("clientId")?;
+    let client_id = raw_client.trim().parse::<i64>().map_err(|_| {
+        ApiError::bad_request(format!(
+            "Invalid `clientId`: expected a client id, got \"{raw_client}\"."
+        ))
+    })?;
+    let kind = form.field("kind")?.to_owned();
+    let title = form.field("title")?.to_owned();
+    let (filename, bytes) = form.pdf()?;
+    let today = crate::clock::today();
+
+    let detail = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            through_spool(&state.db_path(), &filename, &bytes, |pdf| {
+                let new = NewDocument {
+                    client_id,
+                    kind: &kind,
+                    title: &title,
+                };
+                let id = file_document(conn, &state.data_dir(), &new, pdf, &today)
+                    .map_err(|e| not_found_because(e, "client_not_found"))?;
+                detail_for(conn, id)
+            })
+        }
+    })
+    .await?;
+    Ok((StatusCode::CREATED, Json(detail)))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EditRequest {
+    title: Option<String>,
+    kind: Option<String>,
+}
+
+/// `PATCH /api/documents/{id}` — retitle or rekind a draft.
+async fn edit(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<EditRequest>,
+) -> ApiResult<Json<DocumentDetail>> {
+    let today = crate::clock::today();
+    let update = DocumentUpdate {
+        title: request.title,
+        kind: request.kind,
+    };
+    let detail = with_conn_api(&state, move |conn| {
+        update_document(conn, id, &update, &today)
+            .map_err(|e| not_found_because(e, "document_not_found"))?;
+        detail_for(conn, id)
+    })
+    .await?;
+    Ok(Json(detail))
+}
+
+/// `POST /api/documents/{id}/revise` — add a new draft version.
+///
+/// When an earlier version was sent, its pages are closed and republished
+/// through whatever this installation configured. That is best-effort: the new
+/// version stands either way, and what could not be published comes back as
+/// `warnings`.
+async fn revise(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> ApiResult<Json<ActionResult>> {
+    let (filename, bytes) = read_form(multipart).await?.pdf()?;
+    let today = crate::clock::today();
+    let config = crate::settings::documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            through_spool(&state.db_path(), &filename, &bytes, |pdf| {
+                let company = company_name(conn);
+                let outcome = revise_with_republish(
+                    conn,
+                    &state.data_dir(),
+                    id,
+                    pdf,
+                    &today,
+                    &company,
+                    publisher.as_ref(),
+                    source.as_ref(),
+                )
+                .map_err(|e| not_found_because(e, "document_not_found"))?;
+                Ok(ActionResult {
+                    document: detail_for(conn, id)?,
+                    warnings: outcome.warnings,
+                })
+            })
+        }
+    })
+    .await?;
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -537,5 +751,254 @@ mod tests {
         assert_eq!(body["status"], "sent", "{body}");
         assert_eq!(body["canSend"], false, "{body}");
         assert_eq!(body["canRevise"], true, "{body}");
+    }
+
+    fn new_pdf() -> Vec<u8> {
+        fixture_pdf("filed over http")
+    }
+
+    async fn file_over_http(
+        app: &axum::Router,
+        token: &str,
+        filename: &str,
+        bytes: &[u8],
+    ) -> (StatusCode, serde_json::Value) {
+        post_multipart(
+            app,
+            "/api/documents",
+            token,
+            &[
+                ("clientId", "1"),
+                ("kind", "Estimate"),
+                ("title", "Phase two"),
+            ],
+            Some((filename, bytes)),
+        )
+        .await
+    }
+
+    fn sent_document(db_path: &std::path::Path) -> i64 {
+        let conn = crate::db::open_connection(db_path, None).unwrap();
+        let (id, _, _) = sent_document_with_fakes(&conn, db_path.parent().unwrap());
+        id
+    }
+
+    #[tokio::test]
+    async fn filing_a_pdf_answers_the_draft_detail() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = file_over_http(&app, &token, "phase two.pdf", &new_pdf()).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["id"], 2, "{body}");
+        assert_eq!(body["title"], "Phase two", "{body}");
+        assert_eq!(body["kind"], "Estimate", "{body}");
+        assert_eq!(body["clientName"], "Acme Co", "{body}");
+        assert_eq!(body["status"], "draft", "{body}");
+        assert_eq!(body["canEdit"], true, "{body}");
+        assert_eq!(body["versions"][0]["number"], 1, "{body}");
+
+        let response = get_response(&app, "/api/documents/2/preview.pdf", &token).await;
+        assert_eq!(body_bytes(response).await, new_pdf());
+    }
+
+    #[tokio::test]
+    async fn a_document_upload_named_pdf_holding_html_is_a_400() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let (status, json) = post_multipart(
+            &app,
+            "/api/documents",
+            &token,
+            &[("clientId", "1"), ("kind", "Proposal"), ("title", "Fake")],
+            Some(("fake.pdf", b"<html>%PDF-1.7</html>")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        assert!(json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a PDF"));
+    }
+
+    #[tokio::test]
+    async fn a_document_upload_with_a_csv_name_is_a_400() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = file_over_http(&app, &token, "march.csv", &new_pdf()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["error"]["message"].as_str().unwrap().contains(".pdf"),
+            "{body}"
+        );
+        let all = ok_json(&app, "/api/documents", &token).await;
+        assert_eq!(ids(&all), vec![1], "{all}");
+    }
+
+    #[tokio::test]
+    async fn filing_the_same_pdf_twice_is_a_409_naming_the_document() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = file_over_http(&app, &token, "again.pdf", &fixture_pdf("seed")).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "duplicate_document");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("document #1"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn filing_for_an_archived_client_is_a_409_client_archived() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        crate::invoicing::clients::archive_client(&conn, 1, "2026-10-05").unwrap();
+        drop(conn);
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = file_over_http(&app, &token, "phase two.pdf", &new_pdf()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "client_archived");
+    }
+
+    #[tokio::test]
+    async fn the_spool_is_empty_after_filing() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let spool = crate::server::uploads::uploads_dir(&db_path);
+
+        let (status, body) = file_over_http(&app, &token, "phase two.pdf", &new_pdf()).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), 0);
+
+        let (status, body) = file_over_http(&app, &token, "again.pdf", &new_pdf()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(std::fs::read_dir(&spool).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn patch_outside_draft_is_a_409_with_the_data_layer_sentence() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let sent = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = patch_json(
+            &app,
+            "/api/documents/1",
+            &token,
+            &serde_json::json!({ "title": "Website rebuild, phase one", "kind": "Agreement" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["title"], "Website rebuild, phase one", "{body}");
+        assert_eq!(body["kind"], "Agreement", "{body}");
+
+        let (status, body) = patch_json(
+            &app,
+            "/api/documents/1",
+            &token,
+            &serde_json::json!({ "status": "sent" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) = patch_json(
+            &app,
+            &format!("/api/documents/{sent}"),
+            &token,
+            &serde_json::json!({ "title": "X" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let expected = crate::documents::guards::ensure_allowed(
+            sent,
+            crate::documents::model::DocumentStatus::Sent,
+            crate::documents::guards::Action::Edit,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(body["error"]["message"], expected, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_wrong_state");
+    }
+
+    #[tokio::test]
+    async fn revise_from_draft_is_a_409_document_wrong_state() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_multipart(
+            &app,
+            "/api/documents/1/revise",
+            &token,
+            &[],
+            Some(("v2.pdf", &new_pdf())),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_wrong_state");
+    }
+
+    #[tokio::test]
+    async fn revising_a_sent_document_answers_the_new_version_with_warnings_as_data() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let sent = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{sent}/revise");
+
+        let (status, body) =
+            post_multipart(&app, &uri, &token, &[], Some(("v2.pdf", b"<html></html>"))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) =
+            post_multipart(&app, &uri, &token, &[], Some(("v2.pdf", &new_pdf()))).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], sent, "{body}");
+        assert_eq!(body["versions"].as_array().unwrap().len(), 2, "{body}");
+        assert_eq!(body["versions"][1]["number"], 2, "{body}");
+        assert!(
+            !body["warnings"].as_array().expect("warnings").is_empty(),
+            "no publisher is configured, so the republish warns: {body}"
+        );
+        assert_eq!(
+            std::fs::read_dir(crate::server::uploads::uploads_dir(&db_path))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn the_multipart_routes_are_locked_with_the_database() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        encrypt(&db_path);
+        let (app, token) = app_for(&db_path);
+
+        for uri in ["/api/documents", "/api/documents/1/revise"] {
+            let (status, body) = post_multipart(
+                &app,
+                uri,
+                &token,
+                &[("clientId", "1"), ("kind", "Proposal"), ("title", "X")],
+                Some(("x.pdf", &new_pdf())),
+            )
+            .await;
+            assert_eq!(status, StatusCode::LOCKED, "{uri}: {body}");
+            assert_eq!(body["error"]["code"], "locked", "{uri}");
+        }
     }
 }
