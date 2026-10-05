@@ -771,4 +771,145 @@ describe('nigel-documents-screen', () => {
     expect(find(configured.el, '[data-sync]').hasAttribute('disabled')).toBe(false);
     expect(configured.el.shadowRoot?.querySelector('[data-sync-note]')).toBeNull();
   });
+
+  describe('the flow from draft to executed', () => {
+    function state(el: NigelDocumentsScreen) {
+      return {
+        status: find(el, 'wc-document-status').getAttribute('status'),
+        actions: actions(el).sort(),
+        versions: find<WcDocumentTimeline>(el, 'wc-document-timeline').versions.length,
+      };
+    }
+
+    async function open(el: NigelDocumentsScreen, query: string): Promise<void> {
+      el.params = new URLSearchParams(query);
+      await settle(el);
+    }
+
+    async function fill(el: NigelDocumentsScreen, hook: string, value: string): Promise<void> {
+      const field = find(el, hook) as HTMLElement & { value: string };
+      field.value = value;
+      field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      await settle(el);
+    }
+
+    async function confirmDialogAction(el: NigelDocumentsScreen): Promise<void> {
+      await answerConfirm(true);
+      find(el, 'wc-manager-dialog').dispatchEvent(new CustomEvent('nc-manager-save'));
+      await settle(el);
+    }
+
+    it('walks one document through its whole life', async () => {
+      const fake = client();
+      fake.clientContacts[1] = CEDAR_CONTACTS;
+      const { el, routes } = await mount('', fake);
+
+      await fillFiling(el);
+      find(el, '[data-file]').click();
+      await settle(el);
+      expect(routes).toEqual([{ screen: 'documents', params: 'id=700' }]);
+      await open(el, 'id=700');
+      expect(state(el)).toEqual({
+        status: 'draft',
+        actions: ['edit', 'send', 'withdraw'],
+        versions: 1,
+      });
+
+      find(el, '[data-action="send"]').click();
+      await settle(el);
+      const editor = find<WcRecipientEditor>(el, 'wc-send-dialog > wc-recipient-editor');
+      editor.dispatchEvent(
+        new CustomEvent('nc-recipients-change', {
+          detail: {
+            value: {
+              signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+              collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+            },
+          },
+        }),
+      );
+      await settle(el);
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+      expect(sendDialog(el)?.phase).toBe('sent');
+      expect(state(el)).toEqual({
+        status: 'sent',
+        actions: ['accept', 'decline', 'requestChanges', 'revise', 'withdraw'],
+        versions: 1,
+      });
+
+      await fake.requestDocumentChanges(700, {
+        name: 'Pat Example',
+        note: 'Tighten the scope.',
+      });
+      await open(el, '');
+      fake.documentSyncResult = {
+        documentsChecked: 1,
+        recorded: 1,
+        lines: [
+          {
+            documentId: 700,
+            title: 'Phase two proposal',
+            recorded: ['Pat Example requested changes to version 1'],
+            refused: [],
+            warnings: [],
+            status: 'changes_requested',
+          },
+        ],
+        failures: [],
+      };
+      find(el, '[data-sync]').click();
+      await settle(el);
+      expect(find(el, '[data-sync-report]').textContent).toContain('→ changes_requested');
+      await open(el, 'id=700');
+      expect(state(el)).toEqual({
+        status: 'changes_requested',
+        actions: ['accept', 'decline', 'revise', 'withdraw'],
+        versions: 1,
+      });
+
+      find(el, '[data-action="revise"]').click();
+      await settle(el);
+      find(el, 'wc-manager-dialog wc-dropzone').dispatchEvent(
+        new CustomEvent('nc-file-select', {
+          detail: { file: new File(['%PDF-1.7'], 'proposal-v2.pdf', { type: 'application/pdf' }) },
+        }),
+      );
+      await settle(el);
+      await confirmDialogAction(el);
+      expect(fake.calls).toContain('reviseDocument:700:proposal-v2.pdf');
+      expect(state(el)).toEqual({
+        status: 'draft',
+        actions: ['edit', 'send', 'withdraw'],
+        versions: 2,
+      });
+
+      find(el, '[data-action="send"]').click();
+      await settle(el);
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+      expect(fake.calls.filter((call) => call.startsWith('sendDocument:700'))).toHaveLength(2);
+      expect(state(el)).toEqual({
+        status: 'sent',
+        actions: ['accept', 'decline', 'requestChanges', 'revise', 'withdraw'],
+        versions: 2,
+      });
+
+      find(el, '[data-action="accept"]').click();
+      await settle(el);
+      await fill(el, '[data-field-name]', 'Pat Example');
+      await confirmDialogAction(el);
+      expect(fake.calls).toContain(`acceptDocument:700:${JSON.stringify({ name: 'Pat Example' })}`);
+      expect(state(el)).toEqual({ status: 'accepted', actions: ['countersign'], versions: 2 });
+
+      find(el, '[data-action="countersign"]').click();
+      await settle(el);
+      await fill(el, '[data-field-name]', 'Sam Example');
+      await confirmDialogAction(el);
+      expect(fake.calls).toContain(
+        `countersignDocument:700:${JSON.stringify({ name: 'Sam Example' })}`,
+      );
+      expect(state(el)).toEqual({ status: 'executed', actions: [], versions: 2 });
+    });
+  });
 });
