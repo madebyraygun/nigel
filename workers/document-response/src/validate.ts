@@ -20,12 +20,13 @@ export interface ResponseRequest {
 }
 
 export interface Refusal {
-  status: 400 | 403 | 404 | 405 | 409 | 422 | 429;
+  status: 400 | 403 | 404 | 405 | 409 | 413 | 422 | 429;
   code: string;
   message: string;
 }
 
 export const NOTE_MAX = 4000;
+export const TYPED_NAME_MAX = 200;
 
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 
@@ -76,6 +77,9 @@ export function checkRequest(request: ResponseRequest, manifest: Manifest | null
   }
   if (request.action === 'accept') {
     if (request.consent !== true) return refuse(422, 'consent_required', 'Consent to sign electronically is required.');
+    if ([...(request.typedName ?? '').trim()].length > TYPED_NAME_MAX) {
+      return refuse(422, 'name_invalid', `The typed name must be at most ${TYPED_NAME_MAX} characters.`);
+    }
     if (normalizeName(request.typedName ?? '') !== normalizeName(recipient.name)) {
       return refuse(422, 'name_mismatch', 'The typed name does not match the signer.');
     }
