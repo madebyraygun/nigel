@@ -176,6 +176,8 @@ mod tests {
             include_str!("model.rs"),
             include_str!("kinds.rs"),
             include_str!("status.rs"),
+            include_str!("store.rs"),
+            include_str!("record.rs"),
         ];
         for source in sources {
             assert!(
