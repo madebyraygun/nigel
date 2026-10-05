@@ -202,7 +202,7 @@ downstream rather than merely similar.
 
 `crates/nigel-desktop/src/imports.rs` holds both commands and the `stage_file`
 they share. The extension filter on the dialog is derived from
-`uploads::ALLOWED_EXTENSIONS`, so the dialog and the spool cannot disagree
+`uploads::UploadArea::Statement.allowed_extensions()`, so the dialog and the spool cannot disagree
 about what nigel reads.
 
 Two things are the shell's rather than the page's. Tauri intercepts drag events

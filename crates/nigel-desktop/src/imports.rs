@@ -86,7 +86,7 @@ pub async fn pick_import_file(app: tauri::AppHandle) -> Result<Option<StagedUplo
     let Some(picked) = app
         .dialog()
         .file()
-        .add_filter("Statements", &uploads::ALLOWED_EXTENSIONS)
+        .add_filter("Statements", uploads::UploadArea::Statement.allowed_extensions())
         .blocking_pick_file()
     else {
         return Ok(None);
@@ -151,7 +151,7 @@ mod tests {
         let error = stage_file(&source, &spool).expect_err("refused");
 
         assert!(error.contains("notes.txt"), "{error}");
-        for extension in uploads::ALLOWED_EXTENSIONS {
+        for extension in uploads::UploadArea::Statement.allowed_extensions() {
             assert!(error.contains(extension), "{error} omits {extension}");
         }
         assert!(
