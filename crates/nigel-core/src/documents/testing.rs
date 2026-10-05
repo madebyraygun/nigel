@@ -222,3 +222,19 @@ impl crate::invoicing::gateway::ResponseSource for FakeResponseSource {
         Ok(())
     }
 }
+
+pub fn pat() -> crate::documents::model::NewRecipient {
+    crate::documents::model::NewRecipient {
+        role: crate::documents::model::RecipientRole::Signer,
+        name: "Pat Example".into(),
+        email: "pat@cedar.test".into(),
+    }
+}
+
+pub fn sam() -> crate::documents::model::NewRecipient {
+    crate::documents::model::NewRecipient {
+        role: crate::documents::model::RecipientRole::Collaborator,
+        name: "Sam Example".into(),
+        email: "sam@cedar.test".into(),
+    }
+}
