@@ -251,6 +251,24 @@ export class WcSendDialog extends LitElement {
   @property({ type: Boolean, reflect: true })
   open = false;
 
+  /** What is being sent. Invoice is the original behaviour; document drops the money. */
+  @property({ type: String, reflect: true })
+  mode: 'invoice' | 'document' = 'invoice';
+
+  @property({ type: String, attribute: false })
+  documentTitle = '';
+
+  @property({ type: Number, attribute: false })
+  recipientCount = 0;
+
+  /** Whether the published document carries an online response form. */
+  @property({ type: Boolean, attribute: false })
+  responseForm = true;
+
+  /** The published pages, linked from a document's outcome. */
+  @property({ attribute: false })
+  pageLinks: { label: string; href: string }[] = [];
+
   @property({ type: Number })
   number = 0;
 
@@ -424,7 +442,9 @@ export class WcSendDialog extends LitElement {
   render() {
     return html`
       <wa-dialog
-        label=${`Send invoice #${this.number}?`}
+        label=${this.mode === 'document'
+          ? `Send \u201c${this.documentTitle}\u201d?`
+          : `Send invoice #${this.number}?`}
         ?open=${this.open}
         @wa-hide=${this.handleHide}
       >
@@ -439,7 +459,41 @@ export class WcSendDialog extends LitElement {
     return html`${this.renderSteps()}${this.renderOutcome()}`;
   }
 
+  private renderDocumentConfirm() {
+    const n = this.recipientCount;
+    return html`
+      ${this.blocked
+        ? html`<p class="blocked" role="alert" data-blocked>${this.blocked}</p>`
+        : nothing}
+      <slot name="recipients"></slot>
+      <p class="outcome">This will:</p>
+      <ul data-consequences>
+        <li>publish the document${this.publishHost ? ` to ${this.publishHost}` : ''}</li>
+        <li>email each of the ${n} recipients their own link with the PDF attached</li>
+        <li>
+          ${this.responseForm
+            ? 'open it for online responses'
+            : 'with no response form \u2014 responses are recorded by hand'}
+        </li>
+      </ul>
+      ${this.configCautions.map(
+        (caution) =>
+          html`<wc-notice-bar
+            variant="warning"
+            data-config-caution
+            message=${caution}
+          ></wc-notice-bar>`,
+      )}
+      ${this.renderPreview()}
+      <p class="caveat">
+        Nothing is sent until you confirm, and nothing is retried automatically.
+        This cannot be undone.
+      </p>
+    `;
+  }
+
   private renderConfirm() {
+    if (this.mode === 'document') return this.renderDocumentConfirm();
     return html`
       ${this.blocked
         ? html`<p class="blocked" role="alert" data-blocked>${this.blocked}</p>`
@@ -499,14 +553,16 @@ export class WcSendDialog extends LitElement {
     }
     if (this.previewLoading) {
       return html`<div class="preview-loading" data-preview-loading>
-        <wc-spinner show-label label="Rendering the invoice"></wc-spinner>
+        <wc-spinner show-label label=${this.mode === 'document' ? 'Rendering the document' : 'Rendering the invoice'}></wc-spinner>
       </div>`;
     }
     if (!this.previewHtml) return nothing;
     return html`
       <wc-document-frame
         data-preview
-        label=${`Invoice #${this.number} as the client will see it`}
+        label=${this.mode === 'document'
+          ? `\u201c${this.documentTitle}\u201d as a recipient will see it`
+          : `Invoice #${this.number} as the client will see it`}
         height="24rem"
         .srcdoc=${this.previewHtml}
       ></wc-document-frame>
@@ -538,6 +594,26 @@ export class WcSendDialog extends LitElement {
   private renderOutcome() {
     if (this.phase === 'sending') {
       return html`<wc-spinner show-label label="Sending"></wc-spinner>`;
+    }
+
+    if (this.phase === 'sent' && this.mode === 'document') {
+      const n = this.recipientCount;
+      return html`
+        <p class="outcome" data-sent>
+          \u201c${this.documentTitle}\u201d is on its way to ${n} recipient${n === 1 ? '' : 's'}.
+        </p>
+        ${this.pageLinks.length > 0
+          ? html`<ul data-page-links>
+              ${this.pageLinks.map(
+                (link) =>
+                  html`<li><a href=${link.href} data-page-link>${link.label}</a></li>`,
+              )}
+            </ul>`
+          : nothing}
+        ${this.configWarnings.map(
+          (warning) => html`<p class="caveat" data-config-warning>${warning}</p>`,
+        )}
+      `;
     }
 
     if (this.phase === 'sent') {
