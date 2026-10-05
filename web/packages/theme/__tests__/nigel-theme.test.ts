@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
 import { NIGEL_PALETTE } from '../src/tokens/gradient.js';
-import { declarationsOf } from './token-resolution.js';
+import { declarationsOf, followVar, followVarInPrint } from './token-resolution.js';
 
 const text = nigelTheme.cssText;
 
@@ -47,7 +47,9 @@ describe('nigelTheme', () => {
     '--nc-grad-brand',
     '--nc-grad-brand-size',
     '--nc-grad-brand-soft',
+    '--nc-font-figures',
     '--nc-font-money',
+    '--nc-font-brand',
     '--nc-icon-size',
     '--nc-sidebar-width',
     '--nc-sidebar-collapsed-width',
@@ -59,15 +61,61 @@ describe('nigelTheme', () => {
     expect(text).toContain(`${token}:`);
   });
 
-  it('makes the bundled mono the primary face', () => {
-    expect(text).toMatch(/--wa-font-family-sans:\s*'IBM Plex Mono'/);
+  it('makes the system face the primary one', () => {
+    // Chrome, labels and prose are drawn in whatever the person already reads
+    // every menu and dialog in; that is most of what makes an app look like it
+    // belongs on the machine rather than in a tab.
+    expect(text).toMatch(/--wa-font-family-sans:\s*system-ui/);
+    expect(text).toMatch(/--wa-font-family-sans:[^;]*sans-serif;/);
   });
 
-  it('keeps a system mono behind it, so a missing face still aligns columns', () => {
-    // The fallback is deliberately mono rather than the old sans stack: if the
-    // bundled face fails, money columns should still line up.
-    expect(text).toMatch(/--wa-font-family-sans:[^;]*ui-monospace/);
-    expect(text).toMatch(/--wa-font-family-sans:[^;]*monospace;/);
+  it('keeps the bundled face out of the primary stack', () => {
+    // A stack that still named Plex would fall back to it on an engine that
+    // does not answer system-ui, and chrome would be mono again on exactly
+    // the platform the split is for.
+    for (const declared of declarationsOf('--wa-font-family-sans')) {
+      expect(declared).not.toContain('IBM Plex Mono');
+    }
+  });
+
+  it('keeps a system mono behind the bundled one, so a missing face still aligns columns', () => {
+    // Every fallback here is mono: if the bundled face fails to load, money
+    // columns should still line up rather than fall to a proportional face.
+    expect(text).toMatch(/--wa-font-family-mono:\s*'IBM Plex Mono'/);
+    expect(text).toMatch(/--wa-font-family-mono:[^;]*ui-monospace/);
+    expect(text).toMatch(/--wa-font-family-mono:[^;]*monospace;/);
+  });
+
+  it('lands every figures and brand token on the bundled face', () => {
+    // Each is an indirection so a component can say why it wants the face
+    // rather than which face it wants; following the chain is what proves the
+    // indirection still arrives somewhere.
+    for (const token of ['--nc-font-figures', '--nc-font-money', '--nc-font-brand']) {
+      expect(followVar(token), token).toContain("'IBM Plex Mono'");
+    }
+  });
+
+  it('answers the four family names Web Awesome actually reads', () => {
+    // WA's compiled styles never mention --wa-font-family-sans. They read
+    // these four as bare var()s, and an undefined custom property is not a
+    // default but a discarded declaration.
+    for (const [token, want] of [
+      ['--wa-font-family-body', 'system-ui'],
+      ['--wa-font-family-heading', 'system-ui'],
+      ['--wa-font-family-longform', 'system-ui'],
+      ['--wa-font-family-code', "'IBM Plex Mono'"],
+    ]) {
+      expect(followVar(token), token).toContain(want);
+    }
+  });
+
+  it('prints in the bundled face, so two machines print one document', () => {
+    // A system face is whatever the machine has. Paper is the artifact an
+    // accountant keeps, and its metrics cannot depend on the OS it came off.
+    // Followed print-side, so a print-block redefinition anywhere along the
+    // sans -> mono -> Plex chain fails here rather than printing wrong.
+    expect(followVarInPrint('--wa-font-family-sans')).toContain("'IBM Plex Mono'");
+    expect(followVar('--wa-font-family-sans')).not.toContain('IBM Plex Mono');
   });
 
   it('pins color-scheme when a mode is forced, so native widgets follow', () => {

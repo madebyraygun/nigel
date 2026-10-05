@@ -17,6 +17,7 @@ export { radiusCss } from './tokens/radius.js';
 export { shadowCss } from './tokens/shadow.js';
 export { motionCss } from './tokens/motion.js';
 export { controlsCss } from './controls.js';
+export { figuresCss } from './figures.js';
 
 // The one behaviour module in an otherwise CSS-only package: the writer for
 // the light/dark class contract tokens/color.ts defines.

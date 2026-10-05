@@ -65,6 +65,16 @@ export const waContractCss = css`
     --wa-panel-border-width: var(--wa-border-width-s);
     --wa-panel-border-radius: var(--wa-radius-lg);
 
+    /* Families, in the four names Web Awesome's compiled styles actually
+       read. They are bare vars there, so a component whose chunk reaches one
+       gets a discarded declaration and falls back to whatever it inherits —
+       which happens to be right today and would stop being right the moment
+       a primitive is rendered somewhere that inherits a different face. */
+    --wa-font-family-body: var(--wa-font-family-sans);
+    --wa-font-family-heading: var(--wa-font-family-sans);
+    --wa-font-family-longform: var(--wa-font-family-sans);
+    --wa-font-family-code: var(--wa-font-family-mono);
+
     /* Type. --wa-font-size-l is what the dialog title reads; without it the
        heading renders at the inherited body size. */
     --wa-font-size-m: var(--wa-font-size-base);

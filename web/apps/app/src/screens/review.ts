@@ -28,6 +28,7 @@ import {
 } from './review-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
+import { figuresCss } from '@nigel/theme';
 
 /** How long to sit on a pattern before asking the server what it matches. */
 const RULE_TEST_DEBOUNCE_MS = 250;
@@ -52,7 +53,9 @@ type Phase = 'loading' | 'empty' | 'reviewing' | 'summary' | 'error';
  */
 @customElement('nigel-review-screen')
 export class NigelReviewScreen extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: flex;
       flex-direction: column;
@@ -107,7 +110,8 @@ export class NigelReviewScreen extends LitElement {
       opacity: 0.5;
       cursor: default;
     }
-  `;
+    `,
+  ];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })
@@ -474,11 +478,11 @@ export class NigelReviewScreen extends LitElement {
       >
         <dl class="summary-counts">
           <dt>Reviewed</dt>
-          <dd>${counts.reviewed}</dd>
+          <dd class="figure">${counts.reviewed}</dd>
           <dt>Skipped</dt>
-          <dd>${counts.skipped}</dd>
+          <dd class="figure">${counts.skipped}</dd>
           <dt>Rules created</dt>
-          <dd>${counts.rulesCreated}</dd>
+          <dd class="figure">${counts.rulesCreated}</dd>
         </dl>
         ${this.history.length > 0
           ? html`<button

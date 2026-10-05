@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import '../icons/icons.js';
+import { figuresCss } from '@nigel/theme';
 
 /**
  * Which of `year` and `month` a route accepts, as the server reports it on
@@ -95,7 +96,9 @@ const KIND_LABELS: Record<NcPeriodKind, string> = {
  */
 @customElement('wc-period-nav')
 export class WcPeriodNav extends LitElement {
-  static styles = css`
+  static styles = [
+    figuresCss,
+    css`
     :host {
       display: inline-flex;
       align-items: center;
@@ -136,6 +139,10 @@ export class WcPeriodNav extends LitElement {
       outline-offset: 2px;
     }
 
+    /* A period is a date, and the reservation that stops the two arrows
+       shuffling as it changes is measured in ch — the width of this
+       element's own zero. Both have to be the same face or the budget is
+       sized against a glyph nothing here draws. */
     .label {
       min-width: 12ch;
       text-align: center;
@@ -169,7 +176,8 @@ export class WcPeriodNav extends LitElement {
         display: none;
       }
     }
-  `;
+    `,
+  ];
 
   @property({ type: String })
   granularity: NcDateGranularity = 'monthAndYear';
@@ -270,7 +278,7 @@ export class WcPeriodNav extends LitElement {
         >
           <wc-icon-chevron-left></wc-icon-chevron-left>
         </button>
-        <span class="label" aria-live="polite"
+        <span class="label figure" aria-live="polite"
           >${periodLabel(this.period, this.locale)}</span
         >
         <button

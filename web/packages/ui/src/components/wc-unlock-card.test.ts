@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-unlock-card.js';
 import type { WcUnlockCard, NcUnlockDetail } from './wc-unlock-card.js';
+import { WcUnlockCard as WcUnlockCardClass } from './wc-unlock-card.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
+import { styleText } from '../../preview/controls-suite.js';
 import preview from './wc-unlock-card.preview.js';
 
 async function mount(props: Partial<WcUnlockCard> = {}): Promise<WcUnlockCard> {
@@ -104,6 +106,17 @@ describe('wc-unlock-card', () => {
     const el = await mount({ error: 'Wrong password.' });
     const status = el.shadowRoot?.querySelector('.status');
     expect(status?.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
+describe('the gate wears the brand', () => {
+  it('sets the company name in the brand face, as the sidebar does', () => {
+    // The gate is the first thing anyone sees on an encrypted database, and
+    // it shows the same string the sidebar's brand row shows once the books
+    // are open. One name in two faces is the thing this rules out.
+    expect(styleText(WcUnlockCardClass)).toMatch(
+      /\.heading\s*{[^}]*font-family:\s*var\(--nc-font-brand\)/,
+    );
   });
 });
 

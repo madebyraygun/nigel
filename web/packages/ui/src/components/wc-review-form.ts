@@ -67,6 +67,11 @@ export class WcReviewForm extends LitElement {
       margin-bottom: var(--wa-space-2xs, 4px);
     }
 
+    /* The pattern is a code-shaped string, like wc-rule-form's. */
+    #rule-pattern {
+      font-family: var(--wa-font-family-mono, monospace);
+    }
+
     input[type='text'] {
       width: 100%;
       box-sizing: border-box;

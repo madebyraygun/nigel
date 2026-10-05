@@ -187,6 +187,38 @@ other button. Define these in tokens/wa-contract.ts:\n${missing.join('\n')}`,
     ).toEqual([]);
   });
 
+  it('answers the family names Web Awesome reads, not the ones we read', () => {
+    // Nothing in Web Awesome reads --wa-font-family-sans or -mono; those are
+    // this package's own names. WA's compiled styles read these four as bare
+    // var()s, so leaving them undefined is not "inherit the ambient face" but
+    // a discarded declaration wherever a chunk sets one.
+    const defined = definedOnScreen();
+    for (const token of [
+      '--wa-font-family-body',
+      '--wa-font-family-heading',
+      '--wa-font-family-longform',
+      '--wa-font-family-code',
+    ]) {
+      expect(defined.has(token), token).toBe(true);
+    }
+
+    // Guards the guard: if upstream renames these, the list above is wrong
+    // rather than satisfied, and the rename has to be noticed here. Zero
+    // matches means the regex or the path went stale — the exact case the
+    // check exists for — so it fails rather than waving the list through.
+    const upstream = new Set(
+      [...readFileSync(join(waDist, 'styles', 'themes', 'default.css'), 'utf8')
+        .matchAll(/(--wa-font-family-[a-z-]+)\s*:/g)].map((m) => m[1]),
+    );
+    expect(upstream.size, 'no --wa-font-family-* token found in upstream default.css').toBeGreaterThan(0);
+    expect([...upstream].sort()).toEqual([
+      '--wa-font-family-body',
+      '--wa-font-family-code',
+      '--wa-font-family-heading',
+      '--wa-font-family-longform',
+    ]);
+  });
+
   it('is defined on screen, not only under @media print', () => {
     // --wa-shadow-s/m/l were previously defined only inside the print block,
     // so the dialog had no shadow on screen while a naive scan said otherwise.

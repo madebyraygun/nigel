@@ -55,7 +55,7 @@ describe('wc-count-grid', () => {
     const classes = [...(el.shadowRoot?.querySelectorAll('dd') ?? [])].map(
       (dd) => dd.className,
     );
-    expect(classes).toEqual(['good', 'warn', 'default']);
+    expect(classes).toEqual(['figure good', 'figure warn', 'figure default']);
   });
 
   it('renders a hint when one is given', async () => {
