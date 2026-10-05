@@ -1186,7 +1186,7 @@ calls for:
 
 | Step | What it does | A failure is |
 |---|---|---|
-| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys; `400 invalid_public_base_url` when the key is set to something that cannot produce a working link. Both name keys only — no response carries a configured value, so the 400 states the defect and the fix and never quotes the address |
+| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys; `409 invalid_public_base_url` when the key is set to something that cannot produce a working link. Both name keys only — no response carries a configured value, so the 409 states the defect and the fix and never quotes the address |
 | `load` | The invoice, its client and its line items | `404 invoice_not_found` / `client_not_found` |
 | `precheck` | Not void; the client has an address; there is something to charge | `409 void` / `client_missing_email` / `invoice_not_payable` |
 | `payment_link` | Create the Stripe link, unless one exists | `502 upstream_failed`, `service: "stripe"` |
@@ -1680,6 +1680,8 @@ its own words instead of parsing ours:
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
 | `signer_count` | `step` | Sending to anything but exactly one signer |
 | `signer_name_required` | `step` | Sending to a signer with no name to type when accepting |
+| `version_sent` | `step` (on send) | Freezing recipients on, or unfreezing, a version that is already sent or superseded |
+| `invalid_public_base_url` | `step` | Sending an invoice or a document when the public or documents base URL cannot produce a working link |
 | `not_deletable` | — | Deleting an invoice that has been sent, paid or voided |
 | `from_schedule` | — | Deleting an invoice a recurring schedule generated |
 

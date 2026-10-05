@@ -658,6 +658,7 @@ export const CONFLICT_REASONS = [
   'unchanged_revision',
   'signer_count',
   'signer_name_required',
+  'version_sent',
   'kind_inactive',
   'file_changed',
   'stale_version',

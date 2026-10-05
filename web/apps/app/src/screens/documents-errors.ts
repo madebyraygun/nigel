@@ -70,6 +70,8 @@ function conflictSentence(details: ConflictDetails): string | null {
       return 'This PDF is identical to the current version. A revision needs different content.';
     case 'signer_count':
       return 'A document is sent to exactly one signer.';
+    case 'version_sent':
+      return 'That version has already been sent, so its recipients are fixed.';
     case 'signer_name_required':
       return 'The signer needs a name, because accepting means typing it.';
     case 'kind_inactive':

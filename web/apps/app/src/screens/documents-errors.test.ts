@@ -31,6 +31,7 @@ describe('documentsGuardrailMessage', () => {
     ['duplicate_document', {}, 'This PDF is already filed for this client.'],
     ['unchanged_revision', {}, 'This PDF is identical to the current version. A revision needs different content.'],
     ['signer_count', {}, 'A document is sent to exactly one signer.'],
+    ['version_sent', {}, 'That version has already been sent, so its recipients are fixed.'],
     ['signer_name_required', {}, 'The signer needs a name, because accepting means typing it.'],
     ['kind_inactive', {}, 'That document kind is no longer in use. Choose another.'],
     ['file_changed', {}, 'The filed PDF no longer matches the checksum recorded when it was filed.'],
