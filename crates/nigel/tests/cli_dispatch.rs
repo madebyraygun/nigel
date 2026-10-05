@@ -3739,6 +3739,44 @@ fn invoice_schedule_run_never_prompts_on_an_encrypted_database() {
         .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
 }
 
+#[test]
+fn document_sync_never_prompts_on_an_encrypted_database() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.encrypt("hunter2");
+    let r2 = [
+        ("NIGEL_R2_ACCOUNT_ID", "acct"),
+        ("NIGEL_R2_ACCESS_KEY", "key"),
+        ("NIGEL_R2_SECRET_KEY", "secret"),
+        ("NIGEL_R2_PRIVATE_BUCKET", "private"),
+    ];
+
+    env.cmd()
+        .args(["document", "sync"])
+        .envs(r2)
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["document", "sync"])
+        .envs(r2)
+        .env_remove("NIGEL_DB_PASSWORD")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD")
+                .and(predicate::str::contains("never prompts")),
+        );
+}
+
 /// F3. `--currency` is a value the operator typed; `--from` only fills in what
 /// they left out, the way `--net-days` already does.
 #[test]

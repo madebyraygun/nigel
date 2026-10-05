@@ -137,6 +137,8 @@ fn is_unattended(command: &Commands) -> bool {
             command: InvoiceCommands::Schedule {
                 command: InvoiceScheduleCommands::Run
             }
+        } | Commands::Document {
+            command: DocumentCommands::Sync
         }
     )
 }
