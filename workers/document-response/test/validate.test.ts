@@ -40,6 +40,11 @@ describe('names', () => {
       expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, JSON.stringify(typed)).toBe('name_invalid');
     }
   });
+  it('refuses a typed name that is not well-formed Unicode', () => {
+    for (const typed of ['Zoë Example\ud800', '\udc00Zoë Example']) {
+      expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, JSON.stringify(typed)).toBe('name_invalid');
+    }
+  });
 });
 
 describe('consent and notes', () => {
@@ -55,6 +60,11 @@ describe('consent and notes', () => {
     expect(checkRequest({ ...changes, note: 'x'.repeat(4001) }, manifest)?.code).toBe('note_invalid');
     expect(checkRequest({ ...changes, note: 'bell\u0007' }, manifest)?.code).toBe('note_invalid');
     expect(checkRequest({ ...changes, note: '<script>alert(1)</script>' }, manifest)).toBeNull();
+  });
+  it('refuses a note that is not well-formed Unicode', () => {
+    expect(checkRequest({ ...changes, note: 'Fix the dates \ud83d' }, manifest)?.code).toBe('note_invalid');
+    expect(checkRequest({ ...changes, note: '\ude00 Fix the dates' }, manifest)?.code).toBe('note_invalid');
+    expect(checkRequest({ ...changes, note: 'Fix the dates 😀' }, manifest)).toBeNull();
   });
 });
 

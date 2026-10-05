@@ -45,13 +45,10 @@ pub trait DocumentPublisher {
 
 /// Reads the Worker's responses and writes the manifest it checks them against.
 pub trait ResponseSource {
-    /// `None` when the recipient has not responded to that version.
-    fn fetch(
-        &self,
-        token: &str,
-        version: i64,
-        recipient_token: &str,
-    ) -> Result<Option<crate::documents::wire::DocumentResponse>>;
+    /// The response object's body as stored, unparsed: sync reads it as
+    /// untrusted input. `None` when the recipient has not responded to that
+    /// version.
+    fn fetch(&self, token: &str, version: i64, recipient_token: &str) -> Result<Option<Vec<u8>>>;
     fn put_manifest(&self, token: &str, manifest: &crate::documents::wire::Manifest) -> Result<()>;
 }
 

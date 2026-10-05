@@ -161,6 +161,7 @@ pub struct FakeResponseSource {
     pub responses: std::cell::RefCell<
         std::collections::HashMap<String, crate::documents::wire::DocumentResponse>,
     >,
+    pub raw_responses: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>>,
     pub manifests: std::cell::RefCell<Vec<(String, crate::documents::wire::Manifest)>>,
     pub fail_fetch: bool,
     pub fail_fetch_for: Option<String>,
@@ -180,6 +181,14 @@ impl FakeResponseSource {
             .insert(crate::documents::wire::response_key(token, version, rt), r);
     }
 
+    /// Store an object body as is, whether or not it is a response.
+    pub fn put_raw_response(&self, token: &str, version: i64, rt: &str, body: &[u8]) {
+        self.raw_responses.borrow_mut().insert(
+            crate::documents::wire::response_key(token, version, rt),
+            body.to_vec(),
+        );
+    }
+
     pub fn last_manifest(&self, token: &str) -> Option<crate::documents::wire::Manifest> {
         self.manifests
             .borrow()
@@ -196,14 +205,21 @@ impl crate::invoicing::gateway::ResponseSource for FakeResponseSource {
         token: &str,
         version: i64,
         recipient_token: &str,
-    ) -> crate::error::Result<Option<crate::documents::wire::DocumentResponse>> {
+    ) -> crate::error::Result<Option<Vec<u8>>> {
         if self.fail_fetch || self.fail_fetch_for.as_deref() == Some(token) {
             return Err(crate::error::NigelError::Other(
                 "r2 500: fake fetch refused".into(),
             ));
         }
         let key = crate::documents::wire::response_key(token, version, recipient_token);
-        Ok(self.responses.borrow().get(&key).cloned())
+        if let Some(body) = self.raw_responses.borrow().get(&key) {
+            return Ok(Some(body.clone()));
+        }
+        Ok(self
+            .responses
+            .borrow()
+            .get(&key)
+            .map(|r| serde_json::to_vec(r).expect("a response serializes")))
     }
 
     fn put_manifest(

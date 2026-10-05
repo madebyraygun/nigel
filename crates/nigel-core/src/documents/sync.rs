@@ -157,11 +157,18 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
         if answered.contains(&recipient.id) {
             continue;
         }
-        if let Some(response) = source.fetch(&document.token, version.number, &recipient.token)? {
-            fetched.push(Fetched {
+        let Some(body) = source.fetch(&document.token, version.number, &recipient.token)? else {
+            continue;
+        };
+        match serde_json::from_slice::<DocumentResponse>(&body) {
+            Ok(response) => fetched.push(Fetched {
                 recipient,
                 response,
-            });
+            }),
+            Err(_) => line.refused.push(format!(
+                "{}'s response was not recorded: it is not a response Nigel can read.",
+                recipient.name
+            )),
         }
     }
 
@@ -382,6 +389,37 @@ mod tests {
             (sigs.len(), sigs[0].method, sigs[0].ip.as_deref()),
             (1, Method::Online, Some("203.0.113.7"))
         );
+    }
+
+    #[test]
+    fn an_unreadable_response_object_is_refused_without_stopping_the_document() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        src.put_raw_response(
+            &s.token,
+            1,
+            &s.collaborator.token,
+            br#"{"action":"request_changes","note":"\ud800"}"#,
+        );
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            accept_from(&s, "2026-10-05T17:04:11Z"),
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let line = &report.lines[0];
+        assert_eq!(line.recorded, ["Pat Example accepted version 1"]);
+        assert_eq!(line.refused.len(), 1, "{:?}", line.refused);
+        let refused = &line.refused[0];
+        assert!(refused.starts_with("Sam Example's response"), "{refused}");
+        assert!(
+            !refused.contains(&s.token) && !refused.contains(&s.collaborator.token),
+            "{refused}"
+        );
+        assert!(change_requests(&conn, s.version.id).unwrap().is_empty());
     }
 
     #[test]

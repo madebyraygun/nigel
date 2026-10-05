@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
-use crate::documents::wire::{manifest_key, response_key, DocumentResponse, Manifest};
+use crate::documents::wire::{manifest_key, response_key, Manifest};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher, ResponseSource};
 
@@ -228,6 +228,12 @@ fn ensure_success(status: reqwest::StatusCode, body: &str) -> Result<()> {
     Err(NigelError::Other(format!("r2 {status}: {body}")))
 }
 
+/// The signed URL names the object, and an object key carries a document's
+/// tokens, so the URL is left out of the message.
+fn transport_error(op: &str, e: reqwest::Error) -> NigelError {
+    NigelError::Other(format!("r2 {op}: {}", e.without_url()))
+}
+
 pub struct R2Publisher {
     pub account_id: String,
     pub access_key: String,
@@ -264,9 +270,9 @@ fn put_object(
         .header("content-type", content_type)
         .body(body.to_vec())
         .send()
-        .map_err(|e| NigelError::Other(format!("r2 put: {e}")))?;
+        .map_err(|e| transport_error("put", e))?;
     let status = resp.status();
-    let text = resp.text().map_err(|e| NigelError::Other(e.to_string()))?;
+    let text = resp.text().map_err(|e| transport_error("put", e))?;
     ensure_success(status, &text)
 }
 
@@ -286,11 +292,11 @@ fn get_object(
     let resp = crate::invoicing::http_client()
         .get(signed)
         .send()
-        .map_err(|e| NigelError::Other(format!("r2 get: {e}")))?;
+        .map_err(|e| transport_error("get", e))?;
     let status = resp.status();
     let body = resp
         .bytes()
-        .map_err(|e| NigelError::Other(e.to_string()))?
+        .map_err(|e| transport_error("get", e))?
         .to_vec();
     object_body(status, body)
 }
@@ -327,28 +333,14 @@ pub struct R2PrivateStore {
 }
 
 impl ResponseSource for R2PrivateStore {
-    fn fetch(
-        &self,
-        token: &str,
-        version: i64,
-        recipient_token: &str,
-    ) -> Result<Option<DocumentResponse>> {
-        let key = response_key(token, version, recipient_token);
-        let Some(body) = get_object(
+    fn fetch(&self, token: &str, version: i64, recipient_token: &str) -> Result<Option<Vec<u8>>> {
+        get_object(
             &self.account_id,
             &self.access_key,
             &self.secret_key,
             &self.bucket,
-            &key,
-        )?
-        else {
-            return Ok(None);
-        };
-        serde_json::from_slice(&body).map(Some).map_err(|e| {
-            NigelError::Other(format!(
-                "response object {key} is not a valid response: {e}"
-            ))
-        })
+            &response_key(token, version, recipient_token),
+        )
     }
 
     fn put_manifest(&self, token: &str, manifest: &Manifest) -> Result<()> {
@@ -657,6 +649,20 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("r2 403")
+        );
+    }
+
+    #[test]
+    fn a_transport_error_leaves_the_object_key_out() {
+        let err = crate::invoicing::http_client()
+            .get("http://127.0.0.1:1/d/doctoken0123456789/v1/recipienttoken0123.json")
+            .send()
+            .unwrap_err();
+        let msg = transport_error("get", err).to_string();
+        assert!(msg.starts_with("r2 get: "), "{msg}");
+        assert!(
+            !msg.contains("doctoken0123456789") && !msg.contains("recipienttoken0123"),
+            "{msg}"
         );
     }
 

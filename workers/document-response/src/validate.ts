@@ -30,6 +30,7 @@ export const TYPED_NAME_MAX = 200;
 
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const ANY_CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
+const LONE_SURROGATE = /\p{Cs}/u;
 
 const refuse = (status: Refusal['status'], code: string, message: string): Refusal => ({ status, code, message });
 
@@ -79,7 +80,7 @@ export function checkRequest(request: ResponseRequest, manifest: Manifest | null
   if (request.action === 'accept') {
     if (request.consent !== true) return refuse(422, 'consent_required', 'Consent to sign electronically is required.');
     const typed = (request.typedName ?? '').trim();
-    if ([...typed].length > TYPED_NAME_MAX || ANY_CONTROL.test(typed)) {
+    if ([...typed].length > TYPED_NAME_MAX || ANY_CONTROL.test(typed) || LONE_SURROGATE.test(typed)) {
       return refuse(422, 'name_invalid', `The typed name must be at most ${TYPED_NAME_MAX} characters of plain text.`);
     }
     if (normalizeName(request.typedName ?? '') !== normalizeName(recipient.name)) {
@@ -88,7 +89,7 @@ export function checkRequest(request: ResponseRequest, manifest: Manifest | null
     return null;
   }
   const note = request.note;
-  if (typeof note !== 'string' || note.trim() === '' || [...note].length > NOTE_MAX || CONTROL.test(note)) {
+  if (typeof note !== 'string' || note.trim() === '' || [...note].length > NOTE_MAX || CONTROL.test(note) || LONE_SURROGATE.test(note)) {
     return refuse(422, 'note_invalid', `The note must be 1 to ${NOTE_MAX} characters of plain text.`);
   }
   return null;
