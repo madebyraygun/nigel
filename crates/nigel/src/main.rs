@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    ImportsCommands, InvoiceCommands, InvoiceScheduleCommands, InvoiceTemplateCommands,
-    PasswordCommand, RulesCommands,
+    DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
+    InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -254,6 +254,15 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ClientCommands::Archive { id } => cli::client::archive(id, &cli::today()),
             ClientCommands::Unarchive { id } => cli::client::unarchive(id),
             ClientCommands::List { all } => cli::client::list(all),
+        },
+        Commands::Document { command } => match command {
+            DocumentCommands::Kinds { command } => cli::document::kinds(command),
+            DocumentCommands::Add {
+                client,
+                kind,
+                title,
+                file,
+            } => cli::document::add(client, &kind, &title, &file, &cli::today()),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

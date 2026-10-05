@@ -4437,3 +4437,140 @@ fn pausing_twice_keeps_the_first_date_and_an_ended_schedule_cannot_resume() {
         .failure()
         .stderr(predicate::str::contains("nothing to resume"));
 }
+
+fn write_pdf(env: &TestEnv, name: &str, seed: &str) -> std::path::PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(&path, format!("%PDF-1.4\n% fixture {seed}\n%%EOF\n")).unwrap();
+    path
+}
+
+fn add_cedar(env: &TestEnv) -> String {
+    let lookup = || {
+        env.db().query_row(
+            "SELECT id FROM clients WHERE name = 'Cedar Systems'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+    };
+    if lookup().is_err() {
+        env.cmd()
+            .args([
+                "client",
+                "add",
+                "Cedar Systems",
+                "--email",
+                "pat@cedar.test",
+            ])
+            .assert()
+            .success();
+    }
+    lookup().unwrap().to_string()
+}
+
+#[test]
+fn document_add_files_a_pdf_as_a_draft() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "a");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Filed document #1: Website rebuild (Proposal, draft",
+        ));
+    assert!(env.data_dir().join("documents/1/v1.pdf").exists());
+}
+
+#[test]
+fn document_add_refuses_a_non_pdf_named_pdf() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let path = env.home.path().join("fake.pdf");
+    std::fs::write(&path, "<html>not a pdf</html>").unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "X",
+            "--file",
+            path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a PDF"));
+}
+
+#[test]
+fn document_add_twice_names_the_existing_document() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "twice");
+    let add = |title: &str| {
+        env.cmd()
+            .args([
+                "document",
+                "add",
+                "--client",
+                &client,
+                "--kind",
+                "Proposal",
+                "--title",
+                title,
+                "--file",
+                pdf.to_str().unwrap(),
+            ])
+            .assert()
+    };
+    add("Website rebuild").success();
+    add("Again")
+        .failure()
+        .stderr(predicate::str::contains("document #1"));
+}
+
+#[test]
+fn document_kinds_add_rename_deactivate_round_trip() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "kinds"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Proposal").and(predicate::str::contains("Agreement")));
+    env.cmd()
+        .args(["document", "kinds", "add", "Statement of work"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "rename", "4", "SOW"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "deactivate", "4"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SOW").and(predicate::str::contains("inactive")));
+}

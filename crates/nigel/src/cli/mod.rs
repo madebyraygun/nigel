@@ -9,6 +9,7 @@ pub mod client;
 pub mod client_manager;
 pub mod dashboard;
 pub mod demo;
+pub mod document;
 pub mod export;
 #[cfg(all(test, feature = "serve"))]
 mod fixture_capture;
@@ -111,6 +112,11 @@ pub enum Commands {
     Client {
         #[command(subcommand)]
         command: ClientCommands,
+    },
+    /// File, send, and track documents for clients to accept.
+    Document {
+        #[command(subcommand)]
+        command: DocumentCommands,
     },
     /// Create, publish, and track invoices.
     Invoice {
@@ -578,6 +584,41 @@ pub enum InvoiceTemplateCommands {
     },
     /// Show where Nigel looks for a custom invoice template.
     Path,
+}
+
+#[derive(Subcommand)]
+pub enum DocumentCommands {
+    /// List, add, rename or deactivate document kinds.
+    Kinds {
+        #[command(subcommand)]
+        command: Option<DocumentKindsCommands>,
+    },
+    /// File a PDF as a new draft document.
+    Add {
+        /// Client id
+        #[arg(long)]
+        client: i64,
+        /// Kind name, e.g. Proposal
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        title: String,
+        /// Path to the PDF
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DocumentKindsCommands {
+    /// List every kind, including inactive ones.
+    List,
+    /// Add a kind.
+    Add { name: String },
+    /// Rename a kind.
+    Rename { id: i64, name: String },
+    /// Stop offering a kind for new documents.
+    Deactivate { id: i64 },
 }
 
 #[derive(Subcommand)]
