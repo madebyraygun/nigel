@@ -112,6 +112,25 @@ nigel invoice schedule end 1                      # End it for good; history is 
 nigel invoice schedule end 1 --bill               # Bill the periods it still owes, then end
 nigel invoice schedule end 1 --forgive            # Write those periods off, then end
 nigel invoice schedule run                        # Generate everything due (cron/launchd; never prompts)
+nigel document kinds                              # List document kinds, including inactive ones
+nigel document kinds add "Statement of Work"      # Add a kind
+nigel document kinds rename 2 "Master Agreement"  # Rename a kind
+nigel document kinds deactivate 2                 # Stop offering a kind for new documents
+nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf  # File a PDF as a draft
+nigel document list                               # Every document (--client, --status, --kind narrow it)
+nigel document show 3                             # Versions, recipients, signatures and change requests
+nigel document preview 3                          # Write the recipient pages and PDF to <data_dir>/previews/document-3/, no network
+nigel document preview 3 --output-dir /tmp        # Write the preview somewhere else
+nigel document send 3                             # Confirm, then publish and email the signer a link of their own
+nigel document send 3 --signer "Pat Example <pat@cedar.example.test>" --collaborator "Sam Example <sam@cedar.example.test>"  # Name the recipients
+nigel document send 3 --yes                       # Skip the confirmation (required when stdin is not a terminal)
+nigel document revise 3 --file ~/proposal-v2.pdf  # New draft version; live pages read "being revised" until it is sent
+nigel document withdraw 3                         # Replace its pages with a withdrawn notice (--yes skips the prompt); terminal
+nigel document accept 3 --name "Pat Example"      # Record an acceptance received outside the response page (--date)
+nigel document request-changes 3 --name "Pat Example" --note "Move the start date"  # Record a change request (--date)
+nigel document decline 3 --note "Going another way"  # Record a decline (--note and --date optional); terminal
+nigel document sync                               # Pull online responses and record them (cron; never prompts)
+nigel document countersign 3 --name "Sam Example" # Record your countersignature on an accepted document (--date)
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
 nigel serve --port 8080                           # Bind a different port (0 = ephemeral)

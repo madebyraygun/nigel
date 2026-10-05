@@ -1637,3 +1637,279 @@ invoice is readable only by someone holding its link.
 
 To bill from a different domain, point that hostname at your bucket and set
 `public_base_url` (or `NIGEL_PUBLIC_BASE_URL`) to its `…/i` prefix.
+
+## Documents
+
+A document is a PDF filed for a client — a proposal, a statement of work, an
+agreement — and sent to one **signer** and any number of **collaborators**, each
+with a link of their own. The signer can accept it or ask for changes on their
+page; a collaborator can only ask for changes. You can revise it, record a
+response that arrived by email, and countersign it once it is accepted. There is
+no payment in a document, so **Stripe is not needed**.
+
+Signing here means **recorded assent, not a legal e-signature**. An acceptance
+is the signer's typed name, their consent, the time, their IP address and
+browser, bound to the SHA-256 checksum of the exact PDF they were shown. It is
+an audit trail you keep, not a certified signature, and a contract that needs
+one belongs in a service that provides it.
+
+A document's status is derived from what has been recorded and is one of
+`draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
+`withdrawn`. `declined`, `executed` and `withdrawn` are terminal.
+
+### Configuration
+
+Documents share the Mailgun and R2 keys from [Configuration](#configuration)
+and add three:
+
+| settings.json key | Environment variable | Required for | Default |
+|---|---|---|---|
+| `r2_private_bucket` | `NIGEL_R2_PRIVATE_BUCKET` | `send`, `sync` | — |
+| `documents_base_url` | `NIGEL_DOCUMENTS_BASE_URL` | `send` | `public_base_url` with its trailing `/i` read as `/d` |
+| `document_response_url` | `NIGEL_DOCUMENT_RESPONSE_URL` | online responses | — |
+
+- **Send** needs `mailgun_api_key`, `mailgun_domain`, `from_email`,
+  `r2_account_id`, `r2_access_key`, `r2_secret_key`, `r2_bucket`,
+  `r2_private_bucket` and a documents base. A missing key is named, and nothing
+  is published or emailed.
+- **Sync** needs only the private store: `r2_account_id`, `r2_access_key`,
+  `r2_secret_key` and `r2_private_bucket`.
+- **`document_response_url`** is optional. Without it a published page can be
+  read and its PDF downloaded, but has no form. Send says so in its
+  confirmation.
+
+```json
+{
+  "r2_private_bucket": "documents-private",
+  "documents_base_url": "https://docs.example.com/d",
+  "document_response_url": "https://docs.example.com/d/respond"
+}
+```
+
+The web UI disables **Send** and **Sync** until their keys are set, from the
+`documents` report on `GET /api/status`, and names the missing keys.
+
+### What is stored where
+
+Everything a document publishes lives under the `d/` prefix, beside `i/` for
+invoices. A document has one random token and each recipient has another; the
+pair is the capability in a recipient's link.
+
+| Object | Bucket | Written by |
+|---|---|---|
+| `d/{token}/v{n}/document.pdf` | public | Nigel, once per version, never changed |
+| `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
+| `d/{token}/manifest.json` | private | Nigel |
+| `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
+
+The links Nigel prints and emails name the file —
+`https://docs.example.com/d/{token}/{recipient-token}/index.html` — for the
+reason the invoice links do. The private bucket has **no public domain**: it is
+read and written only with the R2 keys and by the Worker's binding.
+
+Every version of every filed PDF also stays in the data directory under
+`documents/<id>/v<n>.pdf`, and its checksum is verified on each read.
+
+The **manifest** tells the Worker whether a recipient may still respond:
+
+```json
+{
+  "version": 2,
+  "checksum": "sha256:9c1f…",
+  "state": "open",
+  "recipients": [
+    { "token": "…", "role": "signer", "name": "Pat Example" },
+    { "token": "…", "role": "collaborator", "name": "Sam Example" }
+  ]
+}
+```
+
+`state` is `open` while the latest sent version can be answered and `closed`
+otherwise: after a response is recorded, a revision, a withdrawal, or a failed
+send.
+
+A **response** is what the Worker writes when a recipient answers:
+
+```json
+{
+  "action": "accept",
+  "version": 2,
+  "checksum": "sha256:9c1f…",
+  "recipientToken": "…",
+  "typedName": "Pat Example",
+  "consent": true,
+  "note": null,
+  "receivedAt": "2026-10-05T17:04:11Z",
+  "ip": "203.0.113.7",
+  "userAgent": "…"
+}
+```
+
+`action` is `accept` or `request_changes`; a change request has a `note` of 1 to
+4000 characters of plain text and no `typedName` or `consent`. The Worker
+refuses a request when the document is unknown (404), the manifest is `closed`
+or the recipient already answered that version (409), the link is not a
+recipient's or a collaborator tries to accept (403), the version or checksum is
+stale (409), the typed name does not match the signer's, consent is missing or
+the note is unusable (422), or the recipient is over 10 requests a minute (429).
+The typed name matches without regard to case or spacing.
+
+### Filing, previewing and sending
+
+```bash
+nigel document kinds                       # Proposal, Statement of Work, …
+nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf
+nigel document preview 3                   # Writes the pages and PDF locally; no network, no configuration
+nigel document send 3                      # Confirm, then publish and email
+```
+
+`add` files the PDF as a draft and prints its checksum. `kinds` lists the
+document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`
+and `kinds deactivate <id>` manage them. `list` takes `--client`, `--status` and
+`--kind`, and `show` prints every version, its recipients and every response.
+
+`preview` writes `<data_dir>/previews/document-<id>/` (or `--output-dir`): one
+page per recipient role, filled in with the client's billing contact as a
+stand-in, and the PDF at `v<n>/document.pdf`. It is the page a recipient will
+receive, rendered by the code `send` publishes with.
+
+`send` defaults the signer to the client's billing contact; `--signer
+"Name <email>"` names someone else, and `--collaborator "Name <email>"` (repeat
+it) adds collaborators. It prints who gets what and asks, and `--yes` skips the
+question and is required when stdin is not a terminal. A document can be sent
+once, from `draft`, and not for an archived client.
+
+A send runs these steps in order and reports the one that failed:
+
+1. **load** the document and its latest version;
+2. **render** each recipient's page;
+3. **freeze** the recipients for this version;
+4. **publish** the PDF and each page to the public bucket;
+5. **manifest** — write the `open` manifest to the private bucket;
+6. **email** each recipient their own link with the PDF attached;
+7. **record** the version as sent.
+
+A failure anywhere before the last step **rolls back**: the recipients it froze
+are removed, the manifest is written back as `closed`, and the version stays an
+unsent draft that can be sent again. Anything the rollback could not undo is
+printed. If emails had already gone out, the addresses are listed and their
+links no longer take responses — tell those people to disregard the email.
+
+### Revising, recording by hand and withdrawing
+
+```bash
+nigel document revise 3 --file ~/proposal-v2.pdf
+nigel document accept 3 --name "Pat Example"
+nigel document request-changes 3 --name "Pat Example" --note "Move the start date"
+nigel document decline 3 --note "Going another way"
+nigel document countersign 3 --name "Sam Example"
+nigel document withdraw 3
+```
+
+`revise` adds the new PDF as the next version, a draft. Until it is sent, the
+live pages show that the document is being revised, the manifest is `closed`,
+and the earlier version cannot be answered. Sending it again issues links for
+the new version. It works from `sent` and `changes_requested`.
+
+`accept`, `request-changes` and `decline` record a response that arrived outside
+the response page. Each takes `--date` (default: today; `YYYY-MM-DD` or an RFC 3339
+timestamp), is recorded with the method `manual`, closes the manifest and
+rewrites the recipients' pages to show the outcome. `accept` records the named
+signer's assent against the version's checksum. `decline` is terminal.
+
+`countersign` records your own signature on an `accepted` document and makes it
+`executed`; the pages then show both signatures.
+
+`withdraw` is terminal and works from `draft`, `sent` and `changes_requested`.
+It replaces every published page with a withdrawn notice and closes the
+manifest. It asks first; `--yes` skips the question.
+
+The published pages and the manifest are updated on a best-effort basis after
+the change is recorded. If R2 is unreachable the command still succeeds and prints
+what could not be updated.
+
+### Syncing responses
+
+Online responses wait in the private bucket until Nigel pulls them:
+
+```bash
+nigel document sync
+```
+
+It checks every `sent` or `changes_requested` document, records each new
+response with its checksum, IP address and browser, closes the manifest and
+rewrites the pages. A response is recorded once however many times it is
+pulled. A document whose responses cannot be fetched is reported and the run
+moves on; the run fails only if every document it reached failed.
+
+Like invoice sync, it also runs **at launch** before any command that reads or
+writes the books, within a 10-second budget, printing
+`notice: recorded 2 new document response(s)` when it finds something and a
+`notice:` line instead of failing the command when it cannot reach the bucket.
+It is silent when the private store is not configured. `document preview` and
+`document sync` skip the launch hook, and so does `nigel serve`; the web UI has
+a **Sync** button.
+
+To pick up responses while nobody is at the keyboard, run it from cron beside
+`invoice schedule run`. It never prompts, and an encrypted database takes its
+password from `NIGEL_DB_PASSWORD` as the invoice job does:
+
+```cron
+# every 15 minutes
+*/15 * * * * /Users/you/bin/nigel-document-sync.sh >> /Users/you/Library/Logs/nigel-documents.log 2>&1
+```
+
+```bash
+#!/bin/sh
+# ~/bin/nigel-document-sync.sh
+set -eu
+NIGEL_DB_PASSWORD="$(security find-generic-password -s nigel-db -w)" \
+  nigel document sync
+```
+
+### In the browser
+
+**Documents** in the web UI lists documents with status and kind filters. Filing
+a PDF uses the file picker (drag-and-drop works in a browser only, not in the
+desktop app). The document screen shows every version, its recipients with their
+page links, and every response; **Send…**, **Revise…**, **Record acceptance…**,
+**Record change request…**, **Record decline…**, **Countersign…**, **Withdraw…**
+and **Sync** are enabled by the server's guards, and Send and Sync stay disabled
+until their keys are configured. A preview shows the page the signer will
+receive before anything is sent.
+
+### Deploying the response Worker
+
+Online responses need a Cloudflare Worker, `workers/document-response/`, that
+accepts `POST /d/respond`. It binds the private bucket and nothing else, so it
+can read a manifest and write a response but cannot touch a published page or
+PDF. Deploy it once:
+
+1. **Create the private bucket** in R2 with **no public domain and no custom
+   domain**, and set it as `r2_private_bucket`.
+2. **Edit `workers/document-response/wrangler.toml`**: set the `routes` pattern
+   to `<your documents hostname>/d/respond` with its zone, set `bucket_name` to
+   the private bucket, and give `ratelimits` a `namespace_id` no other rate
+   limit in your Cloudflare account uses.
+3. **Deploy it:**
+
+   ```bash
+   cd workers/document-response
+   npm ci
+   npx wrangler deploy
+   ```
+
+4. **Confirm the Worker is write-once against real R2** before pointing
+   anything at it. The test suite runs against an in-memory bucket, which cannot
+   show that R2 honours the conditional put (`onlyIf: { etagDoesNotMatch: "*" }`)
+   the Worker relies on. Run `npx wrangler dev --remote` in the same directory,
+   send a document to yourself, and post the same response twice with `curl`:
+   the first answers `200` and the second `409` with `already_responded`. If the
+   second also answers `200`, stop: a recipient could overwrite their answer.
+5. **Then set `document_response_url`** to `https://<your documents
+   hostname>/d/respond`. Documents sent before it was set keep pages without a
+   form; revise and send them again to give them one.
+
+The hostname is the one that serves the public bucket, so the route sits beside
+the bucket's own objects under `/d/`. Nothing about the Worker holds a secret:
+the recipient's link is the credential.
