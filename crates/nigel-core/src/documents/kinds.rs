@@ -190,7 +190,11 @@ mod tests {
 
     #[test]
     fn no_rust_enum_mirrors_the_kind_list() {
-        let sources = [include_str!("model.rs"), include_str!("kinds.rs")];
+        let sources = [
+            include_str!("model.rs"),
+            include_str!("kinds.rs"),
+            include_str!("status.rs"),
+        ];
         for source in sources {
             assert!(
                 !source.contains(concat!("enum ", "DocumentKind")),

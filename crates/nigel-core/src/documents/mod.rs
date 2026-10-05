@@ -4,5 +4,6 @@
 //! user agent, bound to a SHA-256 checksum of the exact PDF.
 pub mod kinds;
 pub mod model;
+pub mod status;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
