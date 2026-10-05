@@ -47,3 +47,76 @@ pub fn seed_document(
     )
     .unwrap()
 }
+
+/// Records every object a document publish writes, in order.
+#[derive(Default)]
+pub struct FakeDocumentPublisher {
+    pub objects: std::cell::RefCell<Vec<(String, Vec<u8>)>>,
+    pub fail_when_key_contains: Option<String>,
+}
+
+impl FakeDocumentPublisher {
+    const BASE: &'static str = "https://docs.example.test/d";
+
+    fn write(&self, key: String, bytes: &[u8]) -> crate::error::Result<()> {
+        if let Some(needle) = &self.fail_when_key_contains {
+            if key.contains(needle.as_str()) {
+                return Err(crate::error::NigelError::Other(format!(
+                    "fake publisher refused {key}"
+                )));
+            }
+        }
+        self.objects.borrow_mut().push((key, bytes.to_vec()));
+        Ok(())
+    }
+
+    pub fn page(&self, token: &str, rt: &str) -> Option<String> {
+        let key = crate::invoicing::r2::document_page_key(token, rt);
+        self.objects
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(k, _)| *k == key)
+            .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.objects
+            .borrow()
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+}
+
+impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
+    fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> crate::error::Result<String> {
+        self.write(crate::invoicing::r2::document_pdf_key(token, version), pdf)?;
+        Ok(crate::invoicing::r2::document_pdf_url(
+            Self::BASE,
+            token,
+            version,
+        ))
+    }
+
+    fn publish_page(
+        &self,
+        token: &str,
+        recipient_token: &str,
+        html: &[u8],
+    ) -> crate::error::Result<String> {
+        self.write(
+            crate::invoicing::r2::document_page_key(token, recipient_token),
+            html,
+        )?;
+        Ok(crate::invoicing::r2::document_page_url(
+            Self::BASE,
+            token,
+            recipient_token,
+        ))
+    }
+
+    fn public_base(&self) -> &str {
+        Self::BASE
+    }
+}

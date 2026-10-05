@@ -33,6 +33,16 @@ pub trait PaymentGateway {
     fn deactivate_payment_link(&self, payment_link_id: &str) -> Result<()>;
 }
 
+/// Publishes a document's PDF and its per-recipient pages under the `d/` layout.
+pub trait DocumentPublisher {
+    /// Write one version of the PDF and answer its address.
+    fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> Result<String>;
+    /// Write one recipient's page and answer its address.
+    fn publish_page(&self, token: &str, recipient_token: &str, html: &[u8]) -> Result<String>;
+    /// The address every published document object is served under.
+    fn public_base(&self) -> &str;
+}
+
 pub trait AssetPublisher {
     fn publish(&self, token: &str, html: &[u8], pdf: &[u8]) -> Result<String>;
     /// Replace the published page, leaving every other object under the token
