@@ -44,7 +44,7 @@
 
 Six inputs the happy path never exercises, each pinned by a named test in the owning task:
 
-1. **A file named `.pdf` that is not a PDF** (HTML, PNG, `%PDF-` appearing after byte 0) — refused by content. Pinned in Task 5 (`ensure_pdf_refuses_content_that_only_claims_to_be_a_pdf`) and Task 13 (`a_document_upload_named_pdf_holding_html_is_a_400`).
+1. **A file named `.pdf` that is not a PDF** (HTML, PNG, `%PDF-` appearing after byte 0) — refused by content. Pinned in Task 5 (`ensure_pdf_refuses_content_that_only_claims_to_be_a_pdf`), Task 13 (`a_document_upload_named_pdf_holding_html_is_refused_by_content`) and Task 25 (`a_document_upload_named_pdf_holding_html_is_a_400`).
 2. **A signer name typed with different case, extra or internal whitespace, or NFD diacritics** — accepted; a different letter (`Zoe` for `Zoë`) refused. Pinned in Task 22 (`names_match_across_case_whitespace_and_normalization_but_not_letters`).
 3. **A response written for version 1 synced after revise sent version 2** — never recorded. Pinned in Task 20 (`a_response_for_an_earlier_version_is_refused_and_records_nothing`).
 4. **Send failing after some emails went out** — recipients removed, version still a draft, manifest closed, the failure lists who was emailed. Pinned in Task 16 (`a_mail_failure_after_the_first_recipient_rolls_back_and_closes_the_manifest`).
@@ -475,7 +475,7 @@ git commit -m "Documents schema: migration v15 with kinds seeded once (TASK-109.
 ### Task 2: Model types and kind rows
 
 **Files:**
-- Create: `crates/nigel-core/src/documents/mod.rs`, `crates/nigel-core/src/documents/model.rs`, `crates/nigel-core/src/documents/kinds.rs`
+- Create: `crates/nigel-core/src/documents/mod.rs`, `crates/nigel-core/src/documents/model.rs`, `crates/nigel-core/src/documents/kinds.rs`, `crates/nigel-core/src/documents/testing.rs`
 - Modify: `crates/nigel-core/src/lib.rs` (`pub mod documents;`)
 
 **Interfaces — Produces:**
@@ -486,16 +486,12 @@ git commit -m "Documents schema: migration v15 with kinds seeded once (TASK-109.
 //! online or recorded by hand, revised and countersigned. Recorded assent, not
 //! a legal e-signature: a typed name, an explicit consent, a time, an IP and a
 //! user agent, bound to a SHA-256 checksum of the exact PDF.
-pub mod guards;
 pub mod kinds;
 pub mod model;
-pub mod record;
-pub mod status;
-pub mod store;
 #[cfg(any(test, feature = "testutil"))]
 pub mod testing;
 ```
-(`guards`, `record`, `status`, `store`, `testing` land in Tasks 3–6; add each `pub mod` line in the task that creates the file.)
+(Tasks 3–6 add `pub mod status;`, `guards`, `store` and `record` as each file lands.)
 
 ```rust
 // documents/model.rs
@@ -670,8 +666,8 @@ fn kinds_are_rows_that_can_be_added_renamed_and_deactivated() {
 fn no_rust_enum_mirrors_the_kind_list() {
     let sources = [include_str!("model.rs"), include_str!("kinds.rs")];
     for source in sources {
-        assert!(!source.contains("enum DocumentKind"), "a compiled-in kind list");
-        assert!(!source.contains("Proposal =>"), "a compiled-in kind name");
+        assert!(!source.contains(concat!("enum ", "DocumentKind")), "a compiled-in kind list");
+        assert!(!source.contains(concat!("Proposal", " =>")), "a compiled-in kind name");
     }
 }
 ```
@@ -768,7 +764,7 @@ git commit -m "Documents model types and operator-defined kinds (TASK-109.1)"
 
 **Files:**
 - Create: `crates/nigel-core/src/documents/status.rs`
-- Modify: `crates/nigel-core/src/documents/mod.rs` (`pub mod status;`)
+- Modify: `crates/nigel-core/src/documents/mod.rs` (`pub mod status;`), `crates/nigel-core/src/documents/kinds.rs` (test source list)
 
 **Interfaces — Produces:**
 
@@ -825,7 +821,7 @@ fn nothing_in_the_documents_module_writes_a_status() {
         include_str!("model.rs"), include_str!("kinds.rs"), include_str!("status.rs"),
     ];
     for source in sources {
-        assert!(!source.contains("SET status"), "a status write");
+        assert!(!source.contains(concat!("SET ", "status")), "a status write");
     }
 }
 
@@ -1085,8 +1081,8 @@ pub fn update_document(conn: &Connection, id: i64, update: &DocumentUpdate, toda
 
 // testing.rs additions
 pub fn fixture_pdf(seed: &str) -> Vec<u8>;    // b"%PDF-1.4\n% fixture {seed}\n%%EOF\n"
-pub fn seed_client(conn: &Connection, name: &str) -> i64; // billing contact "Pat Example <pat@{slug}.test>"
-pub fn seed_document(conn: &Connection, data_dir: &Path, client_id: i64, title: &str) -> i64;
+pub fn seed_client(conn: &Connection, name: &str) -> i64; // address pat@{first word of name, lowercased}.test; billing contact named "Pat Example" through set_contacts
+pub fn seed_document(conn: &Connection, data_dir: &Path, client_id: i64, title: &str) -> i64; // fixture_pdf(&format!("{client_id}:{title}")), kind "Proposal"
 ```
 
 Rules: `file_document` checks `ensure_client_active_for_documents`, `active_kind_by_name`, title trimmed 1–200 chars, `ensure_pdf`, then refuses a checksum already filed for that client on any version of any document with `Conflict { code: "duplicate_document", message: "This PDF is already filed for Cedar Systems as document #4 (\"Proposal\")." }`. One transaction inserts the document (`token = gen_document_token()`, `created_at = updated_at = validate_date(today)`) and version 1 (`file_path = version_file_rel(id, 1)`, `checksum = checksum_of(pdf)`); the file is written before commit and removed if the commit fails. `file_path` is stored relative to the data directory so a moved data directory keeps working.
@@ -1214,7 +1210,7 @@ pub fn ensure_pdf(bytes: &[u8]) -> Result<()> {
 
 **Files:**
 - Create: `crates/nigel-core/src/documents/record.rs`
-- Modify: `crates/nigel-core/src/documents/mod.rs`
+- Modify: `crates/nigel-core/src/documents/mod.rs`, `crates/nigel-core/src/documents/status.rs`
 
 **Interfaces — Produces:**
 
@@ -1434,10 +1430,6 @@ pub enum DocumentCommands {
         #[arg(long)] title: String,
         #[arg(long)] file: std::path::PathBuf,
     },
-    /// List documents.
-    List { #[arg(long)] client: Option<i64>, #[arg(long)] status: Option<String>, #[arg(long)] kind: Option<String> },
-    /// Show one document: every version, its recipients and every response.
-    Show { id: i64 },
 }
 #[derive(Subcommand)]
 pub enum DocumentKindsCommands { List, Add { name: String }, Rename { id: i64, name: String }, Deactivate { id: i64 } }
@@ -1544,11 +1536,19 @@ fn the_kind_list_marks_inactive_rows() {
 ### Task 8 (Track A): `nigel document list` and `show`
 
 **Files:**
-- Modify: `crates/nigel/src/cli/document.rs`, `crates/nigel/tests/cli_dispatch.rs`
+- Modify: `crates/nigel/src/cli/document.rs`, `crates/nigel/src/cli/mod.rs`, `crates/nigel/src/main.rs`, `crates/nigel/tests/cli_dispatch.rs`
 
-**Interfaces — Produces:**
+**Interfaces — Produces** (added to `DocumentCommands` in `cli/mod.rs`):
 
 ```rust
+/// List documents.
+List { #[arg(long)] client: Option<i64>, #[arg(long)] status: Option<String>, #[arg(long)] kind: Option<String> },
+/// Show one document: every version, its recipients and every response.
+Show { id: i64 },
+```
+
+```rust
+// cli/document.rs
 pub fn list(client: Option<i64>, status: Option<&str>, kind: Option<&str>) -> Result<()>;
 pub fn show(id: i64) -> Result<()>;
 pub fn format_document_list(rows: &[DocumentListRow]) -> String;
@@ -1608,7 +1608,7 @@ fn the_list_shows_status_kind_client_and_version() {
 Write `fixture_record()` in the test module as a full struct literal (no database).
 
 - [ ] **Step 2: Run** `cargo test -p nigel document -- --test-threads=1` — Expected: FAIL.
-- [ ] **Step 3: Implement**, adding the `List`/`Show` dispatch arms.
+- [ ] **Step 3: Implement**, adding the `List`/`Show` variants to `DocumentCommands`, their dispatch arms in `main.rs`, and the functions.
 - [ ] **Step 4: Run** — Expected: PASS.
 - [ ] **Step 5: Commit** `git commit -am "nigel document list and show through pure format functions (TASK-109.2)"`
 
@@ -1795,7 +1795,8 @@ fn object_body(status: reqwest::StatusCode, body: Vec<u8>) -> Result<Option<Vec<
 pub struct FakeResponseSource {
     pub responses: RefCell<std::collections::HashMap<String, DocumentResponse>>, // keyed by response_key
     pub manifests: RefCell<Vec<(String, Manifest)>>,
-    pub fail_fetch: bool,
+    pub fail_fetch: bool,                 // every fetch fails
+    pub fail_fetch_for: Option<String>,   // fetches for this document token fail
     pub fail_put: bool,
 }
 impl FakeResponseSource { pub fn put_response(&self, token: &str, version: i64, rt: &str, r: DocumentResponse); pub fn last_manifest(&self, token: &str) -> Option<Manifest>; }
@@ -1847,7 +1848,7 @@ fn a_missing_object_is_none_and_a_refusal_is_an_error() {
 }
 ```
 
-- [ ] **Step 2: Run** `cargo test -p nigel-core wire r2 -- --test-threads=1` — Expected: FAIL.
+- [ ] **Step 2: Run** `cargo test -p nigel-core -- --test-threads=1 wire r2` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `cargo test -p nigel-core -- --test-threads=1` — Expected: PASS.
 - [ ] **Step 5: Commit** `git add crates/nigel-core/src && git commit -m "Manifest and response formats; ResponseSource backed by a private R2 bucket (TASK-109.4)"`
@@ -1942,7 +1943,7 @@ fn the_document_builder_refuses_a_display_name_with_a_line_break() {
 
 (`documents_config_with` is the env-injected private twin of `documents_config_from`, the `invoicing_config_with` shape. `configured_for_documents()` is a test helper returning every invoicing key except Stripe.)
 
-- [ ] **Step 2: Run** `cargo test -p nigel-core settings wiring -- --test-threads=1` — Expected: FAIL.
+- [ ] **Step 2: Run** `cargo test -p nigel-core -- --test-threads=1 settings wiring` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `cargo test -- --test-threads=1` — Expected: PASS.
 - [ ] **Step 5: Commit** `git add crates && git commit -m "Document settings keys and a client builder that needs no Stripe (TASK-109.3)"`
@@ -2186,7 +2187,7 @@ fn preview_writes_pages_and_the_pdf_with_no_network_and_no_configuration() {
 // cli_dispatch.rs
 fn filed_document(env: &TestEnv) {
     env.init_and_demo();
-    env.cmd().args(["client", "add", "Cedar Systems", "--email", "pat@cedar.test"]).assert().success();
+    env.cmd().args(["client", "add", "Cedar Systems", "--contact", "pat@cedar.test:Pat Example"]).assert().success();
     let client = env.db().query_row("SELECT id FROM clients WHERE name = 'Cedar Systems'", [], |r| r.get::<_, i64>(0)).unwrap().to_string();
     let pdf = write_pdf(env, "proposal.pdf", "filed");
     env.cmd()
@@ -2217,7 +2218,7 @@ fn document_preview_writes_files_without_any_configuration() {
 ### Task 16: The traced send
 
 **Files:**
-- Modify: `crates/nigel-core/src/documents/send.rs`
+- Modify: `crates/nigel-core/src/documents/send.rs`, `crates/nigel-core/src/documents/testing.rs`
 
 **Interfaces — Produces:**
 
@@ -2249,6 +2250,12 @@ pub fn send_document<P, M, R>(…same…) -> Result<DocumentSendOutcome>; // .ma
 
 (`StepOutcome` is `crate::invoicing::send::StepOutcome`.)
 
+```rust
+// documents/testing.rs additions
+pub fn pat() -> NewRecipient;   // Signer, "Pat Example", pat@cedar.test
+pub fn sam() -> NewRecipient;   // Collaborator, "Sam Example", sam@cedar.test
+```
+
 Orchestration (each fallible call tagged with its step; `Config` belongs to the caller):
 1. **Load** — `get_document`, `ensure_allowed(Send)`, `ensure_client_active_for_documents`, `latest_version` (unsent by the guard), `read_version_pdf` (refuses a changed file), client name.
 2. **Render** — mint one `gen_document_token()` per recipient, build `PageRecipient`s, `render_document_pages(… PageState::Open { response_url: ctx.response_url })`.
@@ -2264,8 +2271,6 @@ Rollback (any failure from Freeze through Record): `unfreeze(version.id)`; if th
 
 ```rust
 fn ctx(dir: &Path) -> SendContext<'_> { SendContext { data_dir: dir, company: "Initech", response_url: Some("https://docs.example.test/d/respond"), today: "2026-10-05" } }
-fn pat() -> NewRecipient { NewRecipient { role: RecipientRole::Signer, name: "Pat Example".into(), email: "pat@cedar.test".into() } }
-fn sam() -> NewRecipient { NewRecipient { role: RecipientRole::Collaborator, name: "Sam Example".into(), email: "sam@cedar.test".into() } }
 
 #[test]
 fn a_send_publishes_one_page_per_recipient_writes_the_manifest_and_mails_each_their_link() {
@@ -2372,7 +2377,7 @@ fn the_default_signer_is_the_named_billing_contact() {
 }
 ```
 
-`seed_client(conn, "Cedar Systems")` must give the billing contact the name "Pat Example" and the address `pat@cedar.test` (lowercased first word of the client name) so `pat()` matches; define it that way in Task 5.
+`pat()` and `sam()` are written once in `documents::testing` (a plain `NewRecipient` literal each); the CLI crate reaches them through the `testutil` feature. `seed_client(conn, "Cedar Systems")` gives the billing contact "Pat Example" and `pat@cedar.test`, so `pat()` matches it.
 
 - [ ] **Step 2: Run** `cargo test -p nigel-core documents::send -- --test-threads=1` — Expected: FAIL.
 - [ ] **Step 3: Implement** with a private `Trace` (the `invoicing/send.rs` shape) and `fn run(…) -> std::result::Result<DocumentSendOutcome, (DocumentSendStep, NigelError)>`.
@@ -2409,7 +2414,7 @@ pub(crate) fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(conn
 pub fn format_send_failure(failure: &DocumentSendFailure) -> String;
 ```
 
-Flow: open the DB; load the document and run the `Send` guard and archived check first (a refusal costs nothing); resolve recipients; without `--yes` refuse on a non-TTY (`"Refusing to send document #{id} without confirmation. Pass --yes."`), else print the summary and ask `Send it? [y/N]`; `build_document_clients(documents_config(), &company_name)` (a missing key names itself); print client warnings as `notice:`; `send_with` prints `Sent document #{id} v{n}:` then one line per link (`  signer        Pat Example <pat@cedar.test>  https://…/index.html`). A `DocumentSendFailure` prints `format_send_failure` (step, emailed addresses, cleanup warnings) to stderr and returns its source.
+Flow: open the DB; load the document and run the `Send` guard and archived check first (a refusal costs nothing); resolve recipients; without `--yes` refuse on a non-TTY (`"Refusing to send document #{id} without confirmation. Pass --yes."`), else print the summary and ask `Send it? [y/N]`; check `documents_status(&documents_config())` and refuse with every missing key: `"Sending documents is not configured: missing {keys} (set each one in settings.json or the matching NIGEL_ env var)"`; then `build_document_clients(documents_config(), &company_name)`; print client warnings as `notice:`; `send_with` prints `Sent document #{id} v{n}:` then one line per link (`  signer        Pat Example <pat@cedar.test>  https://…/index.html`). A `DocumentSendFailure` prints `format_send_failure` (step, emailed addresses, cleanup warnings) to stderr and returns its source.
 
 - [ ] **Step 1: Failing tests**
 
@@ -2458,11 +2463,13 @@ fn document_send_without_yes_on_a_pipe_refuses_and_sends_nothing() {
 }
 
 #[test]
-fn document_send_with_nothing_configured_names_the_missing_keys() {
+fn document_send_with_nothing_configured_names_every_missing_key() {
     let env = TestEnv::new();
     filed_document(&env);
     env.cmd().args(["document", "send", "1", "--yes"]).assert().failure()
-        .stderr(predicate::str::contains("r2_private_bucket"));
+        .stderr(predicate::str::contains("Sending documents is not configured: missing")
+            .and(predicate::str::contains("mailgun_api_key"))
+            .and(predicate::str::contains("r2_private_bucket")));
 }
 ```
 
@@ -2477,7 +2484,7 @@ fn document_send_with_nothing_configured_names_the_missing_keys() {
 
 **Files:**
 - Create: `crates/nigel-core/src/documents/lifecycle.rs`
-- Modify: `crates/nigel-core/src/documents/mod.rs`, `crates/nigel/src/cli/document.rs`, `crates/nigel/src/cli/mod.rs`, `crates/nigel/src/main.rs`, `crates/nigel/tests/cli_dispatch.rs`
+- Modify: `crates/nigel-core/src/documents/mod.rs`, `crates/nigel-core/src/documents/testing.rs`, `crates/nigel/src/cli/document.rs`, `crates/nigel/src/cli/mod.rs`, `crates/nigel/src/main.rs`, `crates/nigel/tests/cli_dispatch.rs`
 
 **Interfaces — Produces:**
 
@@ -2497,6 +2504,9 @@ pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
     state: &PageState<'_>, publisher: Option<&P>, source: Option<&R>,
 ) -> Vec<String>;
 
+// documents/testing.rs
+pub fn sent_document_with_fakes(conn: &Connection, dir: &Path) -> (i64, FakeDocumentPublisher, FakeResponseSource);
+
 // cli/mod.rs
 /// Replace the PDF with a new version: live pages show "being revised" until it is sent.
 Revise { id: i64, #[arg(long)] file: std::path::PathBuf },
@@ -2514,18 +2524,10 @@ Revise commits `add_version` first, then `close_and_republish(latest sent versio
 - [ ] **Step 1: Failing tests**
 
 ```rust
-fn sent(conn: &Connection, dir: &Path) -> (i64, FakeDocumentPublisher, FakeResponseSource) {
-    let id = seed_document(conn, dir, seed_client(conn, "Cedar Systems"), "Website rebuild");
-    let (p, m, s) = (FakeDocumentPublisher::default(), FakeMailer::default(), FakeResponseSource::default());
-    let ctx = SendContext { data_dir: dir, company: "Initech", response_url: Some("https://docs.example.test/d/respond"), today: "2026-10-05" };
-    send_document(conn, id, &[pat(), sam()], &ctx, &p, &m, &s).unwrap();
-    (id, p, s)
-}
-
 #[test]
 fn revise_closes_the_manifest_and_republishes_every_live_page_as_being_revised() {
     let (dir, conn) = test_conn();
-    let (id, p, s) = sent(&conn, dir.path());
+    let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
     record_manual_change_request(&conn, id, "Sam Example", "Fix the dates", "2026-10-06").unwrap();
     let out = revise_with_republish(&conn, dir.path(), id, &fixture_pdf("v2"), "2026-10-07", "Initech", Some(&p), Some(&s)).unwrap();
     assert_eq!((out.version, out.warnings.len()), (2, 0));
@@ -2541,7 +2543,7 @@ fn revise_closes_the_manifest_and_republishes_every_live_page_as_being_revised()
 #[test]
 fn the_next_send_after_a_revise_reuses_the_document_token_with_new_recipient_tokens() {
     let (dir, conn) = test_conn();
-    let (id, p, s) = sent(&conn, dir.path());
+    let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
     record_manual_change_request(&conn, id, "Sam Example", "Fix the dates", "2026-10-06").unwrap();
     revise_with_republish(&conn, dir.path(), id, &fixture_pdf("v2"), "2026-10-07", "Initech", Some(&p), Some(&s)).unwrap();
     let token = get_document(&conn, id).unwrap().token;
@@ -2558,7 +2560,7 @@ fn the_next_send_after_a_revise_reuses_the_document_token_with_new_recipient_tok
 #[test]
 fn withdraw_commits_first_and_reports_what_it_could_not_reach() {
     let (dir, conn) = test_conn();
-    let (id, _, _) = sent(&conn, dir.path());
+    let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
     let warnings = withdraw_with_teardown::<FakeDocumentPublisher, FakeResponseSource>(&conn, id, "2026-10-06", "Initech", None, None).unwrap();
     assert_eq!(warnings.len(), 2);
     assert_eq!(get_document(&conn, id).unwrap().status, DocumentStatus::Withdrawn);
@@ -2567,7 +2569,7 @@ fn withdraw_commits_first_and_reports_what_it_could_not_reach() {
 #[test]
 fn a_partial_republish_failure_is_a_warning_not_an_error() {
     let (dir, conn) = test_conn();
-    let (id, _, s) = sent(&conn, dir.path());
+    let (id, _, s) = sent_document_with_fakes(&conn, dir.path());
     let v = latest_version(&conn, id).unwrap();
     let sam_token = recipients(&conn, v.id).unwrap().into_iter().find(|r| r.role == RecipientRole::Collaborator).unwrap().token;
     let p = FakeDocumentPublisher { fail_when_key_contains: Some(sam_token), ..Default::default() };
@@ -2587,9 +2589,9 @@ fn withdrawing_a_draft_touches_nothing() {
 }
 ```
 
-`pat()`, `sam()` and the `sent` helper move into `documents::testing` as `pub fn pat()`, `pub fn sam()`, `pub fn sent_document_with_fakes(conn, dir) -> (i64, FakeDocumentPublisher, FakeResponseSource)` so Tasks 19–21 and 24–27 share them. CLI: `document_withdraw_without_yes_on_a_pipe_refuses` and `document_revise_files_version_two_and_prints_its_warnings` (unsent document → revise refused with `document_wrong_state`; the dispatch test covers the refusal sentence) in `cli_dispatch.rs`; `revise_with` / `withdraw_with` seams in `cli/document.rs` tested with fakes.
+`sent_document_with_fakes` (in `documents::testing`, shared by Tasks 19–21 and 24–27) files a document for the first client name from the fixture cast (Cedar Systems, Juniper Labs, Harbor & Vale, Acme, Globex, Initech) that is not yet in `clients` (`seed_client` for it), titles it "Website rebuild", sends it to `pat()` and `sam()` through the fakes with company "Initech", `response_url: Some("https://docs.example.test/d/respond")` and `today: "2026-10-05"`, and returns the document id with the publisher and response source. Calling it twice in one test therefore files two documents for two clients, so neither the duplicate-name rule nor the duplicate-PDF rule is weakened. CLI tests in `cli_dispatch.rs`: `document_withdraw_without_yes_on_a_pipe_refuses`; `document_revise_of_a_draft_is_refused` (asserts `document_wrong_state`); and `document_revise_files_version_two` (marks v1 sent with `UPDATE document_versions SET sent_at = '2026-10-05' …`, runs `document revise 1 --file …`, asserts exit 0 and stdout "version 2 is a draft", with no warnings since there are no recipients and nothing was published). `revise_with` / `withdraw_with` seams in `cli/document.rs` are tested with fakes.
 
-- [ ] **Step 2: Run** `cargo test lifecycle document_revise document_withdraw -- --test-threads=1` — Expected: FAIL.
+- [ ] **Step 2: Run** `cargo test -- --test-threads=1 lifecycle document_revise document_withdraw` — Expected: FAIL.
 - [ ] **Step 3: Implement.** The CLI builds `optional_document_publisher` / `optional_response_source` from `documents_config()` (neither is required), prints `Revised document #{id}: version {n} is a draft.` / `Withdrew document #{id}.` and each warning on stderr.
 - [ ] **Step 4: Run** `cargo test -- --test-threads=1` — Expected: PASS.
 - [ ] **Step 5: Commit** `git add crates && git commit -m "Revise and withdraw: commit first, republish best-effort (TASK-109.3)"`
@@ -2703,7 +2705,7 @@ fn request_changes_needs_a_note() {
 
 No publish ever happened in these, so the republish step is silent (`republish_after_change` returns no warnings when the version's recipients list is empty).
 
-- [ ] **Step 2: Run** `cargo test republish_after_change manual_ request_changes -- --test-threads=1` — Expected: FAIL.
+- [ ] **Step 2: Run** `cargo test -- --test-threads=1 republish_after_change manual_ request_changes` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** — Expected: PASS.
 - [ ] **Step 5: Commit** `git add crates && git commit -m "Manual accept, request-changes, decline and countersign with republish (TASK-109.4)"`
@@ -2748,13 +2750,13 @@ Per document whose status is `sent` or `changes_requested` (oldest `updated_at` 
 - [ ] **Step 1: Failing tests**
 
 ```rust
-struct Sent { id: i64, token: String, version: DocumentVersion, signer: Recipient, collaborator: Recipient }
+struct Sent { token: String, version: DocumentVersion, signer: Recipient, collaborator: Recipient }
 
 fn sent_state(conn: &Connection, id: i64) -> Sent {
     let doc = get_document(conn, id).unwrap();
     let version = latest_version(conn, id).unwrap();
     let rs = recipients(conn, version.id).unwrap();
-    Sent { id, token: doc.token, signer: rs[0].clone(), collaborator: rs[1].clone(), version }
+    Sent { token: doc.token, signer: rs[0].clone(), collaborator: rs[1].clone(), version }
 }
 
 fn accept_from(s: &Sent, at: &str) -> DocumentResponse {
@@ -2862,15 +2864,23 @@ fn a_status_change_closes_the_manifest_and_republishes() {
 #[test]
 fn one_failing_fetch_does_not_stop_the_run() {
     let (dir, conn) = test_conn();
-    let (_first, _, _) = sent_document_with_fakes(&conn, dir.path());
-    let failing = FakeResponseSource { fail_fetch: true, ..Default::default() };
-    let p = FakeDocumentPublisher::default();
-    assert!(sync_documents(&conn, "Initech", &failing, Some(&p), None).is_err());
-    let (second, _, ok) = sent_document_with_fakes(&conn, dir.path());
-    let s = sent_state(&conn, second);
-    ok.put_response(&s.token, 1, &s.signer.token, accept_from(&s, "2026-10-05T17:04:11Z"));
-    let report = sync_documents(&conn, "Initech", &ok, Some(&p), None).unwrap();
+    let (first, p, _) = sent_document_with_fakes(&conn, dir.path());
+    let (second, _, _) = sent_document_with_fakes(&conn, dir.path());
+    let (a, b) = (sent_state(&conn, first), sent_state(&conn, second));
+    let src = FakeResponseSource { fail_fetch_for: Some(a.token.clone()), ..Default::default() };
+    src.put_response(&b.token, 1, &b.signer.token, accept_from(&b, "2026-10-05T17:04:11Z"));
+    let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
     assert_eq!((report.documents_checked, report.recorded), (2, 1));
+    assert_eq!(report.failures.len(), 1);
+}
+
+#[test]
+fn every_document_failing_is_an_err() {
+    let (dir, conn) = test_conn();
+    let (_, p, _) = sent_document_with_fakes(&conn, dir.path());
+    sent_document_with_fakes(&conn, dir.path());
+    let failing = FakeResponseSource { fail_fetch: true, ..Default::default() };
+    assert!(sync_documents(&conn, "Initech", &failing, Some(&p), None).is_err());
 }
 
 #[test]
@@ -2883,7 +2893,7 @@ fn a_spent_budget_reports_the_rest_as_failures() {
 }
 ```
 
-`sent_document_with_fakes` seeds a fresh client each call (`seed_client` with a distinct name per call: "Cedar Systems", then "Juniper Labs", …) so two documents in one test do not collide on the duplicate-PDF rule; `fixture_pdf` takes the client name as its seed for the same reason. A budget-exhausted run is `Ok` even though every document is a failure: nothing failed at the far end.
+`sent_document_with_fakes` (Task 18) files each call's document for a client name not yet taken, and `seed_document` seeds its PDF from the client id and title, so two documents in one test collide on neither the client-name rule nor the duplicate-PDF rule. A budget-exhausted run is `Ok` even though every document is a failure: nothing failed at the far end.
 
 - [ ] **Step 2: Run** `cargo test -p nigel-core documents::sync -- --test-threads=1` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -2973,7 +2983,7 @@ fn a_document_command_runs_with_no_document_configuration() {
 }
 ```
 
-- [ ] **Step 2: Run** `cargo test document_sync launch_sync -- --test-threads=1` — Expected: FAIL.
+- [ ] **Step 2: Run** `cargo test -- --test-threads=1 document_sync launch_sync` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `cargo test -- --test-threads=1` — Expected: PASS.
 - [ ] **Step 5: Commit** `git add crates/nigel && git commit -m "nigel document sync, and document responses in the launch sync (TASK-109.4)"`
@@ -3270,7 +3280,10 @@ describe('POST /d/respond', () => {
     expect((await post(ACCEPT)).status).toBe(429);
     expect((await post({ ...ACCEPT, recipientToken: 'rc', action: 'request_changes', note: 'x', typedName: undefined, consent: undefined })).status).toBe(200);
   });
-  it('refuses a closed manifest, a missing one, and a version mismatch', async () => {
+  it('refuses a version mismatch, a closed manifest, and a missing one', async () => {
+    const mismatch = await post({ ...ACCEPT, version: 1 });
+    expect(mismatch.status).toBe(409);
+    expect((await mismatch.json()).code).toBe('version_mismatch');
     bucket.objects.set(manifestKey('doc'), JSON.stringify({ ...MANIFEST, state: 'closed' }));
     expect((await post(ACCEPT)).status).toBe(409);
     expect((await post({ ...ACCEPT, token: 'other' })).status).toBe(404);
@@ -3336,7 +3349,7 @@ git commit -m "Document response Worker: write-once responses, rate limit, CI st
 #[derive(Serialize)] struct SyncResult { #[serde(flatten)] report: DocumentSyncReport }
 ```
 
-`can_*` = `guards::can(status, Action::…)`, and `can_send`/`can_revise` also require `ensure_client_active_for_documents(…).is_ok()` — the guards called, never re-derived. `page_url` is `document_page_url(base, token, rt)` only for sent versions when a documents base is configured. `token` never crosses the wire.
+`can_*` = `guards::can(status, Action::…)`, and `can_send`/`can_revise` also require `ensure_client_active_for_documents(…).is_ok()` — the guards called, never re-derived. `page_url` is `document_page_url(base, token, rt)` only for sent versions when a documents base is configured. No `token` field is serialized; recipient page URLs, which embed the tokens, are returned only for sent versions, to the loopback, cookie-authenticated SPA.
 
 ### Task 24: Read routes — list, detail, kinds, preview
 
@@ -3344,9 +3357,9 @@ git commit -m "Document response Worker: write-once responses, rate limit, CI st
 - Create: `crates/nigel-core/src/server/routes/documents.rs`
 - Modify: `crates/nigel-core/src/server/routes/mod.rs`, `crates/nigel-core/src/server/testutil.rs`
 
-**Interfaces — Produces:** `pub fn routes() -> Router<AppState>` with `GET /documents` (query `clientId`, `status`, `kind` as strings → 400 on a malformed one; unknown client → 404 `client_not_found`; unknown status word → 400), `GET /documents/{id}` (404 `document_not_found`), `GET /document-kinds` (active only), `GET /documents/{id}/preview` (signer page, `PageState::Open { response_url }`, `pdf_href = "/api/documents/{id}/preview.pdf"`, headers `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox`, `X-Frame-Options: SAMEORIGIN`), `GET /documents/{id}/preview.pdf` (the latest version's bytes, `application/pdf`, `Content-Disposition: inline; filename="<attachment_name>"`). No preview depends on the `pdf` feature, so neither answers 501. `testutil.rs`: `seed()` files one draft document (id 1, "Website rebuild", kind Proposal) for the client the seed already creates as id 1 — no new client, so no existing count changes — writing the fixture PDF beside the database; `DATA_ROUTES` gains `/api/documents`, `/api/documents/1`, `/api/document-kinds` (array length 27) so `unlocking_opens_every_data_route` proves each answers 200; `PREVIEW_ROUTES` gains the two document previews (length 4).
+**Interfaces — Produces:** `pub fn routes() -> Router<AppState>` with `GET /documents` (query `clientId`, `status`, `kind` as strings → 400 on a malformed one; unknown client → 404 `client_not_found`; unknown status word → 400), `GET /documents/{id}` (404 `document_not_found`), `GET /document-kinds` (active only), `GET /documents/{id}/preview` (signer page, `PageState::Open { response_url }`, `pdf_href = "/api/documents/{id}/preview.pdf"`, headers `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: sandbox`, `X-Frame-Options: SAMEORIGIN`), `GET /documents/{id}/preview.pdf` (the latest version's bytes, `application/pdf`, `Content-Disposition: inline; filename="<attachment_name>"`). No preview depends on the `pdf` feature, so neither answers 501. `testutil.rs`: `seeded_db()` files one draft document (id 1) right after `seed(&conn)` with `file_document(&conn, db_path.parent().unwrap(), &NewDocument { client_id: 1, kind: "Proposal", title: "Website rebuild" }, &fixture_pdf("seed"), "2026-10-05")` for the client the seed already creates as id 1 ("Acme Co") — no new client, so no existing count changes — writing the fixture PDF beside the database, which is the directory `AppState::data_dir()` derives; `DATA_ROUTES` gains `/api/documents`, `/api/documents/1`, `/api/document-kinds` (array length 27) so `unlocking_opens_every_data_route` proves each answers 200; `PREVIEW_ROUTES` gains the two document previews (length 4).
 
-- [ ] **Step 1: Failing tests** — `list_filters_and_404s_an_unknown_client`, `detail_never_carries_a_token`, `detail_can_flags_are_the_guards_called` (a draft: `canEdit`, `canSend`, `canWithdraw` true and the rest false; after the client is archived `canSend` false), `kinds_lists_only_active_kinds`, `preview_is_sandboxed_and_names_the_pdf_route`, `preview_pdf_answers_the_filed_bytes`, plus the existing locked-guard sweep in `server/mod.rs` covering the new `DATA_ROUTES`/`PREVIEW_ROUTES` without edits.
+- [ ] **Step 1: Failing tests** — `list_filters_and_404s_an_unknown_client`, `detail_never_carries_a_token`, `detail_can_flags_are_the_guards_called` (a draft: `canEdit`, `canSend`, `canWithdraw` true and the rest false; after the client is archived `canSend` false), `kinds_lists_only_active_kinds`, `preview_is_sandboxed_and_names_the_pdf_route`, `preview_pdf_answers_the_filed_bytes`, `a_sent_document_carries_page_urls_but_no_token_field`, plus the existing locked-guard sweep in `server/mod.rs` covering the new `DATA_ROUTES`/`PREVIEW_ROUTES` without edits.
 
 ```rust
 #[tokio::test]
@@ -3361,6 +3374,23 @@ async fn detail_never_carries_a_token() {
     let doc_token: String = crate::db::open_connection(&db_path, None).unwrap()
         .query_row("SELECT token FROM documents WHERE id = 1", [], |r| r.get(0)).unwrap();
     assert!(!text.contains(&doc_token));
+}
+
+#[tokio::test]
+async fn a_sent_document_carries_page_urls_but_no_token_field() {
+    let _config = TempConfig::new();
+    let mut settings = crate::settings::load_settings();
+    settings.public_base_url = Some("https://billing.example.test/i".to_string());
+    crate::settings::save_settings(&settings).expect("settings");
+    let (_dir, db_path) = seeded_db();
+    let conn = crate::db::open_connection(&db_path, None).unwrap();
+    let (id, _, _) = sent_document_with_fakes(&conn, db_path.parent().unwrap());
+    drop(conn);
+    let (app, token) = app_for(&db_path);
+    let body = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+    let recipient = &body["versions"][0]["recipients"][0];
+    assert!(body.get("token").is_none() && recipient.get("token").is_none());
+    assert!(recipient["pageUrl"].as_str().unwrap().ends_with("/index.html"));
 }
 ```
 
@@ -3408,7 +3438,7 @@ async fn a_document_upload_named_pdf_holding_html_is_a_400() {
 ### Task 26: Send route and the failure seam
 
 **Files:**
-- Modify: `crates/nigel-core/src/server/routes/documents.rs`, `crates/nigel-core/src/server/error.rs`
+- Modify: `crates/nigel-core/src/server/routes/documents.rs`, `crates/nigel-core/src/server/error.rs`, `crates/nigel-core/src/server/testutil.rs`
 
 **Interfaces — Produces:**
 
@@ -3425,7 +3455,27 @@ impl From<DocumentSendFailure> for ApiError { … }
 
 Order in the handler: `confirm` first (400 `confirmation_required`, message `"Sending a document requires an explicit confirmation: post {\"confirm\": true}."`); then `documents_status` (409 `send_not_configured` with `step: "config"` and `missing`); then the documents base validity (409 `invalid_public_base_url`); then `build_document_clients` (`send_misconfigured` on `Invalid`); then `with_conn_api` → `send_with`. No signer in the body → `default_signer`. The failure mapping: `Publish`/`Manifest` → 502 `upstream_failed` with `service: "r2"`, `Email` → 502 with `service: "mailgun"`, `Render`/`Freeze`/`Record` → 500 unless the source is a `Conflict` (then the data layer's 409 with its reason and the step merged, e.g. `signer_count` at `freeze`), `Config`/`Load` keep their own code; details always carry `step`, `completed`, `emailed`, `documentStatus`, `cleanupWarnings`, and `reason: "send_failed"` when the code was replaced.
 
-- [ ] **Step 1: Failing tests** — `send_without_confirmation_is_a_400_and_sends_nothing`, `send_with_no_configuration_is_a_409_naming_the_missing_keys`, `send_with_answers_the_detail_steps_and_links` (fakes; `steps` are the seven post-config words in order; `links[*].url` end with `/index.html`), `a_mail_failure_is_a_502_naming_mailgun_and_who_was_emailed`, `two_signers_is_a_409_signer_count_at_freeze`.
+`testutil.rs`: `WRITE_ROUTES` gains `("POST", "/api/documents/1/send", r#"{"confirm":true}"#)` (array length 37), so the locked-database sweep covers the send route.
+
+- [ ] **Step 1: Failing tests** — `send_without_confirmation_is_a_400_and_sends_nothing`, `send_with_no_configuration_is_a_409_naming_the_missing_keys`, `send_with_answers_the_detail_steps_and_links` (fakes; `steps` are the seven post-config words in order; `links[*].url` end with `/index.html`), `a_mail_failure_is_a_502_naming_mailgun_and_who_was_emailed`, and in `server/error.rs` `a_send_conflict_at_freeze_is_a_409_with_its_reason_and_the_step`. The route cannot post two signers (the body takes one `signer` and collaborators), so the several-signers refusal is pinned by the data-layer tests (Tasks 6 and 16) and by this mapping test:
+
+```rust
+#[test]
+fn a_send_conflict_at_freeze_is_a_409_with_its_reason_and_the_step() {
+    let failure = DocumentSendFailure {
+        step: DocumentSendStep::Freeze,
+        completed: vec![DocumentSendStep::Load, DocumentSendStep::Render],
+        emailed: vec![],
+        document_status: Some(DocumentStatus::Draft),
+        cleanup_warnings: vec![],
+        source: NigelError::Conflict { code: "signer_count", message: "A document is sent to exactly one signer.".into() },
+    };
+    let err = ApiError::from(failure);
+    assert_eq!(err.code.status().as_u16(), 409);
+    let details = err.details.unwrap();
+    assert_eq!((details["reason"].as_str(), details["step"].as_str()), (Some("signer_count"), Some("freeze")));
+}
+```
 - [ ] **Step 2: Run** — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** — Expected: PASS.
@@ -3441,7 +3491,7 @@ Order in the handler: `confirm` first (400 `confirmation_required`, message `"Se
 **Interfaces — Produces:**
 - `POST /documents/{id}/accept` `{ name, date? }`, `…/request-changes` `{ name, note, date? }`, `…/decline` `{ note?, date? }`, `…/countersign` `{ name, date? }`, `…/withdraw` `{}` — each validates, records through `record.rs` (date defaults to `clock::today()`), then `republish_after_change` / `withdraw_with_teardown` with the optional collaborators; answers `ActionResult` (200, warnings as data — the void precedent).
 - `POST /documents/sync` — 409 `sync_not_configured` naming the private-store keys when unset; `sync_documents(…, Some(Instant::now() + SYNC_BUDGET))` with `const SYNC_BUDGET: Duration = Duration::from_secs(60)`; an `Err` from a run where every document failed is 502 `upstream_failed` with `service: "r2"`.
-- `WRITE_ROUTES` gains the six JSON routes (length 42).
+- `WRITE_ROUTES` gains the six JSON routes (length 43).
 
 - [ ] **Step 1: Failing tests** — `accept_then_countersign_reaches_executed_and_the_flags_follow` (`canCountersign` true only while accepted), `decline_from_accepted_is_a_409_document_accepted`, `request_changes_with_an_empty_note_is_a_400`, `withdraw_answers_its_teardown_warnings_as_data`, `sync_with_nothing_configured_is_a_409_naming_the_keys`, `sync_with_records_an_online_accept` (route-level `sync_with` seam over fakes).
 - [ ] **Step 2: Run** — Expected: FAIL.
@@ -3618,7 +3668,7 @@ export function defaultRecipients(contacts: RecipientContactOption[]): Recipient
 export function validateRecipients(value: RecipientEditorValue): RecipientErrors;          // {} when valid
 @customElement('wc-recipient-editor') export class WcRecipientEditor extends LitElement {
   static styles = [controlsCss, css`…`];
-  @property({ attribute: false }) value: RecipientEditorValue;
+  @property({ attribute: false }) value: RecipientEditorValue = { signer: { name: '', email: '' }, collaborators: [] };
   @property({ attribute: false }) contacts: RecipientContactOption[] = [];
   @property({ attribute: false }) errors: RecipientErrors = {};
   @property({ type: Boolean, reflect: true }) disabled = false;
@@ -3815,7 +3865,7 @@ Detail view: header with title, kind, client and `wc-document-status`; a collaps
 
 **Files:** Modify `docs/api.md`, `docs/architecture.md`, `docs/design-constraints.md`.
 
-- [ ] **Step 1:** `docs/api.md` — a "Documents" subsection under both "Reading data" and "Changing data": every route from Tasks 24–27 with request and response shapes, `can*` flags as the guards called, `token` never on the wire and `pageUrl` computed, multipart filing through the uploads spool (PDF only, by content), `confirmation_required`, the send failure details (`step`, `completed`, `emailed`, `documentStatus`, `cleanupWarnings`, `service`), the sync budget, the new conflict reasons in "Conflict reasons" and `document_not_found` in "Not-found reasons"; state that kinds are managed from the CLI and the API serves documents only.
+- [ ] **Step 1:** `docs/api.md` — a "Documents" subsection under both "Reading data" and "Changing data": every route from Tasks 24–27 with request and response shapes, `can*` flags as the guards called, no `token` field serialized and `pageUrl` (which embeds the tokens) returned only for sent versions to the loopback SPA, multipart filing through the uploads spool (PDF only, by content), `confirmation_required`, the send failure details (`step`, `completed`, `emailed`, `documentStatus`, `cleanupWarnings`, `service`), the sync budget, the new conflict reasons in "Conflict reasons" and `document_not_found` in "Not-found reasons"; state that kinds are managed from the CLI and the API serves documents only.
 - [ ] **Step 2:** `docs/architecture.md` — the `documents/` module map (one line per file), the Worker, where documents meet `invoicing` (prefix, `DocumentPublisher`, `ResponseSource`, `Mailer::send`, `DocumentClients`), and the tree on disk (`<data_dir>/documents/<id>/v<n>.pdf`, `<data_dir>/previews/document-<id>/`).
 - [ ] **Step 3:** `docs/design-constraints.md` — one entry each: status derived from rows (and why a newer unsent version reads as draft); guards live in the data layer and the `can*` flags call them; exactly one signer; one online response per recipient per version, enforced across both tables; checksums carry `sha256:` and bind every response; send rolls back before mark-sent and closes the manifest; withdraw/revise/accept commit first and republish best-effort; the Worker never touches the public bucket; recorded assent, not a legal e-signature.
 - [ ] **Step 4:** `./scripts/check-no-real-data.sh; echo $?` — Expected: `0`.
