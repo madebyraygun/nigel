@@ -131,6 +131,12 @@ uninitialized, so the SPA can decide which screen to show before it has data.
     "sendConfigured": false,
     "syncConfigured": true,
     "missing": ["r2_bucket", "public_base_url"]
+  },
+  "documents": {
+    "sendConfigured": false,
+    "syncConfigured": true,
+    "responseForm": false,
+    "missing": ["r2_bucket", "documents_base_url"]
   }
 }
 ```
@@ -177,9 +183,21 @@ than a refusal — an edge rewrite can map that prefix onto the
 domain root — so a client renders it beside the Send action without blocking it.
 Like every other field here it carries no configured value, only the sentence.
 
-The whole object is **absent while the database is locked**. `/api/status` is
-one of the three ungated paths, and which integrations an installation has
-configured is not something to tell a caller who has not passed the gate.
+`documents` is the same report for the documents feature, again **by key name
+only**. `sendConfigured` is every key a document send needs: the Mailgun and R2
+keys it shares with invoicing, `r2_private_bucket`, and a documents base — the
+`documents_base_url` key, or `public_base_url` with its trailing `/i` read as
+`/d`. Stripe is not among them. `syncConfigured` is the four keys a response
+sync reads: `r2_account_id`, `r2_access_key`, `r2_secret_key` and
+`r2_private_bucket`. `responseForm` is whether `document_response_url` is set,
+which decides if the page a signer receives carries a form or only the PDF.
+`missing` lists the unset send keys in that order. A client uses it to disable
+Send and Sync and to say which keys are in the way.
+
+Both `invoicing` and `documents` are **absent while the database is locked**.
+`/api/status` is one of the three ungated paths, and which integrations an
+installation has configured is not something to tell a caller who has not
+passed the gate.
 
 ### `POST /api/unlock`
 
@@ -571,6 +589,106 @@ while the HTML route keeps working — the `/api/exports` treatment exactly. A
 custom invoice template that does not validate is `400` naming the file, never a
 silent fallback to the stock page.
 
+### Documents
+
+A document is a PDF filed for a client, sent to one signer and any
+collaborators, answered online or recorded by hand, revised and countersigned.
+Its **status** is derived from the rows on every read and is never stored:
+`draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
+`withdrawn`. Document kinds are managed from the CLI (`nigel document kind`);
+the API serves documents only, and `GET /api/document-kinds` is the read a
+filing form needs.
+
+| Route | Response |
+|---|---|
+| `GET /api/documents` | `DocumentListRow[]`, a bare array, newest change first |
+| `GET /api/documents/{id}` | `DocumentDetail` |
+| `GET /api/documents/{id}/preview` | `text/html; charset=utf-8` |
+| `GET /api/documents/{id}/preview.pdf` | `application/pdf` |
+| `GET /api/document-kinds` | `DocumentKind[]`, active kinds only |
+
+`GET /api/documents` takes `clientId`, `status` and `kind`, all optional and
+combinable. A `clientId` that is not an integer, or a `status` that is not one
+of the seven words, is `400` naming the valid ones; a `clientId` no client has
+is `404` `client_not_found`.
+
+```json
+[
+  { "id": 3, "title": "Website rebuild", "kind": "Proposal", "clientId": 1,
+    "clientName": "Acme Co", "status": "sent", "latestVersion": 2,
+    "sentAt": "2026-10-02", "updatedAt": "2026-10-02" }
+]
+```
+
+`GET /api/documents/{id}` answers the document's own fields flattened, its
+client's name, every version, and what may be done to it next:
+
+```json
+{
+  "id": 3, "clientId": 1, "kindId": 1, "kind": "Proposal",
+  "title": "Website rebuild", "status": "sent", "clientName": "Acme Co",
+  "declinedAt": null, "declineNote": null, "withdrawnAt": null,
+  "createdAt": "2026-10-01", "updatedAt": "2026-10-02",
+  "versions": [
+    { "id": 5, "documentId": 3, "number": 2, "checksum": "sha256:9c1f…",
+      "sentAt": "2026-10-02", "createdAt": "2026-10-02",
+      "recipients": [
+        { "id": 8, "versionId": 5, "role": "signer", "name": "Pat Example",
+          "email": "pat@acme.test", "position": 0,
+          "pageUrl": "https://docs.example.com/d/6b0e…/4ac2…/index.html" }
+      ],
+      "signatures": [],
+      "changeRequests": [] }
+  ],
+  "canEdit": false, "canSend": false, "canRevise": true, "canAccept": true,
+  "canRequestChanges": true, "canDecline": true, "canCountersign": false,
+  "canWithdraw": true
+}
+```
+
+A signature carries `role` (`client` or `countersign`), `method` (`online` or
+`manual`), `name`, `signedAt`, the `checksum` it was given on and, for an online
+one, `typedName`, `email`, `ip` and `userAgent`. A change request carries
+`name`, `note`, `requestedAt`, `method`, `checksum` and the same online
+metadata. `checksum` always carries the `sha256:` prefix.
+
+- **No token is serialized.** Neither the document's token nor a recipient's
+  appears as a field, and a version's stored file path does not either. Those
+  tokens are the capability in a published address.
+- **`pageUrl` embeds both tokens**, and is the one place they appear. It is
+  computed for a recipient on a version that was **sent**, when a documents base
+  is configured that would produce a working link, and is `null` otherwise — a
+  draft's recipients do not exist, and an unsent version has no page. It is
+  returned to the loopback SPA only; the detail is behind the session cookie
+  like every other route.
+- **The `can*` flags are the guards, called.** Each is `guards::can(status,
+  action)`, the table the data layer enforces, so a flag cannot disagree with
+  the `409` it predicts. `canSend` and `canRevise` also require the client not
+  to be archived, because the data-layer functions behind them refuse an
+  archived client. A client must not re-derive any of them from `status`.
+
+| Flag | From status |
+|---|---|
+| `canEdit`, `canSend` | `draft` |
+| `canRevise`, `canAccept`, `canDecline` | `sent`, `changes_requested` |
+| `canRequestChanges` | `sent` |
+| `canCountersign` | `accepted` |
+| `canWithdraw` | `draft`, `sent`, `changes_requested` |
+
+A version newer than the last one sent reads as `draft`: after a revision the
+change request still sits on the earlier version, and the document must be
+sendable again.
+
+The preview routes render the **latest** version. `preview` is the page a signer
+would receive, built by the functions a send publishes through, with a stand-in
+signer (the client's billing contact) and the PDF link pointed at `preview.pdf`;
+`preview.pdf` is the filed PDF, `inline`, named after the title and version.
+Neither takes a gateway, so no network call is possible and no configuration is
+needed. The HTML response carries the same `Content-Security-Policy: sandbox`
+and `X-Frame-Options: SAMEORIGIN` the invoice preview does, for the same reason;
+`preview.pdf` keeps `DENY`. A PDF whose bytes no longer match the checksum
+recorded at filing is `409` `file_changed`.
+
 ### Not-found reasons
 
 A `404` carries `details.reason` wherever one route can be answering about more
@@ -584,6 +702,7 @@ than one thing, so a client is not left branching on the status alone:
 | `upload_not_found` | An `uploadId` that expired or never existed |
 | `invoice_not_found` | An invoice number no invoice has |
 | `client_not_found` | A client id no client has, including as a filter |
+| `document_not_found` | A document id no document has |
 
 ## Changing data
 
@@ -626,6 +745,16 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
 | `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings` and `warnings`) |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
+| `/api/documents` | `POST` | multipart: `clientId`, `kind`, `title`, `file` | `DocumentDetail` (`201`) |
+| `/api/documents/:id` | `PATCH` | `title?`, `kind?` | `DocumentDetail` |
+| `/api/documents/:id/revise` | `POST` | multipart: `file` | `DocumentActionResult` |
+| `/api/documents/:id/send` | `POST` | `confirm` (must be `true`), `signer?`, `collaborators?` | `DocumentSendResult` |
+| `/api/documents/:id/accept` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/request-changes` | `POST` | `name`, `note`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/decline` | `POST` | `note?`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/countersign` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/withdraw` | `POST` | `{}` | `DocumentActionResult` |
+| `/api/documents/sync` | `POST` | — | `DocumentSyncReport` |
 
 ### Write conventions
 
@@ -806,7 +935,9 @@ rows and one query; the edit dialog fetches the detail on a deliberate click.
 
 `DELETE /api/clients/:id` is a hard delete, and is refused while the client has
 **any** invoice — void and paid included, because those invoices still name the
-client on a page that has already gone out:
+client on a page that has already gone out — or any document, `409`
+`has_documents` with the `count`, because a filed document's published pages
+still name the client:
 
 ```json
 {
@@ -1156,6 +1287,216 @@ did not reach come back in `failures` saying so, never silently dropped, so the
 count still accounts for every invoice in `invoicesChecked` and calling it again
 picks up where it stopped.
 
+### Documents
+
+Every route here is guarded by the status table the `can*` flags report (see
+[Documents](#documents) under Reading data), checked in the data layer, so a
+`curl` meets the same refusal the screen's disabled button predicts. A refused
+action is `409` with the reason in [Conflict reasons](#conflict-reasons) and
+changes nothing. An unknown document id is `404` `document_not_found`.
+
+#### Filing and revising
+
+`POST /api/documents` and `POST /api/documents/{id}/revise` take
+`multipart/form-data`. Filing needs the text fields `clientId`, `kind` and
+`title` and a file field named `file`; revising needs the file alone. The file
+goes through the same uploads spool a statement does — its name is reduced to
+safe characters, it is parked owner-only on disk, read back, handed to the data
+layer and removed whatever the outcome — with these differences:
+
+- **PDF only.** The name must end in `.pdf` **and** the bytes must open with the
+  `%PDF-` header. A file that only claims to be a PDF by its name is `400`.
+- The limit is **25 MB**, `413` over it.
+- There is no `uploadId`: a filing is one call, so nothing carries over.
+
+Filing answers `201` with the `DocumentDetail` of a new draft with one version.
+The PDF is stored under the data directory and its SHA-256 recorded as the
+version's `checksum`. The same PDF filed twice for one client is `409`
+`duplicate_document`, naming the document that has it; an archived client is
+`409` `client_archived`, and a `kind` that is not an active kind is `409`
+`kind_inactive`. A `title` is 1 to 200 characters.
+
+Revising adds the next version as a draft, refused with `409`
+`unchanged_revision` when the PDF is identical to an earlier version of the same
+document. It answers a `DocumentActionResult`:
+
+```json
+{ "id": 3, "status": "draft", "…": "the whole DocumentDetail",
+  "warnings": [] }
+```
+
+`DocumentActionResult` is the refreshed `DocumentDetail` flattened, plus
+`warnings`, always present. When the document had a sent version, its published
+pages are closed and rewritten to say a revision is coming. That follow-up is
+**best-effort**: the new version stands whatever it does, and what could not be
+published or closed comes back as a sentence in `warnings`. An installation with
+no R2 configuration reaches nothing and answers an empty list or a warning that
+the manifest is still open.
+
+`PATCH /api/documents/{id}` retitles or rekinds a **draft**; an unrecognized
+field is `400`. An unknown `kind` is `404` — on this route with reason
+`document_not_found`, and on filing with `client_not_found`.
+
+#### Sending a document
+
+`POST /api/documents/{id}/send` requires a body, and the body must say so:
+
+```json
+{
+  "confirm": true,
+  "signer": { "name": "Pat Example", "email": "pat@acme.test" },
+  "collaborators": [ { "name": "Sam Example", "email": "sam@acme.test" } ]
+}
+```
+
+Without `"confirm": true` the answer is `400` `confirmation_required` and
+nothing is read or written, the invoice send's rule for the same reason. With no
+`signer`, the client's billing contact signs, and the request is refused `409`
+`client_missing_email` when there is none, or `409` `signer_name_required` when
+the contact has no name to type when accepting. **A document goes to exactly one
+signer**; `409` `signer_count` is the data layer's refusal of any other count,
+and the same address named twice is `400`. Unknown body fields are `400`.
+
+**The request blocks until the send is done**, for the reason an invoice send
+does: the rows are the job record. It renders a page per recipient, records the
+recipients, uploads the PDF and the pages, writes the response manifest to the
+private bucket, emails each recipient their own link with the PDF attached, and
+marks the version sent. Each outbound call is bounded at 10s to connect and 30s
+in total, there is no deadline over the whole, and the server never retries.
+
+A completed send answers:
+
+```json
+{
+  "document": { "id": 3, "status": "sent", "…": "the whole DocumentDetail" },
+  "steps": [
+    { "step": "load", "outcome": "ok" },
+    { "step": "render", "outcome": "ok" },
+    { "step": "freeze", "outcome": "ok" },
+    { "step": "publish", "outcome": "ok" },
+    { "step": "manifest", "outcome": "ok" },
+    { "step": "email", "outcome": "ok" },
+    { "step": "record", "outcome": "ok" }
+  ],
+  "links": [
+    { "role": "signer", "name": "Pat Example", "email": "pat@acme.test",
+      "url": "https://docs.example.com/d/6b0e…/4ac2…/index.html" }
+  ],
+  "configWarnings": [],
+  "warnings": []
+}
+```
+
+`links` is each recipient's page **as it was emailed**. `configWarnings` carries
+configuration the send went ahead with, such as a From address off the Mailgun
+domain. Both arrays are always present.
+
+A failure says where it stopped. `config` is the caller's step, before anything
+is built; the other seven are the steps above, in order. The step decides the
+code, and a refusal the data layer already names keeps its own `409` reason and
+gains the step:
+
+| Step | A failure is |
+|---|---|
+| `config` | `409 send_not_configured`, `details.missing` naming the unset keys; `409 invalid_public_base_url` when the documents base is set to something that cannot produce a working link; `409 send_misconfigured` for a set but unusable value. Key names only — no response carries a configured value |
+| `load` | `404 document_not_found`; `409` `document_wrong_state` / `document_terminal` / `client_archived` / `file_changed` / `client_missing_email` / `signer_name_required` |
+| `render` | `500` |
+| `freeze` | `409 signer_count`, otherwise `400` or `500` |
+| `publish` | `502 upstream_failed`, `service: "r2"` |
+| `manifest` | `502 upstream_failed`, `service: "r2"` |
+| `email` | `502 upstream_failed`, `service: "mailgun"` |
+| `record` | `500` |
+
+```json
+{ "error": {
+  "code": "upstream_failed",
+  "message": "r2 403: SignatureDoesNotMatch",
+  "details": {
+    "reason": "send_failed",
+    "step": "publish",
+    "service": "r2",
+    "completed": ["load", "render", "freeze"],
+    "emailed": [],
+    "documentStatus": "draft",
+    "cleanupWarnings": []
+  } } }
+```
+
+`message` is the upstream's own. `completed` lists the steps that finished,
+`emailed` the addresses that already received their link, and `documentStatus`
+the status the document is in now. A database failure is `500` on whichever step
+it lands, and never `502`.
+
+**A failed send rolls back to where it started.** Before the version is marked
+sent, a failure removes the recipients it recorded and closes the manifest it
+opened, so the version is unsent with no recipients and the document is a
+draft that can be sent again. Links an email step had already delivered to
+earlier recipients stay delivered — which is what `emailed` is for — but Nigel
+refuses any response to them. What the rollback itself could not undo comes back
+in `cleanupWarnings`, in sentences, always present.
+
+#### Recording a response
+
+`accept`, `request-changes`, `decline`, `countersign` and `withdraw` each answer
+a `DocumentActionResult`. The first four record something that happened outside
+the published page:
+
+| Route | Body | Records |
+|---|---|---|
+| `accept` | `name`, `date?` | The client's acceptance of the latest sent version, a manual signature |
+| `request-changes` | `name`, `note`, `date?` | A change request, `note` 1 to 4000 characters |
+| `decline` | `note?`, `date?` | The client declining; the document is `declined` and terminal |
+| `countersign` | `name`, `date?` | The company's countersignature on an accepted document; it becomes `executed` |
+| `withdraw` | `{}` | The document withdrawn; every published page becomes a withdrawn notice |
+
+`date` is `YYYY-MM-DD` or an RFC 3339 instant and defaults to today; one that
+does not parse is `400`, checked before anything is recorded. A manual response
+is bound to the SHA-256 checksum of the latest sent version, as an online one
+is.
+
+**These commit first and republish best-effort.** The response or withdrawal is
+recorded, and only then are the published pages corrected — an accepted page, a
+changes-requested page, a withdrawn notice — and the manifest closed where the
+document can no longer take responses. Nothing afterwards can undo the record: a
+failure is a `200` carrying a correct document plus a sentence in `warnings`
+naming what a person still has to do. These routes **may make network calls**
+and hold the database while they do, each bounded by the 30s call timeout.
+
+#### Syncing responses
+
+`POST /api/documents/sync` takes no body. It fetches the responses signers left
+through the response form, from the private bucket, for every `sent` or
+`changes_requested` document, oldest change first, and records each one once. A recipient
+who has already answered is skipped.
+
+```json
+{ "documentsChecked": 2, "recorded": 1,
+  "lines": [
+    { "documentId": 3, "title": "Website rebuild",
+      "recorded": ["Pat Example accepted version 2"], "refused": [],
+      "warnings": [], "status": "accepted" }
+  ],
+  "failures": [
+    { "documentId": 4, "message": "r2 403: …" }
+  ] }
+```
+
+A response that does not answer exactly the latest sent version and its
+checksum for exactly that recipient, or that carries an unfit name or note, is
+**refused, not recorded**, and says why in the line's `refused`. A document
+whose status changed has its pages republished, with what could not be reaching
+the line's `warnings`.
+
+Per-document failures are data, not an error. Only a run where every document
+it reached failed answers with an error: `502 upstream_failed`,
+`service: "r2"`. With any of the four keys unset it is `409`
+`sync_not_configured`, `details.missing` naming them, `details.step` `config`.
+
+The run is bounded at **60 seconds**, checked before each document. Documents
+the budget did not reach come back in `failures` saying so, never dropped, so
+`documentsChecked` plus those failures accounts for every open document and
+calling it again picks up where it stopped.
+
 ## Running an import
 
 Importing over HTTP takes three calls, because a browser has no file path to
@@ -1305,14 +1646,26 @@ its own words instead of parsing ours:
 | `already_encrypted` | — | Setting a password on an encrypted database |
 | `not_encrypted` | — | Changing or removing the password on a plaintext one |
 | `has_invoices` | `count` | Deleting a client that has invoices, any status |
+| `has_documents` | `count` | Deleting a client that has documents, any status |
 | `void` | — | Editing or paying a void invoice |
 | `not_draft` | `status` | Editing an invoice that has been sent |
 | `has_payments` | `total`, `paid` | Editing or voiding an invoice with payments |
 | `already_void` | — | Voiding an invoice that is already void |
 | `no_balance` | `total`, `paid` | Paying an invoice with nothing outstanding |
-| `client_missing_email` | `clientId`, `clientName`, `step` | Sending to a client with no address |
+| `client_missing_email` | `step` | Sending an invoice or a document to a client with no address; for an invoice also `clientId`, `clientName` |
 | `invoice_not_payable` | `step` | Sending an invoice with nothing to charge |
 | `send_not_configured` | `missing`, `step` | Sending or syncing with settings unset |
+| `sync_not_configured` | `missing`, `step` | Syncing document responses with an R2 key unset |
+| `document_wrong_state` | `step` (on send) | A document action the status table does not allow from the current status |
+| `document_terminal` | `step` (on send) | Any action on a `withdrawn`, `executed` or `declined` document |
+| `document_accepted` | `step` (on send) | Any action but countersigning on an `accepted` document |
+| `client_archived` | `step` (on send) | Filing, revising or sending a document for an archived client |
+| `duplicate_document` | — | Filing a PDF already filed for that client |
+| `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
+| `kind_inactive` | — | Filing or retitling to a document kind that is no longer in use |
+| `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
+| `signer_count` | `step` | Sending to anything but exactly one signer |
+| `signer_name_required` | `step` | Sending to a signer with no name to type when accepting |
 | `not_deletable` | — | Deleting an invoice that has been sent, paid or voided |
 | `from_schedule` | — | Deleting an invoice a recurring schedule generated |
 
