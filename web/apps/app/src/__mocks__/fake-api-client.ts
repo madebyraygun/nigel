@@ -34,6 +34,7 @@ import type {
   DeclineRequest,
   Deleted,
   DocumentActionResult,
+  DocumentsConfigStatus,
   DocumentDetail,
   DocumentKind,
   DocumentListParams,
@@ -197,6 +198,14 @@ export const UNLOCKED_STATUS: StatusResponse = {
   dataDir: '/tmp/nigel',
   pdfExport: true,
   updateAvailable: null,
+};
+
+/** Every documents key set, response form included. */
+export const DOCUMENTS_CONFIGURED: DocumentsConfigStatus = {
+  sendConfigured: true,
+  syncConfigured: true,
+  responseForm: true,
+  missing: [],
 };
 
 export const LOCKED_STATUS: StatusResponse = {

@@ -13,7 +13,9 @@ import { ApiError } from '../api/index.js';
 import {
   conflictError,
   documentFlags,
+  DOCUMENTS_CONFIGURED,
   FakeApiClient,
+  UNLOCKED_STATUS,
 } from '../__mocks__/fake-api-client.js';
 import { initializeAppStore, resetAppStore } from '../state/app-store.js';
 import type {
@@ -99,6 +101,7 @@ const ROWS: DocumentListRow[] = [
 
 function client(): FakeApiClient {
   const fake = new FakeApiClient();
+  fake.status = { ...UNLOCKED_STATUS, documents: DOCUMENTS_CONFIGURED };
   fake.clients = [CEDAR, JUNIPER, HARBOR];
   fake.documents = ROWS;
   return fake;
@@ -703,5 +706,69 @@ describe('nigel-documents-screen', () => {
     const rendered = timeline.shadowRoot?.querySelector('.note');
     expect(rendered?.textContent).toContain(note);
     expect(rendered?.querySelector('b, img')).toBeNull();
+  });
+
+  it('the send dialog promises a response form only when one is configured', async () => {
+    const configured = withDetail(documentDetail());
+    configured.clientContacts[1] = CEDAR_CONTACTS;
+    const on = await mount('id=12', configured);
+    find(on.el, '[data-action="send"]').click();
+    await settle(on.el);
+    expect(sendDialog(on.el)?.responseForm).toBe(true);
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const fake = withDetail(documentDetail());
+    fake.status = {
+      ...UNLOCKED_STATUS,
+      documents: { ...DOCUMENTS_CONFIGURED, responseForm: false },
+    };
+    const off = await mount('id=12', fake);
+    find(off.el, '[data-action="send"]').click();
+    await settle(off.el);
+    expect(sendDialog(off.el)?.responseForm).toBe(false);
+  });
+
+  it('send is unavailable until sending is configured, and says which keys', async () => {
+    const fake = withDetail(documentDetail());
+    fake.status = {
+      ...UNLOCKED_STATUS,
+      documents: {
+        ...DOCUMENTS_CONFIGURED,
+        sendConfigured: false,
+        missing: ['r2_private_bucket', 'documents_base_url'],
+      },
+    };
+    const { el } = await mount('id=12', fake);
+
+    const send = find(el, '[data-action="send"]');
+    expect(send.hasAttribute('disabled')).toBe(true);
+    expect(find(el, '[data-send-note]').textContent).toContain(
+      'Sending documents needs r2_private_bucket, documents_base_url, which are not set.',
+    );
+    send.click();
+    await settle(el);
+    expect(sendDialog(el)).toBeNull();
+  });
+
+  it('sync is unavailable until syncing is configured', async () => {
+    const fake = client();
+    fake.status = {
+      ...UNLOCKED_STATUS,
+      documents: { ...DOCUMENTS_CONFIGURED, syncConfigured: false },
+    };
+    const { el } = await mount('', fake);
+
+    const sync = find(el, '[data-sync]');
+    expect(sync.hasAttribute('disabled')).toBe(true);
+    expect(el.shadowRoot?.querySelector('[data-sync-note]')).toBeTruthy();
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const configured = await mount();
+    expect(find(configured.el, '[data-sync]').hasAttribute('disabled')).toBe(false);
+    expect(configured.el.shadowRoot?.querySelector('[data-sync-note]')).toBeNull();
   });
 });

@@ -49,6 +49,20 @@ export interface StatusResponse {
    * has configured is not something to advertise before the gate.
    */
   invoicing?: InvoicingStatus;
+  /** Which documents keys are set, by name. Absent while locked, like `invoicing`. */
+  documents?: DocumentsConfigStatus;
+}
+
+/** `status.documents` — key names only, like `status.invoicing`. */
+export interface DocumentsConfigStatus {
+  /** Every key a document send needs is present. */
+  sendConfigured: boolean;
+  /** The R2 credentials and `r2_private_bucket`, which is all a sync needs. */
+  syncConfigured: boolean;
+  /** `document_response_url` is set, so published pages carry a response form. */
+  responseForm: boolean;
+  /** The unset keys a send needs. */
+  missing: string[];
 }
 
 /**

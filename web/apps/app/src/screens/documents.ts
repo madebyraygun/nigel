@@ -24,6 +24,7 @@ import { controlsCss } from '@nigel/theme';
 
 import { ApiError, type ApiClient } from '../api/index.js';
 import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { getAppStore, type AppStore } from '../state/app-store.js';
 import type {
   Client,
   DocumentDetail,
@@ -64,6 +65,15 @@ const BLANK_RECIPIENTS: RecipientEditorValue = {
 
 function hasRecipientErrors(errors: RecipientErrors): boolean {
   return Object.keys(errors).length > 0;
+}
+
+const SYNC_KEYS = ['r2_account_id', 'r2_access_key', 'r2_secret_key', 'r2_private_bucket'];
+
+function missingSentence(subject: string, missing: string[]): string {
+  if (missing.length === 0) return `${subject} is not configured yet.`;
+  return `${subject} needs ${missing.join(', ')}, which ${
+    missing.length === 1 ? 'is' : 'are'
+  } not set.`;
 }
 
 function pageLinkLabel(link: RecipientLink): string {
@@ -280,6 +290,27 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   @state() private fileClientId = '';
   @state() private fileKind = '';
   @state() private fileTitle = '';
+
+  private appStore: AppStore = getAppStore();
+
+  private get documentsStatus() {
+    return this.appStore.status.get()?.documents;
+  }
+
+  /** Why Send is unavailable whatever the document's flags say, or empty. */
+  private sendBlockReason(): string {
+    const documents = this.documentsStatus;
+    if (!documents || documents.sendConfigured) return '';
+    return missingSentence('Sending documents', documents.missing);
+  }
+
+  /** Why Sync is unavailable, or empty. */
+  private syncBlockReason(): string {
+    const documents = this.documentsStatus;
+    if (documents?.syncConfigured) return '';
+    const missing = documents ? SYNC_KEYS.filter((key) => documents.missing.includes(key)) : [];
+    return missingSentence('Syncing responses', missing);
+  }
 
   /** The route the shown data answers, so a re-render does not refetch. */
   private loadedKey: string | null = null;
@@ -499,7 +530,9 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       const page = await this.client.documentPreviewHtml(detail.id);
       if (this.detail?.id === detail.id) this.previewHtml = page;
     } catch (error) {
-      this.previewError = error instanceof ApiError ? error.message : String(error);
+      if (this.detail?.id === detail.id) {
+        this.previewError = error instanceof ApiError ? error.message : String(error);
+      }
     } finally {
       this.previewLoading = false;
     }
@@ -764,7 +797,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
   private openSend = async (): Promise<void> => {
     const detail = this.detail;
-    if (!detail || this.busy) return;
+    if (!detail || this.busy || this.sendBlockReason()) return;
     this.sendOpen = true;
     this.sendPhase = 'confirm';
     this.sendSteps = [];
@@ -810,7 +843,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       this.sendWarnings = [...result.configWarnings, ...result.warnings];
       this.sendLinks = result.links;
       this.sendPhase = 'sent';
-      this.detail = result.document;
+      if (this.detail?.id === detail.id) this.detail = result.document;
     } catch (error) {
       this.sendSteps = documentSendStepViews({ running: false, error });
       this.sendFailure = documentSendFailureMessage(error, detail.title);
@@ -878,6 +911,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   private renderList() {
     const clientId = this.params.get('clientId') ?? '';
     const active = this.clients.filter((client) => client.archivedAt === null);
+    const syncBlocked = this.syncBlockReason();
 
     return html`
       <header>
@@ -886,14 +920,16 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           <wa-button
             data-sync
             appearance="outlined"
-            ?disabled=${this.busy}
-            title="Fetch online responses and record them"
+            ?disabled=${syncBlocked !== '' || this.busy}
+            title=${syncBlocked || 'Fetch online responses and record them'}
             @click=${this.handleSync}
           >
             Sync responses
           </wa-button>
         </div>
       </header>
+
+      ${syncBlocked ? html`<p class="meta" data-sync-note>${syncBlocked}</p>` : nothing}
 
       ${this.renderActionError()} ${this.renderSyncReport()}
 
@@ -1042,10 +1078,21 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
   /** Only what the server's flags allow, never what the status word suggests. */
   private renderActions(detail: DocumentDetail) {
-    const available: { action: string; label: string; run: () => void; danger?: boolean }[] =
-      [];
+    const sendBlocked = this.sendBlockReason();
+    const available: {
+      action: string;
+      label: string;
+      run: () => void;
+      danger?: boolean;
+      blocked?: string;
+    }[] = [];
     if (detail.canSend) {
-      available.push({ action: 'send', label: 'Send…', run: () => void this.openSend() });
+      available.push({
+        action: 'send',
+        label: 'Send…',
+        run: () => void this.openSend(),
+        blocked: sendBlocked,
+      });
     }
     if (detail.canRevise) {
       available.push({ action: 'revise', label: 'Revise…', run: () => this.openDialog('revise') });
@@ -1093,18 +1140,22 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     if (available.length === 0) return nothing;
 
     return html`<div class="actions">
-      ${available.map(
-        (item, index) => html`<wa-button
-          data-action=${item.action}
-          variant=${item.danger ? 'danger' : index === 0 ? 'brand' : 'neutral'}
-          appearance=${index === 0 && !item.danger ? nothing : 'outlined'}
-          ?disabled=${this.busy}
-          @click=${item.run}
-        >
-          ${item.label}
-        </wa-button>`,
-      )}
-    </div>`;
+        ${available.map(
+          (item, index) => html`<wa-button
+            data-action=${item.action}
+            variant=${item.danger ? 'danger' : index === 0 ? 'brand' : 'neutral'}
+            appearance=${index === 0 && !item.danger ? nothing : 'outlined'}
+            ?disabled=${this.busy || Boolean(item.blocked)}
+            title=${item.blocked || nothing}
+            @click=${item.run}
+          >
+            ${item.label}
+          </wa-button>`,
+        )}
+      </div>
+      ${detail.canSend && sendBlocked
+        ? html`<p class="meta" data-send-note>${sendBlocked}</p>`
+        : nothing}`;
   }
 
   /** How a declined or withdrawn document ended, which the timeline does not carry. */
@@ -1261,6 +1312,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         open
         mode="document"
         .documentTitle=${detail.title}
+        .responseForm=${this.documentsStatus?.responseForm ?? false}
         .recipientCount=${1 + this.recipients.collaborators.length}
         .previewHtml=${this.previewHtml}
         .previewError=${this.previewError}
