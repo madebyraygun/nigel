@@ -573,9 +573,10 @@ describe('wc-send-dialog document mode', () => {
       '\u201cMaster Services Agreement\u201d is on its way to 2 recipients.',
     );
     expect(el.shadowRoot?.querySelector('[data-step="manifest"]')).toBeTruthy();
-    expect(
-      el.shadowRoot?.querySelector<HTMLAnchorElement>('[data-page-link]')?.getAttribute('href'),
-    ).toBe('https://docs.example.com/d/abc/1.html');
+    const pageLink = el.shadowRoot?.querySelector<HTMLAnchorElement>('[data-page-link]');
+    expect(pageLink?.getAttribute('href')).toBe('https://docs.example.com/d/abc/1.html');
+    expect(pageLink?.getAttribute('target')).toBe('_blank');
+    expect(pageLink?.getAttribute('rel')).toBe('noreferrer');
     el.recipientCount = 1;
     await el.updateComplete;
     expect(el.shadowRoot?.querySelector('[data-sent]')?.textContent).toContain('1 recipient.');

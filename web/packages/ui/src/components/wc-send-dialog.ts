@@ -606,7 +606,8 @@ export class WcSendDialog extends LitElement {
           ? html`<ul data-page-links>
               ${this.pageLinks.map(
                 (link) =>
-                  html`<li><a href=${link.href} data-page-link>${link.label}</a></li>`,
+                  html`<li><a href=${link.href} target="_blank" rel="noreferrer"
+                    data-page-link>${link.label}</a></li>`,
               )}
             </ul>`
           : nothing}
