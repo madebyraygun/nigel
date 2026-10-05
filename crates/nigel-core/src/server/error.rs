@@ -161,14 +161,17 @@ impl ApiError {
 
     /// Tag a refusal raised outside the orchestration with the step it belongs
     /// to, so every answer a send can give carries `details.step`.
-    pub(crate) fn at_step(mut self, step: SendStep) -> Self {
-        self.merge_details(serde_json::json!({ "step": step.as_str() }));
-        self
+    pub(crate) fn at_step(self, step: SendStep) -> Self {
+        self.at_step_named(step.as_str())
     }
 
     /// [`Self::at_step`] for a refusal raised before a document send starts.
-    pub(crate) fn at_document_step(mut self, step: DocumentSendStep) -> Self {
-        self.merge_details(serde_json::json!({ "step": step.as_str() }));
+    pub(crate) fn at_document_step(self, step: DocumentSendStep) -> Self {
+        self.at_step_named(step.as_str())
+    }
+
+    fn at_step_named(mut self, step: &str) -> Self {
+        self.merge_details(serde_json::json!({ "step": step }));
         self
     }
 

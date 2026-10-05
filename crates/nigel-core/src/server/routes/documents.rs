@@ -60,6 +60,7 @@ use super::super::extract::{ApiJson, ApiPath};
 use super::super::state::AppState;
 use super::super::uploads::{self, UploadArea};
 use super::imports::multipart_error;
+use super::invoices::{misconfigured, not_configured};
 use super::{not_found_because, with_conn, with_conn_api};
 
 pub fn routes() -> Router<AppState> {
@@ -500,33 +501,6 @@ struct SendResult {
     warnings: Vec<String>,
 }
 
-fn not_configured(missing: &[&'static str]) -> ApiError {
-    ApiError::conflict(
-        format!(
-            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
-            missing.join(", ")
-        ),
-        serde_json::json!({
-            "reason": "send_not_configured",
-            "step": DocumentSendStep::Config.as_str(),
-            "missing": missing,
-        }),
-    )
-}
-
-fn misconfigured(err: NigelError) -> ApiError {
-    match err {
-        NigelError::Invalid(message) => ApiError::conflict(
-            message,
-            serde_json::json!({
-                "reason": "send_misconfigured",
-                "step": DocumentSendStep::Config.as_str(),
-            }),
-        ),
-        other => other.into(),
-    }
-}
-
 /// The documents base refused in the key-and-defect wording, never quoting the
 /// configured value.
 fn invalid_documents_base(config: &DocumentsConfig) -> Option<ApiError> {
@@ -568,13 +542,18 @@ async fn send(
     let config = crate::settings::documents_config();
     let status = crate::settings::documents_status(&config);
     if !status.send_configured {
-        return Err(not_configured(&status.missing));
+        return Err(not_configured(
+            "Sending documents",
+            DocumentSendStep::Config.as_str(),
+            &status.missing,
+        ));
     }
     if let Some(err) = invalid_documents_base(&config) {
         return Err(err);
     }
     let company = with_conn(&state, |conn| Ok(company_name(conn))).await?;
-    let clients = build_document_clients(config, &company).map_err(misconfigured)?;
+    let clients = build_document_clients(config, &company)
+        .map_err(|e| misconfigured(e, DocumentSendStep::Config.as_str()))?;
     let today = crate::clock::today();
     let warnings = clients.warnings().to_vec();
 

@@ -716,11 +716,11 @@ struct SendResult {
     warnings: Vec<String>,
 }
 
-/// The refusal a request that never named the invoicing settings gets.
+/// The refusal a send or sync gets when its settings are not all named.
 ///
 /// Key names only — the values never leave the process, and the names are
 /// already public in `docs/invoicing.md`.
-fn not_configured(what: &str, missing: &[&'static str]) -> ApiError {
+pub(super) fn not_configured(what: &str, step: &str, missing: &[&'static str]) -> ApiError {
     ApiError::conflict(
         format!(
             "{what} is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
@@ -728,23 +728,23 @@ fn not_configured(what: &str, missing: &[&'static str]) -> ApiError {
         ),
         serde_json::json!({
             "reason": "send_not_configured",
-            "step": SendStep::Config.as_str(),
+            "step": step,
             "missing": missing,
         }),
     )
 }
 
-/// `build_clients` can refuse a *set but wrong* value — a display name or a
+/// `build_clients` and `build_document_clients` can refuse a *set but wrong* value — a display name or a
 /// reply-to carrying a line break, which is header injection. That is a
 /// different thing to say than "you have not set a key", so it gets its own
 /// reason word beside `send_not_configured`, at the same step.
-fn misconfigured(err: NigelError) -> ApiError {
+pub(super) fn misconfigured(err: NigelError, step: &str) -> ApiError {
     match err {
         NigelError::Invalid(message) => ApiError::conflict(
             message,
             serde_json::json!({
                 "reason": "send_misconfigured",
-                "step": SendStep::Config.as_str(),
+                "step": step,
             }),
         ),
         other => other.into(),
@@ -784,7 +784,11 @@ async fn send(
     let config = crate::settings::invoicing_config();
     let status = crate::settings::invoicing_status(&config);
     if !status.send_configured {
-        return Err(not_configured("Sending invoices", &status.missing));
+        return Err(not_configured(
+            "Sending invoices",
+            SendStep::Config.as_str(),
+            &status.missing,
+        ));
     }
     let contact_email = crate::invoicing::wiring::contact_email_for_preview(&config).0;
     // `build_clients` refuses an unusable `public_base_url` too, but its
@@ -810,8 +814,8 @@ async fn send(
         Ok(crate::invoicing::wiring::company_name(conn))
     })
     .await?;
-    let clients =
-        crate::invoicing::wiring::build_clients(config, &company).map_err(misconfigured)?;
+    let clients = crate::invoicing::wiring::build_clients(config, &company)
+        .map_err(|e| misconfigured(e, SendStep::Config.as_str()))?;
     let today = crate::clock::today();
     let warnings = clients.warnings().to_vec();
 
@@ -931,7 +935,11 @@ async fn sync(State(state): State<AppState>) -> ApiResult<Json<SyncResult>> {
     // The gateway is the one thing resolved before the gate, because an
     // unconfigured installation owes the caller a refusal rather than a wait.
     let Some(secret_key) = crate::settings::invoicing_config().stripe_secret_key else {
-        return Err(not_configured("Payment sync", &["stripe_secret_key"]));
+        return Err(not_configured(
+            "Payment sync",
+            SendStep::Config.as_str(),
+            &["stripe_secret_key"],
+        ));
     };
     let gateway = crate::invoicing::stripe::StripeClient { secret_key };
     let today = crate::clock::today();
