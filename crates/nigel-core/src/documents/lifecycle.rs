@@ -346,6 +346,92 @@ mod tests {
     }
 
     #[test]
+    fn withdrawing_a_sent_document_closes_the_manifest_and_replaces_every_page() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        let warnings =
+            withdraw_with_teardown(&conn, id, "2026-10-06", "Initech", Some(&p), Some(&s)).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let doc = get_document(&conn, id).unwrap();
+        let manifest = s.last_manifest(&doc.token).unwrap();
+        assert_eq!(
+            (manifest.state, manifest.version),
+            (ManifestState::Closed, 1)
+        );
+        let v1 = latest_version(&conn, id).unwrap();
+        for r in recipients(&conn, v1.id).unwrap() {
+            let page = p.page(&doc.token, &r.token).unwrap();
+            assert!(
+                page.contains("This document has been withdrawn.") && !page.contains("<form"),
+                "{}",
+                r.name
+            );
+        }
+    }
+
+    #[test]
+    fn withdrawing_after_a_second_send_closes_the_newest_manifest_and_replaces_both_versions_pages()
+    {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_change_request(&conn, id, "Sam Example", "Fix the dates", "2026-10-06")
+            .unwrap();
+        revise_with_republish(
+            &conn,
+            dir.path(),
+            id,
+            &fixture_pdf("v2"),
+            "2026-10-07",
+            "Initech",
+            Some(&p),
+            Some(&s),
+        )
+        .unwrap();
+        let ctx = SendContext {
+            data_dir: dir.path(),
+            company: "Initech",
+            response_url: Some("https://docs.example.test/d/respond"),
+            today: "2026-10-08",
+        };
+        send_document(
+            &conn,
+            id,
+            &[pat(), sam()],
+            &ctx,
+            &p,
+            &FakeMailer::default(),
+            &s,
+        )
+        .unwrap();
+        let token = get_document(&conn, id).unwrap().token;
+        let manifests_before = s.manifests.borrow().len();
+
+        let warnings =
+            withdraw_with_teardown(&conn, id, "2026-10-09", "Initech", Some(&p), Some(&s)).unwrap();
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let written: Vec<_> = s.manifests.borrow()[manifests_before..].to_vec();
+        assert_eq!(written.len(), 1, "the manifest is closed once");
+        assert_eq!(
+            (written[0].1.state, written[0].1.version),
+            (ManifestState::Closed, 2)
+        );
+        let all = versions(&conn, id).unwrap();
+        assert_eq!(all.len(), 2);
+        for v in &all {
+            for r in recipients(&conn, v.id).unwrap() {
+                let page = p.page(&token, &r.token).unwrap();
+                assert!(
+                    page.contains("This document has been withdrawn.") && !page.contains("<form"),
+                    "v{} {}",
+                    v.number,
+                    r.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_partial_republish_failure_is_a_warning_not_an_error() {
         let (dir, conn) = test_conn();
         let (id, _, s) = sent_document_with_fakes(&conn, dir.path());

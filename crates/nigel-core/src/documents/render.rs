@@ -292,6 +292,70 @@ mod tests {
     };
     const URL: Option<&str> = Some("https://docs.example.test/d/respond");
 
+    /// The pages the Worker's contract test runs the inline script on, so the
+    /// body the page posts is checked against what `parseRequest` reads.
+    /// `NIGEL_UPDATE_WORKER_FIXTURE=1` rewrites the checked-in copy.
+    #[test]
+    fn the_worker_contract_fixture_matches_the_rendered_pages() {
+        let (doc, signer, collaborator) = (
+            "0123456789abcdef0123456789abcdef",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let ctx = PageContext {
+            token: doc,
+            ..ctx()
+        };
+        let recipients = [
+            PageRecipient {
+                token: signer,
+                ..SIGNER
+            },
+            PageRecipient {
+                token: collaborator,
+                ..COLLAB
+            },
+        ];
+        let pages =
+            render_document_pages(&ctx, &recipients, &PageState::Open { response_url: URL });
+
+        let accept = pages[0].1.split("<form").nth(1).expect("the accept form");
+        for attr in [
+            format!("data-token=\"{doc}\""),
+            format!("data-recipient=\"{signer}\""),
+            "data-version=\"2\"".to_string(),
+            "data-checksum=\"sha256:ab\"".to_string(),
+            "data-action=\"accept\"".to_string(),
+        ] {
+            assert!(accept.contains(&attr), "{attr}");
+        }
+
+        let fixture = serde_json::json!({
+            "token": doc,
+            "version": ctx.version,
+            "checksum": ctx.checksum,
+            "recipients": recipients.iter().map(|r| serde_json::json!({
+                "token": r.token, "role": r.role.as_str(), "name": r.name,
+            })).collect::<Vec<_>>(),
+            "pages": pages.iter().map(|(token, html)| serde_json::json!({
+                "recipientToken": token, "html": html,
+            })).collect::<Vec<_>>(),
+        });
+        let rendered = format!("{}\n", serde_json::to_string_pretty(&fixture).unwrap());
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../workers/document-response/test/fixtures/page-contract.json");
+        if std::env::var_os("NIGEL_UPDATE_WORKER_FIXTURE").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &rendered).unwrap();
+        }
+        let checked_in = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            checked_in == rendered,
+            "{} is stale: rerun this test with NIGEL_UPDATE_WORKER_FIXTURE=1",
+            path.display()
+        );
+    }
+
     #[test]
     fn a_signer_page_carries_both_forms_and_a_collaborator_page_one() {
         let signer = render_recipient_page(&ctx(), &SIGNER, &PageState::Open { response_url: URL });
