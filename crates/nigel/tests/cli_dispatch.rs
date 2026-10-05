@@ -4638,3 +4638,59 @@ fn document_kinds_add_rename_deactivate_round_trip() {
         .success()
         .stdout(predicate::str::contains("SOW").and(predicate::str::contains("inactive")));
 }
+
+fn filed_document(env: &TestEnv) {
+    env.init_and_demo();
+    env.cmd()
+        .args([
+            "client",
+            "add",
+            "Globex",
+            "--contact",
+            "pat@globex.test:Pat Example",
+        ])
+        .assert()
+        .success();
+    let client = env
+        .db()
+        .query_row("SELECT id FROM clients WHERE name = 'Globex'", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap()
+        .to_string();
+    let pdf = write_pdf(env, "proposal.pdf", "filed");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn document_preview_writes_files_without_any_configuration() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "preview", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("document-1/signer/index.html"));
+    assert!(env
+        .data_dir()
+        .join("previews/document-1/v1/document.pdf")
+        .exists());
+    assert!(env
+        .data_dir()
+        .join("previews/document-1/collaborator/index.html")
+        .exists());
+}

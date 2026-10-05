@@ -618,6 +618,13 @@ pub enum DocumentCommands {
     },
     /// Show one document: every version, its recipients and every response.
     Show { id: i64 },
+    /// Render the recipient pages and the PDF to local files, with no network.
+    Preview {
+        id: i64,
+        /// Directory to write into (default: <data dir>/previews)
+        #[arg(long)]
+        output_dir: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1016,4 +1023,50 @@ pub enum BrowseCommands {
         #[command(flatten)]
         filters: RegisterFilterArgs,
     },
+}
+
+/// Whether a command may reconcile Stripe payments before it runs. `restore`
+/// overwrites the database a sync would write to, `invoice sync` does the same
+/// work itself, `serve` may have a locked database and should not block on a
+/// network poll, and the previews and templates are defined to make no network
+/// call at all.
+pub fn launch_sync_allowed(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Init { .. }
+            | Commands::Demo
+            | Commands::Load { .. }
+            | Commands::Update
+            | Commands::Completions { .. }
+            | Commands::Password { .. }
+            | Commands::Restore { .. }
+            | Commands::Serve { .. }
+            | Commands::Invoice {
+                command: InvoiceCommands::Sync
+                    | InvoiceCommands::Preview { .. }
+                    | InvoiceCommands::Template { .. }
+            }
+            | Commands::Document {
+                command: DocumentCommands::Preview { .. }
+            }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previews_never_reach_the_network() {
+        for args in [
+            ["nigel", "invoice", "preview", "1"],
+            ["nigel", "invoice", "template", "path"],
+            ["nigel", "document", "preview", "1"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(!launch_sync_allowed(&cli.command.unwrap()), "{args:?}");
+        }
+        let cli = Cli::try_parse_from(["nigel", "document", "list"]).unwrap();
+        assert!(launch_sync_allowed(&cli.command.unwrap()));
+    }
 }

@@ -7,13 +7,15 @@ use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename
 use nigel_core::documents::model::{
     DocumentKind, DocumentListRow, DocumentRecord, DocumentStatus, Method, SignatureRole,
 };
+use nigel_core::documents::send::write_preview;
 use nigel_core::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, DocumentFilter,
     NewDocument,
 };
 use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::ensure_client_exists;
-use nigel_core::settings::get_data_dir;
+use nigel_core::invoicing::wiring::company_name;
+use nigel_core::settings::{documents_config, get_data_dir};
 
 use crate::cli::DocumentKindsCommands;
 
@@ -88,6 +90,29 @@ pub fn list(client: Option<i64>, status: Option<&str>, kind: Option<&str>) -> Re
 pub fn show(id: i64) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     println!("{}", format_document_show(&document_record(&conn, id)?));
+    Ok(())
+}
+
+pub fn preview(id: i64, output_dir: Option<&str>) -> Result<()> {
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let out = match output_dir {
+        Some(dir) => Path::new(dir).to_path_buf(),
+        None => data_dir.join("previews"),
+    };
+    let config = documents_config();
+    let files = write_preview(
+        &conn,
+        &data_dir,
+        id,
+        &company_name(&conn),
+        config.document_response_url.as_deref(),
+        &out,
+    )?;
+    for page in &files.pages {
+        println!("{}", page.display());
+    }
+    println!("{}", files.pdf.display());
     Ok(())
 }
 

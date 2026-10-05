@@ -7,6 +7,7 @@ pub mod kinds;
 pub mod model;
 pub mod record;
 pub mod render;
+pub mod send;
 pub mod status;
 pub mod store;
 #[cfg(any(test, feature = "testutil"))]

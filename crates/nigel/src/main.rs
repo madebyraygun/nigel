@@ -159,22 +159,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
     // and its startup shouldn't block on a network poll. `invoice preview` is
     // defined to make no network call at all, and a launch sync would make that
     // false on any machine with a Stripe key configured.
-    if !matches!(
-        command,
-        Commands::Init { .. }
-            | Commands::Demo
-            | Commands::Load { .. }
-            | Commands::Update
-            | Commands::Completions { .. }
-            | Commands::Password { .. }
-            | Commands::Restore { .. }
-            | Commands::Serve { .. }
-            | Commands::Invoice {
-                command: InvoiceCommands::Sync
-                    | InvoiceCommands::Preview { .. }
-                    | InvoiceCommands::Template { .. }
-            }
-    ) {
+    if cli::launch_sync_allowed(&command) {
         sync_invoice_payments();
     }
 
@@ -269,6 +254,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 kind,
             } => cli::document::list(client, status.as_deref(), kind.as_deref()),
             DocumentCommands::Show { id } => cli::document::show(id),
+            DocumentCommands::Preview { id, output_dir } => {
+                cli::document::preview(id, output_dir.as_deref())
+            }
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {
