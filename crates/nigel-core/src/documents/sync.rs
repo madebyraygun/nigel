@@ -168,13 +168,13 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
     let mut accepted = Vec::new();
     for f in fetched {
         match check(&f, &version) {
-            Ok(at) => accepted.push((at, f)),
+            Ok(checked) => accepted.push((checked, f)),
             Err(reason) => line.refused.push(reason),
         }
     }
-    accepted.sort_by(|a, b| a.0.cmp(&b.0));
+    accepted.sort_by(|a, b| a.0.received_at.cmp(&b.0.received_at));
 
-    for (at, f) in &accepted {
+    for (checked, f) in &accepted {
         let r = &f.response;
         let kind = match r.action {
             ResponseAction::Accept => ResponseKind::Accept {
@@ -188,9 +188,9 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
             version_id: version.id,
             recipient_id: f.recipient.id,
             kind,
-            received_at: at,
-            ip: r.ip.as_deref(),
-            user_agent: r.user_agent.as_deref(),
+            received_at: &checked.received_at,
+            ip: checked.ip.as_deref(),
+            user_agent: checked.user_agent.as_deref(),
             checksum: &r.checksum,
         };
         match record_online_response(conn, &online) {
@@ -218,10 +218,22 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
     Ok(line)
 }
 
+const TYPED_NAME_MAX_CHARS: usize = 200;
+const USER_AGENT_MAX_CHARS: usize = 512;
+
+/// What survives of a response's metadata once it is fit to store.
+struct Checked {
+    received_at: String,
+    ip: Option<String>,
+    user_agent: Option<String>,
+}
+
 /// Refuses a response that does not answer exactly this version for exactly
-/// this recipient, or that carries text unfit to record. Returns the
-/// normalized moment it was received.
-fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<String, String> {
+/// this recipient, or that carries a name or note unfit to record. An address
+/// that is not an IP, or an over-long or control-laden user agent, is dropped
+/// rather than refused. Nothing the response carries is echoed beyond what
+/// gets recorded.
+fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked, String> {
     let r = &f.response;
     let name = &f.recipient.name;
     let refuse = |why: String| Err(format!("{name}'s response was not recorded: {why}"));
@@ -233,8 +245,8 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<String, 
     }
     if r.checksum != version.checksum {
         return refuse(format!(
-            "it was given on {} but version {} is {}.",
-            r.checksum, version.number, version.checksum
+            "it was given on a different checksum than version {}.",
+            version.number
         ));
     }
     if r.recipient_token != f.recipient.token {
@@ -249,6 +261,11 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<String, 
             if typed.is_empty() {
                 return refuse("an acceptance needs a typed name.".into());
             }
+            if typed.chars().count() > TYPED_NAME_MAX_CHARS {
+                return refuse(format!(
+                    "the typed name is longer than {TYPED_NAME_MAX_CHARS} characters."
+                ));
+            }
             if typed.chars().any(char::is_control) {
                 return refuse("the typed name carries control characters.".into());
             }
@@ -262,7 +279,24 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<String, 
             }
         }
     }
-    validate_moment(&r.received_at, "response time").or_else(|e| refuse(e.to_string()))
+    let received_at = validate_moment(&r.received_at, "response time")
+        .map_err(|e| format!("{name}'s response was not recorded: {e}"))?;
+    let ip =
+        r.ip.as_deref()
+            .and_then(|ip| ip.parse::<std::net::IpAddr>().ok())
+            .map(|ip| ip.to_string());
+    let user_agent = r
+        .user_agent
+        .as_deref()
+        .filter(|ua| {
+            ua.chars().count() <= USER_AGENT_MAX_CHARS && !ua.chars().any(char::is_control)
+        })
+        .map(str::to_string);
+    Ok(Checked {
+        received_at,
+        ip,
+        user_agent,
+    })
 }
 
 #[cfg(test)]
@@ -563,6 +597,94 @@ mod tests {
             change_requests(&conn, s.version.id).unwrap()[0].note,
             "Fix the dates.\nAnd the totals."
         );
+    }
+
+    #[test]
+    fn an_over_long_typed_name_is_refused() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            DocumentResponse {
+                typed_name: Some("P".repeat(201)),
+                ..accept_from(&s, "2026-10-05T17:04:11Z")
+            },
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert_eq!((report.recorded, report.lines[0].refused.len()), (0, 1));
+        assert!(signatures(&conn, s.version.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_unfit_user_agent_is_dropped_and_the_response_kept() {
+        for agent in ["U".repeat(513), "UA\u{1b}[2J".to_string()] {
+            let (dir, conn) = test_conn();
+            let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+            let s = sent_state(&conn, id);
+            src.put_response(
+                &s.token,
+                1,
+                &s.signer.token,
+                DocumentResponse {
+                    user_agent: Some(agent),
+                    ..accept_from(&s, "2026-10-05T17:04:11Z")
+                },
+            );
+            let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+            assert_eq!(report.recorded, 1);
+            let sigs = signatures(&conn, s.version.id).unwrap();
+            assert_eq!(
+                (sigs[0].user_agent.as_deref(), sigs[0].ip.as_deref()),
+                (None, Some("203.0.113.7"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_ip_address_is_dropped_and_the_response_kept() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            DocumentResponse {
+                ip: Some("203.0.113.7\n<script>".into()),
+                ..accept_from(&s, "2026-10-05T17:04:11Z")
+            },
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert_eq!(report.recorded, 1);
+        let sigs = signatures(&conn, s.version.id).unwrap();
+        assert_eq!(
+            (sigs[0].ip.as_deref(), sigs[0].user_agent.as_deref()),
+            (None, Some("UA"))
+        );
+    }
+
+    #[test]
+    fn a_hostile_checksum_is_never_echoed() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        let hostile = format!("sha256:\u{1b}]0;pwned\u{7}{}", "x".repeat(5000));
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            DocumentResponse {
+                checksum: hostile,
+                ..accept_from(&s, "2026-10-05T17:04:11Z")
+            },
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        let refused = &report.lines[0].refused[0];
+        assert!(refused.contains("a different checksum than version 1"));
+        assert!(!refused.contains("pwned") && !refused.contains('\u{1b}'));
     }
 
     #[test]
