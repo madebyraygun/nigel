@@ -19,8 +19,19 @@ import {
   type Company,
   type ConfirmImportRequest,
   type CategoryPatch,
+  type CountersignRequest,
   type CsvProfile,
+  type DeclineRequest,
   type Deleted,
+  type DocumentActionResult,
+  type DocumentDetail,
+  type DocumentKind,
+  type DocumentListParams,
+  type DocumentListRow,
+  type DocumentPatch,
+  type DocumentSendRequest,
+  type DocumentSendResult,
+  type DocumentSyncResult,
   type ExpenseBreakdown,
   type ExportFormat,
   type ExportParams,
@@ -37,9 +48,12 @@ import {
   type InvoiceListRow,
   type InvoicePatch,
   type K1PrepReport,
+  type ManualAcceptRequest,
+  type ManualChangeRequestInput,
   type NewAccountRequest,
   type NewCategoryRequest,
   type NewClientRequest,
+  type NewDocumentRequest,
   type NewInvoiceRequest,
   type NewRuleRequest,
   type NextInvoiceNumber,
@@ -490,6 +504,40 @@ export interface ApiClient {
    * very dialog whose job is to catch exactly that before the send.
    */
   invoicePreviewHtml(number: number): Promise<string>;
+
+  /** Every document, newest change first. Filters are omitted when absent. */
+  getDocuments(params?: DocumentListParams): Promise<DocumentListRow[]>;
+  getDocument(id: number): Promise<DocumentDetail>;
+  /** The active kinds, in their configured order. */
+  getDocumentKinds(): Promise<DocumentKind[]>;
+  /** File a PDF for a client as a new draft. Sent as multipart. */
+  createDocument(input: NewDocumentRequest): Promise<DocumentDetail>;
+  /** Retitle or rekind a draft. */
+  updateDocument(id: number, input: DocumentPatch): Promise<DocumentDetail>;
+  /**
+   * Freeze, publish, email and record — in one blocking request. Takes no
+   * `confirm` argument for `sendInvoice`'s reason.
+   */
+  sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult>;
+  /** Add a new draft version from a PDF. Sent as multipart. */
+  reviseDocument(id: number, file: File): Promise<DocumentActionResult>;
+  acceptDocument(id: number, input: ManualAcceptRequest): Promise<DocumentActionResult>;
+  requestDocumentChanges(
+    id: number,
+    input: ManualChangeRequestInput,
+  ): Promise<DocumentActionResult>;
+  declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult>;
+  countersignDocument(id: number, input: CountersignRequest): Promise<DocumentActionResult>;
+  withdrawDocument(id: number): Promise<DocumentActionResult>;
+  /** Fetch and record the responses signers left online. */
+  syncDocuments(): Promise<DocumentSyncResult>;
+
+  /** Where a document's signer page or latest PDF lives, as `invoicePreviewUrl`. */
+  documentPreviewUrl(id: number, format: 'html' | 'pdf'): string;
+  /** The latest version's PDF, in the form the running client can use. */
+  documentPreviewTarget(id: number): ExportTarget;
+  /** The signer's page as HTML, for `invoicePreviewHtml`'s reason. */
+  documentPreviewHtml(id: number): Promise<string>;
 }
 
 export interface FetchApiClientOptions {
@@ -893,10 +941,95 @@ export class FetchApiClient implements ApiClient {
     return { kind: 'href', href: this.invoicePreviewUrl(number, 'pdf') };
   }
 
-  async invoicePreviewHtml(number: number): Promise<string> {
+  invoicePreviewHtml(number: number): Promise<string> {
     // The same address `invoicePreviewUrl` spells, so there is one literal.
-    const url = this.invoicePreviewUrl(number, 'html');
+    return this.fetchText(this.invoicePreviewUrl(number, 'html'));
+  }
 
+  getDocuments(params: DocumentListParams = {}): Promise<DocumentListRow[]> {
+    return this.request<DocumentListRow[]>('GET', `/documents${query(params)}`);
+  }
+
+  getDocument(id: number): Promise<DocumentDetail> {
+    return this.request<DocumentDetail>('GET', `/documents/${id}`);
+  }
+
+  getDocumentKinds(): Promise<DocumentKind[]> {
+    return this.request<DocumentKind[]>('GET', '/document-kinds');
+  }
+
+  createDocument(input: NewDocumentRequest): Promise<DocumentDetail> {
+    const form = new FormData();
+    form.append('clientId', String(input.clientId));
+    form.append('kind', input.kind);
+    form.append('title', input.title);
+    form.append('file', input.file);
+    return this.request<DocumentDetail>('POST', '/documents', form);
+  }
+
+  updateDocument(id: number, input: DocumentPatch): Promise<DocumentDetail> {
+    return this.request<DocumentDetail>('PATCH', `/documents/${id}`, input);
+  }
+
+  sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult> {
+    return this.request<DocumentSendResult>('POST', `/documents/${id}/send`, {
+      confirm: true,
+      ...input,
+    });
+  }
+
+  reviseDocument(id: number, file: File): Promise<DocumentActionResult> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.request<DocumentActionResult>('POST', `/documents/${id}/revise`, form);
+  }
+
+  acceptDocument(id: number, input: ManualAcceptRequest): Promise<DocumentActionResult> {
+    return this.request<DocumentActionResult>('POST', `/documents/${id}/accept`, input);
+  }
+
+  requestDocumentChanges(
+    id: number,
+    input: ManualChangeRequestInput,
+  ): Promise<DocumentActionResult> {
+    return this.request<DocumentActionResult>(
+      'POST',
+      `/documents/${id}/request-changes`,
+      input,
+    );
+  }
+
+  declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult> {
+    return this.request<DocumentActionResult>('POST', `/documents/${id}/decline`, input);
+  }
+
+  countersignDocument(id: number, input: CountersignRequest): Promise<DocumentActionResult> {
+    return this.request<DocumentActionResult>('POST', `/documents/${id}/countersign`, input);
+  }
+
+  withdrawDocument(id: number): Promise<DocumentActionResult> {
+    return this.request<DocumentActionResult>('POST', `/documents/${id}/withdraw`, {});
+  }
+
+  syncDocuments(): Promise<DocumentSyncResult> {
+    return this.request<DocumentSyncResult>('POST', '/documents/sync', {});
+  }
+
+  documentPreviewUrl(id: number, format: 'html' | 'pdf'): string {
+    const suffix = format === 'pdf' ? 'preview.pdf' : 'preview';
+    return `${this.baseUrl}/documents/${id}/${suffix}`;
+  }
+
+  documentPreviewTarget(id: number): ExportTarget {
+    return { kind: 'href', href: this.documentPreviewUrl(id, 'pdf') };
+  }
+
+  documentPreviewHtml(id: number): Promise<string> {
+    return this.fetchText(this.documentPreviewUrl(id, 'html'));
+  }
+
+  /** A rendered page as text, raising the server's envelope when it fails. */
+  private async fetchText(url: string): Promise<string> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, { credentials: 'same-origin' });

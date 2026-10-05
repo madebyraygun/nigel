@@ -73,6 +73,10 @@ export class DesktopApiClient extends FetchApiClient {
     return this.save(this.invoicePreviewUrl(number, 'pdf'), `invoice-${number}.pdf`);
   }
 
+  override documentPreviewTarget(id: number): ExportTarget {
+    return this.save(this.documentPreviewUrl(id, 'pdf'), `document-${id}.pdf`);
+  }
+
   override shellChrome(): ShellChrome | null {
     return {
       // Fire-and-forget like the drag subscription: a refused invoke leaves

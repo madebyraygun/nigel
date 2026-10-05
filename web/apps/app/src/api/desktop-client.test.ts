@@ -58,6 +58,34 @@ describe('DesktopApiClient', () => {
     expect(saved[0].name).toBe('invoice-1251.pdf');
   });
 
+  it('documentPreviewTarget saves through the native side', async () => {
+    const saved: Array<{ name: string; bytes: number[] }> = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL) =>
+      new Response('%PDF-1.7', {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+    const client = new DesktopApiClient({
+      fetchImpl,
+      listen: eventBus().listen,
+      invoke: async (cmd, args) => {
+        expect(cmd).toBe('save_export');
+        saved.push(args as { name: string; bytes: number[] });
+        return null;
+      },
+    });
+
+    const target = client.documentPreviewTarget(7);
+    expect(target.kind).toBe('action');
+    await (target as { run: () => Promise<void> }).run();
+
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/documents/7/preview.pdf');
+    expect(saved).toHaveLength(1);
+    expect(saved[0].name).toBe('document-7.pdf');
+    expect(saved[0].bytes.length).toBeGreaterThan(0);
+  });
+
   it('raises a failed export rather than swallowing it', async () => {
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 500 }));
     const client = new DesktopApiClient({

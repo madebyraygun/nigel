@@ -29,8 +29,21 @@ import type {
   Company,
   ConfirmImportRequest,
   ConflictDetails,
+  CountersignRequest,
   CsvProfile,
+  DeclineRequest,
   Deleted,
+  DocumentActionResult,
+  DocumentDetail,
+  DocumentKind,
+  DocumentListParams,
+  DocumentListRow,
+  DocumentPatch,
+  DocumentSendRequest,
+  DocumentSendResult,
+  DocumentStatus,
+  DocumentSyncResult,
+  DocumentVersionDetail,
   ExpenseBreakdown,
   ExportFormat,
   ExportParams,
@@ -46,10 +59,13 @@ import type {
   InvoiceListRow,
   InvoicePatch,
   K1PrepReport,
+  ManualAcceptRequest,
+  ManualChangeRequestInput,
   NewAccountRequest,
   NewCategoryRequest,
   NewClientRequest,
   NewContact,
+  NewDocumentRequest,
   NewInvoiceRequest,
   NewRuleRequest,
   NextInvoiceNumber,
@@ -86,7 +102,7 @@ import type {
   PayResult,
   VoidResult,
 } from '../api/types.js';
-import { UPLOAD_NOT_FOUND } from '../api/types.js';
+import { DOCUMENT_SEND_STEPS, UPLOAD_NOT_FOUND } from '../api/types.js';
 import { ApiError } from '../api/client.js';
 
 /**
@@ -257,6 +273,79 @@ export function notFoundError(message: string): ApiError {
     status: 404,
   });
 }
+
+/**
+ * The statuses each document action is allowed from — a local copy of the
+ * server's guard table, so the fake's `can*` flags and refusals agree with it.
+ */
+const DOCUMENT_GUARDS = {
+  edit: ['draft'],
+  send: ['draft'],
+  revise: ['sent', 'changes_requested'],
+  accept: ['sent', 'changes_requested'],
+  requestChanges: ['sent'],
+  decline: ['sent', 'changes_requested'],
+  countersign: ['accepted'],
+  withdraw: ['draft', 'sent', 'changes_requested'],
+} as const satisfies Record<string, readonly DocumentStatus[]>;
+
+type DocumentAction = keyof typeof DOCUMENT_GUARDS;
+
+function documentAllows(status: DocumentStatus, action: DocumentAction): boolean {
+  return (DOCUMENT_GUARDS[action] as readonly DocumentStatus[]).includes(status);
+}
+
+/** The eight `can*` flags for a status, from the one table. */
+export function documentFlags(status: DocumentStatus): Pick<
+  DocumentDetail,
+  | 'canEdit'
+  | 'canSend'
+  | 'canRevise'
+  | 'canAccept'
+  | 'canRequestChanges'
+  | 'canDecline'
+  | 'canCountersign'
+  | 'canWithdraw'
+> {
+  return {
+    canEdit: documentAllows(status, 'edit'),
+    canSend: documentAllows(status, 'send'),
+    canRevise: documentAllows(status, 'revise'),
+    canAccept: documentAllows(status, 'accept'),
+    canRequestChanges: documentAllows(status, 'requestChanges'),
+    canDecline: documentAllows(status, 'decline'),
+    canCountersign: documentAllows(status, 'countersign'),
+    canWithdraw: documentAllows(status, 'withdraw'),
+  };
+}
+
+/** The refusal the server's `ensure_allowed` answers for a status. */
+function documentRefusal(id: number, status: DocumentStatus): ApiError {
+  if (status === 'withdrawn' || status === 'executed' || status === 'declined') {
+    return conflictError('document_terminal', {
+      message: `Document #${id} is ${status} — nothing more can be done to it.`,
+      status,
+    });
+  }
+  if (status === 'accepted') {
+    return conflictError('document_accepted', {
+      message: `Document #${id} is ${status} — the only step left is to countersign it.`,
+      status,
+    });
+  }
+  return conflictError('document_wrong_state', {
+    message: `Document #${id} is ${status} and cannot do that.`,
+    status,
+  });
+}
+
+export const DEFAULT_DOCUMENT_KINDS: DocumentKind[] = [
+  { id: 1, name: 'Proposal', active: true, position: 0 },
+  { id: 2, name: 'Estimate', active: true, position: 1 },
+  { id: 3, name: 'Agreement', active: true, position: 2 },
+];
+
+const FAKE_DOCUMENT_DAY = '2026-10-05';
 
 /**
  * An ApiClient that never touches the network.
@@ -1484,5 +1573,377 @@ export class FakeApiClient implements ApiClient {
     const detail = this.invoiceDetails[number];
     if (!detail) throw notFoundError(`No invoice #${number}`);
     return detail;
+  }
+
+  // -- documents ------------------------------------------------------------
+  //
+  // The transitions are modelled — send, request changes, revise, accept,
+  // countersign, decline, withdraw — so a screen test can walk a document
+  // through its whole life and see each refetch answer the new status.
+
+  documents: DocumentListRow[] = [];
+  documentDetails: Record<number, DocumentDetail> = {};
+  documentKinds: DocumentKind[] = DEFAULT_DOCUMENT_KINDS;
+  /** Configuration warnings a successful document send comes back with. */
+  documentSendConfigWarnings: string[] = [];
+  /** What every document action went ahead despite. */
+  documentWarnings: string[] = [];
+  documentSyncResult: DocumentSyncResult = {
+    documentsChecked: 0,
+    recorded: 0,
+    lines: [],
+    failures: [],
+  };
+
+  documentsError: Error | null = null;
+  documentError: Error | null = null;
+  documentKindsError: Error | null = null;
+  createDocumentError: Error | null = null;
+  updateDocumentError: Error | null = null;
+  sendDocumentError: Error | null = null;
+  reviseDocumentError: Error | null = null;
+  acceptDocumentError: Error | null = null;
+  requestDocumentChangesError: Error | null = null;
+  declineDocumentError: Error | null = null;
+  countersignDocumentError: Error | null = null;
+  withdrawDocumentError: Error | null = null;
+  syncDocumentsError: Error | null = null;
+  documentPreviewHtmlError: Error | null = null;
+
+  private nextDocumentId = 700;
+  private nextDocumentRowId = 1;
+
+  async getDocuments(params: DocumentListParams = {}): Promise<DocumentListRow[]> {
+    const search = new URLSearchParams();
+    if (params.clientId !== undefined) search.set('clientId', String(params.clientId));
+    if (params.status !== undefined) search.set('status', params.status);
+    if (params.kind !== undefined) search.set('kind', params.kind);
+    this.calls.push(`getDocuments:${search.toString()}`);
+    if (this.documentsError) throw this.documentsError;
+    return this.documents.filter(
+      (row) =>
+        (params.clientId === undefined || row.clientId === params.clientId) &&
+        (params.status === undefined || row.status === params.status) &&
+        (params.kind === undefined || row.kind.toLowerCase() === params.kind.toLowerCase()),
+    );
+  }
+
+  async getDocument(id: number): Promise<DocumentDetail> {
+    this.calls.push(`getDocument:${id}`);
+    if (this.documentError) throw this.documentError;
+    return this.document(id);
+  }
+
+  async getDocumentKinds(): Promise<DocumentKind[]> {
+    this.calls.push('getDocumentKinds');
+    if (this.documentKindsError) throw this.documentKindsError;
+    return this.documentKinds.filter((kind) => kind.active);
+  }
+
+  async createDocument(input: NewDocumentRequest): Promise<DocumentDetail> {
+    this.calls.push(
+      `createDocument:${JSON.stringify({
+        clientId: input.clientId,
+        kind: input.kind,
+        title: input.title,
+        file: input.file.name,
+      })}`,
+    );
+    if (this.createDocumentError) throw this.createDocumentError;
+
+    const client = this.clients.find((c) => c.id === input.clientId);
+    if (!client) throw notFoundError(`No client with ID ${input.clientId}`);
+    const kind = this.activeKind(input.kind);
+    const id = this.nextDocumentId++;
+    const created: DocumentDetail = {
+      id,
+      clientId: client.id,
+      kindId: kind.id,
+      kind: kind.name,
+      title: input.title,
+      declinedAt: null,
+      declineNote: null,
+      withdrawnAt: null,
+      createdAt: FAKE_DOCUMENT_DAY,
+      updatedAt: FAKE_DOCUMENT_DAY,
+      status: 'draft',
+      clientName: client.name,
+      versions: [this.newVersion(id, 1)],
+      ...documentFlags('draft'),
+    };
+    this.documentDetails[id] = created;
+    this.documents = [this.listRow(created), ...this.documents];
+    return created;
+  }
+
+  async updateDocument(id: number, input: DocumentPatch): Promise<DocumentDetail> {
+    this.calls.push(`updateDocument:${id}:${JSON.stringify(input)}`);
+    if (this.updateDocumentError) throw this.updateDocumentError;
+    const kind = input.kind === undefined ? undefined : this.activeKind(input.kind);
+    return this.transition(id, 'edit', (current) => ({
+      ...current,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(kind === undefined ? {} : { kind: kind.name, kindId: kind.id }),
+    }));
+  }
+
+  async sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult> {
+    this.calls.push(`sendDocument:${id}:${JSON.stringify(input)}`);
+    if (this.sendDocumentError) throw this.sendDocumentError;
+
+    const recipients = [
+      { ...input.signer, role: 'signer' as const },
+      ...input.collaborators.map((c) => ({ ...c, role: 'collaborator' as const })),
+    ];
+    const document = this.transition(id, 'send', (current) =>
+      this.withLatest(current, 'sent', (version) => ({
+        ...version,
+        sentAt: FAKE_DOCUMENT_DAY,
+        recipients: recipients.map((recipient, position) => ({
+          id: this.nextDocumentRowId++,
+          versionId: version.id,
+          role: recipient.role,
+          name: recipient.name,
+          email: recipient.email,
+          position,
+          pageUrl: `https://docs.example.test/d/doc${id}/r${position}/index.html`,
+        })),
+      })),
+    );
+    const sent = document.versions[document.versions.length - 1];
+    return {
+      document,
+      steps: DOCUMENT_SEND_STEPS.map((step) => ({ step, outcome: 'ok' as const })),
+      links: sent.recipients.map((recipient) => ({
+        role: recipient.role,
+        name: recipient.name,
+        email: recipient.email,
+        url: recipient.pageUrl ?? '',
+      })),
+      configWarnings: this.documentSendConfigWarnings,
+      warnings: this.documentWarnings,
+    };
+  }
+
+  async reviseDocument(id: number, file: File): Promise<DocumentActionResult> {
+    this.calls.push(`reviseDocument:${id}:${file.name}`);
+    if (this.reviseDocumentError) throw this.reviseDocumentError;
+    return this.withWarnings(
+      this.transition(id, 'revise', (current) => ({
+        ...current,
+        status: 'draft',
+        versions: [...current.versions, this.newVersion(id, current.versions.length + 1)],
+      })),
+    );
+  }
+
+  async acceptDocument(id: number, input: ManualAcceptRequest): Promise<DocumentActionResult> {
+    this.calls.push(`acceptDocument:${id}:${JSON.stringify(input)}`);
+    if (this.acceptDocumentError) throw this.acceptDocumentError;
+    return this.withWarnings(
+      this.transition(id, 'accept', (current) =>
+        this.withSignature(current, 'accepted', 'client', input),
+      ),
+    );
+  }
+
+  async requestDocumentChanges(
+    id: number,
+    input: ManualChangeRequestInput,
+  ): Promise<DocumentActionResult> {
+    this.calls.push(`requestDocumentChanges:${id}:${JSON.stringify(input)}`);
+    if (this.requestDocumentChangesError) throw this.requestDocumentChangesError;
+    return this.withWarnings(
+      this.transition(id, 'requestChanges', (current) =>
+        this.withLatest(current, 'changes_requested', (version) => ({
+          ...version,
+          changeRequests: [
+            ...version.changeRequests,
+            {
+              id: this.nextDocumentRowId++,
+              versionId: version.id,
+              recipientId: null,
+              name: input.name,
+              email: null,
+              method: 'manual',
+              requestedAt: input.date ?? FAKE_DOCUMENT_DAY,
+              note: input.note,
+              ip: null,
+              userAgent: null,
+              checksum: version.checksum,
+            },
+          ],
+        })),
+      ),
+    );
+  }
+
+  async declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult> {
+    this.calls.push(`declineDocument:${id}:${JSON.stringify(input)}`);
+    if (this.declineDocumentError) throw this.declineDocumentError;
+    return this.withWarnings(
+      this.transition(id, 'decline', (current) => ({
+        ...current,
+        status: 'declined',
+        declinedAt: input.date ?? FAKE_DOCUMENT_DAY,
+        declineNote: input.note ?? null,
+      })),
+    );
+  }
+
+  async countersignDocument(
+    id: number,
+    input: CountersignRequest,
+  ): Promise<DocumentActionResult> {
+    this.calls.push(`countersignDocument:${id}:${JSON.stringify(input)}`);
+    if (this.countersignDocumentError) throw this.countersignDocumentError;
+    return this.withWarnings(
+      this.transition(id, 'countersign', (current) =>
+        this.withSignature(current, 'executed', 'countersign', input),
+      ),
+    );
+  }
+
+  async withdrawDocument(id: number): Promise<DocumentActionResult> {
+    this.calls.push(`withdrawDocument:${id}`);
+    if (this.withdrawDocumentError) throw this.withdrawDocumentError;
+    return this.withWarnings(
+      this.transition(id, 'withdraw', (current) => ({
+        ...current,
+        status: 'withdrawn',
+        withdrawnAt: FAKE_DOCUMENT_DAY,
+      })),
+    );
+  }
+
+  async syncDocuments(): Promise<DocumentSyncResult> {
+    this.calls.push('syncDocuments');
+    if (this.syncDocumentsError) throw this.syncDocumentsError;
+    return this.documentSyncResult;
+  }
+
+  documentPreviewUrl(id: number, format: 'html' | 'pdf'): string {
+    return `/document-preview/${id}.${format}`;
+  }
+
+  documentPreviewTarget(id: number): ExportTarget {
+    return { kind: 'href', href: this.documentPreviewUrl(id, 'pdf') };
+  }
+
+  async documentPreviewHtml(id: number): Promise<string> {
+    this.calls.push(`documentPreviewHtml:${id}`);
+    if (this.documentPreviewHtmlError) throw this.documentPreviewHtmlError;
+    return `<h1>${this.document(id).title}</h1>`;
+  }
+
+  private document(id: number): DocumentDetail {
+    const detail = this.documentDetails[id];
+    if (!detail) throw notFoundError(`No document #${id}`);
+    return detail;
+  }
+
+  private activeKind(name: string): DocumentKind {
+    const kind = this.documentKinds.find((k) => k.name === name);
+    if (kind?.active) return kind;
+    throw conflictError('kind_inactive', { message: `No active document kind named ${name}` });
+  }
+
+  /**
+   * Refuse an action the guard table does not allow from the current status,
+   * otherwise apply it, recompute the flags and keep the list row in step.
+   */
+  private transition(
+    id: number,
+    action: DocumentAction,
+    apply: (current: DocumentDetail) => DocumentDetail,
+  ): DocumentDetail {
+    const current = this.document(id);
+    if (!documentAllows(current.status, action)) throw documentRefusal(id, current.status);
+    const next = apply(current);
+    const updated: DocumentDetail = {
+      ...next,
+      updatedAt: FAKE_DOCUMENT_DAY,
+      ...documentFlags(next.status),
+    };
+    this.documentDetails[id] = updated;
+    const row = this.listRow(updated);
+    this.documents = this.documents.map((candidate) => (candidate.id === id ? row : candidate));
+    return updated;
+  }
+
+  private withLatest(
+    current: DocumentDetail,
+    status: DocumentStatus,
+    change: (version: DocumentVersionDetail) => DocumentVersionDetail,
+  ): DocumentDetail {
+    const last = current.versions.length - 1;
+    return {
+      ...current,
+      status,
+      versions: current.versions.map((version, index) =>
+        index === last ? change(version) : version,
+      ),
+    };
+  }
+
+  private withSignature(
+    current: DocumentDetail,
+    status: DocumentStatus,
+    role: 'client' | 'countersign',
+    input: { name: string; date?: string },
+  ): DocumentDetail {
+    return this.withLatest(current, status, (version) => ({
+      ...version,
+      signatures: [
+        ...version.signatures,
+        {
+          id: this.nextDocumentRowId++,
+          versionId: version.id,
+          recipientId: null,
+          role,
+          name: input.name,
+          email: null,
+          method: 'manual',
+          signedAt: input.date ?? FAKE_DOCUMENT_DAY,
+          typedName: null,
+          ip: null,
+          userAgent: null,
+          checksum: version.checksum,
+        },
+      ],
+    }));
+  }
+
+  private withWarnings(document: DocumentDetail): DocumentActionResult {
+    return { ...document, warnings: this.documentWarnings };
+  }
+
+  private newVersion(documentId: number, number: number): DocumentVersionDetail {
+    return {
+      id: this.nextDocumentRowId++,
+      documentId,
+      number,
+      checksum: `sha256:${String(documentId * 100 + number).padStart(64, '0')}`,
+      sentAt: null,
+      createdAt: FAKE_DOCUMENT_DAY,
+      recipients: [],
+      signatures: [],
+      changeRequests: [],
+    };
+  }
+
+  private listRow(detail: DocumentDetail): DocumentListRow {
+    const latest = detail.versions[detail.versions.length - 1];
+    return {
+      id: detail.id,
+      title: detail.title,
+      kind: detail.kind,
+      clientId: detail.clientId,
+      clientName: detail.clientName,
+      status: detail.status,
+      latestVersion: latest?.number ?? 0,
+      sentAt: latest?.sentAt ?? null,
+      updatedAt: detail.updatedAt,
+    };
   }
 }
