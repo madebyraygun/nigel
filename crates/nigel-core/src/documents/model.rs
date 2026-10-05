@@ -247,6 +247,19 @@ pub struct NewRecipient {
     pub email: String,
 }
 
+impl NewRecipient {
+    /// Trims both parts. A collaborator with no name is named by their address;
+    /// a signer is left unnamed, which `validate_recipient` refuses.
+    pub fn new(role: RecipientRole, name: &str, email: &str) -> Self {
+        let email = email.trim().to_string();
+        let name = match (name.trim(), role) {
+            ("", RecipientRole::Collaborator) => email.clone(),
+            (name, _) => name.to_string(),
+        };
+        NewRecipient { role, name, email }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseKind<'a> {
     Accept { typed_name: &'a str },
@@ -273,6 +286,44 @@ fn invalid_recipient(raw: &str) -> NigelError {
     ))
 }
 
+fn is_address(email: &str) -> bool {
+    match email.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.contains('@')
+                && !email.contains(char::is_whitespace)
+        }
+        None => false,
+    }
+}
+
+/// The rules every recipient meets before a version is frozen to it, whichever
+/// path named them: a name (the signer types theirs to accept) and an address
+/// with a local part and a dotted domain, both safe in a mail header.
+pub fn validate_recipient(r: &NewRecipient) -> Result<()> {
+    let (name, email) = (r.name.trim(), r.email.trim());
+    crate::invoicing::mailgun::validate_header_value(name, "recipient name")?;
+    crate::invoicing::mailgun::validate_header_value(email, "recipient address")?;
+    if !is_address(email) {
+        return Err(NigelError::Invalid(format!(
+            "Invalid recipient address: {email} (expected an address like name@example.com)"
+        )));
+    }
+    if name.is_empty() {
+        return Err(match r.role {
+            RecipientRole::Signer => NigelError::Conflict {
+                code: "signer_name_required",
+                message: format!("The signer {email} needs a name to type when accepting."),
+            },
+            RecipientRole::Collaborator => {
+                NigelError::Invalid(format!("The collaborator {email} needs a name."))
+            }
+        });
+    }
+    Ok(())
+}
+
 pub fn parse_recipient(raw: &str, role: RecipientRole) -> Result<NewRecipient> {
     let raw = raw.trim();
     crate::invoicing::mailgun::validate_header_value(raw, "recipient")?;
@@ -281,23 +332,23 @@ pub fn parse_recipient(raw: &str, role: RecipientRole) -> Result<NewRecipient> {
             let email = rest
                 .strip_suffix('>')
                 .ok_or_else(|| invalid_recipient(raw))?;
-            (name.trim().to_string(), email.trim().to_string())
+            (name, email)
         }
-        None => (String::new(), raw.to_string()),
+        None => ("", raw),
     };
-    if email.is_empty() || !email.contains('@') || email.contains(char::is_whitespace) {
-        return Err(invalid_recipient(raw));
-    }
-    let name = match (name.is_empty(), role) {
-        (true, RecipientRole::Signer) => {
-            return Err(NigelError::Invalid(format!(
-                "The signer needs a name to type when accepting: write it as \"Name <{email}>\"."
-            )))
-        }
-        (true, RecipientRole::Collaborator) => email.clone(),
-        (false, _) => name,
-    };
-    Ok(NewRecipient { role, name, email })
+    let recipient = NewRecipient::new(role, name, email);
+    validate_recipient(&recipient).map_err(|e| match e {
+        NigelError::Conflict {
+            code: "signer_name_required",
+            ..
+        } => NigelError::Invalid(format!(
+            "The signer needs a name to type when accepting: write it as \"Name <{}>\".",
+            recipient.email
+        )),
+        NigelError::Invalid(_) => invalid_recipient(raw),
+        e => e,
+    })?;
+    Ok(recipient)
 }
 
 pub fn validate_note(note: &str) -> Result<String> {
@@ -381,6 +432,37 @@ mod tests {
         )
         .is_err());
         assert!(parse_recipient("Pat Example <>", RecipientRole::Signer).is_err());
+    }
+
+    #[test]
+    fn a_recipient_address_has_a_local_part_and_a_dotted_domain() {
+        for bad in [
+            "",
+            "pat",
+            "@juniper.test",
+            "pat@",
+            "pat@juniper",
+            "pat@@juniper.test",
+            "pat @juniper.test",
+        ] {
+            assert!(
+                parse_recipient(&format!("Pat Example <{bad}>"), RecipientRole::Signer).is_err(),
+                "{bad}"
+            );
+        }
+        let collaborator =
+            NewRecipient::new(RecipientRole::Collaborator, "  ", " sam@juniper.test ");
+        assert_eq!(collaborator.name, "sam@juniper.test");
+        assert_eq!(collaborator.email, "sam@juniper.test");
+        assert!(validate_recipient(&collaborator).is_ok());
+        let unnamed = NewRecipient::new(RecipientRole::Signer, "", "pat@juniper.test");
+        assert!(matches!(
+            validate_recipient(&unnamed),
+            Err(NigelError::Conflict {
+                code: "signer_name_required",
+                ..
+            })
+        ));
     }
 
     #[test]

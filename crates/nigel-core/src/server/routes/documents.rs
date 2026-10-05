@@ -474,11 +474,7 @@ struct SendRecipient {
 
 impl SendRecipient {
     fn into_recipient(self, role: RecipientRole) -> NewRecipient {
-        NewRecipient {
-            role,
-            name: self.name,
-            email: self.email,
-        }
+        NewRecipient::new(role, &self.name, &self.email)
     }
 }
 
@@ -1635,6 +1631,83 @@ mod tests {
         assert_eq!(details["documentStatus"], "draft", "{json}");
         assert_eq!(details["cleanupWarnings"], serde_json::json!([]));
     }
+    #[tokio::test]
+    async fn a_send_to_an_unnamed_signer_or_a_malformed_address_is_refused_and_sends_nothing() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+
+        for (body, status_code, reason, needle) in [
+            (
+                serde_json::json!({ "confirm": true, "signer": { "name": "", "email": "x" } }),
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "Invalid recipient address: x",
+            ),
+            (
+                serde_json::json!({ "confirm": true, "signer": { "name": " ", "email": "pat@acme.test" } }),
+                StatusCode::CONFLICT,
+                "signer_name_required",
+                "needs a name",
+            ),
+            (
+                serde_json::json!({
+                    "confirm": true,
+                    "signer": { "name": "Pat Example", "email": "pat@acme.test" },
+                    "collaborators": [{ "name": "Sam Example", "email": "not-an-address" }],
+                }),
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "not-an-address",
+            ),
+        ] {
+            let (publisher, mailer, source) = (
+                FakeDocumentPublisher::default(),
+                FakeMailer::default(),
+                FakeResponseSource::default(),
+            );
+            let request: super::SendRequest = serde_json::from_value(body.clone()).unwrap();
+            let err = super::send_with(
+                &conn,
+                db_path.parent().unwrap(),
+                1,
+                request,
+                "Initech",
+                None,
+                "2026-10-05",
+                &publisher,
+                &mailer,
+                &source,
+            )
+            .expect_err("refused");
+            let (status, json) = {
+                use axum::response::IntoResponse;
+                let response = err.into_response();
+                let status = response.status();
+                (status, json_body(response).await)
+            };
+            assert_eq!(status, status_code, "{body}: {json}");
+            let error = &json["error"];
+            let reason_or_code = error["details"]["reason"]
+                .as_str()
+                .or(error["code"].as_str());
+            assert_eq!(reason_or_code, Some(reason), "{json}");
+            assert_eq!(error["details"]["step"], "freeze", "{json}");
+            assert!(
+                error["message"].as_str().unwrap().contains(needle),
+                "{json}"
+            );
+            assert!(mailer.sent.borrow().is_empty(), "{body}");
+            assert!(publisher.objects.borrow().is_empty(), "{body}");
+            assert_eq!(
+                crate::documents::store::get_document(&conn, 1)
+                    .unwrap()
+                    .status,
+                crate::documents::model::DocumentStatus::Draft
+            );
+        }
+    }
+
     async fn post_ok(
         app: &axum::Router,
         token: &str,

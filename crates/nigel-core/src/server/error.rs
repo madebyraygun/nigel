@@ -336,7 +336,8 @@ impl From<SendFailure> for ApiError {
 
 /// A document send that stopped, in the shape [`SendFailure`]'s answer takes:
 /// the step decides the code, and a refusal the data layer already names — a
-/// `Conflict` such as `signer_count` at freeze — keeps its own 409 and reason.
+/// `Conflict` such as `signer_count` at freeze, or an `Invalid` recipient —
+/// keeps its own 409 or 400.
 impl From<DocumentSendFailure> for ApiError {
     fn from(failure: DocumentSendFailure) -> Self {
         let DocumentSendFailure {
@@ -359,7 +360,8 @@ impl From<DocumentSendFailure> for ApiError {
         };
 
         let database_failed = matches!(source, NigelError::Db(_));
-        let data_layer_refusal = matches!(source, NigelError::Conflict { .. });
+        let data_layer_refusal =
+            matches!(source, NigelError::Conflict { .. } | NigelError::Invalid(_));
         let code = match step {
             _ if database_failed => Some(ApiErrorCode::Internal),
             DocumentSendStep::Publish | DocumentSendStep::Manifest | DocumentSendStep::Email => {

@@ -1354,8 +1354,12 @@ nothing is read or written, the invoice send's rule for the same reason. With no
 `signer`, the client's billing contact signs, and the request is refused `409`
 `client_missing_email` when there is none, or `409` `signer_name_required` when
 the contact has no name to type when accepting. **A document goes to exactly one
-signer**; `409` `signer_count` is the data layer's refusal of any other count,
-and the same address named twice is `400`. Unknown body fields are `400`.
+signer**; `409` `signer_count` is the data layer's refusal of any other count.
+Every recipient needs a name and an address with a local part and a dotted
+domain; a collaborator with no name is named by their address. A named signer
+with an empty name is `409` `signer_name_required`, a malformed address or the
+same address named twice is `400`, and either is refused at `freeze`, before
+anything is published or mailed. Unknown body fields are `400`.
 
 **The request blocks until the send is done**, for the reason an invoice send
 does: the rows are the job record. It renders a page per recipient, records the
@@ -1401,7 +1405,7 @@ gains the step:
 | `config` | `409 send_not_configured`, `details.missing` naming the unset keys; `409 invalid_public_base_url` when the documents base is set to something that cannot produce a working link; `409 send_misconfigured` for a set but unusable value. Key names only — no response carries a configured value |
 | `load` | `404 document_not_found`; `409` `document_wrong_state` / `document_terminal` / `client_archived` / `file_changed` / `client_missing_email` / `signer_name_required` |
 | `render` | `500` |
-| `freeze` | `409 signer_count`, otherwise `400` or `500` |
+| `freeze` | `409 signer_count` / `signer_name_required`; `400` for a malformed or repeated address; otherwise `500` |
 | `publish` | `502 upstream_failed`, `service: "r2"` |
 | `manifest` | `502 upstream_failed`, `service: "r2"` |
 | `email` | `502 upstream_failed`, `service: "mailgun"` |

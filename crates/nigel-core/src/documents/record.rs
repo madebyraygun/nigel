@@ -9,8 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::documents::guards::{self, ensure_allowed, Action};
 use crate::documents::model::{
-    checksum_of, validate_moment, validate_note, DocumentStatus, NewRecipient, Recipient,
-    RecipientRole, ResponseKind,
+    checksum_of, validate_moment, validate_note, validate_recipient, DocumentStatus, NewRecipient,
+    Recipient, RecipientRole, ResponseKind,
 };
 use crate::documents::status::document_status;
 use crate::documents::store::{
@@ -127,8 +127,7 @@ pub fn freeze_recipients(
     }
     let mut seen = HashSet::new();
     for (r, _) in set {
-        validate_header_value(&r.name, "recipient name")?;
-        validate_header_value(&r.email, "recipient address")?;
+        validate_recipient(r)?;
         if !seen.insert(r.email.trim().to_lowercase()) {
             return Err(NigelError::Invalid(format!(
                 "{} is named twice; each address can appear once.",
@@ -442,6 +441,78 @@ mod tests {
         .unwrap();
         mark_sent(conn, v.id, "2026-10-02").unwrap();
         (id, v.id, recipients[0].id, recipients[1].id)
+    }
+
+    #[test]
+    fn freezing_refuses_an_unnamed_recipient_or_a_malformed_address_and_writes_nothing() {
+        let (dir, conn) = test_conn();
+        let id = seed_document(
+            &conn,
+            dir.path(),
+            seed_client(&conn, "Cedar Systems"),
+            "SOW",
+        );
+        let v = latest_version(&conn, id).unwrap();
+        let one = |role, name: &str, email: &str| {
+            (
+                NewRecipient {
+                    role,
+                    name: name.into(),
+                    email: email.into(),
+                },
+                gen_document_token(),
+            )
+        };
+        let signer = || one(RecipientRole::Signer, "Pat Example", "pat@cedar.test");
+
+        let err = freeze_recipients(
+            &conn,
+            v.id,
+            &[one(RecipientRole::Signer, "  ", "pat@cedar.test")],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NigelError::Conflict {
+                    code: "signer_name_required",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let err = freeze_recipients(
+            &conn,
+            v.id,
+            &[
+                signer(),
+                one(RecipientRole::Collaborator, "", "sam@cedar.test"),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
+        for bad in [
+            "not-an-address",
+            "@cedar.test",
+            "sam@",
+            "sam@cedar",
+            "sam @cedar.test",
+        ] {
+            let err = freeze_recipients(
+                &conn,
+                v.id,
+                &[
+                    signer(),
+                    one(RecipientRole::Collaborator, "Sam Example", bad),
+                ],
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&err, NigelError::Invalid(m) if m.contains(bad.trim())),
+                "{bad}: {err:?}"
+            );
+        }
+        assert!(recipients(&conn, v.id).unwrap().is_empty());
     }
 
     #[test]
