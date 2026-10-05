@@ -48,6 +48,56 @@ fn sync_invoice_payments() {
     }
 }
 
+/// Pull online document responses before a data-bearing command runs.
+/// Best-effort and silent without the private store configured; a failure
+/// prints a notice instead of failing the command the user asked for.
+fn sync_document_responses() {
+    let config = nigel_core::settings::documents_config();
+    let Some(source) = nigel_core::invoicing::wiring::optional_response_source(&config) else {
+        return;
+    };
+    let publisher = nigel_core::invoicing::wiring::optional_document_publisher(&config);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let result =
+        nigel_core::db::get_connection(&nigel_core::settings::get_data_dir().join("nigel.db"))
+            .and_then(|conn| {
+                let company = nigel_core::invoicing::wiring::company_name(&conn);
+                nigel_core::documents::sync::sync_documents(
+                    &conn,
+                    &company,
+                    &source,
+                    publisher.as_ref(),
+                    Some(deadline),
+                )
+            });
+    match result {
+        Ok(report) => {
+            for failure in &report.failures {
+                eprintln!(
+                    "notice: document sync failed for #{}: {}",
+                    failure.document_id,
+                    cli::document::printable(&failure.message)
+                );
+            }
+            for line in &report.lines {
+                for warning in &line.warnings {
+                    eprintln!("notice: {}", cli::document::printable(warning));
+                }
+            }
+            if report.recorded > 0 {
+                eprintln!(
+                    "notice: recorded {} new document response(s)",
+                    report.recorded
+                );
+            }
+        }
+        Err(e) => eprintln!(
+            "notice: document sync skipped: {}",
+            cli::document::printable(&e.to_string())
+        ),
+    }
+}
+
 fn main() {
     // Install ratatui panic hook once — restores terminal on panic for all TUI screens
     let hook = std::panic::take_hook();
@@ -161,6 +211,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
     // false on any machine with a Stripe key configured.
     if cli::launch_sync_allowed(&command) {
         sync_invoice_payments();
+        sync_document_responses();
     }
 
     match command {
@@ -263,6 +314,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 collaborators,
                 yes,
             } => cli::document::send(id, signer.as_deref(), &collaborators, yes, &cli::today()),
+            DocumentCommands::Sync => cli::document::sync(),
             DocumentCommands::Revise { id, file } => {
                 cli::document::revise(id, &file, &cli::today())
             }

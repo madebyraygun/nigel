@@ -22,6 +22,7 @@ use nigel_core::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, DocumentFilter,
     NewDocument,
 };
+use nigel_core::documents::sync::{sync_documents, DocumentSyncReport};
 use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
@@ -419,6 +420,79 @@ fn record_then_republish(
     Ok(())
 }
 
+/// Replaces every control character but newline, so text a recipient typed
+/// cannot move the cursor or rewrite the terminal.
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| if c != '\n' && c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+pub fn format_sync_report(report: &DocumentSyncReport) -> String {
+    let mut out = String::new();
+    for line in &report.lines {
+        let title = printable(&line.title);
+        if line.recorded.is_empty() {
+            out.push_str(&format!("#{} {title}\n", line.document_id));
+        }
+        for recorded in &line.recorded {
+            out.push_str(&format!(
+                "#{} {title}: {} → {}\n",
+                line.document_id,
+                printable(recorded),
+                line.status.as_str()
+            ));
+        }
+        for refused in &line.refused {
+            out.push_str(&format!("  refused: {}\n", printable(refused)));
+        }
+        for warning in &line.warnings {
+            out.push_str(&format!("  warning: {}\n", printable(warning)));
+        }
+    }
+    for failure in &report.failures {
+        out.push_str(&format!(
+            "notice: document sync failed for #{}: {}\n",
+            failure.document_id,
+            printable(&failure.message)
+        ));
+    }
+    out.push_str(&format!("Recorded {} new response(s)", report.recorded));
+    out
+}
+
+pub(crate) fn sync_with<R: ResponseSource, P: DocumentPublisher>(
+    conn: &Connection,
+    company: &str,
+    source: &R,
+    publisher: Option<&P>,
+) -> Result<String> {
+    let report = sync_documents(conn, company, source, publisher, None)?;
+    Ok(format_sync_report(&report))
+}
+
+pub fn sync() -> Result<()> {
+    let config = documents_config();
+    if !documents_status(&config).sync_configured {
+        return Err(NigelError::Invalid(
+            "Document sync is not configured: set r2_account_id, r2_access_key, r2_secret_key and r2_private_bucket (in settings.json or the matching NIGEL_ env var)"
+                .into(),
+        ));
+    }
+    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let publisher = optional_document_publisher(&config);
+    let Some(source) = optional_response_source(&config) else {
+        return Err(NigelError::Invalid(
+            "Document sync is not configured".into(),
+        ));
+    };
+    println!(
+        "{}",
+        sync_with(&conn, &company_name(&conn), &source, publisher.as_ref())?
+    );
+    Ok(())
+}
+
 pub fn accept(id: i64, name: &str, date: &str) -> Result<()> {
     record_then_republish(id, date, |conn, at| {
         record_manual_accept(conn, id, name, at)
@@ -570,10 +644,87 @@ mod tests {
         ChangeRequest, Document, DocumentVersion, Method, Recipient, Signature, VersionRecord,
     };
     use nigel_core::documents::send::DocumentSendStep;
+    use nigel_core::documents::sync::{DocumentSyncFailure, DocumentSyncLine};
     use nigel_core::documents::testing::{
         fixture_pdf, pat, sam, seed_client, seed_document, sent_document_with_fakes, test_conn,
         FakeDocumentPublisher, FakeMailer, FakeResponseSource,
     };
+
+    #[test]
+    fn the_sync_report_prints_one_line_per_document() {
+        let report = DocumentSyncReport {
+            documents_checked: 2,
+            recorded: 1,
+            lines: vec![DocumentSyncLine {
+                document_id: 3,
+                title: "Website rebuild".into(),
+                recorded: vec!["Pat Example accepted version 2".into()],
+                refused: vec!["a response for version 1 does not match version 2".into()],
+                warnings: vec![],
+                status: DocumentStatus::Accepted,
+            }],
+            failures: vec![DocumentSyncFailure {
+                document_id: 4,
+                message: "r2 403: denied".into(),
+            }],
+        };
+        let out = format_sync_report(&report);
+        assert!(out.contains("#3 Website rebuild: Pat Example accepted version 2 → accepted"));
+        assert!(out.contains("  refused: a response for version 1"));
+        assert!(out.contains("Recorded 1 new response(s)"));
+    }
+
+    #[test]
+    fn the_sync_report_strips_control_characters_from_recipient_text() {
+        let report = DocumentSyncReport {
+            documents_checked: 1,
+            recorded: 1,
+            lines: vec![DocumentSyncLine {
+                document_id: 3,
+                title: "Website rebuild".into(),
+                recorded: vec!["Pat\x1b[2J Example accepted version 2".into()],
+                refused: vec!["bad\x07 name".into()],
+                warnings: vec!["warn\x1b[0m".into()],
+                status: DocumentStatus::Accepted,
+            }],
+            failures: vec![],
+        };
+        let out = format_sync_report(&report);
+        assert!(!out.contains('\x1b') && !out.contains('\x07'), "{out:?}");
+        assert!(out.contains("Pat [2J Example"));
+        assert_eq!(printable("a\nb\tc\x00"), "a\nb c ");
+    }
+
+    #[test]
+    fn sync_with_records_an_online_accept() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let doc = get_document(&conn, id).unwrap();
+        let v = latest_version(&conn, id).unwrap();
+        let signer = nigel_core::documents::store::recipients(&conn, v.id)
+            .unwrap()
+            .remove(0);
+        src.put_response(
+            &doc.token,
+            1,
+            &signer.token,
+            nigel_core::documents::wire::DocumentResponse {
+                action: nigel_core::documents::wire::ResponseAction::Accept,
+                version: 1,
+                checksum: v.checksum.clone(),
+                recipient_token: signer.token.clone(),
+                typed_name: Some("Pat Example".into()),
+                consent: Some(true),
+                note: None,
+                received_at: "2026-10-05T17:04:11Z".into(),
+                ip: None,
+                user_agent: None,
+            },
+        );
+        assert!(sync_with(&conn, "Initech", &src, Some(&p))
+            .unwrap()
+            .contains("→ accepted"));
+    }
 
     #[test]
     fn send_with_prints_each_recipients_link() {

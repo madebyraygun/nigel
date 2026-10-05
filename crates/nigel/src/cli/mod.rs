@@ -677,6 +677,8 @@ pub enum DocumentCommands {
         #[arg(long)]
         date: Option<String>,
     },
+    /// Pull online responses and record them. Run from cron beside `invoice schedule run`.
+    Sync,
     /// Record your countersignature on an accepted document.
     Countersign {
         id: i64,
@@ -1107,7 +1109,7 @@ pub fn launch_sync_allowed(command: &Commands) -> bool {
                     | InvoiceCommands::Template { .. }
             }
             | Commands::Document {
-                command: DocumentCommands::Preview { .. }
+                command: DocumentCommands::Preview { .. } | DocumentCommands::Sync
             }
     )
 }
@@ -1115,6 +1117,28 @@ pub fn launch_sync_allowed(command: &Commands) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_sync_skips_document_sync_and_both_previews() {
+        assert!(!launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Sync
+        }));
+        assert!(!launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Preview {
+                id: 1,
+                output_dir: None
+            }
+        }));
+        assert!(!launch_sync_allowed(&Commands::Invoice {
+            command: InvoiceCommands::Preview {
+                number: 1,
+                output_dir: None
+            }
+        }));
+        assert!(launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Show { id: 1 }
+        }));
+    }
 
     #[test]
     fn previews_never_reach_the_network() {

@@ -4864,3 +4864,25 @@ fn a_bad_date_is_refused_before_anything_is_recorded() {
         .success()
         .stdout(predicate::str::contains("accepted by").not());
 }
+
+#[test]
+fn document_sync_with_nothing_configured_names_the_private_store_keys() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("r2_private_bucket"));
+}
+
+#[test]
+fn a_document_command_runs_with_no_document_configuration() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "list"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("document sync").not());
+}
