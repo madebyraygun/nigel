@@ -81,13 +81,15 @@ pub fn rename_kind(conn: &Connection, id: i64, name: &str) -> Result<()> {
 }
 
 pub fn deactivate_kind(conn: &Connection, id: i64) -> Result<()> {
-    let active: Option<i64> = conn
-        .query_row(
-            "SELECT active FROM document_kinds WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )
-        .ok();
+    let active: Option<i64> = match conn.query_row(
+        "SELECT active FROM document_kinds WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    ) {
+        Ok(active) => Some(active),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(other) => return Err(other.into()),
+    };
     match active {
         None => Err(not_found(id)),
         Some(0) => Err(NigelError::Conflict {
