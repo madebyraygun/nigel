@@ -3722,7 +3722,7 @@ mod tests {
     mod send {
         use super::*;
         use nigel_core::error::NigelError;
-        use nigel_core::invoicing::gateway::{PaidSession, PaymentLink};
+        use nigel_core::invoicing::gateway::{OutgoingMail, PaidSession, PaymentLink};
         use nigel_core::invoicing::render_html::DEFAULT_TEMPLATE;
         use std::cell::RefCell;
 
@@ -3779,14 +3779,7 @@ mod tests {
             sent: RefCell<u32>,
         }
         impl Mailer for FakeMail {
-            fn send_invoice(
-                &self,
-                _to: &str,
-                _cc: &[String],
-                _s: &str,
-                _h: &str,
-                _p: &[u8],
-            ) -> Result<()> {
+            fn send(&self, _mail: &OutgoingMail<'_>) -> Result<()> {
                 *self.sent.borrow_mut() += 1;
                 Ok(())
             }

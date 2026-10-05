@@ -120,3 +120,36 @@ impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
         Self::BASE
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedMail {
+    pub to: String,
+    pub subject: String,
+    pub text: String,
+    pub attachment: Option<(String, Vec<u8>)>,
+}
+
+/// Records every message instead of sending it. `fail_on_call` makes the
+/// call at that 0-based index fail, after the earlier ones were recorded.
+#[derive(Default)]
+pub struct FakeMailer {
+    pub sent: std::cell::RefCell<Vec<CapturedMail>>,
+    pub fail_on_call: Option<usize>,
+}
+
+impl crate::invoicing::gateway::Mailer for FakeMailer {
+    fn send(&self, mail: &crate::invoicing::gateway::OutgoingMail<'_>) -> crate::error::Result<()> {
+        if self.fail_on_call == Some(self.sent.borrow().len()) {
+            return Err(crate::error::NigelError::Other("mailgun 500: boom".into()));
+        }
+        self.sent.borrow_mut().push(CapturedMail {
+            to: mail.to.to_string(),
+            subject: mail.subject.to_string(),
+            text: mail.text.to_string(),
+            attachment: mail
+                .attachment
+                .map(|a| (a.filename.to_string(), a.bytes.to_vec())),
+        });
+        Ok(())
+    }
+}

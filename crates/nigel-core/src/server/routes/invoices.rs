@@ -2615,7 +2615,7 @@ mod tests {
     use super::{pay_with, send_with, sync_with, void_with, PayRequest};
     use crate::error::{NigelError, Result as NigelResult};
     use crate::invoicing::gateway::{
-        AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
+        AssetPublisher, Mailer, OutgoingMail, PaidSession, PaymentGateway, PaymentLink,
     };
     use crate::models::{Client, Invoice};
     use std::cell::RefCell;
@@ -2696,14 +2696,7 @@ mod tests {
         sent: RefCell<u32>,
     }
     impl Mailer for FakeMail {
-        fn send_invoice(
-            &self,
-            _t: &str,
-            _cc: &[String],
-            _s: &str,
-            _h: &str,
-            _p: &[u8],
-        ) -> NigelResult<()> {
+        fn send(&self, _mail: &OutgoingMail<'_>) -> NigelResult<()> {
             *self.sent.borrow_mut() += 1;
             Ok(())
         }

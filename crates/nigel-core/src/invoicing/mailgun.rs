@@ -1,5 +1,5 @@
 use crate::error::{NigelError, Result};
-use crate::invoicing::gateway::Mailer;
+use crate::invoicing::gateway::{Attachment, Mailer, OutgoingMail};
 
 /// The sender identity of one message: what Mailgun puts in `From` and, when
 /// set, in `Reply-To`.
@@ -172,26 +172,26 @@ pub struct MailgunClient {
     pub envelope: EmailEnvelope,
 }
 
+pub fn attachment_part(attachment: &Attachment<'_>) -> Result<reqwest::blocking::multipart::Part> {
+    reqwest::blocking::multipart::Part::bytes(attachment.bytes.to_vec())
+        .file_name(attachment.filename.to_string())
+        .mime_str(attachment.content_type)
+        .map_err(|e| NigelError::Other(format!("mailgun attachment: {e}")))
+}
+
 impl Mailer for MailgunClient {
-    fn send_invoice(
-        &self,
-        to: &str,
-        cc: &[String],
-        subject: &str,
-        text: &str,
-        pdf: &[u8],
-    ) -> Result<()> {
+    fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
         let url = format!("https://api.mailgun.net/v3/{}/messages", self.domain);
 
         let mut form = reqwest::blocking::multipart::Form::new();
-        for (name, value) in message_fields(&self.envelope, to, cc, subject, text) {
+        for (name, value) in
+            message_fields(&self.envelope, mail.to, mail.cc, mail.subject, mail.text)
+        {
             form = form.text(name, value);
         }
-        let part = reqwest::blocking::multipart::Part::bytes(pdf.to_vec())
-            .file_name("invoice.pdf")
-            .mime_str("application/pdf")
-            .map_err(|e| NigelError::Other(format!("mailgun attachment: {e}")))?;
-        form = form.part("attachment", part);
+        if let Some(attachment) = &mail.attachment {
+            form = form.part("attachment", attachment_part(attachment)?);
+        }
 
         let resp = crate::invoicing::http_client()
             .post(&url)
@@ -208,6 +208,16 @@ impl Mailer for MailgunClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_attachment_part_takes_the_given_filename() {
+        let part = attachment_part(&Attachment {
+            filename: "Website-rebuild-v2.pdf",
+            content_type: "application/pdf",
+            bytes: b"%PDF-",
+        });
+        assert!(part.is_ok());
+    }
 
     fn envelope(name: Option<&str>, reply_to: Option<&str>) -> EmailEnvelope {
         EmailEnvelope {

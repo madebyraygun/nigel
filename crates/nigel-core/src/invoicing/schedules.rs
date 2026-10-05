@@ -2072,6 +2072,7 @@ mod tests {
 mod autosend_tests {
     use super::tests::*;
     use super::*;
+    use crate::invoicing::gateway::OutgoingMail;
     use crate::invoicing::gateway::{
         fake_logo_publishing, AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
     };
@@ -2111,15 +2112,8 @@ mod autosend_tests {
         to: RefCell<Vec<String>>,
     }
     impl Mailer for Post {
-        fn send_invoice(
-            &self,
-            to: &str,
-            _cc: &[String],
-            _s: &str,
-            _h: &str,
-            _p: &[u8],
-        ) -> Result<()> {
-            self.to.borrow_mut().push(to.to_string());
+        fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
+            self.to.borrow_mut().push(mail.to.to_string());
             Ok(())
         }
     }
