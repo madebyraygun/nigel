@@ -195,6 +195,12 @@ export {
 } from './wc-aging-bars.js';
 export { WcInvoiceTable, type InvoiceTableRow } from './wc-invoice-table.js';
 export { WcDocumentTable, type DocumentTableRow } from './wc-document-table.js';
+export {
+  WcDocumentTimeline,
+  type TimelineEvent,
+  type TimelineRecipient,
+  type TimelineVersion,
+} from './wc-document-timeline.js';
 export { WcInvoiceSummary } from './wc-invoice-summary.js';
 export {
   WcPaymentList,
