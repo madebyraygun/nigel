@@ -9,8 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::documents::guards::{self, ensure_allowed, Action};
 use crate::documents::model::{
-    checksum_of, validate_moment, validate_note, NewRecipient, Recipient, RecipientRole,
-    ResponseKind,
+    checksum_of, validate_moment, validate_note, DocumentStatus, NewRecipient, Recipient,
+    RecipientRole, ResponseKind,
 };
 use crate::documents::status::document_status;
 use crate::documents::store::{
@@ -308,6 +308,24 @@ pub enum RecordOutcome {
     AlreadyRecorded,
 }
 
+/// The published form takes responses only while the version is `sent`. A
+/// change request closes it, so an acceptance that arrives in the same sync
+/// window is refused rather than recorded over the outstanding request; the
+/// manual verbs keep the wider guard table.
+fn ensure_open_online(document_id: i64, status: DocumentStatus, action: Action) -> Result<()> {
+    ensure_allowed(document_id, status, action)?;
+    if status != DocumentStatus::Sent {
+        return Err(NigelError::Conflict {
+            code: "document_wrong_state",
+            message: format!(
+                "Document #{document_id} is {} and takes no more online responses on this version.",
+                status.as_str()
+            ),
+        });
+    }
+    Ok(())
+}
+
 pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Result<RecordOutcome> {
     let tx = conn.unchecked_transaction()?;
     let (document_id, role, name, email): (i64, String, String, String) = tx
@@ -366,7 +384,7 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
                     ),
                 });
             }
-            ensure_allowed(document_id, status, Action::Accept)?;
+            ensure_open_online(document_id, status, Action::Accept)?;
             tx.execute(
                 "INSERT INTO document_signatures (version_id, recipient_id, role, name, email, method, signed_at, typed_name, ip, user_agent, checksum)
                  VALUES (?1, ?2, 'client', ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)",
@@ -374,7 +392,7 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
             )?;
         }
         ResponseKind::RequestChanges { note } => {
-            ensure_allowed(document_id, status, Action::RequestChanges)?;
+            ensure_open_online(document_id, status, Action::RequestChanges)?;
             let note = validate_note(note)?;
             tx.execute(
                 "INSERT INTO document_change_requests (version_id, recipient_id, name, email, method, requested_at, note, ip, user_agent, checksum)
@@ -391,7 +409,7 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::model::{gen_document_token, DocumentStatus, Method, SignatureRole};
+    use crate::documents::model::{gen_document_token, Method, SignatureRole};
     use crate::documents::status::document_status;
     use crate::documents::store::{change_requests, get_document, latest_version, signatures};
     use crate::documents::testing::{fixture_pdf, seed_client, seed_document, test_conn};

@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn a_change_request_before_an_accept_records_both() {
+    fn a_change_request_closes_the_version_to_an_accept_in_the_same_sync() {
         let (dir, conn) = test_conn();
         let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
         let s = sent_state(&conn, id);
@@ -545,17 +545,22 @@ mod tests {
             accept_from(&s, "2026-10-05T17:05:00Z"),
         );
         let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
-        assert_eq!(report.recorded, 2);
+        assert_eq!(report.recorded, 1);
+        let line = &report.lines[0];
         assert_eq!(
-            report.lines[0].recorded,
-            [
-                "Sam Example requested changes on version 1",
-                "Pat Example accepted version 1"
-            ]
+            line.recorded,
+            ["Sam Example requested changes on version 1"]
         );
+        assert_eq!(line.refused.len(), 1, "{:?}", line.refused);
+        assert!(
+            line.refused[0].starts_with("Pat Example's response was not recorded"),
+            "{}",
+            line.refused[0]
+        );
+        assert!(signatures(&conn, s.version.id).unwrap().is_empty());
         assert_eq!(
             get_document(&conn, id).unwrap().status,
-            DocumentStatus::Accepted
+            DocumentStatus::ChangesRequested
         );
     }
 

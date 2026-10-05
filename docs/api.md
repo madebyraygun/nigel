@@ -1490,7 +1490,9 @@ A response that does not answer exactly the latest sent version and its
 checksum for exactly that recipient, that carries an unfit name or note, or
 whose stored object is not a readable response at all, is **refused, not
 recorded**, and says why in the line's `refused`; the document's other
-recipients are still checked. A document
+recipients are still checked. An online response is recorded only while the document
+is `sent`, so an acceptance pulled in the same run as a change request that was
+received before it is refused. A document
 whose status changed has its pages republished, with what could not be reaching
 the line's `warnings`.
 
