@@ -4,15 +4,22 @@ import '@nigel/ui';
 import { dispatchNcToast, narrowViewport } from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
-import { appUnauthorized, type ApiClient } from '../api/index.js';
+import { appUnauthorized, type ApiClient, type MenuCommand } from '../api/index.js';
 import { createApiClient } from '../api/desktop-client.js';
+import { dropMenuIntentUnlessFor, requestMenuIntent } from '../state/menu-intent.js';
 import {
   getAppStore,
   initializeAppStore,
   type AppStore,
 } from '../state/app-store.js';
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
-import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
+import {
+  DEFAULT_SCREEN,
+  isScreenId,
+  navItems,
+  screenDef,
+  type ScreenId,
+} from '../screens/registry.js';
 import type { ScreenContext } from '../screens/context.js';
 import {
   deepActiveElement,
@@ -83,12 +90,17 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private store: AppStore | null = null;
   private reportedError: string | null = null;
   private focusBeforeSnake: HTMLElement | null = null;
+  private unsubscribeMenu: (() => void) | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
     this.store = initializeAppStore(this.client);
     window.addEventListener('hashchange', this.handleHashChange);
     window.addEventListener('keydown', this.handleGlobalKeydown);
+    const menu = this.client.menuSource();
+    if (menu.kind === 'native') {
+      this.unsubscribeMenu = menu.onCommand(this.handleMenuCommand);
+    }
     this.syncRouteFromHash();
     void this.store.refreshStatus();
   }
@@ -96,14 +108,62 @@ export class NigelApp extends SignalWatcher(LitElement) {
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.handleHashChange);
     window.removeEventListener('keydown', this.handleGlobalKeydown);
+    this.unsubscribeMenu?.();
+    this.unsubscribeMenu = null;
     super.disconnectedCallback();
   }
+
+  /**
+   * A selection from the shell's menu bar.
+   *
+   * Navigation validates the screen id here rather than in the api layer,
+   * which does not know the registry; an id this build has never heard of is
+   * dropped, so a newer shell degrades to inert items rather than a blank
+   * screen. `find` (on the register only) and `import` reach their screens as
+   * one-shot intents the screen consumes — a route parameter could not re-fire
+   * on a repeated chord.
+   */
+  private handleMenuCommand = (command: MenuCommand): void => {
+    // The gates and the boot screen render without the shell: no sidebar to
+    // toggle, no screen to receive an intent, and the untouched hash is what
+    // returns the user where they were headed once the app is up. A selection
+    // before then is dropped whole — an intent stored now would fire on
+    // whatever screen mounts after unlock.
+    if ((this.store ?? getAppStore()).boot.get() !== 'ready') return;
+
+    switch (command.kind) {
+      case 'navigate':
+        if (isScreenId(command.screen)) this.navigate(command.screen);
+        return;
+      case 'new-invoice':
+        this.navigate('invoices', new URLSearchParams({ new: '1' }));
+        return;
+      case 'find':
+        // Find searches the screen in front of the user; only the register
+        // has a search box, and navigating there from elsewhere would throw
+        // away whatever that screen held, an unsaved invoice draft included.
+        if (this.route.screen === 'register') requestMenuIntent('find');
+        return;
+      case 'import':
+        this.navigate('import');
+        requestMenuIntent('pick-import');
+        return;
+      case 'toggle-sidebar':
+        this.sidebarCollapsed = !this.sidebarCollapsed;
+        return;
+      default:
+        command satisfies never;
+    }
+  };
 
   private handleHashChange = (): void => {
     // A route change takes the screen out from under the game, so the game
     // goes with it rather than staying up over a screen nobody navigated to.
     this.closeSnake();
     this.syncRouteFromHash();
+    // An intent belongs to the screen it was raised for; one still parked
+    // when the user leaves for another screen must not fire on a later visit.
+    dropMenuIntentUnlessFor(this.route.screen);
   };
 
   protected willUpdate(): void {
