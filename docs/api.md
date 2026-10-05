@@ -1312,7 +1312,8 @@ layer and removed whatever the outcome — with these differences:
 Filing answers `201` with the `DocumentDetail` of a new draft with one version.
 The PDF is stored under the data directory and its SHA-256 recorded as the
 version's `checksum`. The same PDF filed twice for one client is `409`
-`duplicate_document`, naming the document that has it; an archived client is
+`duplicate_document`, naming the document that has it, unless that document is
+withdrawn or declined; an archived client is
 `409` `client_archived`, and a `kind` that is not an active kind is `409`
 `kind_inactive`. A `title` is 1 to 200 characters.
 
@@ -1673,7 +1674,7 @@ its own words instead of parsing ours:
 | `document_terminal` | `step` (on send) | Any action on a `withdrawn`, `executed` or `declined` document |
 | `document_accepted` | `step` (on send) | Any action but countersigning on an `accepted` document |
 | `client_archived` | `step` (on send) | Filing, revising or sending a document for an archived client |
-| `duplicate_document` | — | Filing a PDF already filed for that client |
+| `duplicate_document` | — | Filing a PDF already filed for that client on a document that is not withdrawn or declined |
 | `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
 | `kind_inactive` | — | Filing or retitling to a document kind that is no longer in use |
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |

@@ -81,6 +81,8 @@ fn clean_title(title: &str) -> Result<String> {
     Ok(title.to_string())
 }
 
+/// A withdrawn or declined document no longer holds its PDF, so a send to the
+/// wrong address can be withdrawn and the same file filed again.
 fn ensure_not_filed(conn: &Connection, client_id: i64, checksum: &str) -> Result<()> {
     let existing: Option<(i64, String, String)> = conn
         .query_row(
@@ -89,6 +91,7 @@ fn ensure_not_filed(conn: &Connection, client_id: i64, checksum: &str) -> Result
                JOIN documents d ON d.id = v.document_id
                JOIN clients c ON c.id = d.client_id
               WHERE d.client_id = ?1 AND v.checksum = ?2
+                AND d.withdrawn_at IS NULL AND d.declined_at IS NULL
               ORDER BY d.id LIMIT 1",
             params![client_id, checksum],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
@@ -547,6 +550,54 @@ mod tests {
             "2026-10-05"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn a_withdrawn_or_declined_document_does_not_hold_its_pdf() {
+        use crate::documents::model::{gen_document_token, NewRecipient, RecipientRole};
+        use crate::documents::record::{
+            freeze_recipients, mark_sent, record_decline, record_withdrawal,
+        };
+        let (dir, conn) = test_conn();
+        let client = seed_client(&conn, "Cedar Systems");
+        let pdf = fixture_pdf("same");
+        let file = |title: &str| {
+            file_document(
+                &conn,
+                dir.path(),
+                &NewDocument {
+                    client_id: client,
+                    kind: "Proposal",
+                    title,
+                },
+                &pdf,
+                "2026-10-05",
+            )
+        };
+
+        let withdrawn = file("Website rebuild").unwrap();
+        record_withdrawal(&conn, withdrawn, "2026-10-05").unwrap();
+        let declined = file("Website rebuild, to the right address").expect("refiled");
+
+        let v = latest_version(&conn, declined).unwrap();
+        freeze_recipients(
+            &conn,
+            v.id,
+            &[(
+                NewRecipient::new(RecipientRole::Signer, "Pat Example", "pat@cedar.test"),
+                gen_document_token(),
+            )],
+        )
+        .unwrap();
+        mark_sent(&conn, v.id, "2026-10-05").unwrap();
+        record_decline(&conn, declined, None, "2026-10-06").unwrap();
+        let live = file("Website rebuild, once more").expect("refiled after a decline");
+
+        let err = file("A fourth time").unwrap_err();
+        assert!(
+            err.to_string().contains(&format!("#{live}")),
+            "the live document still holds it: {err}"
+        );
     }
 
     #[test]
