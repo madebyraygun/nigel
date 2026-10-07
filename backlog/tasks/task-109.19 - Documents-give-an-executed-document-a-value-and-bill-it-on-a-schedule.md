@@ -4,6 +4,7 @@ title: 'Documents: give an executed document a value and bill it on a schedule'
 status: To Do
 assignee: []
 created_date: '2026-10-07 14:24'
+updated_date: '2026-10-07 14:26'
 labels:
   - documents
   - invoicing
@@ -31,4 +32,12 @@ Open questions for the design: is the value part of what is signed (frozen per s
 - [ ] #4 The created invoices or schedule record the document they came from; the document detail lists them and the invoice/schedule detail links back
 - [ ] #5 Converting twice is refused unless the earlier billing is voided or ended, so a contract is never billed twice by accident
 - [ ] #6 Nothing is sent automatically by the conversion unless the operator chooses autosend, matching existing schedule behaviour
+- [ ] #7 The conversion offers an option to attach the executed document to every invoice it produces: the PDF of the version that was signed is attached to each invoice email alongside invoice.pdf, including invoices a schedule generates later; the choice is recorded on the schedule or invoices and can be turned off afterwards
+- [ ] #8 Mail supports more than one attachment (OutgoingMail carries a list), invoice emails without the option are unchanged, and the combined attachments stay under the mail provider's size limit or the send refuses with a clear message
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Attachment option: the invoice email today carries exactly one attachment (Mailer::send / OutgoingMail.attachment is an Option), so this needs a list. Attach the executed version's PDF as filed (the checksum the signatures bind to), named from the document title via render::attachment_name.
+<!-- SECTION:NOTES:END -->
