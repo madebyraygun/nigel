@@ -4,6 +4,7 @@ title: 'Epic: recurring invoice schedules on the web'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:28'
+updated_date: '2026-10-07 18:32'
 labels:
   - epic
   - invoicing
@@ -13,6 +14,7 @@ dependencies:
 references:
   - docs/superpowers/specs/2026-09-11-recurring-schedules-web-design.md
   - TASK-81
+  - 'https://github.com/madebyraygun/nigel/issues/46'
 priority: medium
 ---
 

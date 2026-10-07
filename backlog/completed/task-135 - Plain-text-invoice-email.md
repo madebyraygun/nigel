@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@dalton'
 created_date: '2026-08-24 23:06'
-updated_date: '2026-08-25 18:12'
+updated_date: '2026-10-07 18:32'
 labels: []
 dependencies: []
 ---
@@ -20,10 +20,12 @@ The invoice email currently reuses the published page HTML as its body, which em
 <!-- AC:BEGIN -->
 - [x] #1 Invoice emails are sent with a text body and no html field
 - [x] #2 Body includes header, dates, line items, money lines, Pay now URL, and notes/terms/payment instructions when set; absent values omit their block
-- [ ] #3 Text body money lines come from the same MoneySummary::lines() the page and PDF use
-- [ ] #4 PDF remains attached; To/CC, subject, From/Reply-To unchanged
-- [ ] #5 docs/invoicing.md and docs/design-constraints.md describe the new email body rule
+- [x] #3 Text body money lines come from the same MoneySummary::lines() the page and PDF use
+- [x] #4 PDF remains attached; To/CC, subject, From/Reply-To unchanged
+- [x] #5 docs/invoicing.md and docs/design-constraints.md describe the new email body rule
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 
