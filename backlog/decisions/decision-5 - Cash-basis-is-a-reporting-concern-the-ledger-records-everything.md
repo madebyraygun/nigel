@@ -27,6 +27,9 @@ either refusing cash-basis users or rewriting their schema for accrual.
 
 Two permanent invariants, then the v1 scope boundary.
 
+"v1" in this decision names the release that ships the ledger, which is 2.1
+(decision-10).
+
 **1. Cash basis is a reporting concern, not a recording concern.** The ledger records
 everything; the report decides what to recognise. Cash basis stays the default and the
 primary supported mode. This invariant is permanent — it is not a v1 simplification.
