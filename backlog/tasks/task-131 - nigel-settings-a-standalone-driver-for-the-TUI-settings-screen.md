@@ -4,9 +4,11 @@ title: 'nigel settings: a standalone driver for the TUI settings screen'
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:06'
+updated_date: '2026-10-07 18:44'
 labels:
   - cli
   - tui
+milestone: m-3
 dependencies: []
 ---
 

@@ -4,9 +4,11 @@ title: Interactive nigel init runs the TUI onboarding
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:18'
+updated_date: '2026-10-07 18:44'
 labels:
   - cli
   - tui
+milestone: m-3
 dependencies: []
 ---
 

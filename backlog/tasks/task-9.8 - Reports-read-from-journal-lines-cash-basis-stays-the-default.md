@@ -4,11 +4,11 @@ title: Reports read from journal lines; cash basis stays the default
 status: To Do
 assignee: []
 created_date: '2026-08-19 16:09'
-updated_date: '2026-08-19 16:41'
+updated_date: '2026-10-07 18:44'
 labels:
   - architecture
   - reports
-milestone: m-0
+milestone: m-4
 dependencies:
   - TASK-9.6
   - TASK-9.7

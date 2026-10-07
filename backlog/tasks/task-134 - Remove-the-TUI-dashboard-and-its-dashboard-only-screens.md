@@ -4,8 +4,10 @@ title: Remove the TUI dashboard and its dashboard-only screens
 status: To Do
 assignee: []
 created_date: '2026-08-22 15:05'
+updated_date: '2026-10-07 18:44'
 labels:
   - tui
+milestone: m-3
 dependencies:
   - TASK-116
   - TASK-123

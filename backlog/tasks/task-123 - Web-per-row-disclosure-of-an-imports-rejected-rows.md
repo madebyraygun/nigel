@@ -4,8 +4,10 @@ title: 'Web: per-row disclosure of an import''s rejected rows'
 status: To Do
 assignee: []
 created_date: '2026-08-19 20:34'
+updated_date: '2026-10-07 18:44'
 labels:
   - frontend
+milestone: m-3
 dependencies: []
 ---
 

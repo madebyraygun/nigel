@@ -4,8 +4,10 @@ title: 'Documents: retry a failed teardown and surface late responses'
 status: To Do
 assignee: []
 created_date: '2026-10-05 23:22'
+updated_date: '2026-10-07 18:44'
 labels:
   - documents
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-109
 priority: medium

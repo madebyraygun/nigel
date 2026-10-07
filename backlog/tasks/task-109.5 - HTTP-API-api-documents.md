@@ -5,10 +5,10 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-05 15:16'
+updated_date: '2026-10-07 18:44'
 labels:
   - documents
-milestone: m-1
+milestone: m-3
 dependencies: []
 references:
   - docs/superpowers/specs/2026-10-05-documents-signing-design.md

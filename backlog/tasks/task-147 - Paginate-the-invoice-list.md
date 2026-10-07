@@ -4,9 +4,11 @@ title: Paginate the invoice list
 status: To Do
 assignee: []
 created_date: '2026-10-05 17:10'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - web
+milestone: m-3
 dependencies: []
 priority: medium
 ---

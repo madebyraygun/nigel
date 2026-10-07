@@ -4,10 +4,11 @@ title: 'Documents: give an executed document a value and bill it on a schedule'
 status: To Do
 assignee: []
 created_date: '2026-10-07 14:24'
-updated_date: '2026-10-07 14:26'
+updated_date: '2026-10-07 18:44'
 labels:
   - documents
   - invoicing
+milestone: m-4
 dependencies:
   - TASK-109.4
 parent_task_id: TASK-109

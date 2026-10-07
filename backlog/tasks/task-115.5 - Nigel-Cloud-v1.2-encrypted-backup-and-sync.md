@@ -1,13 +1,14 @@
 ---
 id: TASK-115.5
-title: 'Nigel Cloud v1.2: encrypted backup and sync'
+title: 'Nigel Cloud: encrypted backup and sync'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
+updated_date: '2026-10-07 18:44'
 labels:
   - product
   - backend
-milestone: m-2
+milestone: m-6
 dependencies: []
 parent_task_id: TASK-115
 ---

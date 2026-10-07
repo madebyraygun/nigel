@@ -4,11 +4,12 @@ title: 'Epic: recurring invoice schedules on the web'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:28'
-updated_date: '2026-10-07 18:32'
+updated_date: '2026-10-07 18:44'
 labels:
   - epic
   - invoicing
   - web
+milestone: m-3
 dependencies:
   - TASK-125
 references:

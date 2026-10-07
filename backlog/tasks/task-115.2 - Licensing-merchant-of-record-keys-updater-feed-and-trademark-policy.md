@@ -4,10 +4,11 @@ title: 'Licensing: merchant of record, keys, updater feed and trademark policy'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
+updated_date: '2026-10-07 18:44'
 labels:
   - product
   - desktop
-milestone: m-0
+milestone: m-4
 dependencies: []
 parent_task_id: TASK-115
 ---
@@ -31,3 +32,9 @@ How a purchase becomes a working, updating install — the mechanics behind the 
 - [ ] #3 The trademark policy is committed and linked from the README, and no signing key, store credential or price is committed to this repository
 - [ ] #4 The purchase-to-running-app flow is documented end to end where the operator docs live
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Store builds ship first, in 2.0: the Mac App Store is the merchant and the updater, and the store build never asks for a key (guideline 2.4.5). Direct downloads with license keys, the merchant of record and the update feed follow in 2.1 (decision-9).
+<!-- SECTION:NOTES:END -->

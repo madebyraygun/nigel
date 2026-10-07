@@ -4,9 +4,10 @@ title: 'Documents: hardening and polish from the PR #53 reviews'
 status: To Do
 assignee: []
 created_date: '2026-10-05 23:22'
-updated_date: '2026-10-05 23:22'
+updated_date: '2026-10-07 18:44'
 labels:
   - documents
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-109
 priority: low

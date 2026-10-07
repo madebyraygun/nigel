@@ -4,12 +4,12 @@ title: 'public_base_url accepts control characters, and a settings write NUL-pad
 status: To Do
 assignee: []
 created_date: '2026-10-07 18:32'
-updated_date: '2026-10-07 18:32'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - settings
   - bug
-milestone: m-0
+milestone: m-3
 dependencies: []
 references:
   - 'https://github.com/madebyraygun/nigel/issues/48'

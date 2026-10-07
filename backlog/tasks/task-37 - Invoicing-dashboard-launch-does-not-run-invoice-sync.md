@@ -4,10 +4,11 @@ title: 'Invoicing: dashboard launch does not run invoice sync'
 status: To Do
 assignee: []
 created_date: '2026-08-06 19:14'
-updated_date: '2026-08-07 21:53'
+updated_date: '2026-10-07 18:44'
 labels:
   - enhancement
   - invoicing
+milestone: m-3
 dependencies: []
 references:
   - 'archived PR #172'

@@ -4,10 +4,12 @@ title: Invoice line items cannot be selected for copy and paste
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:11'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - web
   - bug
+milestone: m-3
 dependencies: []
 priority: low
 ---

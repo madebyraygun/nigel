@@ -4,9 +4,9 @@ title: Add FAQ and documentation pages to the site
 status: To Do
 assignee: []
 created_date: '2026-04-25 18:06'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels: []
-milestone: m-0
+milestone: m-3
 dependencies: []
 references:
   - 'archived issue #169'
@@ -49,3 +49,9 @@ Create `site/faq.html` and `site/docs.html` using the same `styles.css` and visu
 ---
 *Migrated from archived GitHub issue #169*
 <!-- SECTION:DESCRIPTION:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Folded into TASK-115.1.
+<!-- SECTION:NOTES:END -->

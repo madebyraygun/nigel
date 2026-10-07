@@ -4,8 +4,10 @@ title: The published invoice page has no PDF download link
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:11'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
+milestone: m-3
 dependencies: []
 priority: medium
 ---

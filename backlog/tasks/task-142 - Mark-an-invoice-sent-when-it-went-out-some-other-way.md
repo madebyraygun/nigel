@@ -4,8 +4,10 @@ title: Mark an invoice sent when it went out some other way
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:42'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
+milestone: m-3
 dependencies: []
 priority: medium
 ---

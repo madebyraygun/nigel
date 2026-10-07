@@ -4,10 +4,12 @@ title: 'Command palette (Cmd+K) over screens, actions and records'
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
+updated_date: '2026-10-07 18:44'
 labels:
   - swift
   - macos
   - ui
+milestone: m-3
 dependencies:
   - TASK-144.6
   - TASK-144.7

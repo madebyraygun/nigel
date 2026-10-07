@@ -4,9 +4,11 @@ title: Sidebar vibrancy behind the navigation plane
 status: To Do
 assignee: []
 created_date: '2026-08-20 23:49'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - macos
+milestone: m-3
 dependencies:
   - TASK-33.20
 parent_task_id: TASK-33
@@ -30,3 +32,9 @@ Hold it until the tiers above are in — vibrancy over a stock title bar and a m
 - [ ] #3 Windows, Linux and browser presentation are unchanged, and no @nigel/ui component detects the platform
 - [ ] #4 The macOSPrivateApi tradeoff (direct distribution only) is recorded alongside the change
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+<!-- SECTION:NOTES:END -->

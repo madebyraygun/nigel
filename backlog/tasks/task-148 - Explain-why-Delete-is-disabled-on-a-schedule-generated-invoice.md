@@ -4,10 +4,11 @@ title: Explain why Delete is disabled on a schedule-generated invoice
 status: To Do
 assignee: []
 created_date: '2026-10-07 18:32'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - web
-milestone: m-0
+milestone: m-3
 dependencies: []
 references:
   - 'https://github.com/madebyraygun/nigel/issues/45'

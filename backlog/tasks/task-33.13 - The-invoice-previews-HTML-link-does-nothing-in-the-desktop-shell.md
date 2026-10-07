@@ -4,11 +4,11 @@ title: The invoice preview's HTML link does nothing in the desktop shell
 status: To Do
 assignee: []
 created_date: '2026-08-18 01:33'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - tauri
   - ui
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium

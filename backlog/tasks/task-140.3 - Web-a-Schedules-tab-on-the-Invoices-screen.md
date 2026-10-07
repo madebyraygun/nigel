@@ -4,9 +4,11 @@ title: 'Web: a Schedules tab on the Invoices screen'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:29'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - web
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-140
 priority: medium

@@ -1,13 +1,14 @@
 ---
 id: TASK-115.4
-title: 'Nigel Cloud v1.1: hosted documents and acceptance'
+title: 'Nigel Cloud: hosted documents and acceptance'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
+updated_date: '2026-10-07 18:44'
 labels:
   - product
   - documents
-milestone: m-1
+milestone: m-5
 dependencies: []
 parent_task_id: TASK-115
 ---

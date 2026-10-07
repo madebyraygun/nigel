@@ -4,11 +4,11 @@ title: 'nigel export beancount — the migration''s proof, shipped before the mi
 status: To Do
 assignee: []
 created_date: '2026-08-19 16:09'
-updated_date: '2026-08-20 14:00'
+updated_date: '2026-10-07 18:44'
 labels:
   - enhancement
   - architecture
-milestone: m-0
+milestone: m-4
 dependencies:
   - TASK-59
 parent_task_id: TASK-9

@@ -4,10 +4,10 @@ title: Trial balance read from journal lines
 status: To Do
 assignee: []
 created_date: '2026-08-19 16:10'
-updated_date: '2026-08-19 16:41'
+updated_date: '2026-10-07 18:44'
 labels:
   - reports
-milestone: m-0
+milestone: m-4
 dependencies:
   - TASK-9.8
 parent_task_id: TASK-9

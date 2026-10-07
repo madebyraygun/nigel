@@ -6,9 +6,11 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:06'
+updated_date: '2026-10-07 18:44'
 labels:
   - web
   - ui
+milestone: m-3
 dependencies:
   - TASK-144.4
 documentation:

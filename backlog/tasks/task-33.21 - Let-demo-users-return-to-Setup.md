@@ -4,13 +4,13 @@ title: Let demo users return to Setup
 status: To Do
 assignee: []
 created_date: '2026-08-20 21:47'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - frontend
   - ui
   - onboarding
   - demo
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium

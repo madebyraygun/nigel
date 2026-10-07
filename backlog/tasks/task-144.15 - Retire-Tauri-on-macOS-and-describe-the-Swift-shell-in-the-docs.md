@@ -4,10 +4,12 @@ title: Retire Tauri on macOS and describe the Swift shell in the docs
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
+updated_date: '2026-10-07 18:44'
 labels:
   - swift
   - macos
   - docs
+milestone: m-3
 dependencies:
   - TASK-144.7
   - TASK-144.8

@@ -4,8 +4,10 @@ title: 'Web dashboard: A/R Outstanding stat card'
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:02'
+updated_date: '2026-10-07 18:44'
 labels:
   - frontend
+milestone: m-3
 dependencies: []
 ---
 

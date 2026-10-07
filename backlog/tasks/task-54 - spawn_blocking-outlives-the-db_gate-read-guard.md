@@ -4,10 +4,12 @@ title: spawn_blocking outlives the db_gate read guard on client disconnect
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-10-07 18:44'
 labels:
   - bug
   - server
   - concurrency
+milestone: m-3
 dependencies: []
 priority: medium
 ---

@@ -4,12 +4,12 @@ title: Network exposure and deployment guide
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-08-17 15:28'
+updated_date: '2026-10-07 18:44'
 labels:
   - multiuser
   - backend
   - docs
-milestone: m-0
+milestone: m-3
 dependencies:
   - TASK-32.2
 parent_task_id: TASK-32

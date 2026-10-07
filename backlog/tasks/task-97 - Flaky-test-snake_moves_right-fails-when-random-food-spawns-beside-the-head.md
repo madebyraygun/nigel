@@ -4,6 +4,7 @@ title: 'Flaky test: snake_moves_right fails when random food spawns beside the h
 status: To Do
 assignee: []
 created_date: '2026-08-12 22:41'
+updated_date: '2026-10-07 18:45'
 labels:
   - testing
   - bug
@@ -21,3 +22,9 @@ cli::snake::tests::snake_moves_right asserts body.len() == 3 after a move, but S
 <!-- AC:BEGIN -->
 - [ ] #1 snake_moves_right passes regardless of where food spawns
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Goes away with TASK-134 (removing the dashboard).
+<!-- SECTION:NOTES:END -->

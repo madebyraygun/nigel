@@ -4,11 +4,11 @@ title: Desktop auto-update via the Tauri updater
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-18 02:04'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - backend
-milestone: m-0
+milestone: m-4
 dependencies:
   - TASK-33.2
 references:
@@ -34,3 +34,9 @@ This repository's CI publishes neither the bundles nor the manifest, per decisio
 - [ ] #3 Neither the desktop bundles nor the update manifest are published by this repository's CI
 - [ ] #4 The desktop app checks, downloads and installs updates with signature verification
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+On macOS the updater is Sparkle in the Swift shell (TASK-144.14), direct builds only; store builds update through the App Store. Both this and 144.14 are 2.1 (decision-9).
+<!-- SECTION:NOTES:END -->

@@ -4,10 +4,10 @@ title: Import history's count column joins the figures face
 status: To Do
 assignee: []
 created_date: '2026-08-21 00:12'
-updated_date: '2026-08-21 01:48'
+updated_date: '2026-10-07 18:44'
 labels:
   - ui
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: low

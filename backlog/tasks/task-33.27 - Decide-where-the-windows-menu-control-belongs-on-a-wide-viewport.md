@@ -4,11 +4,11 @@ title: Decide where the window's menu control belongs on a wide viewport
 status: To Do
 assignee: []
 created_date: '2026-08-21 00:12'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - ui
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: low
@@ -36,3 +36,9 @@ The choice is the operator's. Whichever way it goes, it intersects TASK-33.20's 
 - [ ] #2 The chosen arrangement is implemented, with the drawer below 48rem still openable and closable
 - [ ] #3 TASK-33.20's traffic-light placement still works in the same band, or the conflict is recorded
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+<!-- SECTION:NOTES:END -->

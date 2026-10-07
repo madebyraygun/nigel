@@ -4,11 +4,11 @@ title: Compose-window mail and attested sent
 status: To Do
 assignee: []
 created_date: '2026-08-17 13:27'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - invoicing
   - desktop
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-114
 ---
@@ -30,4 +30,5 @@ The mail half: open the operator's own client with the message ready, then recor
 - [ ] #2 The local send trace ends at compose opened; sent_at is written only by the explicit confirmation and records the delivery method
 - [ ] #3 Declining the confirmation leaves the invoice or document a draft with no dangling version
 - [ ] #4 Platform compose paths are behind one seam with a fake per platform; no test opens a real mail client
+- [ ] #5 On macOS the compose path (NSSharingService with the PDF attached) works inside the App Sandbox
 <!-- AC:END -->

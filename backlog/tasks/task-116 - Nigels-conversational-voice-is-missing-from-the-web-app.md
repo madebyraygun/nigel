@@ -4,10 +4,10 @@ title: Nigel's conversational voice is missing from the web app
 status: To Do
 assignee: []
 created_date: '2026-08-19 14:30'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - frontend
-milestone: m-0
+milestone: m-3
 dependencies: []
 ---
 
