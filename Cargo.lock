@@ -1589,7 +1589,7 @@ dependencies = [
 
 [[package]]
 name = "nigel"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "assert_cmd",
  "base64 0.22.1",
@@ -1616,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "nigel-core"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
