@@ -462,7 +462,11 @@ pub fn format_sync_report(report: &DocumentSyncReport) -> String {
     for line in &report.lines {
         let title = printable(&line.title);
         if line.recorded.is_empty() {
-            out.push_str(&format!("#{} {title}\n", line.document_id));
+            out.push_str(&format!(
+                "#{} {title}: no new responses ({})\n",
+                line.document_id,
+                line.status.as_str()
+            ));
         }
         for recorded in &line.recorded {
             out.push_str(&format!(
@@ -701,6 +705,27 @@ mod tests {
         assert_eq!(
             format_sync_failures(&report),
             vec!["notice: document sync failed for #4: r2 403: denied".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_checked_document_with_nothing_new_says_so() {
+        let report = DocumentSyncReport {
+            documents_checked: 1,
+            recorded: 0,
+            lines: vec![DocumentSyncLine {
+                document_id: 1,
+                title: "Website rebuild".into(),
+                recorded: vec![],
+                refused: vec![],
+                warnings: vec![],
+                status: DocumentStatus::Sent,
+            }],
+            failures: vec![],
+        };
+        assert_eq!(
+            format_sync_report(&report),
+            "#1 Website rebuild: no new responses (sent)\nRecorded 0 new response(s)"
         );
     }
 
