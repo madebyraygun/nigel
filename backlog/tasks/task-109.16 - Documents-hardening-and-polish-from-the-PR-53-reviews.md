@@ -4,7 +4,7 @@ title: 'Documents: hardening and polish from the PR #53 reviews'
 status: To Do
 assignee: []
 created_date: '2026-10-05 23:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-09 17:15'
 labels:
   - documents
 milestone: m-3
@@ -28,4 +28,5 @@ Smaller items deferred from the documents PR reviews.
 - [ ] #5 Pages of an earlier version read as superseded once a later version is sent
 - [ ] #6 The CLI checks configuration before asking to confirm a send; the send dialog pluralizes 'recipient' correctly; invoicing.md lists the real seeded kinds
 - [ ] #7 nigel document show passes recipient-supplied text through printable(), and printable() also maps carriage returns and bidi controls
+- [ ] #8 A deactivated document kind can be reactivated: nigel document kinds reactivate <id>, the matching API action, and a Reactivate control in the web UI; reactivating an active kind is refused like deactivating an inactive one
 <!-- AC:END -->
