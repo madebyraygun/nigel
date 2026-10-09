@@ -1462,9 +1462,9 @@ does not parse is `400`, checked before anything is recorded. A manual response
 is bound to the SHA-256 checksum of the latest sent version, as an online one
 is.
 
-An acceptance or countersignature, online or manual, is **recorded assent, not
-a legal e-signature**: a typed name, a time and, online, consent, an IP address
-and a user agent, bound to the checksum of the exact PDF — see
+An acceptance or countersignature, online or manual, is **a simple electronic
+signature with an audit trail**: a typed name, a time and, online, consent, an
+IP address and a user agent, bound to the checksum of the exact PDF — see
 [Documents](invoicing.md#documents).
 
 **These commit first and republish best-effort.** The response or withdrawal is

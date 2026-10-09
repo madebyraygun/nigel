@@ -649,7 +649,7 @@ describe('nigel-documents-screen', () => {
     find(el, '[data-action="accept"]').click();
     await settle(el);
     const dialog = find(el, 'wc-manager-dialog');
-    expect(dialog.textContent).toContain('not a legal e-signature');
+    expect(dialog.textContent).toContain('does not verify the signer’s identity');
 
     const name = find(el, '[data-field-name]') as HTMLElement & { value: string };
     name.value = 'Pat Example';

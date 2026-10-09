@@ -13,9 +13,10 @@ name. Nigel picks responses up asynchronously, the operator revises or countersi
 whole history — every version, who received it, and every response — stays bound to the
 checksummed version it concerns. Everything works from the CLI and the web UI.
 
-Recorded assent, not a legal e-signature product: the record is a typed name, an explicit
-consent, a timestamp, IP and user agent, bound to a checksum. Nigel makes no legal claim
-beyond that.
+A simple electronic signature with an audit trail, not an e-signature platform: the record
+is a typed name, an explicit consent, a timestamp, IP and user agent, bound to a checksum.
+The signer is told their typed name is their signature; Nigel claims no identity
+verification and no qualified (eIDAS) signature.
 
 ## Non-goals (this round)
 

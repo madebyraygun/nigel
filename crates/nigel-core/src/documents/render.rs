@@ -102,6 +102,26 @@ fn data_attrs(
     )
 }
 
+const SIGNATURE_INTENT: &str = "Your typed name is your electronic signature on this document.";
+
+fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
+    match role {
+        RecipientRole::Signer => format!(
+            "<p>Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). {SIGNATURE_INTENT}</p>\n"
+        ),
+        RecipientRole::Collaborator => String::new(),
+    }
+}
+
+fn signing_line(role: RecipientRole) -> String {
+    match role {
+        RecipientRole::Signer => format!(
+            "\nAccepting records your typed name, the time, your IP address and browser against this exact file. {SIGNATURE_INTENT}\n"
+        ),
+        RecipientRole::Collaborator => String::new(),
+    }
+}
+
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
     let mut out = String::new();
     if recipient.role == RecipientRole::Signer {
@@ -169,13 +189,13 @@ pub fn render_recipient_page(
 <object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object>\n\
 <p><a href=\"{href}\">Download the PDF</a></p>\n\
 <p class=\"meta\">Checksum: {checksum}</p>\n\
-<p>Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). It is a record of your agreement, not a certified electronic signature.</p>\n\
-{section}",
+{signing}{section}",
         company = esc(ctx.company),
         title = esc(ctx.title),
         kind = esc(ctx.kind),
         client = esc(ctx.client_name),
         version = ctx.version,
+        signing = signing_paragraph(recipient.role, &esc(ctx.checksum)),
         name = esc(recipient.name),
         href = esc(ctx.pdf_href),
         checksum = esc(ctx.checksum),
@@ -235,11 +255,12 @@ pub fn render_document_email_text(
         format!("\n{company}")
     };
     format!(
-        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n\n\
-Accepting records your typed name, the time, your IP address and browser against this exact file. It is a record of your agreement, not a certified electronic signature.\n{from}\n",
+        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n\
+{signing}{from}\n",
         name = recipient.name,
         title = ctx.title,
         version = ctx.version,
+        signing = signing_line(recipient.role),
     )
 }
 
@@ -371,7 +392,6 @@ mod tests {
         for page in [&signer, &collab] {
             assert!(page.contains("<meta name=\"robots\" content=\"noindex\">"));
             assert!(page.contains("sha256:ab") && page.contains("../v2/document.pdf"));
-            assert!(page.contains("not a certified electronic signature"));
             assert!(page.contains(
                 "<noscript><p>To respond, reply to the email this link came in.</p></noscript>"
             ));
@@ -382,6 +402,10 @@ mod tests {
             );
         }
         assert!(signer.contains("I agree to sign electronically"));
+        assert!(signer.contains(
+            "against this exact file (checksum sha256:ab). Your typed name is your electronic signature on this document."
+        ));
+        assert!(!collab.contains("electronic signature"));
         assert_eq!(signer.matches("<form").count(), 2);
     }
 
@@ -496,6 +520,20 @@ mod tests {
         );
         assert!(text.contains("https://docs.example.test/d/doc/rs/index.html"));
         assert!(!text.contains('<'));
+        assert!(text.ends_with(
+            "/index.html\n\nAccepting records your typed name, the time, your IP address and browser against this exact file. Your typed name is your electronic signature on this document.\n\nInitech\n"
+        ));
+    }
+
+    #[test]
+    fn a_collaborator_email_carries_no_signature_sentence() {
+        let text = render_document_email_text(
+            "Initech",
+            &ctx(),
+            &COLLAB,
+            "https://docs.example.test/d/doc/rc/index.html",
+        );
+        assert!(text.ends_with("/index.html\n\nInitech\n"));
     }
 
     #[test]

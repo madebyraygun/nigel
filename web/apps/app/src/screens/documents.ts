@@ -54,7 +54,7 @@ type View = 'list' | 'detail';
 type ActionDialog = 'edit' | 'revise' | 'accept' | 'requestChanges' | 'decline' | 'countersign';
 
 const RECORDED_ASSENT =
-  'Recorded assent, not a legal e-signature: Nigel records the name, the date and the checksum of the version it binds to, and makes no legal claim beyond that.';
+  'A simple electronic signature with an audit trail: Nigel records the name, the date and the checksum of the version it binds to. It does not verify the signer’s identity and is not a qualified (eIDAS) signature.';
 
 const NOTE_LIMIT = 4000;
 

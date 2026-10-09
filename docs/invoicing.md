@@ -1647,11 +1647,14 @@ page; a collaborator can only ask for changes. You can revise it, record a
 response that arrived by email, and countersign it once it is accepted. There is
 no payment in a document, so **Stripe is not needed**.
 
-Signing here means **recorded assent, not a legal e-signature**. An acceptance
-is the signer's typed name, their consent, the time, their IP address and
-browser, bound to the SHA-256 checksum of the exact PDF they were shown. It is
-an audit trail you keep, not a certified signature, and a contract that needs
-one belongs in a service that provides it.
+An acceptance is a **simple electronic signature with an audit trail**: the
+signer's typed name, their consent to sign electronically, the time, their IP
+address and browser, bound to the SHA-256 checksum of the exact PDF they were
+shown. The signer's page tells them their typed name is their signature on the
+document. Nigel does not verify who typed the name — anyone holding the link
+can — and it is not a qualified (eIDAS) signature, so a contract that needs
+identity verification or a qualified signature belongs in a service that
+provides it.
 
 A document's status is derived from what has been recorded and is one of
 `draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
