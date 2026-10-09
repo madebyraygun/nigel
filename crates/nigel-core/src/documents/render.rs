@@ -113,15 +113,6 @@ fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
     }
 }
 
-fn signing_line(role: RecipientRole) -> String {
-    match role {
-        RecipientRole::Signer => format!(
-            "\nAccepting records your typed name, the time, your IP address and browser against this exact file. {SIGNATURE_INTENT}\n"
-        ),
-        RecipientRole::Collaborator => String::new(),
-    }
-}
-
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
     let mut out = String::new();
     if recipient.role == RecipientRole::Signer {
@@ -227,20 +218,18 @@ pub fn withdrawn_page_html(company: &str, title: &str) -> String {
 }
 
 pub fn email_subject(company: &str, title: &str, role: RecipientRole) -> String {
-    let prefix = if company.is_empty() {
-        String::new()
+    let ask = match role {
+        RecipientRole::Signer => "Please review and sign",
+        RecipientRole::Collaborator => "Please review",
+    };
+    if company.is_empty() {
+        format!("{ask}: {title}")
     } else {
-        format!("{company}: ")
-    };
-    let tail = match role {
-        RecipientRole::Signer => "please review and sign",
-        RecipientRole::Collaborator => "for your review",
-    };
-    format!("{prefix}{title}: {tail}")
+        format!("{ask}: {title} for {company}")
+    }
 }
 
 pub fn render_document_email_text(
-    company: &str,
     ctx: &PageContext<'_>,
     recipient: &PageRecipient<'_>,
     url: &str,
@@ -249,18 +238,11 @@ pub fn render_document_email_text(
         RecipientRole::Signer => "Please review the attached document and respond using the link below.",
         RecipientRole::Collaborator => "The attached document is shared for your review. You can request changes using the link below.",
     };
-    let from = if company.is_empty() {
-        String::new()
-    } else {
-        format!("\n{company}")
-    };
     format!(
-        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n\
-{signing}{from}\n",
+        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n",
         name = recipient.name,
         title = ctx.title,
         version = ctx.version,
-        signing = signing_line(recipient.role),
     )
 }
 
@@ -493,11 +475,11 @@ mod tests {
     fn subjects_and_attachment_names() {
         assert_eq!(
             email_subject("Initech", "Website rebuild", RecipientRole::Signer),
-            "Initech: Website rebuild: please review and sign"
+            "Please review and sign: Website rebuild for Initech"
         );
         assert_eq!(
             email_subject("", "Website rebuild", RecipientRole::Collaborator),
-            "Website rebuild: for your review"
+            "Please review: Website rebuild"
         );
         assert_eq!(
             attachment_name("Website rebuild / Phase 2", 2),
@@ -513,27 +495,24 @@ mod tests {
     #[test]
     fn the_email_body_is_plain_text_with_the_personal_link() {
         let text = render_document_email_text(
-            "Initech",
             &ctx(),
             &SIGNER,
             "https://docs.example.test/d/doc/rs/index.html",
         );
         assert!(text.contains("https://docs.example.test/d/doc/rs/index.html"));
         assert!(!text.contains('<'));
-        assert!(text.ends_with(
-            "/index.html\n\nAccepting records your typed name, the time, your IP address and browser against this exact file. Your typed name is your electronic signature on this document.\n\nInitech\n"
-        ));
+        assert!(text.ends_with("/d/doc/rs/index.html\n"));
+        assert!(!text.contains("electronic signature"));
     }
 
     #[test]
-    fn a_collaborator_email_carries_no_signature_sentence() {
+    fn a_collaborator_email_ends_with_the_link() {
         let text = render_document_email_text(
-            "Initech",
             &ctx(),
             &COLLAB,
             "https://docs.example.test/d/doc/rc/index.html",
         );
-        assert!(text.ends_with("/index.html\n\nInitech\n"));
+        assert!(text.ends_with("/d/doc/rc/index.html\n"));
     }
 
     #[test]

@@ -175,8 +175,8 @@ Outcomes come back as data: `SendStep`, `StepOutcome` and `SendFailure`, in the
 `invoicing/send.rs` shape.
 
 - **Emails:** plain text, with the PDF attached and the personal link in the body. The
-  signer's subject is "{Company}: {title}: please review and sign"; collaborators get
-  "{Company}: {title}: for your review".
+  signer's subject is "Please review and sign: {title} for {Company}"; collaborators get
+  "Please review: {title} for {Company}" (" for {Company}" is dropped when no company is set).
 - **Preview:** `nigel document preview <id>` renders the pages to local files with no
   network and no configuration. It joins the launch-sync skip list.
 - **Revise:** `nigel document revise <id> --file new.pdf` creates the next version as a draft

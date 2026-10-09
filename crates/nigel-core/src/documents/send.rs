@@ -419,7 +419,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         };
         let to = format_address(Some(&r.name), &r.email);
         let subject = email_subject(ctx.company, &document.title, r.role);
-        let text = render_document_email_text(ctx.company, &page_ctx, &recipient, &link.url);
+        let text = render_document_email_text(&page_ctx, &recipient, &link.url);
         mailer
             .send(&OutgoingMail {
                 to: &to,
@@ -547,11 +547,11 @@ mod tests {
         let mails = m.sent.borrow();
         assert_eq!(
             mails[0].subject,
-            "Initech: Website rebuild: please review and sign"
+            "Please review and sign: Website rebuild for Initech"
         );
         assert_eq!(
             mails[1].subject,
-            "Initech: Website rebuild: for your review"
+            "Please review: Website rebuild for Initech"
         );
         assert_eq!(
             mails[0].attachment.as_ref().unwrap().0,
