@@ -4554,7 +4554,7 @@ fn document_add_refuses_a_non_pdf_named_pdf() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not a PDF"));
+        .stderr(predicate::str::contains("not a valid PDF"));
 }
 
 #[test]

@@ -23,7 +23,7 @@ pub fn ensure_pdf(bytes: &[u8]) -> Result<()> {
         return Ok(());
     }
     Err(NigelError::Invalid(
-        "This file is not a PDF: its content does not start with the %PDF- header, whatever its name says.".into(),
+        "This file is not a valid PDF, it may be damaged.".into(),
     ))
 }
 

@@ -1298,7 +1298,7 @@ mod tests {
         assert!(json["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("not a PDF"));
+            .contains("not a valid PDF"));
     }
 
     #[tokio::test]
