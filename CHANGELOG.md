@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Documents: file, send and sign proposals, estimates and agreements** — `nigel document add` files a PDF for a client under an operator-defined kind (Proposal, Estimate and Agreement to start; `nigel document kinds` adds, renames and deactivates them), and `nigel document send` emails exactly one signer and any collaborators each their own link to a page carrying the PDF, the letterhead logo and the version's SHA-256 checksum. The signer accepts by typing their name, which must match, and consenting to sign electronically; anyone can request changes with a note, and a change request closes that version for everyone. `revise` files the next version and marks the live pages as being revised, `withdraw` takes them down, and `countersign` executes an accepted document. An acceptance is a simple electronic signature with an audit trail — typed name, consent, time, IP address and browser, bound to the checksum of the exact PDF — and Nigel does not verify identity. Responses arrive asynchronously: an optional Cloudflare Worker (`workers/document-response/`) writes each one once to a private R2 bucket, and `nigel document sync` pulls them, records them and republishes the pages, unattended on an encrypted database via `NIGEL_DB_PASSWORD`. Without the Worker, responses that arrive by email are recorded with `accept` and `request-changes`. The web UI has a Documents screen covering the same flow, and `/api/documents` the same verbs. See "Documents" in `docs/invoicing.md`
+
 ## [1.1.0] - 2026-10-07
 
 ### Changed
