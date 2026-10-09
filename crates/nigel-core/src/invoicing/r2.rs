@@ -2,11 +2,71 @@ use std::time::Duration;
 
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
+use crate::documents::wire::{manifest_key, response_key, Manifest};
 use crate::error::{NigelError, Result};
-use crate::invoicing::gateway::AssetPublisher;
+use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher, ResponseSource};
 
-pub fn object_key(token: &str, filename: &str) -> String {
-    format!("i/{token}/{filename}")
+/// The top-level directory a family of published objects lives under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyPrefix {
+    Invoices,
+    Documents,
+}
+
+impl KeyPrefix {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KeyPrefix::Invoices => "i",
+            KeyPrefix::Documents => "d",
+        }
+    }
+}
+
+pub fn object_key(prefix: KeyPrefix, token: &str, filename: &str) -> String {
+    format!("{}/{token}/{filename}", prefix.as_str())
+}
+
+/// The PDF a document publishes, beside `PDF_OBJECT` for invoices.
+pub const DOCUMENT_PDF_OBJECT: &str = "document.pdf";
+
+pub fn pdf_object(prefix: KeyPrefix) -> &'static str {
+    match prefix {
+        KeyPrefix::Invoices => PDF_OBJECT,
+        KeyPrefix::Documents => DOCUMENT_PDF_OBJECT,
+    }
+}
+
+/// A document's PDF is versioned: a re-filed revision is a new object and the
+/// one a recipient was sent never changes.
+pub fn document_pdf_key(token: &str, version: i64) -> String {
+    object_key(
+        KeyPrefix::Documents,
+        token,
+        &format!("v{version}/{DOCUMENT_PDF_OBJECT}"),
+    )
+}
+
+/// One page per recipient, so each recipient's link is its own object.
+pub fn document_page_key(token: &str, recipient_token: &str) -> String {
+    object_key(
+        KeyPrefix::Documents,
+        token,
+        &format!("{recipient_token}/{PAGE_OBJECT}"),
+    )
+}
+
+pub fn document_page_url(base: &str, token: &str, recipient_token: &str) -> String {
+    format!(
+        "{}/{token}/{recipient_token}/{PAGE_OBJECT}",
+        base.trim_end_matches('/')
+    )
+}
+
+pub fn document_pdf_url(base: &str, token: &str, version: i64) -> String {
+    format!(
+        "{}/{token}/v{version}/{DOCUMENT_PDF_OBJECT}",
+        base.trim_end_matches('/')
+    )
 }
 
 /// The object every published page is written to. The address Nigel hands out
@@ -168,6 +228,12 @@ fn ensure_success(status: reqwest::StatusCode, body: &str) -> Result<()> {
     Err(NigelError::Other(format!("r2 {status}: {body}")))
 }
 
+/// The signed URL names the object, and an object key carries a document's
+/// tokens, so the URL is left out of the message.
+fn transport_error(op: &str, e: reqwest::Error) -> NigelError {
+    NigelError::Other(format!("r2 {op}: {}", e.without_url()))
+}
+
 pub struct R2Publisher {
     pub account_id: String,
     pub access_key: String,
@@ -176,44 +242,140 @@ pub struct R2Publisher {
     pub public_base_url: String,
 }
 
+fn r2_bucket(account_id: &str, bucket: &str) -> Result<Bucket> {
+    let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com")
+        .parse()
+        .map_err(|e| NigelError::Other(format!("r2 endpoint: {e}")))?;
+    Bucket::new(endpoint, UrlStyle::Path, bucket.to_string(), "auto")
+        .map_err(|e| NigelError::Other(format!("r2 bucket: {e}")))
+}
+
+fn put_object(
+    account_id: &str,
+    access_key: &str,
+    secret_key: &str,
+    bucket: &str,
+    key: &str,
+    body: &[u8],
+    content_type: &str,
+) -> Result<()> {
+    let bucket = r2_bucket(account_id, bucket)?;
+    let creds = Credentials::new(access_key.to_string(), secret_key.to_string());
+    let signed = bucket
+        .put_object(Some(&creds), key)
+        .sign(Duration::from_secs(300));
+
+    let resp = crate::invoicing::http_client()
+        .put(signed)
+        .header("content-type", content_type)
+        .body(body.to_vec())
+        .send()
+        .map_err(|e| transport_error("put", e))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| transport_error("put", e))?;
+    ensure_success(status, &text)
+}
+
+fn get_object(
+    account_id: &str,
+    access_key: &str,
+    secret_key: &str,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<Vec<u8>>> {
+    let bucket = r2_bucket(account_id, bucket)?;
+    let creds = Credentials::new(access_key.to_string(), secret_key.to_string());
+    let signed = bucket
+        .get_object(Some(&creds), key)
+        .sign(Duration::from_secs(300));
+
+    let resp = crate::invoicing::http_client()
+        .get(signed)
+        .send()
+        .map_err(|e| transport_error("get", e))?;
+    let status = resp.status();
+    let body = resp
+        .bytes()
+        .map_err(|e| transport_error("get", e))?
+        .to_vec();
+    object_body(status, body)
+}
+
+/// A missing object is an answer (`None`); any other refusal is an error.
+fn object_body(status: reqwest::StatusCode, body: Vec<u8>) -> Result<Option<Vec<u8>>> {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    ensure_success(status, &String::from_utf8_lossy(&body))?;
+    Ok(Some(body))
+}
+
 impl R2Publisher {
     fn put(&self, key: &str, body: &[u8], content_type: &str) -> Result<()> {
-        let endpoint = format!("https://{}.r2.cloudflarestorage.com", self.account_id)
-            .parse()
-            .map_err(|e| NigelError::Other(format!("r2 endpoint: {e}")))?;
-        let bucket = Bucket::new(endpoint, UrlStyle::Path, self.bucket.clone(), "auto")
-            .map_err(|e| NigelError::Other(format!("r2 bucket: {e}")))?;
-        let creds = Credentials::new(self.access_key.clone(), self.secret_key.clone());
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            key,
+            body,
+            content_type,
+        )
+    }
+}
 
-        let action = bucket.put_object(Some(&creds), key);
-        let signed = action.sign(Duration::from_secs(300));
+/// The bucket the Worker writes responses to. It is never served publicly.
+pub struct R2PrivateStore {
+    pub account_id: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub bucket: String,
+}
 
-        let resp = crate::invoicing::http_client()
-            .put(signed)
-            .header("content-type", content_type)
-            .body(body.to_vec())
-            .send()
-            .map_err(|e| NigelError::Other(format!("r2 put: {e}")))?;
-        let status = resp.status();
-        let text = resp.text().map_err(|e| NigelError::Other(e.to_string()))?;
-        ensure_success(status, &text)
+impl ResponseSource for R2PrivateStore {
+    fn fetch(&self, token: &str, version: i64, recipient_token: &str) -> Result<Option<Vec<u8>>> {
+        get_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &response_key(token, version, recipient_token),
+        )
+    }
+
+    fn put_manifest(&self, token: &str, manifest: &Manifest) -> Result<()> {
+        let body = serde_json::to_vec(manifest)
+            .map_err(|e| NigelError::Other(format!("manifest: {e}")))?;
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &manifest_key(token),
+            &body,
+            "application/json",
+        )
     }
 }
 
 impl AssetPublisher for R2Publisher {
     fn publish(&self, token: &str, html: &[u8], pdf: &[u8]) -> Result<String> {
         self.put(
-            &object_key(token, PAGE_OBJECT),
+            &object_key(KeyPrefix::Invoices, token, PAGE_OBJECT),
             html,
             "text/html; charset=utf-8",
         )?;
-        self.put(&object_key(token, PDF_OBJECT), pdf, "application/pdf")?;
+        self.put(
+            &object_key(KeyPrefix::Invoices, token, PDF_OBJECT),
+            pdf,
+            "application/pdf",
+        )?;
         Ok(public_url(&self.public_base_url, token))
     }
 
     fn publish_page(&self, token: &str, html: &[u8]) -> Result<String> {
         self.put(
-            &object_key(token, PAGE_OBJECT),
+            &object_key(KeyPrefix::Invoices, token, PAGE_OBJECT),
             html,
             "text/html; charset=utf-8",
         )?;
@@ -230,14 +392,58 @@ impl AssetPublisher for R2Publisher {
     }
 }
 
+impl DocumentPublisher for R2Publisher {
+    fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> Result<String> {
+        self.put(&document_pdf_key(token, version), pdf, "application/pdf")?;
+        Ok(document_pdf_url(&self.public_base_url, token, version))
+    }
+
+    fn publish_page(&self, token: &str, recipient_token: &str, html: &[u8]) -> Result<String> {
+        self.put(
+            &document_page_key(token, recipient_token),
+            html,
+            "text/html; charset=utf-8",
+        )?;
+        Ok(document_page_url(
+            &self.public_base_url,
+            token,
+            recipient_token,
+        ))
+    }
+
+    fn public_base(&self) -> &str {
+        &self.public_base_url
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn object_key_layout() {
-        assert_eq!(object_key("abc", "index.html"), "i/abc/index.html");
-        assert_eq!(object_key("abc", "invoice.pdf"), "i/abc/invoice.pdf");
+    fn object_keys_carry_their_prefix() {
+        assert_eq!(
+            object_key(KeyPrefix::Invoices, "abc", PAGE_OBJECT),
+            "i/abc/index.html"
+        );
+        assert_eq!(
+            object_key(KeyPrefix::Invoices, "abc", PDF_OBJECT),
+            "i/abc/invoice.pdf"
+        );
+        assert_eq!(document_pdf_key("abc", 2), "d/abc/v2/document.pdf");
+        assert_eq!(document_page_key("abc", "r1"), "d/abc/r1/index.html");
+    }
+
+    #[test]
+    fn document_urls_name_the_object_not_the_directory() {
+        assert_eq!(
+            document_page_url("https://docs.example.test/d/", "abc", "r1"),
+            "https://docs.example.test/d/abc/r1/index.html"
+        );
+        assert_eq!(
+            document_pdf_url("https://docs.example.test/d", "abc", 2),
+            "https://docs.example.test/d/abc/v2/document.pdf"
+        );
     }
 
     #[test]
@@ -257,7 +463,7 @@ mod tests {
     fn the_address_and_the_key_name_the_same_object() {
         let url = public_url("https://billing.example.com/i", "abc");
         assert!(
-            url.ends_with(&object_key("abc", PAGE_OBJECT)),
+            url.ends_with(&object_key(KeyPrefix::Invoices, "abc", PAGE_OBJECT)),
             "the address and the key must not drift: {url}"
         );
     }
@@ -425,6 +631,38 @@ mod tests {
         assert!(
             msg.contains("SignatureDoesNotMatch"),
             "r2 message missing from {msg:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_object_is_none_and_a_refusal_is_an_error() {
+        assert_eq!(
+            object_body(reqwest::StatusCode::NOT_FOUND, b"".to_vec()).unwrap(),
+            None
+        );
+        assert_eq!(
+            object_body(reqwest::StatusCode::OK, b"{}".to_vec()).unwrap(),
+            Some(b"{}".to_vec())
+        );
+        assert!(
+            object_body(reqwest::StatusCode::FORBIDDEN, b"denied".to_vec())
+                .unwrap_err()
+                .to_string()
+                .contains("r2 403")
+        );
+    }
+
+    #[test]
+    fn a_transport_error_leaves_the_object_key_out() {
+        let err = crate::invoicing::http_client()
+            .get("http://127.0.0.1:1/d/doctoken0123456789/v1/recipienttoken0123.json")
+            .send()
+            .unwrap_err();
+        let msg = transport_error("get", err).to_string();
+        assert!(msg.starts_with("r2 get: "), "{msg}");
+        assert!(
+            !msg.contains("doctoken0123456789") && !msg.contains("recipienttoken0123"),
+            "{msg}"
         );
     }
 

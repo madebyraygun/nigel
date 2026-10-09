@@ -1,0 +1,18 @@
+name = "nigel-document-response"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Replace with the documents hostname that serves the public bucket.
+routes = [{ pattern = "docs.example.com/d/respond", zone_name = "example.com" }]
+
+[[r2_buckets]]
+binding = "PRIVATE"
+bucket_name = "nigel-documents-private"
+
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60

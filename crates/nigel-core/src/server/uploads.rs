@@ -33,10 +33,38 @@ pub const MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// memory while it is written.
 pub const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 
-/// What the importers can read. The extension is not decoration: Gusto's
-/// detector refuses anything not named `.xlsx`, and calamine picks its reader
-/// from the extension, so this is also what the stored file must keep.
-pub const ALLOWED_EXTENSIONS: [&str; 3] = ["csv", "xlsx", "xls"];
+/// What an upload is for. Each area accepts its own file types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadArea {
+    Statement,
+    Document,
+}
+
+impl UploadArea {
+    /// For statements, what the importers can read. The extension is not
+    /// decoration: Gusto's detector refuses anything not named `.xlsx`, and
+    /// calamine picks its reader from the extension, so this is also what the
+    /// stored file must keep. For documents, a PDF only.
+    pub fn allowed_extensions(self) -> &'static [&'static str] {
+        match self {
+            UploadArea::Statement => &["csv", "xlsx", "xls"],
+            UploadArea::Document => &["pdf"],
+        }
+    }
+}
+
+/// Refuse bytes that only claim, by their name, to be what the area accepts.
+/// Statements are checked by their importers; documents must open with the
+/// PDF header.
+pub fn check_content(area: UploadArea, bytes: &[u8]) -> std::result::Result<(), String> {
+    match area {
+        UploadArea::Statement => Ok(()),
+        UploadArea::Document => crate::documents::store::ensure_pdf(bytes).map_err(|e| match e {
+            crate::error::NigelError::Invalid(message) => message,
+            other => other.to_string(),
+        }),
+    }
+}
 
 const ID_BYTES: usize = 16;
 const MAX_FILENAME_BYTES: usize = 100;
@@ -71,6 +99,11 @@ pub fn new_id() -> String {
 ///
 /// Errors carry the message the client is shown.
 pub fn sanitize_filename(raw: &str) -> std::result::Result<String, String> {
+    sanitize_filename_for(raw, UploadArea::Statement)
+}
+
+/// [`sanitize_filename`] for the file types of one area.
+pub fn sanitize_filename_for(raw: &str, area: UploadArea) -> std::result::Result<String, String> {
     // `file_name` drops every directory component, `..` among them.
     let base = Path::new(raw)
         .file_name()
@@ -83,10 +116,10 @@ pub fn sanitize_filename(raw: &str) -> std::result::Result<String, String> {
 
     let (stem, extension) = match base.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => (stem, ext.to_ascii_lowercase()),
-        _ => return Err(unsupported_extension(base)),
+        _ => return Err(unsupported_extension(base, area)),
     };
-    if !ALLOWED_EXTENSIONS.contains(&extension.as_str()) {
-        return Err(unsupported_extension(base));
+    if !area.allowed_extensions().contains(&extension.as_str()) {
+        return Err(unsupported_extension(base, area));
     }
 
     let mut safe: String = stem
@@ -112,8 +145,9 @@ pub fn sanitize_filename(raw: &str) -> std::result::Result<String, String> {
     Ok(format!("{safe}.{extension}"))
 }
 
-fn unsupported_extension(name: &str) -> String {
-    let types = ALLOWED_EXTENSIONS
+fn unsupported_extension(name: &str, area: UploadArea) -> String {
+    let types = area
+        .allowed_extensions()
         .iter()
         .map(|ext| format!(".{ext}"))
         .collect::<Vec<_>>()
@@ -208,6 +242,22 @@ fn is_valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_area_has_its_own_extensions() {
+        assert!(sanitize_filename_for("sow.pdf", UploadArea::Document).is_ok());
+        assert!(sanitize_filename_for("sow.pdf", UploadArea::Statement).is_err());
+        assert!(sanitize_filename_for("march.csv", UploadArea::Document).is_err());
+        assert_eq!(sanitize_filename("march.CSV").unwrap(), "march.csv");
+    }
+
+    #[test]
+    fn a_document_upload_named_pdf_holding_html_is_refused_by_content() {
+        assert!(check_content(UploadArea::Document, b"<html>%PDF-1.7</html>").is_err());
+        assert!(check_content(UploadArea::Document, b"\x89PNG\r\n\x1a\n%PDF-1.7").is_err());
+        assert!(check_content(UploadArea::Document, b"%PDF-1.7\n%%EOF\n").is_ok());
+        assert!(check_content(UploadArea::Statement, b"date,amount\n").is_ok());
+    }
 
     fn spool() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");

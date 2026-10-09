@@ -3739,6 +3739,44 @@ fn invoice_schedule_run_never_prompts_on_an_encrypted_database() {
         .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
 }
 
+#[test]
+fn document_sync_never_prompts_on_an_encrypted_database() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    env.encrypt("hunter2");
+    let r2 = [
+        ("NIGEL_R2_ACCOUNT_ID", "acct"),
+        ("NIGEL_R2_ACCESS_KEY", "key"),
+        ("NIGEL_R2_SECRET_KEY", "secret"),
+        ("NIGEL_R2_PRIVATE_BUCKET", "private"),
+    ];
+
+    env.cmd()
+        .args(["document", "sync"])
+        .envs(r2)
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+
+    env.cmd()
+        .args(["document", "sync"])
+        .envs(r2)
+        .env_remove("NIGEL_DB_PASSWORD")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD")
+                .and(predicate::str::contains("never prompts")),
+        );
+}
+
 /// F3. `--currency` is a value the operator typed; `--from` only fills in what
 /// they left out, the way `--net-days` already does.
 #[test]
@@ -4436,4 +4474,453 @@ fn pausing_twice_keeps_the_first_date_and_an_ended_schedule_cannot_resume() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("nothing to resume"));
+}
+
+fn write_pdf(env: &TestEnv, name: &str, seed: &str) -> std::path::PathBuf {
+    let path = env.home.path().join(name);
+    std::fs::write(&path, format!("%PDF-1.4\n% fixture {seed}\n%%EOF\n")).unwrap();
+    path
+}
+
+fn add_cedar(env: &TestEnv) -> String {
+    let lookup = || {
+        env.db().query_row(
+            "SELECT id FROM clients WHERE name = 'Cedar Systems'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+    };
+    if lookup().is_err() {
+        env.cmd()
+            .args([
+                "client",
+                "add",
+                "Cedar Systems",
+                "--email",
+                "pat@cedar.test",
+            ])
+            .assert()
+            .success();
+    }
+    lookup().unwrap().to_string()
+}
+
+#[test]
+fn document_add_files_a_pdf_as_a_draft() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "a");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Filed document #1: Website rebuild (Proposal, draft",
+        ));
+    assert!(env.data_dir().join("documents/1/v1.pdf").exists());
+}
+
+#[test]
+fn document_add_refuses_a_non_pdf_named_pdf() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let path = env.home.path().join("fake.pdf");
+    std::fs::write(&path, "<html>not a pdf</html>").unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "X",
+            "--file",
+            path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a valid PDF"));
+}
+
+#[test]
+fn document_add_twice_names_the_existing_document() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "twice");
+    let add = |title: &str| {
+        env.cmd()
+            .args([
+                "document",
+                "add",
+                "--client",
+                &client,
+                "--kind",
+                "Proposal",
+                "--title",
+                title,
+                "--file",
+                pdf.to_str().unwrap(),
+            ])
+            .assert()
+    };
+    add("Website rebuild").success();
+    add("Again")
+        .failure()
+        .stderr(predicate::str::contains("document #1"));
+}
+
+#[test]
+fn document_list_and_show_after_add() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let client = add_cedar(&env);
+    let pdf = write_pdf(&env, "proposal.pdf", "list");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "list", "--client", &client, "--status", "draft"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Website rebuild").and(predicate::str::contains("v1")));
+    env.cmd()
+        .args(["document", "list", "--status", "sent"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Website rebuild").not());
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Document #1  [draft]  Proposal")
+                .and(predicate::str::contains("Client:   Cedar Systems"))
+                .and(predicate::str::contains("Version 1  sha256:")),
+        );
+}
+
+#[test]
+fn document_list_rejects_an_unknown_status_and_a_missing_client() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "list", "--status", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Unknown status: bogus. Use one of: draft, sent",
+        ));
+    env.cmd()
+        .args(["document", "list", "--client", "99999"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Client not found"));
+    env.cmd()
+        .args(["document", "show", "99999"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn document_kinds_add_rename_deactivate_round_trip() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "kinds"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Proposal").and(predicate::str::contains("Agreement")));
+    env.cmd()
+        .args(["document", "kinds", "add", "Statement of work"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "rename", "4", "SOW"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "deactivate", "4"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["document", "kinds", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SOW").and(predicate::str::contains("inactive")));
+}
+
+fn filed_document(env: &TestEnv) {
+    env.init_and_demo();
+    env.cmd()
+        .args([
+            "client",
+            "add",
+            "Globex",
+            "--contact",
+            "pat@globex.test:Pat Example",
+        ])
+        .assert()
+        .success();
+    let client = env
+        .db()
+        .query_row("SELECT id FROM clients WHERE name = 'Globex'", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap()
+        .to_string();
+    let pdf = write_pdf(env, "proposal.pdf", "filed");
+    env.cmd()
+        .args([
+            "document",
+            "add",
+            "--client",
+            &client,
+            "--kind",
+            "Proposal",
+            "--title",
+            "Website rebuild",
+            "--file",
+            pdf.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn document_preview_writes_files_without_any_configuration() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "preview", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("document-1/signer/index.html"));
+    assert!(env
+        .data_dir()
+        .join("previews/document-1/v1/document.pdf")
+        .exists());
+    assert!(env
+        .data_dir()
+        .join("previews/document-1/collaborator/index.html")
+        .exists());
+}
+
+#[test]
+fn document_send_without_yes_on_a_pipe_refuses_and_sends_nothing() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "send", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Pass --yes"));
+    let sent: Option<String> = env
+        .db()
+        .query_row(
+            "SELECT sent_at FROM document_versions WHERE document_id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(sent.is_none());
+}
+
+#[test]
+fn document_send_with_nothing_configured_names_every_missing_key() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "send", "1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Sending documents is not configured: missing")
+                .and(predicate::str::contains("mailgun_api_key"))
+                .and(predicate::str::contains("r2_private_bucket")),
+        );
+}
+
+#[test]
+fn document_withdraw_without_yes_on_a_pipe_refuses() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "withdraw", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Pass --yes"));
+    let withdrawn: Option<String> = env
+        .db()
+        .query_row("SELECT withdrawn_at FROM documents WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(withdrawn.is_none());
+}
+
+#[test]
+fn document_revise_of_a_draft_is_refused() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    let pdf = write_pdf(&env, "v2.pdf", "second");
+    env.cmd()
+        .args(["document", "revise", "1", "--file", pdf.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be revised"));
+}
+
+#[test]
+fn document_revise_files_version_two() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute(
+            "UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1",
+            [],
+        )
+        .unwrap();
+    let pdf = write_pdf(&env, "v2.pdf", "second");
+    env.cmd()
+        .args(["document", "revise", "1", "--file", pdf.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("version 2 is a draft"))
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn manual_accept_and_countersign_carry_a_document_to_executed() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args(["document", "accept", "1", "--name", "Pat Example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is accepted"));
+    env.cmd()
+        .args(["document", "decline", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only step left is to countersign"));
+    env.cmd()
+        .args(["document", "countersign", "1", "--name", "Sam Example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("is executed"));
+    env.cmd()
+        .args(["document", "withdraw", "1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing more can be done"));
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("accepted by Pat Example (manual)").and(
+                predicate::str::contains("countersigned by Sam Example (manual)"),
+            ),
+        );
+}
+
+#[test]
+fn request_changes_needs_a_note() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "request-changes",
+            "1",
+            "--name",
+            "Sam Example",
+            "--note",
+            "",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1 to 4000"));
+}
+
+#[test]
+fn a_bad_date_is_refused_before_anything_is_recorded() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.db()
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .unwrap();
+    env.cmd()
+        .args([
+            "document",
+            "accept",
+            "1",
+            "--name",
+            "Pat Example",
+            "--date",
+            "yesterday",
+        ])
+        .assert()
+        .failure();
+    env.cmd()
+        .args(["document", "show", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("accepted by").not());
+}
+
+#[test]
+fn document_sync_with_nothing_configured_names_the_private_store_keys() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["document", "sync"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("r2_private_bucket"));
+}
+
+#[test]
+fn a_document_command_runs_with_no_document_configuration() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "list"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("document sync").not());
 }

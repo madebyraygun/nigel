@@ -33,6 +33,25 @@ pub trait PaymentGateway {
     fn deactivate_payment_link(&self, payment_link_id: &str) -> Result<()>;
 }
 
+/// Publishes a document's PDF and its per-recipient pages under the `d/` layout.
+pub trait DocumentPublisher {
+    /// Write one version of the PDF and answer its address.
+    fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> Result<String>;
+    /// Write one recipient's page and answer its address.
+    fn publish_page(&self, token: &str, recipient_token: &str, html: &[u8]) -> Result<String>;
+    /// The address every published document object is served under.
+    fn public_base(&self) -> &str;
+}
+
+/// Reads the Worker's responses and writes the manifest it checks them against.
+pub trait ResponseSource {
+    /// The response object's body as stored, unparsed: sync reads it as
+    /// untrusted input. `None` when the recipient has not responded to that
+    /// version.
+    fn fetch(&self, token: &str, version: i64, recipient_token: &str) -> Result<Option<Vec<u8>>>;
+    fn put_manifest(&self, token: &str, manifest: &crate::documents::wire::Manifest) -> Result<()>;
+}
+
 pub trait AssetPublisher {
     fn publish(&self, token: &str, html: &[u8], pdf: &[u8]) -> Result<String>;
     /// Replace the published page, leaving every other object under the token
@@ -94,12 +113,34 @@ macro_rules! fake_logo_publishing {
 #[cfg(test)]
 pub(crate) use fake_logo_publishing;
 
+pub const INVOICE_ATTACHMENT: &str = "invoice.pdf";
+
+#[derive(Debug, Clone, Copy)]
+pub struct Attachment<'a> {
+    pub filename: &'a str,
+    pub content_type: &'a str,
+    pub bytes: &'a [u8],
+}
+
+/// One message to a single recipient with an optional attachment.
+///
+/// `cc` entries are already formatted header values, so a name carrying a
+/// comma is quoted before it gets here — `mailgun::format_address` is the one
+/// place that happens, for a recipient as much as for the sender.
+#[derive(Debug, Clone, Copy)]
+pub struct OutgoingMail<'a> {
+    pub to: &'a str,
+    pub cc: &'a [String],
+    pub subject: &'a str,
+    pub text: &'a str,
+    pub attachment: Option<Attachment<'a>>,
+}
+
 pub trait Mailer {
-    /// One message to the billing contact with every other contact copied.
-    ///
-    /// Each entry is already a formatted header value, so a name carrying a
-    /// comma is quoted before it gets here — `mailgun::format_address` is the
-    /// one place that happens, for a recipient as much as for the sender.
+    fn send(&self, mail: &OutgoingMail<'_>) -> Result<()>;
+
+    /// An invoice: the billing contact with every other contact copied and the
+    /// PDF attached as [`INVOICE_ATTACHMENT`].
     fn send_invoice(
         &self,
         to: &str,
@@ -107,12 +148,44 @@ pub trait Mailer {
         subject: &str,
         text: &str,
         pdf: &[u8],
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.send(&OutgoingMail {
+            to,
+            cc,
+            subject,
+            text,
+            attachment: Some(Attachment {
+                filename: INVOICE_ATTACHMENT,
+                content_type: "application/pdf",
+                bytes: pdf,
+            }),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_invoice_is_send_with_the_invoice_attachment_name() {
+        use std::cell::RefCell;
+        struct Capture(RefCell<Option<(String, String)>>);
+        impl Mailer for Capture {
+            fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
+                let a = mail.attachment.unwrap();
+                *self.0.borrow_mut() = Some((a.filename.to_string(), a.content_type.to_string()));
+                Ok(())
+            }
+        }
+        let m = Capture(RefCell::new(None));
+        m.send_invoice("to@example.test", &[], "s", "t", b"%PDF-")
+            .unwrap();
+        assert_eq!(
+            m.0.into_inner().unwrap(),
+            ("invoice.pdf".into(), "application/pdf".into())
+        );
+    }
 
     struct Ok1;
     impl AssetPublisher for Ok1 {

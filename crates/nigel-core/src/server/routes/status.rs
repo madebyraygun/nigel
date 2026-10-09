@@ -71,6 +71,9 @@ pub(crate) struct StatusResponse {
     /// to advertise to a caller who has not passed the gate.
     #[serde(skip_serializing_if = "Option::is_none")]
     invoicing: Option<crate::settings::InvoicingStatus>,
+    /// Absent while locked, for the reason `invoicing` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    documents: Option<crate::settings::DocumentsStatus>,
 }
 
 /// Whether there are books here: the file exists **and** has been written to.
@@ -136,6 +139,8 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
         update_available: state.update_available(),
         invoicing: (!locked)
             .then(|| crate::settings::invoicing_status(&crate::settings::invoicing_config())),
+        documents: (!locked)
+            .then(|| crate::settings::documents_status(&crate::settings::documents_config())),
     })
 }
 
@@ -285,6 +290,39 @@ mod tests {
         assert!(!rendered.contains("sk_test_not_a_real_key"), "{rendered}");
     }
 
+    #[tokio::test]
+    async fn status_reports_the_documents_configuration_by_name() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let status = status_json(&app, &token).await;
+        let documents = &status["documents"];
+        assert_eq!(documents["sendConfigured"], false, "{status}");
+        assert_eq!(documents["syncConfigured"], false, "{status}");
+        assert_eq!(documents["responseForm"], false, "{status}");
+        let missing = documents["missing"].as_array().expect("missing keys");
+        assert!(
+            missing.contains(&serde_json::json!("r2_private_bucket")),
+            "{status}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_response_url_turns_the_documents_response_form_on() {
+        let _config = TempConfig::new();
+        let mut settings = crate::settings::load_settings();
+        settings.document_response_url = Some("https://docs.example.test/d/respond".to_string());
+        crate::settings::save_settings(&settings).expect("settings");
+
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let status = status_json(&app, &token).await;
+        assert_eq!(status["documents"]["responseForm"], true, "{status}");
+        assert_eq!(status["documents"]["sendConfigured"], false, "{status}");
+    }
+
     /// `/api/status` answers while the database is still encrypted, so it must
     /// not use that answer to say which integrations this installation has.
     #[tokio::test]
@@ -297,6 +335,7 @@ mod tests {
         let status = status_json(&app, &token).await;
         assert_eq!(status["locked"], true, "{status}");
         assert!(status.get("invoicing").is_none(), "{status}");
+        assert!(status.get("documents").is_none(), "{status}");
 
         let (code, _) = get_json(&app, "/api/clients", &token).await;
         assert_eq!(code, StatusCode::LOCKED);

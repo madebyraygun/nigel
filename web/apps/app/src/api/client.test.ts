@@ -744,6 +744,127 @@ describe('FetchApiClient', () => {
       expect(error.code).toBe('upstream_failed');
     });
   });
+
+  describe('documents', () => {
+    it('createDocument posts FormData with clientId kind title and file', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}, 201));
+      const file = new File(['%PDF-1.7'], 'proposal.pdf', { type: 'application/pdf' });
+
+      await clientFor(fetchImpl).createDocument({
+        clientId: 3,
+        kind: 'Proposal',
+        title: 'Website rebuild',
+        file,
+      });
+
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/documents');
+      expect(init.method).toBe('POST');
+      expect(init.body).toBeInstanceOf(FormData);
+      const form = init.body as FormData;
+      expect(form.get('clientId')).toBe('3');
+      expect(form.get('kind')).toBe('Proposal');
+      expect(form.get('title')).toBe('Website rebuild');
+      expect((form.get('file') as File).name).toBe('proposal.pdf');
+      expect(init.headers).toBeUndefined();
+    });
+
+    it('reviseDocument posts the file alone as multipart', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}));
+      const file = new File(['%PDF-1.7'], 'proposal-v2.pdf', { type: 'application/pdf' });
+
+      await clientFor(fetchImpl).reviseDocument(7, file);
+
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/documents/7/revise');
+      expect(init.method).toBe('POST');
+      const form = init.body as FormData;
+      expect((form.get('file') as File).name).toBe('proposal-v2.pdf');
+      expect([...form.keys()]).toEqual(['file']);
+      expect(init.headers).toBeUndefined();
+    });
+
+    it('sendDocument always carries confirm true', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}));
+      await clientFor(fetchImpl).sendDocument(7, {
+        signer: { name: 'Pat Example', email: 'pat@example.com' },
+        collaborators: [{ name: 'Sam Example', email: 'sam@example.com' }],
+      });
+
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/documents/7/send');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({
+        confirm: true,
+        signer: { name: 'Pat Example', email: 'pat@example.com' },
+        collaborators: [{ name: 'Sam Example', email: 'sam@example.com' }],
+      });
+    });
+
+    it('getDocuments omits absent filters', async () => {
+      const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse([]));
+      const client = clientFor(fetchImpl);
+
+      await client.getDocuments();
+      await client.getDocuments({ status: 'sent' });
+      await client.getDocuments({ clientId: 3, kind: 'Proposal' });
+
+      expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+        '/api/documents',
+        '/api/documents?status=sent',
+        '/api/documents?clientId=3&kind=Proposal',
+      ]);
+    });
+
+    it('reaches each document route with the method it belongs to', async () => {
+      const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse({}));
+      const client = clientFor(fetchImpl);
+
+      await client.getDocument(7);
+      await client.getDocumentKinds();
+      await client.updateDocument(7, { title: 'Website rebuild, phase two' });
+      await client.acceptDocument(7, { name: 'Pat Example', date: '2026-10-01' });
+      await client.requestDocumentChanges(7, { name: 'Pat Example', note: 'Split phase two.' });
+      await client.declineDocument(7, {});
+      await client.countersignDocument(7, { name: 'Sam Example' });
+      await client.withdrawDocument(7);
+      await client.syncDocuments();
+
+      expect(
+        fetchImpl.mock.calls.map(([url, init]) => `${init.method} ${url}`),
+      ).toEqual([
+        'GET /api/documents/7',
+        'GET /api/document-kinds',
+        'PATCH /api/documents/7',
+        'POST /api/documents/7/accept',
+        'POST /api/documents/7/request-changes',
+        'POST /api/documents/7/decline',
+        'POST /api/documents/7/countersign',
+        'POST /api/documents/7/withdraw',
+        'POST /api/documents/sync',
+      ]);
+      expect(JSON.parse(fetchImpl.mock.calls[7][1].body)).toEqual({});
+    });
+
+    it('builds both document preview addresses and fetches the page as text', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        new Response('<h1>Website rebuild</h1>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      );
+      const client = clientFor(fetchImpl);
+
+      expect(client.documentPreviewUrl(7, 'html')).toBe('/api/documents/7/preview');
+      expect(client.documentPreviewUrl(7, 'pdf')).toBe('/api/documents/7/preview.pdf');
+      expect(client.documentPreviewTarget(7)).toEqual({
+        kind: 'href',
+        href: '/api/documents/7/preview.pdf',
+      });
+      expect(await client.documentPreviewHtml(7)).toBe('<h1>Website rebuild</h1>');
+      expect(fetchImpl.mock.calls[0][0]).toBe('/api/documents/7/preview');
+    });
+  });
 });
 
 describe('importSource', () => {

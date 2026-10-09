@@ -28,6 +28,7 @@ const ALL: ScreenId[] = [
   'rules',
   'clients',
   'invoices',
+  'documents',
   'reconcile',
   'undo',
   'settings',

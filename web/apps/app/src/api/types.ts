@@ -49,6 +49,20 @@ export interface StatusResponse {
    * has configured is not something to advertise before the gate.
    */
   invoicing?: InvoicingStatus;
+  /** Which documents keys are set, by name. Absent while locked, like `invoicing`. */
+  documents?: DocumentsConfigStatus;
+}
+
+/** `status.documents` — key names only, like `status.invoicing`. */
+export interface DocumentsConfigStatus {
+  /** Every key a document send needs is present. */
+  sendConfigured: boolean;
+  /** The R2 credentials and `r2_private_bucket`, which is all a sync needs. */
+  syncConfigured: boolean;
+  /** `document_response_url` is set, so published pages carry a response form. */
+  responseForm: boolean;
+  /** The unset keys a send needs. */
+  missing: string[];
 }
 
 /**
@@ -636,6 +650,22 @@ export const CONFLICT_REASONS = [
   'client_archived',
   'not_deletable',
   'from_schedule',
+  'has_documents',
+  'document_terminal',
+  'document_accepted',
+  'document_wrong_state',
+  'duplicate_document',
+  'unchanged_revision',
+  'signer_count',
+  'signer_name_required',
+  'version_sent',
+  'kind_inactive',
+  'file_changed',
+  'stale_version',
+  'checksum_mismatch',
+  'role_not_allowed',
+  'sync_not_configured',
+  'invalid_public_base_url',
 ] as const;
 
 export type ConflictReason = (typeof CONFLICT_REASONS)[number];
@@ -681,6 +711,8 @@ export const NOT_FOUND_REASONS = [
   'upload_not_found',
   'invoice_not_found',
   'client_not_found',
+  'document_not_found',
+  'kind_not_found',
 ] as const;
 
 export type NotFoundReason = (typeof NOT_FOUND_REASONS)[number];
@@ -1316,4 +1348,246 @@ export interface SendErrorDetails {
   missing?: string[];
   clientId?: number;
   clientName?: string;
+}
+
+export type DocumentStatus =
+  | 'draft'
+  | 'sent'
+  | 'changes_requested'
+  | 'accepted'
+  | 'declined'
+  | 'executed'
+  | 'withdrawn';
+
+export type RecipientRole = 'signer' | 'collaborator';
+
+/** A kind a document is filed under. Kinds are rows, so the list is the server's. */
+export interface DocumentKind {
+  id: number;
+  name: string;
+  active: boolean;
+  position: number;
+}
+
+export interface DocumentListRow {
+  id: number;
+  title: string;
+  kind: string;
+  clientId: number;
+  clientName: string | null;
+  status: DocumentStatus;
+  latestVersion: number;
+  sentAt: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Someone a version was sent to. `pageUrl` is their published page, `null`
+ * until the version is sent or when no documents base URL is configured.
+ */
+export interface DocumentRecipient {
+  id: number;
+  versionId: number;
+  role: RecipientRole;
+  name: string;
+  email: string;
+  position: number;
+  pageUrl: string | null;
+}
+
+export interface DocumentSignature {
+  id: number;
+  versionId: number;
+  recipientId: number | null;
+  role: 'client' | 'countersign';
+  name: string;
+  email: string | null;
+  method: 'online' | 'manual';
+  signedAt: string;
+  typedName: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  checksum: string;
+}
+
+export interface DocumentChangeRequest {
+  id: number;
+  versionId: number;
+  recipientId: number | null;
+  name: string;
+  email: string | null;
+  method: 'online' | 'manual';
+  requestedAt: string;
+  note: string;
+  ip: string | null;
+  userAgent: string | null;
+  checksum: string;
+}
+
+export interface DocumentVersionDetail {
+  id: number;
+  documentId: number;
+  number: number;
+  checksum: string;
+  sentAt: string | null;
+  createdAt: string;
+  recipients: DocumentRecipient[];
+  signatures: DocumentSignature[];
+  changeRequests: DocumentChangeRequest[];
+}
+
+/**
+ * One document with every version and what may be done to it next.
+ *
+ * The `can*` flags are the server's guard table, so a screen offers exactly
+ * the actions the server would accept.
+ */
+export interface DocumentDetail {
+  id: number;
+  clientId: number;
+  kindId: number;
+  kind: string;
+  title: string;
+  declinedAt: string | null;
+  declineNote: string | null;
+  withdrawnAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: DocumentStatus;
+  clientName: string;
+  versions: DocumentVersionDetail[];
+  canEdit: boolean;
+  canSend: boolean;
+  canRevise: boolean;
+  canAccept: boolean;
+  canRequestChanges: boolean;
+  canDecline: boolean;
+  canCountersign: boolean;
+  canWithdraw: boolean;
+}
+
+/** `GET /api/documents` filters. Omitted when absent, like the invoice list's. */
+export interface DocumentListParams {
+  clientId?: number;
+  status?: string;
+  kind?: string;
+}
+
+/** `POST /api/documents`, sent as multipart. */
+export interface NewDocumentRequest {
+  clientId: number;
+  kind: string;
+  title: string;
+  file: File;
+}
+
+export interface DocumentPatch {
+  title?: string;
+  kind?: string;
+}
+
+export interface DocumentRecipientInput {
+  name: string;
+  email: string;
+}
+
+/** The recipients of a send. The client adds `confirm: true` on the wire. */
+export interface DocumentSendRequest {
+  signer: DocumentRecipientInput;
+  collaborators: DocumentRecipientInput[];
+}
+
+/** The stages of a document send, in execution order. */
+export const DOCUMENT_SEND_STEPS = [
+  'config',
+  'load',
+  'render',
+  'freeze',
+  'publish',
+  'manifest',
+  'email',
+  'record',
+] as const;
+
+export type DocumentSendStep = (typeof DOCUMENT_SEND_STEPS)[number];
+
+/** A recipient's page as it was emailed. */
+export interface RecipientLink {
+  role: RecipientRole;
+  name: string;
+  email: string;
+  url: string;
+}
+
+export interface DocumentSendResult {
+  /** `null` when the reload after the committed send failed; `warnings` says so. */
+  document: DocumentDetail | null;
+  steps: { step: DocumentSendStep; outcome: SendStepOutcome }[];
+  links: RecipientLink[];
+  configWarnings: string[];
+  warnings: string[];
+}
+
+/**
+ * `error.details` on a document send that stopped. `emailed` names who was
+ * mailed a link before it stopped; the rollback closed those links.
+ */
+export interface DocumentSendErrorDetails {
+  reason?: string;
+  step?: DocumentSendStep;
+  completed?: DocumentSendStep[];
+  emailed?: string[];
+  documentStatus?: DocumentStatus;
+  cleanupWarnings?: string[];
+  service?: 'r2' | 'mailgun';
+  missing?: string[];
+}
+
+/** A response given outside the published page. `date` defaults to today. */
+export interface ManualAcceptRequest {
+  name: string;
+  date?: string;
+}
+
+export interface ManualChangeRequestInput {
+  name: string;
+  note: string;
+  date?: string;
+}
+
+export interface DeclineRequest {
+  note?: string;
+  date?: string;
+}
+
+export interface CountersignRequest {
+  name: string;
+  date?: string;
+}
+
+/**
+ * A document after an action whose republish is best-effort: the action
+ * stood, and `warnings` says what could not be published. The document's
+ * fields are absent when the reload after the action failed, which
+ * `warnings` then says.
+ */
+export type DocumentActionResult = Partial<DocumentDetail> & {
+  warnings: string[];
+};
+
+export interface DocumentSyncLine {
+  documentId: number;
+  title: string;
+  recorded: string[];
+  refused: string[];
+  warnings: string[];
+  status: DocumentStatus;
+}
+
+/** `POST /api/documents/sync`. Per-document failures are data, not an error. */
+export interface DocumentSyncResult {
+  documentsChecked: number;
+  recorded: number;
+  lines: DocumentSyncLine[];
+  failures: { documentId: number; message: string }[];
 }

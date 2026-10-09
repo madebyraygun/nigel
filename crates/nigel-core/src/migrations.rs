@@ -388,6 +388,106 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 15,
+        description:
+            "documents: kinds, documents, versions, recipients, signatures and change requests",
+        up: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS document_kinds (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    position INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    kind_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
+                    declined_at TEXT,
+                    decline_note TEXT,
+                    withdrawn_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (client_id) REFERENCES clients(id),
+                    FOREIGN KEY (kind_id) REFERENCES document_kinds(id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_documents_client ON documents(client_id);
+                 CREATE TABLE IF NOT EXISTS document_versions (
+                    id INTEGER PRIMARY KEY,
+                    document_id INTEGER NOT NULL,
+                    number INTEGER NOT NULL CHECK (number >= 1),
+                    file_path TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    sent_at TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE (document_id, number),
+                    FOREIGN KEY (document_id) REFERENCES documents(id)
+                 );
+                 CREATE TABLE IF NOT EXISTS document_recipients (
+                    id INTEGER PRIMARY KEY,
+                    version_id INTEGER NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('signer', 'collaborator')),
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (version_id) REFERENCES document_versions(id)
+                 );
+                 CREATE TABLE IF NOT EXISTS document_signatures (
+                    id INTEGER PRIMARY KEY,
+                    version_id INTEGER NOT NULL,
+                    recipient_id INTEGER,
+                    role TEXT NOT NULL CHECK (role IN ('client', 'countersign')),
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    method TEXT NOT NULL CHECK (method IN ('online', 'manual')),
+                    signed_at TEXT NOT NULL,
+                    typed_name TEXT,
+                    ip TEXT,
+                    user_agent TEXT,
+                    checksum TEXT NOT NULL,
+                    CHECK ((method = 'online') = (recipient_id IS NOT NULL)),
+                    FOREIGN KEY (version_id) REFERENCES document_versions(id),
+                    FOREIGN KEY (recipient_id) REFERENCES document_recipients(id)
+                 );
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_document_signatures_online
+                     ON document_signatures(version_id, recipient_id)
+                     WHERE recipient_id IS NOT NULL;
+                 CREATE TABLE IF NOT EXISTS document_change_requests (
+                    id INTEGER PRIMARY KEY,
+                    version_id INTEGER NOT NULL,
+                    recipient_id INTEGER,
+                    name TEXT NOT NULL,
+                    email TEXT,
+                    method TEXT NOT NULL CHECK (method IN ('online', 'manual')),
+                    requested_at TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    ip TEXT,
+                    user_agent TEXT,
+                    checksum TEXT NOT NULL,
+                    CHECK ((method = 'online') = (recipient_id IS NOT NULL)),
+                    FOREIGN KEY (version_id) REFERENCES document_versions(id),
+                    FOREIGN KEY (recipient_id) REFERENCES document_recipients(id)
+                 );
+                 CREATE UNIQUE INDEX IF NOT EXISTS idx_document_change_requests_online
+                     ON document_change_requests(version_id, recipient_id)
+                     WHERE recipient_id IS NOT NULL;",
+            )?;
+            // Seeded once per database, never again: a replay must not bring back a
+            // kind the operator renamed or removed.
+            if crate::db::get_metadata(conn, "document_kinds_seeded").is_none() {
+                conn.execute_batch(
+                    "INSERT OR IGNORE INTO document_kinds (name, position) VALUES
+                         ('Proposal', 0), ('Estimate', 1), ('Agreement', 2);",
+                )?;
+                set_metadata(conn, "document_kinds_seeded", "1")?;
+            }
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -1418,6 +1518,144 @@ mod tests {
             };
             assert_eq!(column(&fresh), column(&migrated), "{table}.class");
         }
+    }
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn kind_names(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT name FROM document_kinds ORDER BY position, id")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap()
+    }
+
+    const DOCUMENT_TABLES: [&str; 6] = [
+        "document_kinds",
+        "documents",
+        "document_versions",
+        "document_recipients",
+        "document_signatures",
+        "document_change_requests",
+    ];
+
+    #[test]
+    fn v15_creates_the_document_tables_and_seeds_three_kinds() {
+        let (_dir, conn) = test_db();
+        for table in DOCUMENT_TABLES {
+            assert!(table_exists(&conn, table), "{table}");
+        }
+        assert_eq!(kind_names(&conn), ["Proposal", "Estimate", "Agreement"]);
+    }
+
+    #[test]
+    fn v15_never_reseeds_a_kind_the_operator_renamed_or_removed() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "UPDATE document_kinds SET name = 'Quote' WHERE name = 'Proposal';
+             DELETE FROM document_kinds WHERE name = 'Estimate';",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "14").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(kind_names(&conn), ["Quote", "Agreement"]);
+    }
+
+    #[test]
+    fn v15_migrates_an_existing_v14_database_and_leaves_invoices_alone() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Cedar Systems');
+             INSERT INTO invoices (number, client_id, issue_date, token)
+                 VALUES (1248, 1, '2026-01-01', 'tok-1248');
+             DROP TABLE document_change_requests;
+             DROP TABLE document_signatures;
+             DROP TABLE document_recipients;
+             DROP TABLE document_versions;
+             DROP TABLE documents;
+             DROP TABLE document_kinds;
+             DELETE FROM metadata WHERE key = 'document_kinds_seeded';",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "14").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        for table in DOCUMENT_TABLES {
+            assert!(table_exists(&conn, table), "{table}");
+        }
+        assert_eq!(kind_names(&conn), ["Proposal", "Estimate", "Agreement"]);
+        let invoices: i64 = conn
+            .query_row("SELECT COUNT(*) FROM invoices", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(invoices, 1);
+    }
+
+    #[test]
+    fn v15_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "14").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        assert_eq!(kind_names(&conn).len(), 3);
+    }
+
+    #[test]
+    fn v15_refuses_a_second_online_signature_for_one_recipient_and_version() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Juniper Labs');
+             INSERT INTO documents (client_id, kind_id, title, token, created_at, updated_at)
+                 VALUES (1, 1, 'Statement of work', 'a', '2026-10-01', '2026-10-01');
+             INSERT INTO document_versions (document_id, number, file_path, checksum, sent_at, created_at)
+                 VALUES (1, 1, 'documents/1/v1.pdf', 'sha256:00', '2026-10-01', '2026-10-01');
+             INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r', 0);
+             INSERT INTO document_signatures
+                 (version_id, recipient_id, role, name, method, signed_at, typed_name, checksum)
+                 VALUES (1, 1, 'client', 'Pat Example', 'online', '2026-10-02', 'Pat Example', 'sha256:00');",
+        )
+        .unwrap();
+        let again = conn.execute_batch(
+            "INSERT INTO document_signatures
+                 (version_id, recipient_id, role, name, method, signed_at, typed_name, checksum)
+                 VALUES (1, 1, 'client', 'Pat Example', 'online', '2026-10-03', 'Pat Example', 'sha256:00');",
+        );
+        assert!(again.is_err());
+        conn.execute_batch(
+            "INSERT INTO document_signatures (version_id, role, name, method, signed_at, checksum)
+                 VALUES (1, 'countersign', 'Sam Example', 'manual', '2026-10-04', 'sha256:00');",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v15_ties_online_to_a_recipient_and_manual_to_none() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(
+            "INSERT INTO clients (name) VALUES ('Juniper Labs');
+             INSERT INTO documents (client_id, kind_id, title, token, created_at, updated_at)
+                 VALUES (1, 1, 'T', 'a', '2026-10-01', '2026-10-01');
+             INSERT INTO document_versions (document_id, number, file_path, checksum, created_at)
+                 VALUES (1, 1, 'documents/1/v1.pdf', 'sha256:00', '2026-10-01');",
+        )
+        .unwrap();
+        assert!(conn
+            .execute_batch(
+                "INSERT INTO document_change_requests
+                     (version_id, name, method, requested_at, note, checksum)
+                     VALUES (1, 'Sam Example', 'online', '2026-10-02', 'x', 'sha256:00');",
+            )
+            .is_err());
     }
 }
 

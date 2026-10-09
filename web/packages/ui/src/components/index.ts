@@ -183,11 +183,34 @@ export {
   type InvoiceStatusWord,
 } from './wc-invoice-status.js';
 export {
+  WcDocumentStatus,
+  DOCUMENT_STATUS_WORDS,
+  documentStatusLabel,
+  type DocumentStatusWord,
+} from './wc-document-status.js';
+export {
   WcAgingBars,
   agingBarHeights,
   type AgingBucketView,
 } from './wc-aging-bars.js';
 export { WcInvoiceTable, type InvoiceTableRow } from './wc-invoice-table.js';
+export { WcDocumentTable, type DocumentTableRow } from './wc-document-table.js';
+export {
+  WcDocumentTimeline,
+  type TimelineEvent,
+  type TimelineRecipient,
+  type TimelineVersion,
+} from './wc-document-timeline.js';
+export {
+  WcRecipientEditor,
+  defaultRecipients,
+  validateRecipients,
+  type NcRecipientsChangeDetail,
+  type RecipientContactOption,
+  type RecipientEditorValue,
+  type RecipientErrors,
+  type RecipientValue,
+} from './wc-recipient-editor.js';
 export { WcInvoiceSummary } from './wc-invoice-summary.js';
 export {
   WcPaymentList,

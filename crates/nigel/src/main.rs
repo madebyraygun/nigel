@@ -2,8 +2,8 @@ use clap::{CommandFactory, Parser};
 
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
-    ImportsCommands, InvoiceCommands, InvoiceScheduleCommands, InvoiceTemplateCommands,
-    PasswordCommand, RulesCommands,
+    DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
+    InvoiceTemplateCommands, PasswordCommand, RulesCommands,
 };
 use nigel_core::error;
 
@@ -48,6 +48,56 @@ fn sync_invoice_payments() {
     }
 }
 
+/// Pull online document responses before a data-bearing command runs.
+/// Best-effort and silent without the private store configured; a failure
+/// prints a notice instead of failing the command the user asked for.
+fn sync_document_responses() {
+    let config = nigel_core::settings::documents_config();
+    let Some(source) = nigel_core::invoicing::wiring::optional_response_source(&config) else {
+        return;
+    };
+    let publisher = nigel_core::invoicing::wiring::optional_document_publisher(&config);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let result =
+        nigel_core::db::get_connection(&nigel_core::settings::get_data_dir().join("nigel.db"))
+            .and_then(|conn| {
+                let company = nigel_core::invoicing::wiring::company_name(&conn);
+                nigel_core::documents::sync::sync_documents(
+                    &conn,
+                    &company,
+                    &source,
+                    publisher.as_ref(),
+                    Some(deadline),
+                )
+            });
+    match result {
+        Ok(report) => {
+            for failure in &report.failures {
+                eprintln!(
+                    "notice: document sync failed for #{}: {}",
+                    failure.document_id,
+                    cli::document::printable(&failure.message)
+                );
+            }
+            for line in &report.lines {
+                for warning in &line.warnings {
+                    eprintln!("notice: {}", cli::document::printable(warning));
+                }
+            }
+            if report.recorded > 0 {
+                eprintln!(
+                    "notice: recorded {} new document response(s)",
+                    report.recorded
+                );
+            }
+        }
+        Err(e) => eprintln!(
+            "notice: document sync skipped: {}",
+            cli::document::printable(&e.to_string())
+        ),
+    }
+}
+
 fn main() {
     // Install ratatui panic hook once — restores terminal on panic for all TUI screens
     let hook = std::panic::take_hook();
@@ -87,6 +137,8 @@ fn is_unattended(command: &Commands) -> bool {
             command: InvoiceCommands::Schedule {
                 command: InvoiceScheduleCommands::Run
             }
+        } | Commands::Document {
+            command: DocumentCommands::Sync
         }
     )
 }
@@ -152,30 +204,11 @@ fn dispatch(command: Commands) -> error::Result<()> {
         nigel_core::db::init_db(&conn)?;
     }
 
-    // Reconcile Stripe payments for commands that read or write the books.
-    // `restore` is excluded because it overwrites the database a sync would
-    // write to, `invoice sync` because it does the same work itself, and
-    // `serve` because its database may still be locked (no stdin to prompt on)
-    // and its startup shouldn't block on a network poll. `invoice preview` is
-    // defined to make no network call at all, and a launch sync would make that
-    // false on any machine with a Stripe key configured.
-    if !matches!(
-        command,
-        Commands::Init { .. }
-            | Commands::Demo
-            | Commands::Load { .. }
-            | Commands::Update
-            | Commands::Completions { .. }
-            | Commands::Password { .. }
-            | Commands::Restore { .. }
-            | Commands::Serve { .. }
-            | Commands::Invoice {
-                command: InvoiceCommands::Sync
-                    | InvoiceCommands::Preview { .. }
-                    | InvoiceCommands::Template { .. }
-            }
-    ) {
+    // Reconcile Stripe payments and document responses; `cli::launch_sync_allowed`
+    // says which commands skip it and why.
+    if cli::launch_sync_allowed(&command) {
         sync_invoice_payments();
+        sync_document_responses();
     }
 
     match command {
@@ -254,6 +287,52 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ClientCommands::Archive { id } => cli::client::archive(id, &cli::today()),
             ClientCommands::Unarchive { id } => cli::client::unarchive(id),
             ClientCommands::List { all } => cli::client::list(all),
+        },
+        Commands::Document { command } => match command {
+            DocumentCommands::Kinds { command } => cli::document::kinds(command),
+            DocumentCommands::Add {
+                client,
+                kind,
+                title,
+                file,
+            } => cli::document::add(client, &kind, &title, &file, &cli::today()),
+            DocumentCommands::List {
+                client,
+                status,
+                kind,
+            } => cli::document::list(client, status.as_deref(), kind.as_deref()),
+            DocumentCommands::Show { id } => cli::document::show(id),
+            DocumentCommands::Preview { id, output_dir } => {
+                cli::document::preview(id, output_dir.as_deref())
+            }
+            DocumentCommands::Send {
+                id,
+                signer,
+                collaborators,
+                yes,
+            } => cli::document::send(id, signer.as_deref(), &collaborators, yes, &cli::today()),
+            DocumentCommands::Sync => cli::document::sync(),
+            DocumentCommands::Revise { id, file } => {
+                cli::document::revise(id, &file, &cli::today())
+            }
+            DocumentCommands::Withdraw { id, yes } => {
+                cli::document::withdraw(id, yes, &cli::today())
+            }
+            DocumentCommands::Accept { id, name, date } => {
+                cli::document::accept(id, &name, &date.unwrap_or_else(cli::today))
+            }
+            DocumentCommands::RequestChanges {
+                id,
+                name,
+                note,
+                date,
+            } => cli::document::request_changes(id, &name, &note, &date.unwrap_or_else(cli::today)),
+            DocumentCommands::Decline { id, note, date } => {
+                cli::document::decline(id, note.as_deref(), &date.unwrap_or_else(cli::today))
+            }
+            DocumentCommands::Countersign { id, name, date } => {
+                cli::document::countersign(id, &name, &date.unwrap_or_else(cli::today))
+            }
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

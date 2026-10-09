@@ -13,9 +13,10 @@ name. Nigel picks responses up asynchronously, the operator revises or countersi
 whole history — every version, who received it, and every response — stays bound to the
 checksummed version it concerns. Everything works from the CLI and the web UI.
 
-Recorded assent, not a legal e-signature product: the record is a typed name, an explicit
-consent, a timestamp, IP and user agent, bound to a checksum. Nigel makes no legal claim
-beyond that.
+A simple electronic signature with an audit trail, not an e-signature platform: the record
+is a typed name, an explicit consent, a timestamp, IP and user agent, bound to a checksum.
+The signer is told their typed name is their signature; Nigel claims no identity
+verification and no qualified (eIDAS) signature.
 
 ## Non-goals (this round)
 
@@ -174,8 +175,8 @@ Outcomes come back as data: `SendStep`, `StepOutcome` and `SendFailure`, in the
 `invoicing/send.rs` shape.
 
 - **Emails:** plain text, with the PDF attached and the personal link in the body. The
-  signer's subject is "{Company}: {title}: please review and sign"; collaborators get
-  "{Company}: {title}: for your review".
+  signer's subject is "Please review and sign: {title} for {Company}"; collaborators get
+  "Please review: {title} for {Company}" (" for {Company}" is dropped when no company is set).
 - **Preview:** `nigel document preview <id>` renders the pages to local files with no
   network and no configuration. It joins the launch-sync skip list.
 - **Revise:** `nigel document revise <id> --file new.pdf` creates the next version as a draft
@@ -217,7 +218,7 @@ the documents hostname (`…/d/respond`), so the page posts same-origin and need
 6. For `request_changes`: `note` is required, 1–4000 characters, plain text. Otherwise 422.
 7. Write `d/{token}/v{n}/{recipientToken}.json` with `onlyIf: { etagDoesNotMatch: "*" }`.
    If a response already exists, return 409 `already_responded`.
-8. Return 200. The page then shows "Received: thank you".
+8. Return 200. The page then shows "Thank you, your acceptance has been received." or "Thank you, your request has been received.", by action.
 
 The Worker never edits pages or the public bucket.
 
@@ -239,7 +240,7 @@ sync next to invoice sync. For each document whose status is `sent` or `changes_
    second run a no-op.
 4. If the status changed, close the manifest and republish the pages:
    - accepted: stamped "Accepted by {name} on {date}", no form;
-   - changes requested: "Changes requested: a revised version is on its way", no form;
+   - changes requested: "Changes have been requested. A new document will be sent.", then each request as "<name> said “<note>” on <date and time>", the time shown in the reader's own zone; no form;
    - countersign (manual): stamped with both signatures.
 
    A failed republish is a warning, not an error.

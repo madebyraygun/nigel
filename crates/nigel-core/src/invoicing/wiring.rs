@@ -18,12 +18,13 @@ use crate::invoicing::mailgun::{
     from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
     MailgunClient,
 };
+use crate::invoicing::r2::R2PrivateStore;
 use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::republish::republish_invoice;
 use crate::invoicing::stripe::StripeClient;
 use crate::models::Invoice;
-use crate::settings::InvoicingConfig;
+use crate::settings::{derive_documents_base, DocumentsConfig, InvoicingConfig};
 
 fn require(value: Option<String>, what: &str) -> Result<String> {
     value.ok_or_else(|| {
@@ -207,20 +208,56 @@ pub fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients>
         public_base_url,
     };
 
-    let api_key = require(cfg.mailgun_api_key, "mailgun_api_key")?;
-    let domain = require(cfg.mailgun_domain, "mailgun_domain")?;
+    let (mail, mail_warnings) = build_mailer(
+        cfg.mailgun_api_key,
+        cfg.mailgun_domain,
+        cfg.from_email,
+        cfg.from_name,
+        cfg.reply_to_email,
+        company,
+    )?;
+    // Config cautions travel as data on the one channel, so a terminal, the
+    // TUI and a browser all say the same things about the same installation.
+    // The `/i` one is a caution and not a refusal, because an edge rewrite can
+    // map that prefix onto the domain root.
+    let warnings = mail_warnings
+        .into_iter()
+        .chain(public_base_url_warning(&r2.public_base_url).map(str::to_string))
+        .collect();
+    Ok(SendClients {
+        stripe,
+        r2,
+        mail,
+        warnings,
+    })
+}
+
+/// The mail client and its cautions, shared by both builders so the
+/// header-injection refusals are identical.
+///
+/// `company` is the business name an unset `from_name` falls back to.
+fn build_mailer(
+    api_key: Option<String>,
+    domain: Option<String>,
+    from_email: Option<String>,
+    from_name: Option<String>,
+    reply_to: Option<String>,
+    company: &str,
+) -> Result<(MailgunClient, Vec<String>)> {
+    let api_key = require(api_key, "mailgun_api_key")?;
+    let domain = require(domain, "mailgun_domain")?;
 
     // The from address is composed into a header like every other value here,
     // so it is guarded like one — and it must be a bare address, because
     // `format_address` is what puts the display name on.
-    let from_address = require(cfg.from_email, "from_email")?;
+    let from_address = require(from_email, "from_email")?;
     validate_header_value(&from_address, "from_email")?;
     validate_bare_address(&from_address, "from_email")?;
 
     // An unset `from_name` falls back to the business name, and the refusal
     // has to name whichever of the two the bad value actually came from: an
     // operator who never set `from_name` cannot fix `from_name`.
-    let (from_name, name_source) = match cfg.from_name {
+    let (from_name, name_source) = match from_name {
         Some(name) => (Some(name), "from_name"),
         None => (
             Some(company.trim().to_string()).filter(|c| !c.is_empty()),
@@ -232,33 +269,133 @@ pub fn build_clients(cfg: InvoicingConfig, company: &str) -> Result<SendClients>
     }
     // The reply-to gets no domain check: Mailgun constrains what a message is
     // sent from, not where a human replies to it.
-    if let Some(reply_to) = &cfg.reply_to_email {
+    if let Some(reply_to) = &reply_to {
         validate_header_value(reply_to, "reply_to_email")?;
     }
 
-    // Config cautions travel as data on the one channel, so a terminal, the
-    // TUI and a browser all say the same things about the same installation.
-    // The `/i` one is a caution and not a refusal, because an edge rewrite can
-    // map that prefix onto the domain root.
     let warnings = from_address_domain_warning(&from_address, &domain)
         .into_iter()
-        .chain(public_base_url_warning(&r2.public_base_url).map(str::to_string))
         .collect();
-
     let mail = MailgunClient {
         api_key,
         domain,
         envelope: EmailEnvelope {
             from_address,
             from_name,
-            reply_to: cfg.reply_to_email,
+            reply_to,
         },
     };
-    Ok(SendClients {
-        stripe,
-        r2,
+    Ok((mail, warnings))
+}
+
+/// The clients a document send needs. No Stripe: a document has no payment.
+///
+/// The publisher is its own `R2Publisher` built with the documents base, never
+/// the invoice publisher, so an object lands under `d/` and links under `/d`.
+pub struct DocumentClients {
+    publisher: R2Publisher,
+    source: R2PrivateStore,
+    mail: MailgunClient,
+    response_url: Option<String>,
+    warnings: Vec<String>,
+}
+
+impl DocumentClients {
+    pub fn publisher(&self) -> &R2Publisher {
+        &self.publisher
+    }
+
+    pub fn source(&self) -> &R2PrivateStore {
+        &self.source
+    }
+
+    pub fn mail(&self) -> &MailgunClient {
+        &self.mail
+    }
+
+    pub fn response_url(&self) -> Option<&str> {
+        self.response_url.as_deref()
+    }
+
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+}
+
+/// The clients a document send needs, or the first refusal the configuration
+/// earns. The requirement order is `documents_status`'s.
+pub fn build_document_clients(cfg: DocumentsConfig, company: &str) -> Result<DocumentClients> {
+    let inv = cfg.invoicing;
+    // Presence is checked in the status order before anything is validated, so
+    // the first refusal names the first missing key.
+    let api_key = require(inv.mailgun_api_key, "mailgun_api_key")?;
+    let domain = require(inv.mailgun_domain, "mailgun_domain")?;
+    let from_email = require(inv.from_email, "from_email")?;
+    let account_id = require(inv.r2_account_id, "r2_account_id")?;
+    let access_key = require(inv.r2_access_key, "r2_access_key")?;
+    let secret_key = require(inv.r2_secret_key, "r2_secret_key")?;
+    let bucket = require(inv.r2_bucket, "r2_bucket")?;
+    let private_bucket = require(cfg.r2_private_bucket, "r2_private_bucket")?;
+    let documents_base = require(
+        derive_documents_base(
+            cfg.documents_base_url.as_deref(),
+            inv.public_base_url.as_deref(),
+        ),
+        "documents_base_url",
+    )?;
+    validate_public_base_url(&documents_base)?;
+
+    let (mail, warnings) = build_mailer(
+        Some(api_key),
+        Some(domain),
+        Some(from_email),
+        inv.from_name,
+        inv.reply_to_email,
+        company,
+    )?;
+    Ok(DocumentClients {
+        source: R2PrivateStore {
+            account_id: account_id.clone(),
+            access_key: access_key.clone(),
+            secret_key: secret_key.clone(),
+            bucket: private_bucket,
+        },
+        publisher: R2Publisher {
+            account_id,
+            access_key,
+            secret_key,
+            bucket,
+            public_base_url: documents_base,
+        },
         mail,
+        response_url: cfg.document_response_url,
         warnings,
+    })
+}
+
+/// The document publisher, when its keys and a documents base are all set.
+pub fn optional_document_publisher(cfg: &DocumentsConfig) -> Option<R2Publisher> {
+    let inv = &cfg.invoicing;
+    Some(R2Publisher {
+        account_id: inv.r2_account_id.clone()?,
+        access_key: inv.r2_access_key.clone()?,
+        secret_key: inv.r2_secret_key.clone()?,
+        bucket: inv.r2_bucket.clone()?,
+        public_base_url: derive_documents_base(
+            cfg.documents_base_url.as_deref(),
+            inv.public_base_url.as_deref(),
+        )?,
+    })
+}
+
+/// The private response store, when its four keys are set.
+pub fn optional_response_source(cfg: &DocumentsConfig) -> Option<R2PrivateStore> {
+    let inv = &cfg.invoicing;
+    Some(R2PrivateStore {
+        account_id: inv.r2_account_id.clone()?,
+        access_key: inv.r2_access_key.clone()?,
+        secret_key: inv.r2_secret_key.clone()?,
+        bucket: cfg.r2_private_bucket.clone()?,
     })
 }
 
@@ -342,5 +479,93 @@ pub fn contact_email_for_preview(cfg: &InvoicingConfig) -> (String, bool) {
     match contact_address(cfg) {
         Some(email) => (email, false),
         None => (PREVIEW_CONTACT_PLACEHOLDER.to_string(), true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn configured_for_documents() -> InvoicingConfig {
+        InvoicingConfig {
+            stripe_secret_key: None,
+            mailgun_api_key: Some("key-test".into()),
+            mailgun_domain: Some("mg.example.com".into()),
+            from_email: Some("billing@example.com".into()),
+            from_name: Some("Cedar Systems".into()),
+            reply_to_email: None,
+            contact_email: None,
+            r2_account_id: Some("acct".into()),
+            r2_access_key: Some("access".into()),
+            r2_secret_key: Some("secret".into()),
+            r2_bucket: Some("billing".into()),
+            public_base_url: Some("https://billing.example.com/i".into()),
+        }
+    }
+
+    #[test]
+    fn the_document_builder_refuses_a_display_name_with_a_line_break() {
+        let cfg = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                from_name: Some("Cedar\r\nBcc: x@y.test".into()),
+                ..configured_for_documents()
+            },
+            r2_private_bucket: Some("private".into()),
+            ..Default::default()
+        };
+        assert!(build_document_clients(cfg, "").is_err());
+    }
+
+    #[test]
+    fn the_document_publisher_is_built_on_the_documents_base_not_the_invoice_one() {
+        let cfg = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            r2_private_bucket: Some("private".into()),
+            ..Default::default()
+        };
+        let clients = build_document_clients(cfg, "Cedar Systems").unwrap();
+        assert_eq!(
+            clients.publisher().public_base_url,
+            "https://billing.example.com/d"
+        );
+        assert_eq!(clients.publisher().bucket, "billing");
+        assert_eq!(clients.source().bucket, "private");
+    }
+
+    #[test]
+    fn the_document_builder_names_the_first_missing_key_and_never_asks_for_stripe() {
+        let cfg = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            ..Default::default()
+        };
+        let err = build_document_clients(cfg, "").err().unwrap().to_string();
+        assert!(err.contains("r2_private_bucket"), "got: {err}");
+        assert!(!err.contains("stripe"), "got: {err}");
+    }
+
+    #[test]
+    fn an_invoice_base_without_i_needs_an_explicit_documents_base() {
+        let cfg = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                public_base_url: Some("https://billing.example.com".into()),
+                ..configured_for_documents()
+            },
+            r2_private_bucket: Some("private".into()),
+            ..Default::default()
+        };
+        let err = build_document_clients(cfg, "").err().unwrap().to_string();
+        assert!(err.contains("documents_base_url"), "got: {err}");
+    }
+
+    #[test]
+    fn the_optional_builders_need_only_their_own_keys() {
+        let mut cfg = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            ..Default::default()
+        };
+        assert!(optional_response_source(&cfg).is_none());
+        assert!(optional_document_publisher(&cfg).is_some());
+        cfg.r2_private_bucket = Some("private".into());
+        assert_eq!(optional_response_source(&cfg).unwrap().bucket, "private");
     }
 }
