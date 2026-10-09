@@ -4,10 +4,12 @@ title: 'Epic: Swift macOS shell hosting the SPA'
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:05'
+updated_date: '2026-10-07 18:44'
 labels:
   - epic
   - swift
   - macos
+milestone: m-3
 dependencies: []
 documentation:
   - docs/superpowers/specs/2026-09-14-swift-shell-design.md

@@ -4,10 +4,11 @@ title: 'nigel.works: the public site'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
+updated_date: '2026-10-07 18:45'
 labels:
   - product
   - docs
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-115
 ---
@@ -28,4 +29,12 @@ The forward-facing page at nigel.works, built on the existing `site/` machinery.
 - [ ] #1 nigel.works serves the positioning page with download and purchase flows, and every claim on it traces to docs/product/foundation.md
 - [ ] #2 The site is static, carries no tracking requiring consent, and all screenshots use demo data with the fictional cast
 - [ ] #3 A visitor can reach the repository, the purchase flow and the Cloud waitlist/signup in one click each from the landing page
+- [ ] #4 The support and privacy policy URLs are live before App Store submission
+- [ ] #5 FAQ and documentation pages are published (formerly TASK-22)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2.0 scope: landing page, an App Store link in place of a checkout, a support page, a privacy policy (the App Store requires both URLs), and docs/FAQ (absorbs TASK-22). Cloud sign-up lives here, never in the app.
+<!-- SECTION:NOTES:END -->

@@ -4,10 +4,12 @@ title: Menu bar extra with review and overdue counts
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
+updated_date: '2026-10-07 18:44'
 labels:
   - swift
   - macos
   - ui
+milestone: m-3
 dependencies:
   - TASK-144.4
 documentation:

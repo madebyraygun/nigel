@@ -4,9 +4,11 @@ title: Secret's zeroize guarantee ends at the first expose()
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-10-07 18:44'
 labels:
   - security
   - tech-debt
+milestone: m-3
 dependencies: []
 priority: medium
 ---

@@ -4,10 +4,10 @@ title: 'TUI: documents manager screen'
 status: To Do
 assignee: []
 created_date: '2026-08-16 04:22'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - documents
-milestone: m-1
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-109
 priority: medium
@@ -31,3 +31,9 @@ priority: medium
 - [ ] #4 Guards are asked before a confirmation is offered, so a refusal lands on the status line and no dialog can fail
 - [ ] #5 The dashboard Home menu and CLAUDE.md name the new key
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cut: a TUI documents screen contradicts decision-8 (the TUI dashboard is being removed). Documents live in the web and native apps.
+<!-- SECTION:NOTES:END -->

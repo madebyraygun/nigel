@@ -1,11 +1,11 @@
 ---
 id: TASK-33.23
 title: 'Window lifecycle: Cmd+W, Dock reopen, and window-state memory'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:48'
-updated_date: '2026-08-21 14:54'
+updated_date: '2026-10-07 18:32'
 labels:
   - tauri
   - macos
@@ -27,10 +27,10 @@ tauri-plugin-window-state would do the third piece but carries open macOS bugs â
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On macOS, closing the window leaves Nigel running, and clicking the Dock icon brings the main window back
-- [ ] #2 Window size and position persist across launches, restored clamped to a visible screen; first launch keeps the 1200x820 default
-- [ ] #3 The 900x700 minimum still holds after restore
-- [ ] #4 Windows and Linux are unchanged: closing the window exits
+- [x] #1 On macOS, closing the window leaves Nigel running, and clicking the Dock icon brings the main window back
+- [x] #2 Window size and position persist across launches, restored clamped to a visible screen; first launch keeps the 1200x820 default
+- [x] #3 The 900x700 minimum still holds after restore
+- [x] #4 Windows and Linux are unchanged: closing the window exits
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,9 @@ tauri-plugin-window-state would do the third piece but carries open macOS bugs â
 <!-- SECTION:NOTES:BEGIN -->
 Implemented on feat/desktop-lifecycle, PR 42. Close hides on macOS (recorded in docs/desktop.md's Window lifecycle section); keep-alive via ExitRequested/prevent_exit with explicit quits carrying a code; Reopen shows or rebuilds. Geometry in logical units at config_dir()/window-state.json, clamp_restore pure and unit-tested (offscreen, shrunken, multi-monitor, sub-minimum screens); silent fallback on any state-file failure. nigel-core's config_dir() went pub as the single accessor, per TASK-33.10's cross-crate-caller rule. macOS behaviors need operator verification per the PR checklist.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Merged as PR #42.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -4,10 +4,11 @@ title: 'iOS (iPad) client: the desktop shell as a thin remote client'
 status: To Do
 assignee: []
 created_date: '2026-08-19 20:55'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
-dependencies:
-  - TASK-33.8
+milestone: m-5
+dependencies: []
 parent_task_id: TASK-33
 priority: low
 ---
@@ -45,3 +46,9 @@ The architecture already permits this. Tauri 2's iOS support rides on `WKURLSche
 - [ ] #8 All linting checks pass
 - [ ] #9 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Rewrite onto the Swift shell's RemoteTransport (TASK-144.16) and iOS chrome, as the Swift shell spec's iOS section recommends, rather than tauri ios. Until then, TASK-124's web app manifest gives iPad users the SPA against a server.
+<!-- SECTION:NOTES:END -->

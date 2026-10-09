@@ -4,10 +4,11 @@ title: Fix unlock tests failing under parallel cargo test
 status: To Do
 assignee: []
 created_date: '2026-08-06 21:08'
-updated_date: '2026-08-07 14:30'
+updated_date: '2026-10-07 18:44'
 labels:
   - tech-debt
   - testing
+milestone: m-3
 dependencies: []
 priority: low
 ---

@@ -4,11 +4,11 @@ title: 'Epic: Multiuser (level one) — shared server for a small team'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-08-17 15:28'
+updated_date: '2026-10-07 18:44'
 labels:
   - epic
   - multiuser
-milestone: m-0
+milestone: m-3
 dependencies: []
 priority: medium
 ---

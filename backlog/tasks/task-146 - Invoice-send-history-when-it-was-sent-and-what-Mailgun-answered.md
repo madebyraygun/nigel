@@ -4,8 +4,10 @@ title: 'Invoice send history: when it was sent and what Mailgun answered'
 status: To Do
 assignee: []
 created_date: '2026-09-30 18:11'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
+milestone: m-3
 dependencies: []
 priority: medium
 ---

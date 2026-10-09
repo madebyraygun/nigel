@@ -5,12 +5,12 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:48'
-updated_date: '2026-08-21 14:54'
+updated_date: '2026-10-07 18:44'
 labels:
   - tauri
   - ui
   - macos
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium

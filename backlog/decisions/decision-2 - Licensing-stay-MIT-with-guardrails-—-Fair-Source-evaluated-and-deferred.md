@@ -34,10 +34,10 @@ Nigel stays MIT, with two guardrails that keep every other door open:
    title and the unilateral right to relicense future versions. Contributions remain
    MIT-licensed in this repository, always — the CLA changes who may relicense, never
    what contributors receive.
-2. **Trademark before announcement.** The Nigel name and mark are registered before any
-   public launch, and the trademark policy ships with epic 115.2. Under MIT the mark is
-   the only thing keeping unofficial builds from wearing the name; it does the work a
-   restrictive license would otherwise do.
+2. **Trademark before announcement.** A trademark application for the Nigel name and
+   mark is filed before any public launch, and the trademark policy ships with epic
+   115.2. Under MIT the mark is the only thing keeping unofficial builds from wearing the
+   name; it does the work a restrictive license would otherwise do.
 
 Fair Source is deferred, not rejected. Sole authorship plus the CLA keeps FSL-1.1-MIT
 available as the pre-selected alternative for future versions, should a commercial

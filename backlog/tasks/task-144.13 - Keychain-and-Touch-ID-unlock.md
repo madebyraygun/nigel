@@ -4,10 +4,12 @@ title: Keychain and Touch ID unlock
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
+updated_date: '2026-10-07 18:44'
 labels:
   - swift
   - macos
   - security
+milestone: m-3
 dependencies:
   - TASK-144.4
 documentation:

@@ -4,12 +4,12 @@ title: Use the unified title bar on macOS
 status: To Do
 assignee: []
 created_date: '2026-08-20 21:47'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - ui
   - macos
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium
@@ -38,3 +38,9 @@ Nigel's macOS desktop window currently keeps the standard native title bar visua
 4. Traffic-light clearance via a CSS custom property (e.g. --nc-titlebar-inset) set by the shell/app and consumed by wc-app-shell, so no component detects the platform.
 5. Window background color matching the theme bg keeps the unified surface from flashing white mid-resize (shared concern with TASK-33.25).
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+<!-- SECTION:NOTES:END -->

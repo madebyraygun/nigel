@@ -4,9 +4,11 @@ title: 'Notifications: update available, and a paid invoice found by a timer syn
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
+updated_date: '2026-10-07 18:45'
 labels:
   - swift
   - macos
+milestone: m-3
 dependencies:
   - TASK-144.4
 documentation:
@@ -27,3 +29,9 @@ Phase 3. UNUserNotificationCenter, only for things that happen while the user is
 - [ ] #2 The timer sync runs only when sync is configured and the window is closed, and never overlaps a sync the page started
 - [ ] #3 Notifications can be turned off in the app's settings; permission is asked on first use
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Keep the paid-invoice notification in 2.0. The update-available notification exists only in the direct build (2.1, decision-9).
+<!-- SECTION:NOTES:END -->

@@ -4,11 +4,11 @@ title: Silence the webview's context menu and the keystroke beep
 status: To Do
 assignee: []
 created_date: '2026-08-20 23:48'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - ui
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: low
@@ -31,3 +31,9 @@ Per docs/native-feel.md, host-conditional suppression is placed in crates/nigel-
 - [ ] #3 Keys the register grid handles produce no system alert sound in the desktop shell
 - [ ] #4 Host-conditional suppression lives in the shell or web/apps/app, never in @nigel/ui
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+<!-- SECTION:NOTES:END -->

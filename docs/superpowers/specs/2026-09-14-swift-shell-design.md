@@ -154,8 +154,51 @@ encrypted, `POST /api/unlock` itself before the page loads, with the password
 from an opt-in Keychain item released by Touch ID through `LocalAuthentication`.
 The SPA's unlock screen remains the fallback and the browser path (TASK-33.4).
 
-**Updates.** A Sparkle hook pointed at the licensed feed TASK-115.2 owns;
-nothing in this repository signs or publishes (decision-3, TASK-33.5).
+**Updates.** In the direct build, a Sparkle hook pointed at the licensed feed
+TASK-115.2 owns; nothing in this repository signs or publishes (decision-3,
+TASK-33.5). The store build has no updater (see App Store).
+
+## App Store
+
+The Mac app ships through the Mac App Store (decision-9). The store build is
+this shell with three differences: it runs in the App Sandbox, it has no update
+mechanism of its own, and it asks for no license key. The work is tracked in
+"Epic: Nigel on the Mac App Store"; packaging, signing and upload happen in
+the private pipeline (decision-3).
+
+- **Sandbox from the first commit.** App Sandbox is on in the XcodeGen spec
+  before phase 1's scaffold lands, so every native affordance is built and
+  tested under it. Entitlements: `app-sandbox`,
+  `files.user-selected.read-write`, `files.bookmarks.app-scope` and
+  `network.client`. No `network.server` — the server is headless
+  `nigel serve`, and the shell is its client or runs local books. No
+  temporary-exception entitlements.
+- **Store build flavor.** A `store` cargo feature on `nigel-core` and
+  `nigel-ffi`, with a matching Xcode configuration, compiles out the updater
+  (`updater.rs`, `update_available` in `AppState` and `/api/status`), Sparkle,
+  and any license prompt. `/api/status` reports the distribution, so the SPA
+  hides update and licensing UI without detecting its host.
+- **Where the books live.** In the sandbox the home directory resolves inside
+  the app container, so the shell owns the location rather than
+  `default_data_dir()`. First run offers a folder, pre-pointed at
+  `~/Documents/Nigel`, or "Open existing books…". The shell keeps an
+  app-scoped security-scoped bookmark to the books **folder, not the `.db`
+  file**: SQLite needs its `-wal`, `-shm` and `-journal` siblings, and backups,
+  pre-import snapshots, the uploads spool, filed document PDFs and the
+  local-delivery outbox all live under the data directory. The shell starts
+  access before `NigelHost::new(data_dir)` and passes the config directory
+  explicitly; `nigel-core` knows nothing about bookmarks. A stale or missing
+  bookmark re-prompts and never falls back to a new database.
+- **Updates are direct-build only.** Sparkle and the update-available
+  notification exist only in the direct build; the store updates the store
+  build. The paid-invoice notification is in both.
+- **Nigel Cloud sign-in.** The store build signs in to an existing nigel.works
+  account and shows no pricing, purchase or "subscribe" link and no call to
+  action for Cloud (guideline 3.1.3(b)). If App Review requires in-app
+  purchase for it, Cloud is compiled out of the store build for that
+  submission.
+- **Bundle ID `com.madebyraygun.nigel`**, permanent once the App Store
+  Connect record exists.
 
 ## The contract, and why the overhead stays near zero
 
@@ -240,5 +283,6 @@ notification click, drops) need a person at a Mac at the end of each phase.
 
 Out: any `wc-*` port; moving the web header into the toolbar (a follow-up
 once the shell is in); Windows and Linux (Tauri stays); local books on iOS;
-App Store submission and the paywall (TASK-115); background sync beyond the
-one timer notifications need.
+direct-download licensing (TASK-115.2); background sync beyond the one timer
+notifications need. App Store submission is tracked in "Epic: Nigel on the
+Mac App Store".

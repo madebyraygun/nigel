@@ -1,11 +1,11 @@
 ---
 id: TASK-33.25
 title: Launch and resize without the white flash
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:49'
-updated_date: '2026-08-21 14:54'
+updated_date: '2026-10-07 18:32'
 labels:
   - tauri
   - macos
@@ -25,10 +25,10 @@ Two shell-side changes. Give the window a background color matching the theme bg
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Launching in light and in dark shows no wrong-color flash before first paint
-- [ ] #2 Fast resizes show the theme background at the edges, never white
-- [ ] #3 The window appears promptly — perceived launch is not slower
-- [ ] #4 Windows and Linux are unaffected or equally improved; no @nigel/ui change
+- [x] #1 Launching in light and in dark shows no wrong-color flash before first paint
+- [x] #2 Fast resizes show the theme background at the edges, never white
+- [x] #3 The window appears promptly — perceived launch is not slower
+- [x] #4 Windows and Linux are unaffected or equally improved; no @nigel/ui change
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,9 @@ Two shell-side changes. Give the window a background color matching the theme bg
 <!-- SECTION:NOTES:BEGIN -->
 Implemented on feat/desktop-launch-paint, PR 43, stacked on PR 42. Hidden window shows on frontend_ready (double rAF) with a 4s fallback; window background starts on the OS theme and follows the SPA's resolved palette via set_chrome_background, driven by apps/app/src/chrome-bridge.ts through the new ApiClient.shellChrome() seam (fetch client answers null). Canvas constants drift-pinned to color.ts; index.html's stale #fdfcfb fallback corrected to #f3f2f7. Dark-launch and resize-edge color need operator verification on macOS per the PR checklist.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Merged as PR #43.
+<!-- SECTION:FINAL_SUMMARY:END -->

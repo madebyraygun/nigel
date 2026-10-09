@@ -4,11 +4,11 @@ title: 'Packaging, signing, and release CI for desktop'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-08-18 02:03'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - ci
-milestone: m-0
+milestone: m-4
 dependencies:
   - TASK-33.5
 parent_task_id: TASK-33
@@ -35,3 +35,9 @@ Building from source stays supported and documented for anyone who would rather 
 - [ ] #4 This repository's CI publishes no desktop installer and no update manifest, and still compiles and tests crates/nigel-desktop on every pull request
 - [ ] #5 Building the desktop app from a source checkout stays supported, and docs/desktop.md says how
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+On macOS the updater is Sparkle in the Swift shell (TASK-144.14), direct builds only; store builds update through the App Store. Both this and 144.14 are 2.1 (decision-9).
+<!-- SECTION:NOTES:END -->

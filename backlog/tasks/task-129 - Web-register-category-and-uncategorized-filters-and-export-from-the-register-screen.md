@@ -6,9 +6,11 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:02'
+updated_date: '2026-10-07 18:44'
 labels:
   - frontend
   - api
+milestone: m-3
 dependencies: []
 ---
 

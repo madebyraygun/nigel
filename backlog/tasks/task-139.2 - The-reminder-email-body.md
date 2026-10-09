@@ -4,8 +4,10 @@ title: The reminder email body
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
+milestone: m-4
 dependencies: []
 parent_task_id: TASK-139
 priority: medium

@@ -4,9 +4,10 @@ title: Bare nigel starts the server and opens the browser
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:07'
-updated_date: '2026-08-22 14:19'
+updated_date: '2026-10-07 18:44'
 labels:
   - cli
+milestone: m-3
 dependencies:
   - TASK-133
 ---

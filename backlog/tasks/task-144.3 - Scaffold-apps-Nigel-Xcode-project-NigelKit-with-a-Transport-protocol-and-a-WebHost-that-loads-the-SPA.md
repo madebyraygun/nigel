@@ -6,11 +6,13 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:06'
+updated_date: '2026-10-07 18:45'
 labels:
   - swift
   - macos
+milestone: m-3
 dependencies:
-  - TASK-144.2
+  - TASK-150.1
 documentation:
   - docs/superpowers/specs/2026-09-14-swift-shell-design.md
 parent_task_id: TASK-144

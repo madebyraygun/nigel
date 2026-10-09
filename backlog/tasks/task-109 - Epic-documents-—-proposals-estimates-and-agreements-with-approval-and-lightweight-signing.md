@@ -6,12 +6,12 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-16 04:21'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-09 17:32'
 labels:
   - epic
   - documents
   - architecture
-milestone: m-1
+milestone: m-3
 dependencies: []
 priority: medium
 ---
@@ -27,7 +27,7 @@ This epic adds **Documents** as a top-level domain beside Clients and Invoices �
 - **Documents are drafted in Nigel or filed as finished PDFs — both paths are first-class.** A document's source is either *drafted* — a Markdown body with `{{KEY}}` placeholders, wrapped by a per-kind template and rendered by Nigel to the page and the PDF — or *filed* — a finished PDF produced elsewhere (a drafting skill, a partner's paper, a countersigned scan) ingested by `nigel document add`, a browser upload, or the HTTP API. Templates are seeded, operator-editable data under the data dir with generic wording only in the repo (the `templates/invoice.html` precedent), so drafting ships without compiling in anyone's rates or clauses. The skills contract covers both halves: a business-specific skill may hand Nigel Markdown and let Nigel own rendering and branding, or render its own PDF and file it; either way the contract is the documented CLI/API surface and the business half (wording, rates, clause libraries) stays in the operator's private skills and data dir.
 - **The lifecycle is the feature — and it ends in *executed*.** draft → sent → accepted → executed, with declined and withdrawn terminal alongside — statuses derived from timestamps the way invoice status is derived (`refresh_status`/`voided_at` precedent), never hand-set. Publishing reuses the invoicing machinery: a tokenized page + PDF pair at `d/{token}/…` beside the invoices' `i/{token}/…`, Mailgun send with confirmation and a step trace, void-style teardown for withdraw.
 - **Sending freezes a version, and signatures bind to it.** A draft mutates freely; each send snapshots an immutable numbered version — content, rendered PDF, checksum. Acceptance and countersigning record *which version* was assented to, which is what keeps recorded assent meaningful once editing exists. Revising a sent document opens a new draft version to resend at the same token; the published page names the version it shows.
-- **Signing is recorded, two-party assent — not an e-signature platform.** The client's acceptance comes first: manual as the zero-infrastructure baseline (`nigel document accept` with a name, a date and a method), or optional online click-to-accept — the published page carries a typed-name accept form posting to a small operator-deployed Worker that writes an acceptance object beside the page in R2, pulled by `nigel document sync` (pull-based, idempotent, no webhook endpoint into Nigel, because `serve` binds localhost and localhost is not a trust boundary). The operator's countersign (`nigel document countersign`) then carries the document to *executed*. On each signature the page is republished stamped with who signed and when (the republish precedent); once executed the accept form is gone and both parties stand on the page and the PDF. Nigel records assent; it makes no claim about legal enforceability.
+- **Signing is a simple electronic signature with an audit trail — not an e-signature platform.** The client's acceptance comes first: manual as the zero-infrastructure baseline (`nigel document accept` with a name, a date and a method), or optional online click-to-accept — the published page carries a typed-name accept form posting to a small operator-deployed Worker that writes an acceptance object beside the page in R2, pulled by `nigel document sync` (pull-based, idempotent, no webhook endpoint into Nigel, because `serve` binds localhost and localhost is not a trust boundary). The operator's countersign (`nigel document countersign`) then carries the document to *executed*. On each signature the page is republished stamped with who signed and when (the republish precedent); once executed the accept form is gone and both parties stand on the page and the PDF. Nigel records assent; it makes no claim about legal enforceability.
 
 ## Design decisions stated up front
 
@@ -49,6 +49,6 @@ Data layer and kinds first, then filing, then drafting/templates with paginated 
 - [ ] #3 On demo data, a PDF produced outside Nigel can still be filed against a client, previewed, sent, and carried through the same lifecycle
 - [ ] #4 Nothing business-specific is compiled in or committed: document kinds and templates are editable seeded data with generic wording, every fixture and example uses the fictional cast, and ./scripts/check-no-real-data.sh passes on every commit in the push
 - [ ] #5 The skills scaffold is real: docs/documents.md documents both halves of the filing contract (hand Nigel Markdown, or file a rendered PDF), a generic example skill in .claude/skills/ exercises it end to end on demo data, and an operator's private skill can participate with no change to this repository
-- [ ] #6 Scope is stated where it stops: signing is recorded assent with no legal-enforceability claim, online accept is optional operator infrastructure with manual accept as the baseline, and clause libraries, structured/block authoring and third-party e-signature integration are explicitly out of v1
-- [ ] #7 IMPORTANT: Any PRs created from this epic must be created as DRAFTS until manually reviewed by the user
+- [ ] #6 IMPORTANT: Any PRs created from this epic must be created as DRAFTS until manually reviewed by the user
+- [ ] #7 Scope is stated where it stops: an acceptance is a simple electronic signature with an audit trail (no identity verification, no qualified signature), online accept is optional operator infrastructure with manual accept as the baseline, and clause libraries, structured/block authoring and third-party e-signature integration are out of scope
 <!-- AC:END -->

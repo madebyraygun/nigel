@@ -4,11 +4,11 @@ title: Auth middleware and login/logout endpoints
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-08-17 15:28'
+updated_date: '2026-10-07 18:44'
 labels:
   - multiuser
   - backend
-milestone: m-0
+milestone: m-3
 dependencies:
   - TASK-32.1
 parent_task_id: TASK-32

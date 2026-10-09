@@ -4,6 +4,7 @@ title: Desktop remote mode against a standalone nigel serve
 status: To Do
 assignee: []
 created_date: '2026-08-15 23:38'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - backend
@@ -39,3 +40,9 @@ Distinct from task-33.7, which is the same screens against a shared multiuser se
 - [ ] #4 Local and remote data are never mixed in one view
 - [ ] #5 An unreachable or restarted server degrades gracefully with a retry, never silent staleness
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Folded into TASK-32.2 (credentials that survive restarts) and TASK-32.9 (bind, trusted host, TLS or proxy). A single-user remote is a multiuser server with one admin; there is no second auth scheme. On the Mac the client side is TASK-144.16.
+<!-- SECTION:NOTES:END -->

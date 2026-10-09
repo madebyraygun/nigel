@@ -5,11 +5,11 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-08-20 14:10'
+updated_date: '2026-10-07 18:44'
 labels:
   - tech-debt
   - correctness
-milestone: m-0
+milestone: m-3
 dependencies: []
 priority: medium
 ---

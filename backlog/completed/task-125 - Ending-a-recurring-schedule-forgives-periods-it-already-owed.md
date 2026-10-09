@@ -1,11 +1,11 @@
 ---
 id: TASK-125
 title: Ending a recurring schedule forgives periods it already owed
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-20 19:21'
-updated_date: '2026-09-11 17:33'
+updated_date: '2026-10-07 18:32'
 labels:
   - invoicing
 dependencies: []
@@ -21,8 +21,8 @@ Whether that is right is a judgement call the original ACs did not make. Forgivi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The behaviour when a schedule ends with unbilled periods before its end date is decided, documented and tested
-- [ ] #2 Whichever way it goes, ending a schedule never generates a period dated after ended_at
+- [x] #1 The behaviour when a schedule ends with unbilled periods before its end date is decided, documented and tested
+- [x] #2 Whichever way it goes, ending a schedule never generates a period dated after ended_at
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,3 +45,9 @@ Docs: docs/invoicing.md, docs/commands.md, docs/architecture.md.
 
 Tests: core covers nothing owed, refusal writing nothing, forgive, an end date mid-cycle, quarterly anchor restoration, sequential numbering, autosend still drafting, a stopped walk, an already-billed period, an already-ended schedule, and a paused one. cli_dispatch covers the refusal text, both flags, the terminal guard and the clap conflict.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Merged as PR #49.
+<!-- SECTION:FINAL_SUMMARY:END -->

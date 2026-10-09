@@ -4,8 +4,10 @@ title: Three dashboard and settings tests race the machine's real config directo
 status: To Do
 assignee: []
 created_date: '2026-08-22 12:55'
+updated_date: '2026-10-07 18:44'
 labels:
   - tests
+milestone: m-3
 dependencies: []
 ---
 

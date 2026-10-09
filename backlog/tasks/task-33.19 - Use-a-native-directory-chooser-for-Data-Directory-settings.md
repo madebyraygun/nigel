@@ -4,11 +4,11 @@ title: Use a native directory chooser for Data Directory settings
 status: To Do
 assignee: []
 created_date: '2026-08-20 19:01'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:45'
 labels:
   - tauri
   - ui
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium
@@ -27,3 +27,9 @@ The Settings screen's Data Directory panel currently asks for a filesystem path 
 - [ ] #3 The chooser accepts directories only, while missing or invalid Nigel databases are still rejected by the existing backend validation and surfaced in the panel
 - [ ] #4 Browser and remote-server clients retain the typed-path control, with the settings screen branching through the API-client capability seam rather than reading Tauri globals
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+<!-- SECTION:NOTES:END -->

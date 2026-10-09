@@ -4,9 +4,11 @@ title: delete_account writes three statements with no transaction
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-10-07 18:44'
 labels:
   - bug
   - data-integrity
+milestone: m-3
 dependencies: []
 priority: medium
 ---

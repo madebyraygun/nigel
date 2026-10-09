@@ -4,9 +4,11 @@ title: 'Epic: invoice payment reminders'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:20'
+updated_date: '2026-10-07 18:44'
 labels:
   - epic
   - invoicing
+milestone: m-4
 dependencies: []
 references:
   - docs/superpowers/specs/2026-09-11-invoice-payment-reminders-design.md

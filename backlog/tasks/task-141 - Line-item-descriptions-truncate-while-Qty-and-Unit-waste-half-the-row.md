@@ -4,10 +4,12 @@ title: Line item descriptions truncate while Qty and Unit waste half the row
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:41'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - web
   - bug
+milestone: m-3
 dependencies: []
 priority: medium
 ---

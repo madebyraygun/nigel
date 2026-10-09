@@ -4,13 +4,13 @@ title: Local mode across the surfaces
 status: To Do
 assignee: []
 created_date: '2026-08-17 13:27'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - invoicing
   - documents
   - spa
   - desktop
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-114
 ---

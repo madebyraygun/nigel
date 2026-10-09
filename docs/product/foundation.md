@@ -27,37 +27,56 @@ Three commitments, permanent:
 2. **The books are a local file, forever.** No Nigel feature may require cloud custody
    of the books. Hosted offerings are convenience around the file — delivery, backup —
    never a migration of the file into our hands.
-3. **Never nagware.** An unconfigured or unpurchased capability does not nag, upsell inside workflows, or render broken controls. Small commercial notes about Nigel Cloud may appear during onboarding or in the settings app, which are for convenience and do not hold any features hostage. The pay button precedent (live, inert or absent) is the pattern for everything commercial.
+3. **Never nagware.** An unconfigured or unpurchased capability does not nag, upsell inside workflows, or render broken controls. Small commercial notes about Nigel Cloud may appear during onboarding or in the settings app, which are for convenience and do not hold any features hostage. The App Store build carries none of them (see below). The pay button precedent (live, inert or absent) is the pattern for everything commercial.
 
 ## The ladder
 
 Three rungs, each the same software with less friction. No rung gates a feature the
-rung below has; each rung removes work.
+rung below has; each rung removes work. The middle rung, a built app someone else keeps
+current, is sold through two channels.
 
 | Rung | What you get | What you pay |
 |---|---|---|
 | **Build it yourself** | The full app from source; local delivery mode (epic 114) means invoicing and documents work with no cloud accounts at all | Nothing |
-| **Nigel Desktop** | Signed, notarized, auto-updating builds for macOS, Windows and Linux, from nigel.works | Perpetual license with 12 months of updates |
-| **Nigel Cloud** | Hosted delivery: invoice and document pages served from nigel.works, mail sent from our infrastructure, acceptance recorded by us as a third party; later, zero-knowledge encrypted backup and sync | Subscription, which includes a Desktop license while active |
+| **Nigel for Mac (App Store)** | The native Mac app from the Mac App Store, sandboxed, updated by the store | Paid up front; updates for the life of that App Store app |
+| **Nigel Desktop (direct)** | Signed, notarized, auto-updating builds for macOS, Windows and Linux, from nigel.works | Perpetual license with 12 months of updates |
+| **Nigel Cloud** | Hosted delivery: invoice and document pages served from nigel.works, mail sent from our infrastructure, acceptance recorded by us as a third party; later, zero-knowledge encrypted backup and sync | Subscription, sold on nigel.works, which includes a direct Desktop license while active |
 
 The rungs map onto the `delivery` setting: `local` (no infrastructure), `hosted` (your
 own R2, Mailgun and Stripe keys — the bring-your-own-cloud path stays first-class and
-free), and `nigel` (our infrastructure, authenticated by your license).
+free), and `nigel` (our infrastructure, authenticated by your nigel.works account).
+
+The Mac App Store is the first paid channel (2.0); direct downloads and licensing follow
+(2.1). `backlog/decisions/decision-9` records why.
 
 ## Licensing: how it works
+
+**The App Store build.** Apple is the merchant of record and the updater. The build is
+paid up front with no in-app purchase, asks for no license key, and has no update
+mechanism of its own (guideline 2.4.5). Store buyers update through the store for the
+life of that App Store app; a future paid upgrade is a new App Store app. It signs in to
+Nigel Cloud as an existing nigel.works account only (guideline 3.1.3(b)): no price, no
+purchase or "subscribe" link and no call to action for Cloud appears inside it. If App
+Review requires in-app purchase for that sign-in, Cloud is compiled out of the store build
+rather than sold through the store. The Cloud subscription is sold on nigel.works only,
+never by in-app purchase.
+
+**Direct builds** carry a license key. The first four points below cover them; the last
+four apply to every build.
 
 - **What is licensed is the build and its update channel**, not the software. MIT means
   anyone may compile, redistribute, even sell builds — the license key buys our signed
   artifacts and the updater feed that keeps them current.
-- **Perpetual plus a year**: a purchased build works forever; the key entitles updates
-  for 12 months from purchase, renewable. No expiring app, no phoning home to keep
+- **Perpetual plus a year**: a purchased direct build works forever; the key entitles
+  updates for 12 months from purchase, renewable. No expiring app, no phoning home to keep
   running. Bookkeeping has an annual rhythm (tax years, bank format drift); the renewal
   matches it honestly.
-- **Sales run through a merchant of record** (checkout, VAT and sales tax, license key
-  issuance, refunds). Subscription is sold on nigel.works only, never by in-app purchase.
+- **Direct sales run through a merchant of record** (checkout, VAT and sales tax, license
+  key issuance, refunds).
 - **The key is a signed token** carried in config: the updater presents it for the feed,
-  and `delivery = "nigel"` presents it to the Cloud API. Offline validation for the
-  build, online validation for the service. No other phone-home.
+  validated offline. No other phone-home.
+- **Cloud authenticates with an account, not the key**: `delivery = "nigel"` signs in to
+  the operator's nigel.works account, in every build.
 - **Trademark remains ours** Trademark policy: builds not produced by nigel.works
   do not use the Nigel name or icon. The policy is published in this repository; the
   code stays MIT.
@@ -69,20 +88,20 @@ free), and `nigel` (our infrastructure, authenticated by your license).
   tests the desktop crate, and publishes no installer and no
   update manifest. `backlog/decisions/decision-3` records this.
 
-## Nigel Cloud: scope by milestone
+## Nigel Cloud: scope by release
 
 Cloud is convenience hosting, never data custody. Each phase ships when its client half
 in this repository and its service half in the private repository are both real.
 
-- **v1 — hosted email and invoice delivery.** Replaces the R2 + Mailgun + DNS onboarding
+- **2.0 — hosted email and invoice delivery.** Replaces the R2 + Mailgun + DNS onboarding
   wall with sign-in: invoice pages published to nigel.works, mail sent from a per-tenant
   subdomain with correct SPF/DKIM, payments still the operator's own Stripe. The client
   half is a third `AssetPublisher`/`Mailer` pair behind the existing traits.
-- **v1.1 — hosted documents and acceptance.** Document pages and the accept endpoint
+- **2.2 — hosted documents and acceptance.** Document pages and the accept endpoint
   served by nigel.works, acceptance pulled by `document sync`. When we host the
   acceptance record, Nigel is a third-party witness to assent — a stronger signing
   story than a record in the operator's own bucket, with the same no-legal-claim scope.
-- **v1.2 — encrypted backup and sync.** Zero-knowledge snapshot backup and
+- **2.3 — encrypted backup and sync.** Zero-knowledge snapshot backup and
   device-to-device sync of the SQLCipher database: ciphertext only, the key never
   leaves the operator. Conflicts are surfaced, not silently merged.
 
@@ -96,7 +115,7 @@ an operator could run themselves.
 Launch requires that an operator can give their bookkeeper or accountant access that is
 not "screen-share my laptop": a shared standalone instance with named users, an audit
 trail, and admin / bookkeeper / read-only roles. That is epic 32 (multiuser level one),
-and it is assigned to the v1 milestone — it ships before the public launch, because the
+and it is assigned to the 2.0 milestone — it ships before the public launch, because the
 first question a working consultancy asks is "can my accountant see this?"
 
 ## Non-goals

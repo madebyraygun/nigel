@@ -4,9 +4,11 @@ title: Three test assertions that cannot fail
 status: To Do
 assignee: []
 created_date: '2026-08-07 14:12'
+updated_date: '2026-10-07 18:44'
 labels:
   - testing
   - tech-debt
+milestone: m-3
 dependencies: []
 priority: medium
 ---

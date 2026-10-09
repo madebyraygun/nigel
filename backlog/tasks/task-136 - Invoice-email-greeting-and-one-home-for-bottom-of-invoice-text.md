@@ -4,7 +4,9 @@ title: 'Invoice email greeting, and one home for bottom-of-invoice text'
 status: To Do
 assignee: []
 created_date: '2026-08-25 18:12'
+updated_date: '2026-10-07 18:44'
 labels: []
+milestone: m-3
 dependencies: []
 ---
 

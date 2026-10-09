@@ -4,9 +4,11 @@ title: 'Web app manifest: the SPA installs to the iPad Home Screen'
 status: To Do
 assignee: []
 created_date: '2026-08-19 20:55'
+updated_date: '2026-10-07 18:44'
 labels:
   - enhancement
   - frontend
+milestone: m-3
 dependencies: []
 priority: medium
 ---

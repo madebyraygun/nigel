@@ -1,13 +1,14 @@
 ---
 id: TASK-115.3
-title: 'Nigel Cloud v1: hosted email and invoice delivery'
+title: 'Nigel Cloud: hosted email and invoice delivery'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
+updated_date: '2026-10-07 18:44'
 labels:
   - product
   - invoicing
-milestone: m-0
+milestone: m-3
 dependencies: []
 parent_task_id: TASK-115
 ---
@@ -34,3 +35,9 @@ The third delivery mode, invoicing first: `delivery = "nigel"` replaces the R2 +
 - [ ] #3 The pay button and invoice sync behave in nigel mode exactly as in hosted mode — the money path stays the operator's Stripe
 - [ ] #4 The service contract (endpoints, auth, tenancy, abuse limits, end-of-subscription export) is specified in the docs even though the implementation lives in the private repository
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2.0 scope (decision-9): the Mac App Store build signs in to an existing nigel.works account only — no pricing, purchase or subscribe links inside the app (guideline 3.1.3(b), multiplatform services). The subscription is sold on nigel.works only. If App Review requires in-app purchase, that submission compiles Cloud out of the store build and keeps local delivery (epic 114).
+<!-- SECTION:NOTES:END -->

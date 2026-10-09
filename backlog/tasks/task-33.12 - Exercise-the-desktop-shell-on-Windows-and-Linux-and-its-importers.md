@@ -4,11 +4,11 @@ title: 'Exercise the desktop shell on Windows and Linux, and its importers'
 status: To Do
 assignee: []
 created_date: '2026-08-17 19:28'
-updated_date: '2026-08-21 00:21'
+updated_date: '2026-10-07 18:44'
 labels:
   - tauri
   - qa
-milestone: m-0
+milestone: m-4
 dependencies: []
 parent_task_id: TASK-33
 priority: medium
