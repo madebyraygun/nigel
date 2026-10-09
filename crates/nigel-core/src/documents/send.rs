@@ -14,12 +14,15 @@ use super::render::{
 };
 use super::store::{get_document, latest_version, read_version_pdf};
 use super::wire::{manifest_for, Manifest, ManifestState};
+use crate::db::get_metadata;
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::{get_client, list_contacts};
 use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource,
 };
+use crate::invoicing::logo::{fingerprint, COMPANY_LOGO_KEY, PUBLISHED_LOGO_KEY};
 use crate::invoicing::mailgun::format_address;
+use crate::invoicing::render::usable_logo;
 use crate::invoicing::send::StepOutcome;
 
 pub struct PreviewFiles {
@@ -63,6 +66,7 @@ pub fn write_preview(
     let pdf_bytes = read_version_pdf(data_dir, &version)?;
     let client = get_client(conn, document.client_id)?;
     let href = relative_pdf_href(version.number);
+    let logo = page_logo_src(conn, None);
     let ctx = PageContext {
         company,
         client_name: &client.name,
@@ -72,6 +76,7 @@ pub fn write_preview(
         version: version.number,
         checksum: &version.checksum,
         pdf_href: &href,
+        logo_src: logo.as_deref(),
     };
     let stand_ins = preview_recipients(conn, document.client_id);
     let recipients: Vec<PageRecipient<'_>> = stand_ins
@@ -178,6 +183,33 @@ pub struct DocumentSendFailure {
     pub document_status: Option<DocumentStatus>,
     pub cleanup_warnings: Vec<String>,
     pub source: NigelError,
+}
+
+/// The letterhead logo's `<img src>` for a recipient page.
+///
+/// The address invoices already published the current logo at, when the
+/// recorded object is this exact image and lives on the same origin the
+/// document pages are served from; otherwise the image inline as a `data:` URI.
+/// A recipient page is opened in a browser rather than shown as an email body,
+/// so the inline image renders there and nothing is uploaded on a document's
+/// account. `documents_base` is `None` for a preview, which always inlines.
+pub(crate) fn page_logo_src(conn: &Connection, documents_base: Option<&str>) -> Option<String> {
+    let stored = get_metadata(conn, COMPANY_LOGO_KEY).unwrap_or_default();
+    let logo = usable_logo(&stored)?;
+    let published = documents_base.and_then(|base| {
+        let recorded = get_metadata(conn, PUBLISHED_LOGO_KEY)?;
+        let (print, url) = recorded.split_once(' ')?;
+        (print == fingerprint(&logo.bytes) && origin(url).is_some() && origin(url) == origin(base))
+            .then(|| url.to_string())
+    });
+    Some(published.unwrap_or_else(|| format!("data:{};base64,{}", logo.mime, logo.base64)))
+}
+
+/// `scheme://host[:port]` of an absolute URL.
+fn origin(url: &str) -> Option<&str> {
+    let after = url.find("://")? + 3;
+    let end = url[after..].find('/').map_or(url.len(), |i| after + i);
+    (end > after).then(|| &url[..end])
 }
 
 pub struct SendContext<'a> {
@@ -344,6 +376,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         })
         .collect();
     let href = relative_pdf_href(version.number);
+    let logo = page_logo_src(conn, Some(publisher.public_base()));
     let page_ctx = PageContext {
         company: ctx.company,
         client_name: &client.name,
@@ -353,6 +386,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         version: version.number,
         checksum: &version.checksum,
         pdf_href: &href,
+        logo_src: logo.as_deref(),
     };
     let page_recipients: Vec<PageRecipient<'_>> = set
         .iter()
@@ -484,6 +518,119 @@ mod tests {
         assert!(signer.contains("../v1/document.pdf") && !signer.contains("<form"));
         assert!(files.pdf.ends_with("document-1/v1/document.pdf"));
         assert!(files.pdf.exists());
+    }
+
+    #[cfg(feature = "pdf")]
+    mod logo {
+        use super::*;
+        use crate::db::set_metadata;
+        use crate::invoicing::document::parse_logo;
+
+        fn store_logo(conn: &Connection) -> String {
+            let uri = crate::pdf::logo_uri(400, 60);
+            set_metadata(conn, COMPANY_LOGO_KEY, &uri).unwrap();
+            uri
+        }
+
+        fn record_published(conn: &Connection, uri: &str, url: &str) {
+            let bytes = parse_logo(uri).unwrap().expect("a logo").bytes;
+            set_metadata(
+                conn,
+                PUBLISHED_LOGO_KEY,
+                &format!("{} {url}", fingerprint(&bytes)),
+            )
+            .unwrap();
+        }
+
+        #[test]
+        fn no_stored_logo_draws_no_image() {
+            let (_dir, conn) = test_conn();
+            assert_eq!(
+                page_logo_src(&conn, Some(FakeDocumentPublisher::BASE)),
+                None
+            );
+        }
+
+        #[test]
+        fn an_unpublished_logo_is_inlined() {
+            let (_dir, conn) = test_conn();
+            let uri = store_logo(&conn);
+            assert_eq!(
+                page_logo_src(&conn, Some(FakeDocumentPublisher::BASE)),
+                Some(uri)
+            );
+        }
+
+        #[test]
+        fn the_logo_invoices_published_is_reused_on_the_same_origin() {
+            let (_dir, conn) = test_conn();
+            let uri = store_logo(&conn);
+            let origin = origin(FakeDocumentPublisher::BASE).unwrap();
+            let url = format!("{origin}/i/logo-abc.png");
+            record_published(&conn, &uri, &url);
+            assert_eq!(
+                page_logo_src(&conn, Some(FakeDocumentPublisher::BASE)),
+                Some(url)
+            );
+            assert_eq!(
+                page_logo_src(&conn, None),
+                Some(uri),
+                "a preview always inlines"
+            );
+        }
+
+        #[test]
+        fn a_published_logo_on_another_origin_or_of_another_image_is_not_reused() {
+            let (_dir, conn) = test_conn();
+            let uri = store_logo(&conn);
+            record_published(&conn, &uri, "https://old-bucket.example.net/i/logo-abc.png");
+            assert_eq!(
+                page_logo_src(&conn, Some(FakeDocumentPublisher::BASE)),
+                Some(uri.clone())
+            );
+
+            let origin = origin(FakeDocumentPublisher::BASE).unwrap();
+            set_metadata(
+                &conn,
+                PUBLISHED_LOGO_KEY,
+                &format!("deadbeef {origin}/i/logo-old.png"),
+            )
+            .unwrap();
+            assert_eq!(
+                page_logo_src(&conn, Some(FakeDocumentPublisher::BASE)),
+                Some(uri)
+            );
+        }
+
+        #[test]
+        fn a_preview_page_carries_the_logo_inline() {
+            let (dir, conn) = test_conn();
+            let uri = store_logo(&conn);
+            let id = seed_document(
+                &conn,
+                dir.path(),
+                seed_client(&conn, "Cedar Systems"),
+                "Website rebuild",
+            );
+            let out = tempfile::tempdir().unwrap();
+            let files = write_preview(&conn, dir.path(), id, "", None, out.path()).unwrap();
+            let page = std::fs::read_to_string(&files.pages[0]).unwrap();
+            assert!(page.contains(&format!("<header><p><img src=\"{uri}\" alt=\"\"")));
+        }
+
+        #[test]
+        fn origins() {
+            assert_eq!(
+                origin("https://billing.example.com/d"),
+                Some("https://billing.example.com")
+            );
+            assert_eq!(
+                origin("https://billing.example.com"),
+                Some("https://billing.example.com")
+            );
+            assert_eq!(origin("billing.example.com/d"), None);
+            assert_eq!(origin("https:///d"), None);
+        }
     }
 
     #[test]

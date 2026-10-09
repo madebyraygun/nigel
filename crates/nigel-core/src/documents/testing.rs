@@ -56,7 +56,7 @@ pub struct FakeDocumentPublisher {
 }
 
 impl FakeDocumentPublisher {
-    const BASE: &'static str = "https://docs.example.test/d";
+    pub const BASE: &'static str = "https://docs.example.test/d";
 
     fn write(&self, key: String, bytes: &[u8]) -> crate::error::Result<()> {
         if let Some(needle) = &self.fail_when_key_contains {

@@ -1656,6 +1656,13 @@ can — and it is not a qualified (eIDAS) signature, so a contract that needs
 identity verification or a qualified signature belongs in a service that
 provides it.
 
+Each recipient page carries the [letterhead](#the-letterhead) logo above the
+company name. A send points it at the logo invoices already published when that
+object is the current image on the same host as the document pages, and
+otherwise embeds the image in the page; a preview always embeds it. The page is
+opened in a browser rather than shown as an email body, so the embedded image
+renders. With no logo set the page shows the company name alone.
+
 A document's status is derived from what has been recorded and is one of
 `draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
 `withdrawn`. `declined`, `executed` and `withdrawn` are terminal.

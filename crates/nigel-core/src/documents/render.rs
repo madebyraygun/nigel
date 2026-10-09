@@ -14,6 +14,9 @@ pub struct PageContext<'a> {
     pub version: i64,
     pub checksum: &'a str,
     pub pdf_href: &'a str,
+    /// The letterhead logo's `<img src>`: the address invoices published it
+    /// at, or the image inline as a `data:` URI. `None` draws no image.
+    pub logo_src: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -174,7 +177,7 @@ pub fn render_recipient_page(
     state: &PageState<'_>,
 ) -> String {
     let body = format!(
-        "<header><p class=\"meta\">{company}</p><h1>{title}</h1>\
+        "<header>{logo}<p class=\"meta\">{company}</p><h1>{title}</h1>\
 <p class=\"meta\">{kind} for {client} &middot; Version {version}</p>\
 <p class=\"meta\">Prepared for {name}</p></header>\n\
 <object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object>\n\
@@ -187,6 +190,10 @@ pub fn render_recipient_page(
         client = esc(ctx.client_name),
         version = ctx.version,
         signing = signing_paragraph(recipient.role, &esc(ctx.checksum)),
+        logo = ctx
+            .logo_src
+            .map(|src| format!("<p><img src=\"{}\" alt=\"\" style=\"max-width:12rem;max-height:4rem\"></p>", esc(src)))
+            .unwrap_or_default(),
         name = esc(recipient.name),
         href = esc(ctx.pdf_href),
         checksum = esc(ctx.checksum),
@@ -281,6 +288,7 @@ mod tests {
             version: 2,
             checksum: "sha256:ab",
             pdf_href: "../v2/document.pdf",
+            logo_src: None,
         }
     }
     const SIGNER: PageRecipient<'static> = PageRecipient {

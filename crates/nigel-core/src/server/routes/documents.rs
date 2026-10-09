@@ -900,6 +900,7 @@ fn render_preview(conn: &Connection, id: i64) -> ApiResult<String> {
     let company = crate::invoicing::wiring::company_name(conn);
     let response_url = crate::settings::documents_config().document_response_url;
     let pdf_href = format!("/api/documents/{id}/preview.pdf");
+    let logo = crate::documents::send::page_logo_src(conn, None);
     let ctx = PageContext {
         company: &company,
         client_name: &client.name,
@@ -909,6 +910,7 @@ fn render_preview(conn: &Connection, id: i64) -> ApiResult<String> {
         version: version.number,
         checksum: &version.checksum,
         pdf_href: &pdf_href,
+        logo_src: logo.as_deref(),
     };
     let stand_ins = preview_recipients(conn, document.client_id);
     let (label, role, name) = &stand_ins[0];

@@ -153,6 +153,7 @@ pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
         Err(e) => return vec![format!("Warning: could not load the client ({e}).")],
     };
     let href = relative_pdf_href(version.number);
+    let logo = super::send::page_logo_src(conn, publisher.map(|p| p.public_base()));
     let ctx = PageContext {
         company,
         client_name: &client_name,
@@ -162,6 +163,7 @@ pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
         version: version.number,
         checksum: &version.checksum,
         pdf_href: &href,
+        logo_src: logo.as_deref(),
     };
     teardown(
         conn,
