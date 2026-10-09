@@ -1711,6 +1711,7 @@ pair is the capability in a recipient's link.
 | `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
 | `d/{token}/manifest.json` | private | Nigel |
 | `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
+| `d/{token}/v{n}/changes-requested` | private | the Worker, when anyone requests changes on that version |
 
 The links Nigel prints and emails name the file —
 `https://docs.example.com/d/{token}/{recipient-token}/index.html` — for the
@@ -1758,7 +1759,8 @@ A **response** is what the Worker writes when a recipient answers:
 `action` is `accept` or `request_changes`; a change request has a `note` of 1 to
 4000 characters of plain text and no `typedName` or `consent`. The Worker
 refuses a request when the document is unknown (404), the manifest is `closed`
-or the recipient already answered that version (409), the link is not a
+or the recipient already answered that version (409), someone has already
+requested changes on that version (409 `changes_requested`), the link is not a
 recipient's or a collaborator tries to accept (403), the version or checksum is
 stale (409), the typed name does not match the signer's, consent is missing or
 the note is unusable (422), or the recipient is over 10 requests a minute (429).

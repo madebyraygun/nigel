@@ -14,6 +14,11 @@ export function responseKey(token: string, version: number, recipientToken: stri
   return `d/${token}/v${version}/${recipientToken}.json`;
 }
 
+/** Written once any recipient asks for changes: the version is closed to every later response. */
+export function changesRequestedKey(token: string, version: number): string {
+  return `d/${token}/v${version}/changes-requested`;
+}
+
 const json = (body: unknown, status: number) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -79,6 +84,10 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
   }
   const refusal = checkRequest(parsed, manifest);
   if (refusal) return reply(refusal);
+  const closedBy = changesRequestedKey(parsed.token, parsed.version);
+  if (await env.PRIVATE.get(closedBy)) {
+    return reply({ status: 409, code: 'changes_requested', message: 'Changes have been requested on this version. A new document will be sent.' });
+  }
   const record = {
     action: parsed.action,
     version: parsed.version,
@@ -96,6 +105,11 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
     { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'application/json' } },
   );
   if (written === null) return reply({ status: 409, code: 'already_responded', message: 'A response for this version is already recorded.' });
+  if (parsed.action === 'request_changes') {
+    // Best-effort: the response is stored either way, and sync refuses an
+    // acceptance that arrived after it.
+    await env.PRIVATE.put(closedBy, record.receivedAt, { httpMetadata: { contentType: 'text/plain' } }).catch(() => null);
+  }
   return json({ ok: true, message: 'Received: thank you' }, 200);
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BODY_MAX_BYTES, handle, manifestKey, responseKey } from '../src/index.js';
+import { BODY_MAX_BYTES, changesRequestedKey, handle, manifestKey, responseKey } from '../src/index.js';
 import { MemoryBucket, CountingLimiter } from './memory-r2.js';
 
 const DOC = '0123456789abcdef0123456789abcdef';
@@ -85,6 +85,26 @@ describe('POST /d/respond', () => {
   it('never writes to anything but the response key under the document', async () => {
     await post(ACCEPT);
     expect(responses()).toEqual([`d/${DOC}/v2/${SIGNER}.json`]);
+  });
+  it('a change request closes the version: a later accept is refused and nothing is written', async () => {
+    expect((await post(CHANGES)).status).toBe(200);
+    expect(responses().sort()).toEqual([`d/${DOC}/v2/${COLLABORATOR}.json`, changesRequestedKey(DOC, 2)].sort());
+    const accept = await post(ACCEPT);
+    expect(accept.status).toBe(409);
+    expect(await accept.json()).toEqual({
+      code: 'changes_requested',
+      message: 'Changes have been requested on this version. A new document will be sent.',
+    });
+    expect(bucket.objects.has(responseKey(DOC, 2, SIGNER))).toBe(false);
+  });
+  it('an accept writes no marker', async () => {
+    expect((await post(ACCEPT)).status).toBe(200);
+    expect(bucket.objects.has(changesRequestedKey(DOC, 2))).toBe(false);
+  });
+  it('a change request on one version does not close the next', async () => {
+    await post(CHANGES);
+    bucket.objects.set(manifestKey(DOC), JSON.stringify({ ...MANIFEST, version: 3 }));
+    expect((await post({ ...ACCEPT, version: 3 })).status).toBe(200);
   });
 });
 
