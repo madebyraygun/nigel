@@ -615,7 +615,9 @@ mod tests {
             let out = tempfile::tempdir().unwrap();
             let files = write_preview(&conn, dir.path(), id, "", None, out.path()).unwrap();
             let page = std::fs::read_to_string(&files.pages[0]).unwrap();
-            assert!(page.contains(&format!("<header><p><img src=\"{uri}\" alt=\"\"")));
+            assert!(page.contains(&format!(
+                "<header class=\"letterhead\"><img class=\"logo\" src=\"{uri}\" alt=\"\">"
+            )));
         }
 
         #[test]

@@ -69,10 +69,38 @@ const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach
   });
 });"#;
 
-const STYLE: &str = "body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#1a1a1a}\
-object{width:100%;height:70vh;border:1px solid #ccc}label{display:block;margin:.5rem 0}\
-textarea,input[type=text]{width:100%;box-sizing:border-box}.meta{color:#555;font-size:.9rem}\
-fieldset{margin:1rem 0}";
+const STYLE: &str = "*,*::before,*::after{box-sizing:border-box}[hidden]{display:none!important}\
+body{font-family:system-ui,sans-serif;max-width:52rem;margin:2.5rem auto;padding:0 1.25rem;color:#111;line-height:1.5;background:#fff}\
+.letterhead{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-bottom:1.25rem;border-bottom:1px solid #909090;margin-bottom:2rem}\
+.logo{max-width:8.8rem;max-height:2.5rem}\
+.company,.eyebrow{margin:0;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#666}\
+.eyebrow{margin-bottom:.25rem}\
+h1{margin:0 0 1.25rem;font-size:1.75rem;line-height:1.2}\
+table.meta{border-collapse:collapse;margin-bottom:1.75rem}\
+table.meta th,table.meta td{padding:.2rem 1.5rem .2rem 0;text-align:left;vertical-align:top;font-weight:400}\
+table.meta th{color:#666;white-space:nowrap}\
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;word-break:break-all;color:#444}\
+.doc{margin:0 0 .75rem;border:1px solid #909090;border-radius:.4rem;overflow:hidden;background:#f4f4f4}\
+.doc object{display:block;width:100%;height:75vh}\
+.doc object p{padding:2rem;text-align:center}\
+.download{margin:0 0 2.5rem}\
+.note{font-size:.875rem;color:#444;overflow-wrap:anywhere;border-left:3px solid #909090;padding:.25rem 0 .25rem .9rem;margin:0 0 1.5rem}\
+.forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:1.25rem;align-items:start}\
+.card{border:1px solid #d0d0d0;border-radius:.5rem;padding:1.25rem 1.25rem 1rem}\
+.card h2{margin:0 0 .75rem;font-size:1.05rem}\
+label{display:block;margin:0 0 .9rem;font-size:.9rem;color:#333}\
+input[type=text],textarea{display:block;width:100%;margin-top:.35rem;padding:.55rem .7rem;font:inherit;color:#111;border:1px solid #909090;border-radius:.4rem;background:#fff}\
+input[type=text]:focus,textarea:focus{outline:2px solid #111;outline-offset:1px}\
+textarea{resize:vertical;min-height:7rem}\
+.check{display:flex;gap:.5rem;align-items:flex-start}.check input{margin-top:.25rem}\
+.button,button{display:inline-block;padding:.6rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:1px solid #111;cursor:pointer;text-decoration:none}\
+.primary{background:#111;color:#fff}.secondary{background:#fff;color:#111}\
+button:disabled{opacity:.5;cursor:default}\
+.status{margin:.75rem 0 0;font-size:.875rem;color:#a40000}.status:empty{display:none}\
+.notice{padding:.9rem 1.1rem;border-radius:.5rem;background:#f4f4f4;border:1px solid #d0d0d0}\
+.success{background:#eef7ee;border-color:#9cc79c}\
+@media (max-width:36rem){body{margin-top:1.5rem}h1{font-size:1.4rem}.doc object{height:60vh}}\
+@media print{.respond,.download{display:none}}";
 
 pub fn relative_pdf_href(version: i64) -> String {
     format!("../v{version}/document.pdf")
@@ -110,28 +138,28 @@ const SIGNATURE_INTENT: &str = "Your typed name is your electronic signature on 
 fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
     match role {
         RecipientRole::Signer => format!(
-            "<p>Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). {SIGNATURE_INTENT}</p>\n"
+            "<p class=\"note\">Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). {SIGNATURE_INTENT}</p>\n"
         ),
         RecipientRole::Collaborator => String::new(),
     }
 }
 
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::from("<div class=\"forms\">\n");
     if recipient.role == RecipientRole::Signer {
         out.push_str(&format!(
-            "<form method=\"post\" hidden {}><h2>Accept</h2>\
+            "<form method=\"post\" hidden {} class=\"card\"><h2>Accept</h2>\
 <label>Your full name <input type=\"text\" name=\"typedName\" required maxlength=\"200\" autocomplete=\"name\"></label>\
-<label><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
-<button type=\"submit\">Accept</button><p data-status role=\"status\"></p></form>\n",
+<label class=\"check\"><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
+<button type=\"submit\" class=\"primary\">Accept</button><p data-status role=\"status\" class=\"status\"></p></form>\n",
             data_attrs(ctx, recipient, endpoint, "accept")
         ));
     }
     out.push_str(&format!(
-        "<form method=\"post\" hidden {}><h2>Request changes</h2>\
+        "<form method=\"post\" hidden {} class=\"card\"><h2>Request changes</h2>\
 <label>What should change? <textarea name=\"note\" rows=\"5\" maxlength=\"4000\" required></textarea></label>\
-<button type=\"submit\">Request changes</button><p data-status role=\"status\"></p></form>\n\
-<p id=\"received\" hidden>Received: thank you</p>\n<script>{SCRIPT}</script>\n\
+<button type=\"submit\" class=\"secondary\">Request changes</button><p data-status role=\"status\" class=\"status\"></p></form>\n</div>\n\
+<p id=\"received\" class=\"notice success\" hidden>Received: thank you</p>\n<script>{SCRIPT}</script>\n\
 <noscript><p>{REPLY_BY_EMAIL}</p></noscript>\n",
         data_attrs(ctx, recipient, endpoint, "request_changes")
     ));
@@ -147,27 +175,27 @@ fn state_section(
         PageState::Open {
             response_url: Some(url),
         } => forms(ctx, recipient, url),
-        PageState::Open { response_url: None } => format!("<p>{REPLY_BY_EMAIL}</p>\n"),
+        PageState::Open { response_url: None } => format!("<p class=\"notice\">{REPLY_BY_EMAIL}</p>\n"),
         PageState::Revising => {
-            "<p>This document is being revised. A new version will be sent to you.</p>\n".into()
+            "<p class=\"notice\">This document is being revised. A new version will be sent to you.</p>\n".into()
         }
         PageState::ChangesRequested => {
-            "<p>Changes requested: a revised version is on its way.</p>\n".into()
+            "<p class=\"notice\">Changes requested: a revised version is on its way.</p>\n".into()
         }
         PageState::Accepted { name, date } => {
-            format!("<p>Accepted by {} on {}.</p>\n", esc(name), esc(date))
+            format!("<p class=\"notice success\">Accepted by {} on {}.</p>\n", esc(name), esc(date))
         }
         PageState::Executed {
             client,
             countersign,
         } => format!(
-            "<p>Accepted by {} on {}.</p>\n<p>Countersigned by {} on {}.</p>\n",
+            "<p class=\"notice success\">Accepted by {} on {}.<br>Countersigned by {} on {}.</p>\n",
             esc(client.0),
             esc(client.1),
             esc(countersign.0),
             esc(countersign.1)
         ),
-        PageState::Declined => "<p>This document was declined.</p>\n".into(),
+        PageState::Declined => "<p class=\"notice\">This document was declined.</p>\n".into(),
     }
 }
 
@@ -177,13 +205,14 @@ pub fn render_recipient_page(
     state: &PageState<'_>,
 ) -> String {
     let body = format!(
-        "<header>{logo}<p class=\"meta\">{company}</p><h1>{title}</h1>\
-<p class=\"meta\">{kind} for {client} &middot; Version {version}</p>\
-<p class=\"meta\">Prepared for {name}</p></header>\n\
-<object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object>\n\
-<p><a href=\"{href}\">Download the PDF</a></p>\n\
-<p class=\"meta\">Checksum: {checksum}</p>\n\
-{signing}{section}",
+        "<header class=\"letterhead\">{logo}<p class=\"company\">{company}</p></header>\n\
+<p class=\"eyebrow\">{kind} &middot; Version {version}</p>\n<h1>{title}</h1>\n\
+<table class=\"meta\"><tr><th>Prepared for</th><td>{name}</td></tr>\
+<tr><th>Client</th><td>{client}</td></tr>\
+<tr><th>Checksum</th><td class=\"mono\">{checksum}</td></tr></table>\n\
+<div class=\"doc\"><object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object></div>\n\
+<p class=\"download\"><a class=\"button secondary\" href=\"{href}\">Download the PDF</a></p>\n\
+<section class=\"respond\">\n{signing}{section}</section>",
         company = esc(ctx.company),
         title = esc(ctx.title),
         kind = esc(ctx.kind),
@@ -192,7 +221,7 @@ pub fn render_recipient_page(
         signing = signing_paragraph(recipient.role, &esc(ctx.checksum)),
         logo = ctx
             .logo_src
-            .map(|src| format!("<p><img src=\"{}\" alt=\"\" style=\"max-width:12rem;max-height:4rem\"></p>", esc(src)))
+            .map(|src| format!("<img class=\"logo\" src=\"{}\" alt=\"\">", esc(src)))
             .unwrap_or_default(),
         name = esc(recipient.name),
         href = esc(ctx.pdf_href),
