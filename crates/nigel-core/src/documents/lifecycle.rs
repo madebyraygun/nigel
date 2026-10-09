@@ -9,9 +9,9 @@ use super::model::{Document, DocumentStatus, DocumentVersion, SignatureRole};
 use super::record::{add_version, record_withdrawal};
 use super::render::{
     relative_pdf_href, render_recipient_page, withdrawn_page_html, PageContext, PageRecipient,
-    PageState,
+    PageState, RequestedChange,
 };
-use super::store::{get_document, recipients, signatures, versions};
+use super::store::{change_requests, get_document, recipients, signatures, versions};
 use super::wire::{manifest_for, ManifestState};
 use crate::error::Result;
 use crate::invoicing::clients::get_client;
@@ -90,7 +90,7 @@ pub fn withdraw_with_teardown<P: DocumentPublisher, R: ResponseSource>(
 }
 
 type Stamp = (SignatureRole, String, String);
-type Loaded = (Document, DocumentVersion, Vec<Stamp>);
+type Loaded = (Document, DocumentVersion, Vec<Stamp>, Vec<RequestedChange>);
 
 pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
@@ -108,9 +108,17 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
             .into_iter()
             .map(|s| (s.role, s.name, s.signed_at.chars().take(10).collect()))
             .collect();
-        Ok(Some((document, version, stamps)))
+        let requests = change_requests(conn, version.id)?
+            .into_iter()
+            .map(|c| RequestedChange {
+                name: c.name,
+                note: c.note,
+                at: c.requested_at,
+            })
+            .collect();
+        Ok(Some((document, version, stamps, requests)))
     };
-    let (document, version, stamps) = match load() {
+    let (document, version, stamps, requests) = match load() {
         Ok(Some(loaded)) => loaded,
         Ok(None) => return Vec::new(),
         Err(e) => return vec![format!("Warning: could not load the document ({e}).")],
@@ -130,7 +138,9 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
             },
             None => return Vec::new(),
         },
-        (DocumentStatus::ChangesRequested, _) => PageState::ChangesRequested,
+        (DocumentStatus::ChangesRequested, _) => PageState::ChangesRequested {
+            requests: &requests,
+        },
         (DocumentStatus::Declined, _) => PageState::Declined,
         _ => return Vec::new(),
     };

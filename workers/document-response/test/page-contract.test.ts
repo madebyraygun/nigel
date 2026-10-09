@@ -51,7 +51,12 @@ function load(recipientToken: string) {
   const page = fixture.pages.find((p) => p.recipientToken === recipientToken)!;
   const script = /<script>([\s\S]*?)<\/script>/.exec(page.html)![1];
   const forms = formsOf(page.html);
-  const received = { hidden: true };
+  const dataset = Object.fromEntries(
+    [...page.html.matchAll(/ data-(accept|request-changes)="([^"]*)"/g)].map(
+      (m) => [m[1] === 'accept' ? 'accept' : 'requestChanges', m[2]],
+    ),
+  );
+  const received = { hidden: true, textContent: '', dataset };
   const posted: unknown[] = [];
   const document = {
     querySelectorAll: (selector: string) => (selector === 'form[data-endpoint]' ? forms : []),
@@ -97,6 +102,7 @@ describe('the page Nigel publishes, posting to this Worker', () => {
     );
     expect(accept.status.textContent).toBe('');
     expect(received.hidden).toBe(false);
+    expect(received.textContent).toBe('Thank you, your acceptance has been received.');
     const record = JSON.parse(bucket.objects.get(responseKey(fixture.token, fixture.version, signer.token))!);
     expect(record).toMatchObject({
       action: 'accept', version: fixture.version, checksum: fixture.checksum,
@@ -114,6 +120,7 @@ describe('the page Nigel publishes, posting to this Worker', () => {
       ['action', 'checksum', 'note', 'recipientToken', 'token', 'version'],
     );
     expect(received.hidden).toBe(false);
+    expect(received.textContent).toBe('Thank you, your request has been received.');
     const record = JSON.parse(bucket.objects.get(responseKey(fixture.token, fixture.version, collaborator.token))!);
     expect(record).toMatchObject({ action: 'request_changes', recipientToken: collaborator.token, note: 'Please split phase two.' });
   });

@@ -218,7 +218,7 @@ the documents hostname (`…/d/respond`), so the page posts same-origin and need
 6. For `request_changes`: `note` is required, 1–4000 characters, plain text. Otherwise 422.
 7. Write `d/{token}/v{n}/{recipientToken}.json` with `onlyIf: { etagDoesNotMatch: "*" }`.
    If a response already exists, return 409 `already_responded`.
-8. Return 200. The page then shows "Received: thank you".
+8. Return 200. The page then shows "Thank you, your acceptance has been received." or "Thank you, your request has been received.", by action.
 
 The Worker never edits pages or the public bucket.
 
@@ -240,7 +240,7 @@ sync next to invoice sync. For each document whose status is `sent` or `changes_
    second run a no-op.
 4. If the status changed, close the manifest and republish the pages:
    - accepted: stamped "Accepted by {name} on {date}", no form;
-   - changes requested: "Changes requested: a revised version is on its way", no form;
+   - changes requested: "Changes have been requested. A new document will be sent.", then each request as "<name> said “<note>” on <date and time>", the time shown in the reader's own zone; no form;
    - countersign (manual): stamped with both signatures.
 
    A failed republish is a warning, not an error.

@@ -26,13 +26,25 @@ pub struct PageRecipient<'a> {
     pub name: &'a str,
 }
 
+/// One change request as the page shows it. `at` is the stored timestamp: a
+/// UTC `YYYY-MM-DDTHH:MM:SSZ` for an online response, a bare date for one
+/// recorded by hand.
+#[derive(Debug, Clone)]
+pub struct RequestedChange {
+    pub name: String,
+    pub note: String,
+    pub at: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PageState<'a> {
     Open {
         response_url: Option<&'a str>,
     },
     Revising,
-    ChangesRequested,
+    ChangesRequested {
+        requests: &'a [RequestedChange],
+    },
     Accepted {
         name: &'a str,
         date: &'a str,
@@ -60,7 +72,9 @@ const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
         if (res.ok) { document.querySelectorAll('form[data-endpoint]').forEach(function (x) { x.hidden = true; });
-                      document.getElementById('received').hidden = false; }
+                      var received = document.getElementById('received');
+                      received.textContent = received.dataset[d.action === 'accept' ? 'accept' : 'requestChanges'] || received.textContent;
+                      received.hidden = false; }
         else { status.textContent = (res.j && res.j.message) || 'This response could not be recorded.';
                form.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); }
       })
@@ -98,6 +112,7 @@ textarea{resize:vertical;min-height:7rem}\
 button:disabled{opacity:.5;cursor:default}\
 .status{margin:.75rem 0 0;font-size:.875rem;color:#a40000}.status:empty{display:none}\
 .notice{padding:.9rem 1.1rem;border-radius:.5rem;background:#f4f4f4;border:1px solid #d0d0d0}\
+.notice p{margin:0}.notice p+p{margin-top:.6rem}.request{white-space:pre-wrap;overflow-wrap:anywhere}\
 .success{background:#eef7ee;border-color:#9cc79c}\
 @media (max-width:36rem){body{margin-top:1.5rem}h1{font-size:1.4rem}.doc object{height:60vh}}\
 @media print{.respond,.download{display:none}}";
@@ -159,10 +174,87 @@ fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -
         "<form method=\"post\" hidden {} class=\"card\"><h2>Request changes</h2>\
 <label>What should change? <textarea name=\"note\" rows=\"5\" maxlength=\"4000\" required></textarea></label>\
 <button type=\"submit\" class=\"secondary\">Request changes</button><p data-status role=\"status\" class=\"status\"></p></form>\n</div>\n\
-<p id=\"received\" class=\"notice success\" hidden>Received: thank you</p>\n<script>{SCRIPT}</script>\n\
+<p id=\"received\" class=\"notice success\" hidden data-accept=\"Thank you, your acceptance has been received.\" data-request-changes=\"Thank you, your request has been received.\">Thank you, your response has been received.</p>\n<script>{SCRIPT}</script>\n\
 <noscript><p>{REPLY_BY_EMAIL}</p></noscript>\n",
         data_attrs(ctx, recipient, endpoint, "request_changes")
     ));
+    out
+}
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// Rewrites each `<time data-local>` into the reader's own time zone. The
+/// server-rendered text, in UTC, is what a reader without script sees.
+const LOCAL_TIME_SCRIPT: &str = r#"document.querySelectorAll('time[data-local]').forEach(function (t) {
+  var d = new Date(t.getAttribute('datetime'));
+  if (isNaN(d)) return;
+  t.textContent = d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' }) + ' at ' +
+    d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+});"#;
+
+/// `October 9` for a date, and a `<time>` reading `October 9 at 8:44pm UTC`
+/// for an online timestamp, which the page localizes. `None` when `at` is
+/// neither, so the sentence drops its date rather than printing a raw value.
+fn when(at: &str) -> Option<(String, bool)> {
+    let month: usize = at.get(5..7)?.parse().ok()?;
+    let day: u32 = at.get(8..10)?.parse().ok()?;
+    let date = format!("{} {day}", MONTHS.get(month.checked_sub(1)?)?);
+    if at.len() == 10 {
+        return Some((date, false));
+    }
+    let hour: u32 = at.get(11..13)?.parse().ok()?;
+    let minute = at.get(14..16)?;
+    let (h12, half) = match hour {
+        0 => (12, "am"),
+        1..=11 => (hour, "am"),
+        12 => (12, "pm"),
+        _ => (hour - 12, "pm"),
+    };
+    Some((
+        format!(
+            "<time datetime=\"{}\" data-local>{date} at {h12}:{minute}{half} UTC</time>",
+            esc(at)
+        ),
+        true,
+    ))
+}
+
+fn changes_requested(requests: &[RequestedChange]) -> String {
+    let mut out = String::from(
+        "<div class=\"notice\"><p><strong>Changes have been requested. A new document will be sent.</strong></p>\n",
+    );
+    let mut timed = false;
+    for request in requests {
+        let on = match when(&request.at) {
+            Some((text, is_time)) => {
+                timed |= is_time;
+                format!(" on {text}")
+            }
+            None => String::new(),
+        };
+        out.push_str(&format!(
+            "<p>{} said <q class=\"request\">{}</q>{on}.</p>\n",
+            esc(&request.name),
+            esc(&request.note)
+        ));
+    }
+    out.push_str("</div>\n");
+    if timed {
+        out.push_str(&format!("<script>{LOCAL_TIME_SCRIPT}</script>\n"));
+    }
     out
 }
 
@@ -179,9 +271,7 @@ fn state_section(
         PageState::Revising => {
             "<p class=\"notice\">This document is being revised. A new version will be sent to you.</p>\n".into()
         }
-        PageState::ChangesRequested => {
-            "<p class=\"notice\">Changes requested: a revised version is on its way.</p>\n".into()
-        }
+        PageState::ChangesRequested { requests } => changes_requested(requests),
         PageState::Accepted { name, date } => {
             format!("<p class=\"notice success\">Accepted by {} on {}.</p>\n", esc(name), esc(date))
         }
@@ -439,7 +529,7 @@ mod tests {
     fn closed_states_carry_no_form() {
         for state in [
             PageState::Revising,
-            PageState::ChangesRequested,
+            PageState::ChangesRequested { requests: &[] },
             PageState::Declined,
             PageState::Accepted {
                 name: "Pat Example",
@@ -563,8 +653,29 @@ mod tests {
         let notice = |state| render_recipient_page(&ctx(), &SIGNER, &state);
         assert!(notice(PageState::Revising)
             .contains("This document is being revised. A new version will be sent to you."));
-        assert!(notice(PageState::ChangesRequested)
-            .contains("Changes requested: a revised version is on its way."));
+        let requests = [
+            RequestedChange {
+                name: "Pat Example".into(),
+                note: "Strike paragraph 3 <and> add a cancellation clause.".into(),
+                at: "2026-10-09T23:44:51Z".into(),
+            },
+            RequestedChange {
+                name: "Sam Example".into(),
+                note: "Also fix the dates.".into(),
+                at: "2026-10-10".into(),
+            },
+        ];
+        let changes = notice(PageState::ChangesRequested {
+            requests: &requests,
+        });
+        assert!(changes.contains("Changes have been requested. A new document will be sent."));
+        assert!(changes.contains(
+            "<p>Pat Example said <q class=\"request\">Strike paragraph 3 &lt;and&gt; add a cancellation clause.</q> on <time datetime=\"2026-10-09T23:44:51Z\" data-local>October 9 at 11:44pm UTC</time>.</p>"
+        ));
+        assert!(changes.contains(
+            "<p>Sam Example said <q class=\"request\">Also fix the dates.</q> on October 10.</p>"
+        ));
+        assert!(changes.contains("time[data-local]") && !changes.contains("<form"));
         assert!(notice(PageState::Declined).contains("This document was declined."));
         let executed = notice(PageState::Executed {
             client: ("Pat Example", "2026-10-06"),

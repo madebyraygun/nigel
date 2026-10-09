@@ -771,10 +771,11 @@ mod tests {
             src.last_manifest(&s.token).unwrap().state,
             ManifestState::Closed
         );
-        assert!(p
-            .page(&s.token, &s.signer.token)
-            .unwrap()
-            .contains("Changes requested"));
+        let page = p.page(&s.token, &s.signer.token).unwrap();
+        assert!(page.contains("Changes have been requested. A new document will be sent."));
+        assert!(page.contains(
+            "Sam Example said <q class=\"request\">Fix the dates</q> on <time datetime=\"2026-10-05T17:04:11Z\" data-local>October 5 at 5:04pm UTC</time>."
+        ));
     }
 
     #[test]
