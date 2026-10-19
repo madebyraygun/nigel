@@ -50,7 +50,7 @@ use crate::documents::send::{
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
-    update_document, DocumentFilter, DocumentUpdate, NewDocument,
+    update_document, version_file_missing, DocumentFilter, DocumentUpdate, NewDocument,
 };
 use crate::documents::sync::{sync_documents, DocumentSyncReport};
 use crate::error::NigelError;
@@ -142,6 +142,8 @@ struct VersionDetail {
     recipients: Vec<RecipientDetail>,
     signatures: Vec<Signature>,
     change_requests: Vec<ChangeRequest>,
+    /// `true` when the version's PDF is absent from the data directory.
+    file_missing: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,6 +194,11 @@ fn detail_after_commit(
 }
 
 fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
+    let data_dir = conn
+        .path()
+        .and_then(|db| Path::new(db).parent())
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let record =
         document_record(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
     let status = record.document.status;
@@ -215,6 +222,7 @@ fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
                 })
                 .collect();
             VersionDetail {
+                file_missing: version_file_missing(&data_dir, &v.version),
                 version: v.version,
                 recipients,
                 signatures: v.signatures,
@@ -1060,6 +1068,19 @@ mod tests {
                 "{uri}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn detail_flags_a_version_whose_pdf_is_missing() {
+        let _config = TempConfig::new();
+        let (dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let body = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(body["versions"][0]["fileMissing"], false, "{body}");
+
+        std::fs::remove_file(dir.path().join("documents/1/v1.pdf")).unwrap();
+        let body = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(body["versions"][0]["fileMissing"], true, "{body}");
     }
 
     #[tokio::test]

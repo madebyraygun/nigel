@@ -178,6 +178,7 @@ function documentDetail(overrides: Partial<DocumentDetail> = {}): DocumentDetail
         recipients: [],
         signatures: [],
         changeRequests: [],
+        fileMissing: false,
       },
     ],
     ...documentFlags('draft'),
@@ -334,6 +335,17 @@ describe('nigel-documents-screen', () => {
     );
   });
 
+  it('filters by active clients only and asks for a PDF', async () => {
+    const { el } = await mount();
+    const options = [...find(el, '[data-client-filter]').querySelectorAll('wa-option')].map(
+      (option) => option.textContent?.trim(),
+    );
+    expect(options).toEqual(['All clients', 'Cedar Systems', 'Juniper Labs']);
+    expect(find<WcDropzone>(el, 'wc-dropzone').prompt).toBe(
+      'Drop a PDF here, or choose a file',
+    );
+  });
+
   it('offers active clients and the server’s kinds for filing', async () => {
     const { el, fake } = await mount();
     expect(fake.calls).toContain('getDocumentKinds');
@@ -427,6 +439,23 @@ describe('nigel-documents-screen', () => {
     expect(el.shadowRoot?.querySelector('[data-back]')?.getAttribute('href')).toBe(
       '#/documents',
     );
+  });
+
+  it('says so when a version’s PDF is missing from disk', async () => {
+    const base = documentDetail();
+    const ok = await mount('id=12', withDetail(base));
+    expect(ok.el.shadowRoot?.querySelector('[data-file-missing]')).toBeNull();
+    document.body.innerHTML = '';
+
+    const lost = await mount(
+      'id=12',
+      withDetail({
+        ...base,
+        versions: base.versions.map((version) => ({ ...version, fileMissing: true })),
+      }),
+    );
+    const notice = find(lost.el, '[data-file-missing]');
+    expect(notice.getAttribute('message')).toContain('The PDF for v1 is missing');
   });
 
   it('actions follow the can flags, never the status word', async () => {
@@ -679,6 +708,7 @@ describe('nigel-documents-screen', () => {
         versions: [
           {
             id: 40,
+            fileMissing: false,
             documentId: 12,
             number: 1,
             checksum: `sha256:${'a'.repeat(64)}`,

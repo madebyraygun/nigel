@@ -78,6 +78,12 @@ pub fn run(path: &str) -> Result<()> {
         crate::cli::backup::snapshot(&conn, &safety_path)?;
         drop(conn);
         println!("Safety backup saved to {}", safety_path.display());
+        if crate::cli::backup::copy_documents_out(&data_dir, &safety_path)? > 0 {
+            println!(
+                "Safety copy of filed documents saved to {}",
+                crate::cli::backup::documents_path_for(&safety_path).display()
+            );
+        }
     }
 
     // 5. Restore using the SQLite backup API (handles WAL and encryption correctly)
@@ -85,6 +91,14 @@ pub fn run(path: &str) -> Result<()> {
     crate::cli::backup::snapshot(&src_conn, &db_path)?;
     drop(src_conn);
     restrict_file_permissions(&db_path)?;
+
+    match crate::cli::backup::restore_documents_in(&data_dir, &backup_path)? {
+        Some(files) => println!("Restored {files} filed PDF(s)."),
+        None => println!(
+            "No documents folder next to the backup ({}); filed PDFs were left as they are.",
+            crate::cli::backup::documents_path_for(&backup_path).display()
+        ),
+    }
 
     // 6. Validate the restored database
     let conn = get_connection(&db_path)?;

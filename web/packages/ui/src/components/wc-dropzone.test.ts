@@ -54,6 +54,20 @@ describe('wc-dropzone', () => {
     expect(seen.mock.calls[0][0]).toBe(dropped);
   });
 
+  it('asks for a statement unless told otherwise', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.prompt')?.textContent).toBe(
+      'Drop a statement here, or choose a file',
+    );
+  });
+
+  it('shows the prompt its owner sets', async () => {
+    const el = await mount({ prompt: 'Drop a PDF here, or choose a file' });
+    expect(el.shadowRoot?.querySelector('.prompt')?.textContent).toBe(
+      'Drop a PDF here, or choose a file',
+    );
+  });
+
   it('opens the picker when the well is clicked', async () => {
     const el = await mount();
     const input = el.shadowRoot?.querySelector('input[type="file"]') as HTMLInputElement;

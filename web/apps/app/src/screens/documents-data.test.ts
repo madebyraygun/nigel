@@ -31,6 +31,7 @@ function version(overrides: Partial<DocumentVersionDetail>): DocumentVersionDeta
     recipients: [],
     signatures: [],
     changeRequests: [],
+    fileMissing: false,
     ...overrides,
   };
 }

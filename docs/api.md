@@ -638,7 +638,8 @@ client's name, every version, and what may be done to it next:
           "pageUrl": "https://docs.example.com/d/6b0e…/4ac2…/index.html" }
       ],
       "signatures": [],
-      "changeRequests": [] }
+      "changeRequests": [],
+      "fileMissing": false }
   ],
   "canEdit": false, "canSend": false, "canRevise": true, "canAccept": true,
   "canRequestChanges": true, "canDecline": true, "canCountersign": false,
@@ -652,6 +653,9 @@ one, `typedName`, `email`, `ip` and `userAgent`. A change request carries
 `name`, `note`, `requestedAt`, `method`, `checksum` and the same online
 metadata. `checksum` always carries the `sha256:` prefix.
 
+- **`fileMissing`** is `true` on a version whose PDF is absent from the data
+  directory, as after a restore from a backup that lacked the documents folder.
+  Fetching such a version's PDF or sending it answers `409` `file_missing`.
 - **No token is serialized.** Neither the document's token nor a recipient's
   appears as a field, and a version's stored file path does not either. Those
   tokens are the capability in a published address.

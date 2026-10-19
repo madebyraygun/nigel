@@ -118,7 +118,7 @@ nigel document kinds rename 2 "Master Agreement"  # Rename a kind
 nigel document kinds deactivate 2                 # Stop offering a kind for new documents
 nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf  # File a PDF as a draft
 nigel document list                               # Every document (--client, --status, --kind narrow it)
-nigel document show 3                             # Versions, recipients, signatures and change requests
+nigel document show 3                             # Versions, recipients, signatures and change requests; a version whose PDF is missing is flagged
 nigel document preview 3                          # Write the recipient pages and PDF to <data_dir>/previews/document-3/, no network
 nigel document preview 3 --output-dir /tmp        # Write it to /tmp/document-3/ instead
 nigel document send 3                             # Confirm, then publish and email the signer a link of their own
@@ -137,9 +137,9 @@ nigel serve --port 8080                           # Bind a different port (0 = e
 nigel serve --no-open                             # Print the tokenized URL instead of opening a browser
 nigel status                                      # Show active DB and summary stats, including a Dropped rows line naming the accounts
 nigel load ~/other-books                          # Switch to a different data directory
-nigel backup                                      # Back up DB to <data_dir>/backups/
-nigel backup --output /tmp/nigel-backup.db        # Back up to custom path
-nigel restore ~/backups/nigel-20250301-120000.db  # Restore from a backup file
+nigel backup                                      # Back up DB and filed document PDFs to <data_dir>/backups/
+nigel backup --output /tmp/nigel-backup.db        # Back up to custom path (PDFs in /tmp/nigel-backup.documents/)
+nigel restore ~/backups/nigel-20250301-120000.db  # Restore the DB and, when nigel-20250301-120000.documents/ sits beside it, the filed PDFs
 nigel password set                                # Encrypt an unencrypted database
 nigel password change                             # Change password on encrypted database
 nigel password remove                             # Decrypt database (remove password)
