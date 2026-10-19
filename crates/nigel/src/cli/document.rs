@@ -3,6 +3,7 @@ use std::path::Path;
 use comfy_table::{Cell, Table};
 
 use nigel_core::db::get_connection;
+use nigel_core::documents::execute::{complete_execution, regenerate_signing_record};
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
 use nigel_core::documents::lifecycle::{
@@ -27,7 +28,8 @@ use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
 use nigel_core::invoicing::wiring::{
-    build_document_clients, company_name, optional_document_publisher, optional_response_source,
+    build_document_clients, company_name, optional_document_mailer, optional_document_publisher,
+    optional_response_source,
 };
 use nigel_core::settings::{
     derive_documents_base, documents_config, documents_status, get_data_dir, DocumentsConfig,
@@ -538,8 +540,57 @@ pub fn decline(id: i64, note: Option<&str>, date: &str) -> Result<()> {
     record_then_republish(id, date, |conn, at| record_decline(conn, id, note, at))
 }
 
+/// Countersign, then publish the signing record, republish the pages and
+/// email the signed copy. Everything after the countersignature is a warning
+/// when it fails, never an error.
 pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
-    record_then_republish(id, date, |conn, at| record_countersign(conn, id, name, at))
+    let date = validate_moment(date, "date")?;
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    record_countersign(&conn, id, name, &date)?;
+    println!("Recorded: document #{id} is executed.");
+    let config = documents_config();
+    let company = company_name(&conn);
+    let (mailer, mut warnings) = optional_document_mailer(&config, &company);
+    warnings.extend(complete_execution(
+        &conn,
+        &data_dir,
+        id,
+        &company,
+        optional_document_publisher(&config).as_ref(),
+        optional_response_source(&config).as_ref(),
+        mailer.as_ref(),
+    ));
+    for warning in warnings {
+        eprintln!("{}", printable(&warning));
+    }
+    Ok(())
+}
+
+pub fn signing_record(id: i64) -> Result<()> {
+    let data_dir = get_data_dir();
+    let conn = get_connection(&data_dir.join("nigel.db"))?;
+    let config = documents_config();
+    let publisher = optional_document_publisher(&config);
+    let regenerated = regenerate_signing_record(
+        &conn,
+        &data_dir,
+        id,
+        &company_name(&conn),
+        publisher.as_ref(),
+        optional_response_source(&config).as_ref(),
+    )?;
+    println!(
+        "Wrote the signing record for document #{id}: {}",
+        regenerated.path.display()
+    );
+    if publisher.is_some() && regenerated.warnings.is_empty() {
+        println!("Published it as {}.", regenerated.filename);
+    }
+    for warning in regenerated.warnings {
+        eprintln!("{}", printable(&warning));
+    }
+    Ok(())
 }
 
 fn confirm_unless_piped(id: i64) -> Result<()> {

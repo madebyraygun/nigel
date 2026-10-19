@@ -3,6 +3,7 @@
 //! simple electronic signature with an audit trail: a typed name, an explicit
 //! consent, a time, an IP and a user agent, bound to a SHA-256 checksum of the
 //! exact PDF.
+pub mod execute;
 pub mod guards;
 pub mod kinds;
 pub mod lifecycle;
@@ -10,6 +11,7 @@ pub mod model;
 pub mod record;
 pub mod render;
 pub mod send;
+pub mod signing_record;
 pub mod status;
 pub mod store;
 pub mod sync;

@@ -1,6 +1,7 @@
 //! Documents: the list, one document in full, the active kinds, the sandboxed
 //! preview of the page a signer would receive, filing, editing and revising,
-//! the send, the manual responses, withdrawal and the response sync.
+//! the send, the manual responses, countersigning, withdrawal, the response
+//! sync and an executed document's signing record.
 //!
 //! A filed or revised PDF arrives as multipart and goes through the uploads
 //! spool like a statement does: its name is sanitized, its bytes must open with
@@ -29,6 +30,7 @@ use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::documents::execute::complete_execution;
 use crate::documents::guards::{can, ensure_client_active_for_documents, Action};
 use crate::documents::kinds::list_kinds;
 use crate::documents::lifecycle::{
@@ -48,6 +50,9 @@ use crate::documents::send::{
     default_signer, preview_recipients, send_document_traced, DocumentSendStep, RecipientLink,
     SendContext,
 };
+use crate::documents::signing_record::{
+    generate_signing_record, read_signing_record, RECORD_UNAVAILABLE,
+};
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
     update_document, DocumentFilter, DocumentUpdate, NewDocument,
@@ -58,7 +63,8 @@ use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
 use crate::invoicing::send::StepOutcome;
 use crate::invoicing::wiring::{
-    build_document_clients, company_name, optional_document_publisher, optional_response_source,
+    build_document_clients, company_name, optional_document_mailer, optional_document_publisher,
+    optional_response_source,
 };
 use crate::settings::DocumentsConfig;
 
@@ -88,6 +94,10 @@ pub fn routes() -> Router<AppState> {
         .route("/documents/{id}/revise", post(revise).layer(upload_limit()))
         .route("/documents/{id}/preview", get(preview_html))
         .route("/documents/{id}/preview.pdf", get(preview_pdf))
+        .route(
+            "/documents/{id}/signing-record.pdf",
+            get(signing_record_pdf),
+        )
         .route("/document-kinds", get(kinds))
 }
 
@@ -773,16 +783,39 @@ async fn decline(
 }
 
 /// `POST /api/documents/{id}/countersign` — countersign an accepted document.
+/// The countersignature commits first; the signing record, the republished
+/// pages and the signed-copy emails follow best-effort, and what could not be
+/// done comes back as `warnings`.
 async fn countersign(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<i64>,
     ApiJson(request): ApiJson<AcceptRequest>,
 ) -> ApiResult<Json<ActionResult>> {
     let date = response_date(request.date)?;
-    record_and_republish(&state, id, move |conn| {
-        record_countersign(conn, id, &request.name, &date)
+    let config = crate::settings::documents_config();
+    let publisher = optional_document_publisher(&config);
+    let source = optional_response_source(&config);
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            record_countersign(conn, id, &request.name, &date)
+                .map_err(|e| not_found_because(e, "document_not_found"))?;
+            let company = company_name(conn);
+            let (mailer, mut warnings) = optional_document_mailer(&config, &company);
+            warnings.extend(complete_execution(
+                conn,
+                &state.data_dir(),
+                id,
+                &company,
+                publisher.as_ref(),
+                source.as_ref(),
+                mailer.as_ref(),
+            ));
+            Ok(ActionResult::after_commit(conn, id, warnings))
+        }
     })
-    .await
+    .await?;
+    Ok(Json(result))
 }
 
 /// `POST /api/documents/{id}/withdraw` — replace every published page with a
@@ -969,6 +1002,40 @@ async fn preview_pdf(
             ),
         ],
         Body::from(bytes),
+    )
+        .into_response())
+}
+
+/// `GET /api/documents/{id}/signing-record.pdf` — the executed version's
+/// signing record: the copy kept beside the version's PDF, generated and kept
+/// first when there is none yet.
+async fn signing_record_pdf(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Response> {
+    let record = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            get_document(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
+            let data_dir = state.data_dir();
+            if let Some(record) = read_signing_record(conn, &data_dir, id)? {
+                return Ok(record);
+            }
+            generate_signing_record(conn, &data_dir, id, &company_name(conn))?
+                .ok_or_else(|| ApiError::feature_disabled(RECORD_UNAVAILABLE))
+        }
+    })
+    .await?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("inline; filename=\"{}\"", record.filename),
+            ),
+        ],
+        Body::from(record.bytes),
     )
         .into_response())
 }
@@ -1840,6 +1907,61 @@ mod tests {
         assert_eq!(executed["status"], "executed", "{executed}");
         assert_eq!(executed["canCountersign"], false, "{executed}");
         assert_eq!(executed["canWithdraw"], false, "{executed}");
+        let warnings: Vec<&str> = executed["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w.as_str().unwrap())
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("Mailgun is not configured")),
+            "{executed}"
+        );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[tokio::test]
+    async fn an_executed_document_serves_the_signing_record_kept_at_countersign() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{id}/signing-record.pdf");
+
+        let (status, body) = get_json(&app, &uri, &token).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_not_executed");
+
+        for (step, name) in [("accept", "Pat Example"), ("countersign", "Sam Example")] {
+            post_ok(
+                &app,
+                &token,
+                &format!("/api/documents/{id}/{step}"),
+                serde_json::json!({ "name": name, "date": "2026-10-07" }),
+            )
+            .await;
+        }
+        let kept = std::fs::read(
+            db_path
+                .parent()
+                .unwrap()
+                .join(crate::documents::signing_record::signing_record_rel(id, 1)),
+        )
+        .expect("the countersign kept a local copy");
+
+        let response = get_response(&app, &uri, &token).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(content_type(&response), "application/pdf");
+        assert_eq!(
+            header_str(&response, header::CONTENT_DISPOSITION),
+            "inline; filename=\"Website-rebuild-v1-signing-record.pdf\""
+        );
+        assert_eq!(body_bytes(response).await, kept);
+
+        let (status, _) = get_json(&app, "/api/documents/999/signing-record.pdf", &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

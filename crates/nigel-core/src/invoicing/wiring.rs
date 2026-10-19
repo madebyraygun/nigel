@@ -388,6 +388,40 @@ pub fn optional_document_publisher(cfg: &DocumentsConfig) -> Option<R2Publisher>
     })
 }
 
+/// The document mail client, when `mailgun_api_key`, `mailgun_domain` and
+/// `from_email` are all set, with the cautions its configuration earns. A
+/// configuration `build_document_clients` would refuse answers no client and
+/// says why, so a best-effort email reports it rather than failing.
+pub fn optional_document_mailer(
+    cfg: &DocumentsConfig,
+    company: &str,
+) -> (Option<MailgunClient>, Vec<String>) {
+    let inv = &cfg.invoicing;
+    let (Some(api_key), Some(domain), Some(from_email)) = (
+        inv.mailgun_api_key.clone(),
+        inv.mailgun_domain.clone(),
+        inv.from_email.clone(),
+    ) else {
+        return (None, Vec::new());
+    };
+    match build_mailer(
+        Some(api_key),
+        Some(domain),
+        Some(from_email),
+        inv.from_name.clone(),
+        inv.reply_to_email.clone(),
+        company,
+    ) {
+        Ok((mail, warnings)) => (Some(mail), warnings),
+        Err(e) => (
+            None,
+            vec![format!(
+                "Warning: the mail configuration was refused ({e})."
+            )],
+        ),
+    }
+}
+
 /// The private response store, when its four keys are set.
 pub fn optional_response_source(cfg: &DocumentsConfig) -> Option<R2PrivateStore> {
     let inv = &cfg.invoicing;
@@ -501,6 +535,31 @@ mod tests {
             r2_bucket: Some("billing".into()),
             public_base_url: Some("https://billing.example.com/i".into()),
         }
+    }
+
+    #[test]
+    fn the_document_mailer_is_absent_unconfigured_and_a_warning_when_refused() {
+        let (mail, warnings) = optional_document_mailer(&DocumentsConfig::default(), "Initech");
+        assert!(mail.is_none() && warnings.is_empty());
+
+        let configured = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            ..Default::default()
+        };
+        let (mail, _) = optional_document_mailer(&configured, "Initech");
+        assert!(mail.is_some());
+
+        let refused = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                from_name: Some("Cedar\r\nBcc: x@y.test".into()),
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        };
+        let (mail, warnings) = optional_document_mailer(&refused, "Initech");
+        assert!(mail.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("from_name"), "{warnings:?}");
     }
 
     #[test]
