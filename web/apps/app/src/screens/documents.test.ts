@@ -483,6 +483,23 @@ describe('nigel-documents-screen', () => {
     );
   });
 
+  it('offers the signing record beside the PDF only once the document is executed', async () => {
+    const sent = await mount('id=12', withDetail(documentDetail()));
+    expect(sent.el.shadowRoot?.querySelector('[data-signing-record-link]')).toBeNull();
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const { el } = await mount(
+      'id=12',
+      withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') })),
+    );
+    const link = find(el, '[data-signing-record-link]');
+    expect(link.getAttribute('href')).toBe('/document-signing-record/12.pdf');
+    expect(link.textContent?.trim()).toBe('Download signing record');
+    expect(find(el, '[data-pdf-link]').nextElementSibling).toBe(link);
+  });
+
   it('send posts the recipient editor’s value', async () => {
     const fake = withDetail(documentDetail());
     fake.clientContacts[1] = CEDAR_CONTACTS;

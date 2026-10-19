@@ -536,6 +536,8 @@ export interface ApiClient {
   documentPreviewUrl(id: number, format: 'html' | 'pdf'): string;
   /** The latest version's PDF, in the form the running client can use. */
   documentPreviewTarget(id: number): ExportTarget;
+  /** An executed document's signing record PDF, in the form the running client can use. */
+  documentSigningRecordTarget(id: number): ExportTarget;
   /** The signer's page as HTML: an iframe cannot report a failed load, bytes can. */
   documentPreviewHtml(id: number): Promise<string>;
 }
@@ -1022,6 +1024,14 @@ export class FetchApiClient implements ApiClient {
 
   documentPreviewTarget(id: number): ExportTarget {
     return { kind: 'href', href: this.documentPreviewUrl(id, 'pdf') };
+  }
+
+  protected documentSigningRecordUrl(id: number): string {
+    return `${this.baseUrl}/documents/${id}/signing-record.pdf`;
+  }
+
+  documentSigningRecordTarget(id: number): ExportTarget {
+    return { kind: 'href', href: this.documentSigningRecordUrl(id) };
   }
 
   documentPreviewHtml(id: number): Promise<string> {
