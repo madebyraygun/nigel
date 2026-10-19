@@ -213,6 +213,58 @@ pub fn multipart_body(field: &str, filename: &str, content: &[u8]) -> (String, V
     (format!("multipart/form-data; boundary={BOUNDARY}"), body)
 }
 
+/// A `multipart/form-data` body with text fields and, optionally, a file
+/// field named `file`.
+pub fn multipart_form(fields: &[(&str, &str)], file: Option<(&str, &[u8])>) -> (String, Vec<u8>) {
+    const BOUNDARY: &str = "----nigeltestboundary";
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\n\
+                 Content-Disposition: form-data; name=\"{name}\"\r\n\r\n\
+                 {value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    if let Some((filename, content)) = file {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\n\
+                 Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
+                 Content-Type: application/octet-stream\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(content);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+
+    (format!("multipart/form-data; boundary={BOUNDARY}"), body)
+}
+
+/// POST a [`multipart_form`] with a valid session.
+pub async fn post_multipart(
+    app: &Router,
+    uri: &str,
+    token: &str,
+    fields: &[(&str, &str)],
+    file: Option<(&str, &[u8])>,
+) -> (StatusCode, serde_json::Value) {
+    let (content_type, body) = multipart_form(fields, file);
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::HOST, HOST)
+        .header(header::COOKIE, format!("nigel_session={token}"))
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(body))
+        .expect("request");
+    send(app, request).await
+}
+
 /// POST a file to an upload route with a valid session.
 pub async fn upload_file(
     app: &Router,
@@ -272,7 +324,7 @@ pub async fn ok_json(app: &Router, uri: &str, token: &str) -> serde_json::Value 
 /// Every route that reads the database, for tests that must hold across all of
 /// them — the locked guard especially, where a route mounted in the wrong place
 /// would silently answer while the database is still encrypted.
-pub const DATA_ROUTES: [&str; 24] = [
+pub const DATA_ROUTES: [&str; 27] = [
     "/api/settings/app",
     "/api/reports/pnl",
     "/api/reports/expenses",
@@ -297,14 +349,19 @@ pub const DATA_ROUTES: [&str; 24] = [
     "/api/invoices/1248",
     "/api/invoices/aging",
     "/api/invoices/next-number",
+    "/api/documents",
+    "/api/documents/1",
+    "/api/document-kinds",
 ];
 
-/// The two invoice preview routes. Kept out of [`DATA_ROUTES`] for the reason
-/// [`EXPORT_ROUTES`] is: a successful preview is a document, not JSON — only
-/// the failures share a shape with the rest of the API.
-pub const PREVIEW_ROUTES: [&str; 2] = [
+/// The invoice and document preview routes. Kept out of [`DATA_ROUTES`] for
+/// the reason [`EXPORT_ROUTES`] is: a successful preview is a page or a PDF,
+/// not JSON — only the failures share a shape with the rest of the API.
+pub const PREVIEW_ROUTES: [&str; 4] = [
     "/api/invoices/1248/preview",
     "/api/invoices/1248/preview.pdf",
+    "/api/documents/1/preview",
+    "/api/documents/1/preview.pdf",
 ];
 
 /// Every export route, named without the `format` each of them requires. They
@@ -329,7 +386,7 @@ pub const EXPORT_ROUTES: [&str; 8] = [
 /// — `rules/test` and `imports/preview` are dry runs — and a rule stated as
 /// "the ones that write" invites the next dry run to be left out of a list the
 /// guard still has to cover.
-pub const WRITE_ROUTES: [(&str, &str, &str); 35] = [
+pub const WRITE_ROUTES: [(&str, &str, &str); 43] = [
     ("POST", "/api/clients", r#"{"name":"X"}"#),
     ("PATCH", "/api/clients/1", r#"{"name":"X"}"#),
     ("DELETE", "/api/clients/1", ""),
@@ -402,6 +459,18 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 35] = [
     ("DELETE", "/api/categories/1", ""),
     ("POST", "/api/rules", r#"{"pattern":"X","categoryId":1}"#),
     ("POST", "/api/rules/test", r#"{"pattern":"X"}"#),
+    ("PATCH", "/api/documents/1", r#"{"title":"X"}"#),
+    ("POST", "/api/documents/1/send", r#"{"confirm":true}"#),
+    ("POST", "/api/documents/1/accept", r#"{"name":"X"}"#),
+    (
+        "POST",
+        "/api/documents/1/request-changes",
+        r#"{"name":"X","note":"X"}"#,
+    ),
+    ("POST", "/api/documents/1/decline", "{}"),
+    ("POST", "/api/documents/1/countersign", r#"{"name":"X"}"#),
+    ("POST", "/api/documents/1/withdraw", "{}"),
+    ("POST", "/api/documents/sync", "{}"),
     ("DELETE", "/api/imports/1", ""),
     // The guard runs before the extractors, so these bodies only have to reach
     // the router — the upload route never gets as far as wanting multipart.
@@ -437,6 +506,18 @@ pub fn seeded_db() -> (tempfile::TempDir, PathBuf) {
     let (dir, db_path) = temp_db();
     let conn = crate::db::open_connection(&db_path, None).expect("open db");
     seed(&conn);
+    crate::documents::store::file_document(
+        &conn,
+        db_path.parent().unwrap(),
+        &crate::documents::store::NewDocument {
+            client_id: 1,
+            kind: "Proposal",
+            title: "Website rebuild",
+        },
+        &crate::documents::testing::fixture_pdf("seed"),
+        "2026-10-05",
+    )
+    .expect("document");
     drop(conn);
     (dir, db_path)
 }

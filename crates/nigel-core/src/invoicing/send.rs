@@ -382,6 +382,7 @@ mod tests {
     use crate::error::{NigelError, Result};
     use crate::invoicing::clients::add_client;
     use crate::invoicing::gateway::fake_logo_publishing;
+    use crate::invoicing::gateway::OutgoingMail;
     use crate::invoicing::gateway::{
         AssetPublisher, Mailer, PaidSession, PaymentGateway, PaymentLink,
     };
@@ -483,19 +484,12 @@ mod tests {
         body: RefCell<String>,
     }
     impl Mailer for FakeMail {
-        fn send_invoice(
-            &self,
-            to: &str,
-            cc: &[String],
-            s: &str,
-            text: &str,
-            _p: &[u8],
-        ) -> Result<()> {
+        fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
             *self.sent.borrow_mut() += 1;
-            *self.subject.borrow_mut() = s.to_string();
-            *self.to.borrow_mut() = to.to_string();
-            *self.cc.borrow_mut() = cc.to_vec();
-            *self.body.borrow_mut() = text.to_string();
+            *self.subject.borrow_mut() = mail.subject.to_string();
+            *self.to.borrow_mut() = mail.to.to_string();
+            *self.cc.borrow_mut() = mail.cc.to_vec();
+            *self.body.borrow_mut() = mail.text.to_string();
             Ok(())
         }
     }
@@ -1088,14 +1082,7 @@ mod tests {
 
     struct FailMail;
     impl Mailer for FailMail {
-        fn send_invoice(
-            &self,
-            _t: &str,
-            _cc: &[String],
-            _s: &str,
-            _h: &str,
-            _p: &[u8],
-        ) -> Result<()> {
+        fn send(&self, _mail: &OutgoingMail<'_>) -> Result<()> {
             Err(NigelError::Other("mailgun 401: Invalid private key".into()))
         }
     }

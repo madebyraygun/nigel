@@ -91,6 +91,8 @@ function sentenceFor(details: ConflictDetails): string | null {
     }
     case 'has_invoices':
       return `${plural(count, 'invoice')} ${count === 1 ? 'bills' : 'bill'} this client. Nigel will not delete a client that has been billed.`;
+    case 'has_documents':
+      return `This client has ${plural(count, 'document')}. Nigel will not delete a client that has documents filed.`;
     case 'duplicate_name':
       return details.name
         ? `A client named “${details.name}” already exists.`

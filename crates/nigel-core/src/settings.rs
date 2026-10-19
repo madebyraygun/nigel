@@ -41,6 +41,12 @@ pub struct Settings {
     pub r2_bucket: Option<String>,
     #[serde(default)]
     pub public_base_url: Option<String>,
+    #[serde(default)]
+    pub r2_private_bucket: Option<String>,
+    #[serde(default)]
+    pub documents_base_url: Option<String>,
+    #[serde(default)]
+    pub document_response_url: Option<String>,
 }
 
 impl Default for Settings {
@@ -62,6 +68,9 @@ impl Default for Settings {
             r2_secret_key: None,
             r2_bucket: None,
             public_base_url: None,
+            r2_private_bucket: None,
+            documents_base_url: None,
+            document_response_url: None,
         }
     }
 }
@@ -257,14 +266,18 @@ pub struct InvoicingConfig {
 }
 
 pub fn invoicing_config_from(s: &Settings) -> InvoicingConfig {
-    // Under a `TempConfigDir` the environment is not consulted at all — see
-    // `SUPPRESS_INVOICING_ENV`, which exists so that a machine with the nine
-    // `NIGEL_*` variables exported cannot turn an offline test into a real send.
+    invoicing_config_with(s, process_env)
+}
+
+/// The process environment, or nothing at all under a `TempConfigDir` — see
+/// `SUPPRESS_INVOICING_ENV`, which exists so that a machine with the `NIGEL_*`
+/// variables exported cannot turn an offline test into a real send.
+fn process_env(name: &str) -> Option<String> {
     #[cfg(any(test, feature = "testutil"))]
     if invoicing_env_is_suppressed() {
-        return invoicing_config_with(s, |_| None);
+        return None;
     }
-    invoicing_config_with(s, |name| std::env::var(name).ok())
+    std::env::var(name).ok()
 }
 
 /// The env lookup is injected so tests can exercise the env-wins precedence
@@ -289,6 +302,93 @@ fn invoicing_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
 
 pub fn invoicing_config() -> InvoicingConfig {
     invoicing_config_from(&load_settings())
+}
+
+/// Everything the documents feature reads: the invoicing keys it shares with
+/// invoices plus the three it adds. Stripe is carried but never required.
+#[derive(Default)]
+pub struct DocumentsConfig {
+    pub invoicing: InvoicingConfig,
+    pub r2_private_bucket: Option<String>,
+    pub documents_base_url: Option<String>,
+    pub document_response_url: Option<String>,
+}
+
+pub fn documents_config_from(s: &Settings) -> DocumentsConfig {
+    documents_config_with(s, process_env)
+}
+
+fn documents_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> DocumentsConfig {
+    let env_or = |name: &str, file_val: &Option<String>| env(name).or_else(|| file_val.clone());
+    DocumentsConfig {
+        invoicing: invoicing_config_with(s, &env),
+        r2_private_bucket: env_or("NIGEL_R2_PRIVATE_BUCKET", &s.r2_private_bucket),
+        documents_base_url: env_or("NIGEL_DOCUMENTS_BASE_URL", &s.documents_base_url),
+        document_response_url: env_or("NIGEL_DOCUMENT_RESPONSE_URL", &s.document_response_url),
+    }
+}
+
+pub fn documents_config() -> DocumentsConfig {
+    documents_config_from(&load_settings())
+}
+
+/// The base URL documents publish under: the explicit override, or the invoice
+/// base with its trailing `/i` replaced by `/d`. `None` when neither gives one.
+pub fn derive_documents_base(
+    documents_base_url: Option<&str>,
+    public_base_url: Option<&str>,
+) -> Option<String> {
+    if let Some(explicit) = documents_base_url {
+        return Some(explicit.to_string());
+    }
+    let invoice_base = public_base_url?.trim_end_matches('/');
+    invoice_base
+        .strip_suffix("/i")
+        .map(|root| format!("{root}/d"))
+}
+
+/// Which document features are usable, by key name only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentsStatus {
+    pub send_configured: bool,
+    pub sync_configured: bool,
+    pub response_form: bool,
+    pub missing: Vec<&'static str>,
+}
+
+pub fn documents_status(cfg: &DocumentsConfig) -> DocumentsStatus {
+    let inv = &cfg.invoicing;
+    let documents_base = derive_documents_base(
+        cfg.documents_base_url.as_deref(),
+        inv.public_base_url.as_deref(),
+    );
+    let keys: [(&'static str, bool); 9] = [
+        ("mailgun_api_key", inv.mailgun_api_key.is_some()),
+        ("mailgun_domain", inv.mailgun_domain.is_some()),
+        ("from_email", inv.from_email.is_some()),
+        ("r2_account_id", inv.r2_account_id.is_some()),
+        ("r2_access_key", inv.r2_access_key.is_some()),
+        ("r2_secret_key", inv.r2_secret_key.is_some()),
+        ("r2_bucket", inv.r2_bucket.is_some()),
+        ("r2_private_bucket", cfg.r2_private_bucket.is_some()),
+        ("documents_base_url", documents_base.is_some()),
+    ];
+    let missing: Vec<&'static str> = keys
+        .iter()
+        .filter(|(_, set)| !set)
+        .map(|(name, _)| *name)
+        .collect();
+    let sync_configured = inv.r2_account_id.is_some()
+        && inv.r2_access_key.is_some()
+        && inv.r2_secret_key.is_some()
+        && cfg.r2_private_bucket.is_some();
+    DocumentsStatus {
+        send_configured: missing.is_empty(),
+        sync_configured,
+        response_form: cfg.document_response_url.is_some(),
+        missing,
+    }
 }
 
 /// Which invoicing keys are set, by name.
@@ -668,6 +768,79 @@ mod tests {
         assert_eq!(cfg3.public_base_url, None);
         assert_eq!(cfg3.mailgun_domain, None);
         assert_eq!(cfg3.from_email, None);
+    }
+
+    #[test]
+    fn the_documents_base_is_the_override_or_the_invoice_base_with_d() {
+        assert_eq!(
+            derive_documents_base(None, Some("https://billing.example.com/i")),
+            Some("https://billing.example.com/d".into())
+        );
+        assert_eq!(
+            derive_documents_base(None, Some("https://billing.example.com/i/")),
+            Some("https://billing.example.com/d".into())
+        );
+        assert_eq!(
+            derive_documents_base(
+                Some("https://docs.example.com/d"),
+                Some("https://billing.example.com/i")
+            ),
+            Some("https://docs.example.com/d".into())
+        );
+        assert_eq!(
+            derive_documents_base(None, Some("https://billing.example.com")),
+            None
+        );
+        assert_eq!(derive_documents_base(None, None), None);
+    }
+
+    #[test]
+    fn documents_need_no_stripe_key_and_name_what_is_missing() {
+        let cfg = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                stripe_secret_key: None,
+                ..fully_configured()
+            },
+            r2_private_bucket: None,
+            ..Default::default()
+        };
+        let status = documents_status(&cfg);
+        assert!(!status.send_configured);
+        assert_eq!(status.missing, vec!["r2_private_bucket"]);
+        assert!(!status.response_form);
+    }
+
+    #[test]
+    fn a_fully_configured_documents_setup_sends_syncs_and_serves_the_form() {
+        let cfg = DocumentsConfig {
+            invoicing: fully_configured(),
+            r2_private_bucket: Some("private".into()),
+            document_response_url: Some("https://docs.example.com/d/respond".into()),
+            ..Default::default()
+        };
+        let status = documents_status(&cfg);
+        assert!(status.send_configured && status.sync_configured && status.response_form);
+        assert!(status.missing.is_empty());
+    }
+
+    #[test]
+    fn the_document_keys_resolve_from_the_environment_first() {
+        let file = Settings {
+            r2_private_bucket: Some("file-private".into()),
+            ..Settings::default()
+        };
+        let cfg = documents_config_with(&file, |name| match name {
+            "NIGEL_R2_PRIVATE_BUCKET" => Some("env-private".into()),
+            "NIGEL_DOCUMENT_RESPONSE_URL" => Some("https://docs.example.com/d/respond".into()),
+            _ => None,
+        });
+        assert_eq!(cfg.r2_private_bucket.as_deref(), Some("env-private"));
+        assert_eq!(
+            cfg.document_response_url.as_deref(),
+            Some("https://docs.example.com/d/respond")
+        );
+        let from_file = documents_config_with(&file, |_| None);
+        assert_eq!(from_file.r2_private_bucket.as_deref(), Some("file-private"));
     }
 
     #[test]

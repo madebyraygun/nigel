@@ -72,7 +72,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            workers/document-response/package-lock.json
 
       - name: Install web dependencies
         working-directory: web
@@ -93,6 +95,18 @@ jobs:
       - name: Build web
         working-directory: web
         run: npm run build
+
+      - name: Install Worker dependencies
+        working-directory: workers/document-response
+        run: npm ci
+
+      - name: Typecheck Worker
+        working-directory: workers/document-response
+        run: npm run typecheck
+
+      - name: Test Worker
+        working-directory: workers/document-response
+        run: npm test
 
       - name: Check formatting
         run: cargo fmt --check

@@ -441,7 +441,7 @@ fn import_error(err: NigelError) -> ApiError {
     }
 }
 
-fn multipart_error(err: MultipartError) -> ApiError {
+pub(super) fn multipart_error(err: MultipartError) -> ApiError {
     if err.status() == StatusCode::PAYLOAD_TOO_LARGE {
         ApiError::payload_too_large(format!(
             "That file is larger than the {} MB upload limit.",

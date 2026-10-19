@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 /// Every `NIGEL_*` key `settings::invoicing_config()` reads. Env vars win over the
 /// settings file, and the temp HOME cannot mask them, so they are cleared per command.
-pub const INVOICING_ENV_VARS: [&str; 12] = [
+pub const INVOICING_ENV_VARS: [&str; 15] = [
     "NIGEL_STRIPE_SECRET_KEY",
     "NIGEL_MAILGUN_API_KEY",
     "NIGEL_MAILGUN_DOMAIN",
@@ -24,6 +24,9 @@ pub const INVOICING_ENV_VARS: [&str; 12] = [
     "NIGEL_R2_SECRET_KEY",
     "NIGEL_R2_BUCKET",
     "NIGEL_PUBLIC_BASE_URL",
+    "NIGEL_R2_PRIVATE_BUCKET",
+    "NIGEL_DOCUMENTS_BASE_URL",
+    "NIGEL_DOCUMENT_RESPONSE_URL",
 ];
 
 /// Bounds any run that could reach the interactive password prompt, so a test

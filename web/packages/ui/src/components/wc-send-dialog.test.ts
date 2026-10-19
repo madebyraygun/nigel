@@ -510,6 +510,86 @@ describe('wc-send-dialog', () => {
   });
 });
 
+describe('wc-send-dialog document mode', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  const DOC = {
+    mode: 'document' as const,
+    documentTitle: 'Master Services Agreement',
+    recipientCount: 2,
+    publishHost: 'docs.example.com',
+  };
+
+  it('document mode names the title and never mentions Stripe', async () => {
+    const el = await mount(DOC);
+    const dialog = el.shadowRoot?.querySelector('wa-dialog');
+    expect(dialog?.getAttribute('label')).toBe('Send \u201cMaster Services Agreement\u201d?');
+    const text = el.shadowRoot?.textContent ?? '';
+    expect(text).not.toMatch(/stripe/i);
+    expect(el.shadowRoot?.querySelector('wc-money')).toBeNull();
+    const consequences = el.shadowRoot?.querySelector('[data-consequences]')?.textContent ?? '';
+    expect(consequences).toContain('publish the document to docs.example.com');
+    expect(consequences).toContain(
+      'email each of the 2 recipients their own link with the PDF attached',
+    );
+    expect(consequences).toContain('open it for online responses');
+  });
+
+  it('says responses are recorded by hand when there is no response form', async () => {
+    const el = await mount({ ...DOC, responseForm: false });
+    expect(el.shadowRoot?.querySelector('[data-consequences]')?.textContent).toContain(
+      'with no response form \u2014 responses are recorded by hand',
+    );
+  });
+
+  it('the recipients slot renders in the confirm phase only', async () => {
+    const el = await mount(DOC);
+    expect(el.shadowRoot?.querySelector('slot[name="recipients"]')).toBeTruthy();
+    el.phase = 'sent';
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('slot[name="recipients"]')).toBeNull();
+    const invoice = await mount();
+    expect(invoice.shadowRoot?.querySelector('slot[name="recipients"]')).toBeNull();
+  });
+
+  it('wa-hide is still prevented while sending in document mode', async () => {
+    const el = await mount({ ...DOC, phase: 'sending' });
+    const hide = new CustomEvent('wa-hide', { bubbles: false, cancelable: true });
+    el.shadowRoot?.querySelector('wa-dialog')?.dispatchEvent(hide);
+    expect(hide.defaultPrevented).toBe(true);
+    expect(el.shadowRoot?.querySelector('wc-spinner')).toBeTruthy();
+  });
+
+  it('reports the outcome with the step trace and page links', async () => {
+    const el = await mount({
+      ...DOC,
+      phase: 'sent',
+      steps: [{ step: 'manifest', label: 'Writing the manifest', state: 'ok' }],
+      pageLinks: [{ label: 'Page 1', href: 'https://docs.example.com/d/abc/1.html' }],
+    });
+    expect(el.shadowRoot?.querySelector('[data-sent]')?.textContent).toContain(
+      '\u201cMaster Services Agreement\u201d is on its way to 2 recipients.',
+    );
+    expect(el.shadowRoot?.querySelector('[data-step="manifest"]')).toBeTruthy();
+    const pageLink = el.shadowRoot?.querySelector<HTMLAnchorElement>('[data-page-link]');
+    expect(pageLink?.getAttribute('href')).toBe('https://docs.example.com/d/abc/1.html');
+    expect(pageLink?.getAttribute('target')).toBe('_blank');
+    expect(pageLink?.getAttribute('rel')).toBe('noreferrer');
+    el.recipientCount = 1;
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('[data-sent]')?.textContent).toContain('1 recipient.');
+  });
+
+  it('labels the preview spinner for a document', async () => {
+    const el = await mount({ ...DOC, previewLoading: true });
+    expect(el.shadowRoot?.querySelector('wc-spinner')?.getAttribute('label')).toBe(
+      'Rendering the document',
+    );
+  });
+});
+
 describePreviewA11y(preview);
 
 describeControlsAdoption(WcSendDialog, 'wa-dialog::part(body)');

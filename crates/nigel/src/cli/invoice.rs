@@ -590,7 +590,7 @@ fn refuse_unconfirmed_send(invoice: &Invoice) -> Result<()> {
 
 /// The host a published page is served from, for the consequence sentence.
 /// Just the authority — the operator recognizes `billing.example.com`, not a path.
-fn publish_host(base: &str) -> Option<String> {
+pub(crate) fn publish_host(base: &str) -> Option<String> {
     let rest = base
         .strip_prefix("https://")
         .or_else(|| base.strip_prefix("http://"))?;

@@ -491,6 +491,14 @@ pub fn delete_blocker(conn: &Connection, id: i64) -> Result<Option<DeleteBlock>>
     if count > 0 {
         return Ok(Some(DeleteBlock::invoices("client", count)));
     }
+    let documents: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM documents WHERE client_id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    if documents > 0 {
+        return Ok(Some(DeleteBlock::documents("client", documents)));
+    }
     Ok(None)
 }
 
@@ -548,6 +556,12 @@ pub fn unarchive_client(conn: &Connection, id: i64) -> Result<()> {
 /// it is a fact about the client record a screen can act on, so over HTTP it is
 /// a 409 naming the client and carrying a reason a button can be built from.
 pub fn ensure_client_active(conn: &Connection, id: i64) -> Result<()> {
+    ensure_client_active_for(conn, id, "invoicing")
+}
+
+/// `ensure_client_active` for another purpose: `purpose` completes "unarchive
+/// it before …" in the refusal.
+pub fn ensure_client_active_for(conn: &Connection, id: i64, purpose: &str) -> Result<()> {
     let client = get_client(conn, id)?;
     if client.archived_at.is_none() {
         return Ok(());
@@ -555,7 +569,7 @@ pub fn ensure_client_active(conn: &Connection, id: i64) -> Result<()> {
     Err(NigelError::Conflict {
         code: "client_archived",
         message: format!(
-            "client '{}' is archived — unarchive it before invoicing",
+            "client '{}' is archived — unarchive it before {purpose}",
             client.name
         ),
     })
@@ -1102,6 +1116,22 @@ mod tests {
             "got: {err:?}"
         );
         assert!(err.to_string().contains("Acme Co"), "got: {err}");
+    }
+
+    #[test]
+    fn a_client_with_documents_cannot_be_deleted_and_the_block_counts_them() {
+        let (_d, conn) = test_conn();
+        let id = seed_client(&conn);
+        conn.execute_batch(&format!(
+            "INSERT INTO documents (client_id, kind_id, title, token, created_at, updated_at)
+                 VALUES ({id}, 1, 'A', 't1', '2026-10-01', '2026-10-01'),
+                        ({id}, 1, 'B', 't2', '2026-10-01', '2026-10-01');"
+        ))
+        .unwrap();
+        let block = delete_blocker(&conn, id).unwrap().unwrap();
+        assert_eq!(block.reason_code(), "has_documents");
+        assert_eq!(block.count(), Some(2));
+        assert_eq!(block.to_string(), "Cannot delete: client has 2 documents");
     }
 
     fn contact(email: &str) -> NewContact {

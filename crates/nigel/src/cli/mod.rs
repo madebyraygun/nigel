@@ -9,6 +9,7 @@ pub mod client;
 pub mod client_manager;
 pub mod dashboard;
 pub mod demo;
+pub mod document;
 pub mod export;
 #[cfg(all(test, feature = "serve"))]
 mod fixture_capture;
@@ -111,6 +112,11 @@ pub enum Commands {
     Client {
         #[command(subcommand)]
         command: ClientCommands,
+    },
+    /// File, send, and track documents for clients to accept.
+    Document {
+        #[command(subcommand)]
+        command: DocumentCommands,
     },
     /// Create, publish, and track invoices.
     Invoice {
@@ -581,6 +587,121 @@ pub enum InvoiceTemplateCommands {
 }
 
 #[derive(Subcommand)]
+pub enum DocumentCommands {
+    /// List, add, rename or deactivate document kinds.
+    Kinds {
+        #[command(subcommand)]
+        command: Option<DocumentKindsCommands>,
+    },
+    /// File a PDF as a new draft document.
+    Add {
+        /// Client id
+        #[arg(long)]
+        client: i64,
+        /// Kind name, e.g. Proposal
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        title: String,
+        /// Path to the PDF
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// List documents.
+    List {
+        #[arg(long)]
+        client: Option<i64>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Show one document: every version, its recipients and every response.
+    Show { id: i64 },
+    /// Render the recipient pages and the PDF to local files, with no network.
+    Preview {
+        id: i64,
+        /// Directory to write into (default: <data dir>/previews)
+        #[arg(long)]
+        output_dir: Option<String>,
+    },
+    /// Publish a document and email the signer and any collaborators their own links.
+    Send {
+        id: i64,
+        /// "Name <email>" (default: the client's billing contact)
+        #[arg(long)]
+        signer: Option<String>,
+        /// "Name <email>", repeatable
+        #[arg(long = "collaborator")]
+        collaborators: Vec<String>,
+        /// Send without confirmation (required when stdin is not a TTY)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent.
+    Revise {
+        id: i64,
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Withdraw a document. Terminal — its pages are replaced with a withdrawn notice.
+    Withdraw {
+        id: i64,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Record the client's acceptance received outside the response page.
+    Accept {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Record a change request received outside the response page.
+    #[command(name = "request-changes")]
+    RequestChanges {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        note: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Record the client's decline received outside the response page.
+    Decline {
+        id: i64,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// Pull online responses and record them. Run from cron beside `invoice schedule run`.
+    Sync,
+    /// Record your countersignature on an accepted document.
+    Countersign {
+        id: i64,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        date: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DocumentKindsCommands {
+    /// List every kind, including inactive ones.
+    List,
+    /// Add a kind.
+    Add { name: String },
+    /// Rename a kind.
+    Rename { id: i64, name: String },
+    /// Stop offering a kind for new documents.
+    Deactivate { id: i64 },
+}
+
+#[derive(Subcommand)]
 pub enum InvoiceScheduleCommands {
     /// Create a schedule. Line items as "desc:qty:unit", repeatable, or seed
     /// them from an existing invoice with --from.
@@ -964,4 +1085,73 @@ pub enum BrowseCommands {
         #[command(flatten)]
         filters: RegisterFilterArgs,
     },
+}
+
+/// Whether a command may run the launch syncs (Stripe payments and document
+/// responses) before it runs. `restore` overwrites the database a sync would
+/// write to, `invoice sync` and `document sync` do the same work themselves,
+/// `serve` may have a locked database and should not block on a network poll,
+/// and the previews (`document preview` included) and templates are defined to
+/// make no network call at all.
+pub fn launch_sync_allowed(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Init { .. }
+            | Commands::Demo
+            | Commands::Load { .. }
+            | Commands::Update
+            | Commands::Completions { .. }
+            | Commands::Password { .. }
+            | Commands::Restore { .. }
+            | Commands::Serve { .. }
+            | Commands::Invoice {
+                command: InvoiceCommands::Sync
+                    | InvoiceCommands::Preview { .. }
+                    | InvoiceCommands::Template { .. }
+            }
+            | Commands::Document {
+                command: DocumentCommands::Preview { .. } | DocumentCommands::Sync
+            }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_sync_skips_document_sync_and_both_previews() {
+        assert!(!launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Sync
+        }));
+        assert!(!launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Preview {
+                id: 1,
+                output_dir: None
+            }
+        }));
+        assert!(!launch_sync_allowed(&Commands::Invoice {
+            command: InvoiceCommands::Preview {
+                number: 1,
+                output_dir: None
+            }
+        }));
+        assert!(launch_sync_allowed(&Commands::Document {
+            command: DocumentCommands::Show { id: 1 }
+        }));
+    }
+
+    #[test]
+    fn previews_never_reach_the_network() {
+        for args in [
+            ["nigel", "invoice", "preview", "1"],
+            ["nigel", "invoice", "template", "path"],
+            ["nigel", "document", "preview", "1"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(!launch_sync_allowed(&cli.command.unwrap()), "{args:?}");
+        }
+        let cli = Cli::try_parse_from(["nigel", "document", "list"]).unwrap();
+        assert!(launch_sync_allowed(&cli.command.unwrap()));
+    }
 }

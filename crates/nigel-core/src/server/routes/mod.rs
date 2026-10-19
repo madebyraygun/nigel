@@ -9,6 +9,7 @@
 pub mod accounts;
 pub mod categories;
 pub mod clients;
+pub mod documents;
 pub mod exports;
 pub mod imports;
 pub mod invoices;
@@ -57,7 +58,8 @@ fn data_router() -> Router<AppState> {
         .merge(settings::routes())
         .merge(setup::routes())
         .merge(clients::routes())
-        .merge(invoices::routes());
+        .merge(invoices::routes())
+        .merge(documents::routes());
 
     // A route that exists only to prove `api_router` — the assembly every
     // endpoint is mounted into — actually applies the guard, without pinning

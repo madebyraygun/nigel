@@ -8,6 +8,7 @@ use axum::Json;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::documents::send::{DocumentSendFailure, DocumentSendStep};
 use crate::error::NigelError;
 use crate::invoicing::send::{SendFailure, SendStep, PDF_REQUIRED_MESSAGE};
 
@@ -158,10 +159,23 @@ impl ApiError {
         self.code
     }
 
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     /// Tag a refusal raised outside the orchestration with the step it belongs
     /// to, so every answer a send can give carries `details.step`.
-    pub(crate) fn at_step(mut self, step: SendStep) -> Self {
-        self.merge_details(serde_json::json!({ "step": step.as_str() }));
+    pub(crate) fn at_step(self, step: SendStep) -> Self {
+        self.at_step_named(step.as_str())
+    }
+
+    /// [`Self::at_step`] for a refusal raised before a document send starts.
+    pub(crate) fn at_document_step(self, step: DocumentSendStep) -> Self {
+        self.at_step_named(step.as_str())
+    }
+
+    fn at_step_named(mut self, step: &str) -> Self {
+        self.merge_details(serde_json::json!({ "step": step }));
         self
     }
 
@@ -190,6 +204,9 @@ impl From<NigelError> for ApiError {
             }
             NigelError::UnknownCategory(_) => {
                 Self::not_found_because(err.to_string(), "category_not_found")
+            }
+            NigelError::UnknownDocumentKind(_) => {
+                Self::not_found_because(err.to_string(), "kind_not_found")
             }
             NigelError::NotFound(_) => Self::not_found(err.to_string()),
             // A file that parsed to nothing is the caller's to fix — the wrong
@@ -321,6 +338,79 @@ impl From<SendFailure> for ApiError {
     }
 }
 
+/// A document send that stopped, in the shape [`SendFailure`]'s answer takes:
+/// the step decides the code, and a refusal the data layer already names — a
+/// `Conflict` such as `signer_count` at freeze, or an `Invalid` recipient —
+/// keeps its own 409 or 400.
+impl From<DocumentSendFailure> for ApiError {
+    fn from(failure: DocumentSendFailure) -> Self {
+        let DocumentSendFailure {
+            step,
+            completed,
+            emailed,
+            document_status,
+            cleanup_warnings,
+            source,
+        } = failure;
+
+        let service = match step {
+            DocumentSendStep::Publish | DocumentSendStep::Manifest => Some("r2"),
+            DocumentSendStep::Email => Some("mailgun"),
+            DocumentSendStep::Config
+            | DocumentSendStep::Load
+            | DocumentSendStep::Render
+            | DocumentSendStep::Freeze
+            | DocumentSendStep::Record => None,
+        };
+
+        let database_failed = matches!(source, NigelError::Db(_));
+        let data_layer_refusal =
+            matches!(source, NigelError::Conflict { .. } | NigelError::Invalid(_));
+        let code = match step {
+            _ if database_failed => Some(ApiErrorCode::Internal),
+            DocumentSendStep::Publish | DocumentSendStep::Manifest | DocumentSendStep::Email => {
+                Some(ApiErrorCode::UpstreamFailed)
+            }
+            DocumentSendStep::Render | DocumentSendStep::Freeze | DocumentSendStep::Record
+                if data_layer_refusal =>
+            {
+                None
+            }
+            DocumentSendStep::Render | DocumentSendStep::Freeze | DocumentSendStep::Record => {
+                Some(ApiErrorCode::Internal)
+            }
+            DocumentSendStep::Config | DocumentSendStep::Load => None,
+        };
+
+        let mut step_details = serde_json::json!({
+            "step": step.as_str(),
+            "completed": completed.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            "emailed": emailed,
+            "documentStatus": document_status,
+            "cleanupWarnings": cleanup_warnings,
+        });
+        if let Some(service) = service {
+            step_details["service"] = serde_json::json!(service);
+        }
+
+        match code {
+            Some(code) => {
+                step_details["reason"] = serde_json::json!("send_failed");
+                let message = match database_failed {
+                    true => redact_key_pragma(source.to_string()),
+                    false => source.to_string(),
+                };
+                Self::new(code, message).with_details(step_details)
+            }
+            None => {
+                let mut error = Self::from(source);
+                error.merge_details(step_details);
+                error
+            }
+        }
+    }
+}
+
 /// The failure a build without the `pdf` feature answers `501` for, told apart
 /// from a genuine render failure by the sentence `send.rs` raises it with.
 fn is_pdf_missing(source: &NigelError) -> bool {
@@ -369,6 +459,7 @@ impl IntoResponse for ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::model::DocumentStatus;
     use serde_json::json;
 
     #[test]
@@ -690,6 +781,31 @@ mod tests {
         assert_eq!(
             category.details,
             Some(json!({ "reason": "category_not_found" }))
+        );
+
+        let kind = ApiError::from(NigelError::UnknownDocumentKind("Memo".into()));
+        assert_eq!(kind.details, Some(json!({ "reason": "kind_not_found" })));
+    }
+
+    #[test]
+    fn a_send_conflict_at_freeze_is_a_409_with_its_reason_and_the_step() {
+        let failure = DocumentSendFailure {
+            step: DocumentSendStep::Freeze,
+            completed: vec![DocumentSendStep::Load, DocumentSendStep::Render],
+            emailed: vec![],
+            document_status: Some(DocumentStatus::Draft),
+            cleanup_warnings: vec![],
+            source: NigelError::Conflict {
+                code: "signer_count",
+                message: "A document is sent to exactly one signer.".into(),
+            },
+        };
+        let err = ApiError::from(failure);
+        assert_eq!(err.code.status().as_u16(), 409);
+        let details = err.details.unwrap();
+        assert_eq!(
+            (details["reason"].as_str(), details["step"].as_str()),
+            (Some("signer_count"), Some("freeze"))
         );
     }
 }

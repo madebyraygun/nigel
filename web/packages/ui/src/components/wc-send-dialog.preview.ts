@@ -1,5 +1,6 @@
 import { html } from 'lit';
 import './wc-send-dialog.js';
+import './wc-recipient-editor.js';
 import type { SendStepView } from './wc-send-dialog.js';
 import type { Preview } from '../../preview/types.js';
 
@@ -33,6 +34,39 @@ function trace(done: string[], running?: string, failed?: string): SendStepView[
   }));
 }
 
+const DOC_LABELS: Record<string, string> = {
+  config: 'Reading the invoicing settings',
+  load: 'Loading the document',
+  render: 'Rendering the pages',
+  freeze: 'Freezing the version',
+  publish: 'Publishing the PDF and pages',
+  manifest: 'Writing the manifest',
+  email: 'Emailing each recipient',
+  record: 'Marking it sent',
+};
+
+function docTrace(done: string[], running?: string, failed?: string): SendStepView[] {
+  return Object.keys(DOC_LABELS).map((step) => ({
+    step,
+    label: DOC_LABELS[step],
+    state:
+      step === failed
+        ? 'failed'
+        : step === running
+          ? 'running'
+          : done.includes(step)
+            ? 'ok'
+            : 'pending',
+  }));
+}
+
+const DOC_STEPS = Object.keys(DOC_LABELS);
+
+const DOC_RECIPIENTS = {
+  signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+  collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+};
+
 const base = html`
   <wc-send-dialog
     open
@@ -56,6 +90,76 @@ const preview: Preview = {
   layout: 'stack',
   states: [
     { name: 'confirm', render: () => base },
+    {
+      name: 'document-confirm',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${2}
+          .publishHost=${'docs.example.com'}
+        >
+          <wc-recipient-editor
+            slot="recipients"
+            .value=${DOC_RECIPIENTS}
+          ></wc-recipient-editor>
+        </wc-send-dialog>
+      `,
+    },
+    {
+      name: 'document-sending',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          phase="sending"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${2}
+          .steps=${docTrace(['config', 'load', 'render', 'freeze'], 'publish')}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'document-sent',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          phase="sent"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${2}
+          .steps=${docTrace(DOC_STEPS)}
+          .pageLinks=${[
+            { label: 'Page 1', href: 'https://docs.example.com/d/abc123/1.html' },
+            { label: 'Page 2', href: 'https://docs.example.com/d/abc123/2.html' },
+          ]}
+        ></wc-send-dialog>
+      `,
+    },
+    {
+      name: 'document-failed',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          phase="failed"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${2}
+          .steps=${docTrace(
+            ['config', 'load', 'render', 'freeze', 'publish', 'manifest'],
+            undefined,
+            'email',
+          )}
+          .failure=${{
+            headline: 'Not every recipient could be emailed.',
+            message: 'mailgun 500: upstream timeout',
+            note: 'The first recipient was already emailed. Check before sending again.',
+            retryable: false,
+          }}
+        ></wc-send-dialog>
+      `,
+    },
     {
       name: 'confirm-with-preview',
       render: () => html`
