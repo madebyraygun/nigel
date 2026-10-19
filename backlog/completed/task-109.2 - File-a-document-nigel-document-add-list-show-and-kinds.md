@@ -1,11 +1,11 @@
 ---
 id: TASK-109.2
 title: 'File a document: nigel document add, list, show and kinds'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:54'
 labels:
   - documents
 milestone: m-3
@@ -29,9 +29,15 @@ This command is one of the skills contract's two core verbs — a business-speci
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Filing a valid PDF creates a draft linked to the client and stores the file under the data directory with its checksum recorded
-- [ ] #2 A duplicate (same client, same checksum) is refused as a structured Conflict naming the existing document
-- [ ] #3 A non-PDF is refused by content (magic bytes), not by extension
-- [ ] #4 list, show and kinds print through pure format functions, with fictional-cast fixtures; show carries source, versions and the signature records
-- [ ] #5 An archived client refuses a new document with the data layer's own sentence
+- [x] #1 Filing a valid PDF creates a draft linked to the client and stores the file under the data directory with its checksum recorded
+- [x] #2 A duplicate (same client, same checksum) is refused as a structured Conflict naming the existing document
+- [x] #3 A non-PDF is refused by content (magic bytes), not by extension
+- [x] #4 list, show and kinds print through pure format functions, with fictional-cast fixtures; show carries source, versions and the signature records
+- [x] #5 An archived client refuses a new document with the data layer's own sentence
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #53 (d79ea21).
+<!-- SECTION:FINAL_SUMMARY:END -->

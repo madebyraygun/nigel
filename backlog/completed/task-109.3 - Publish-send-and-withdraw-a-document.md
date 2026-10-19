@@ -1,11 +1,11 @@
 ---
 id: TASK-109.3
 title: 'Publish, send, revise and withdraw a document'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:54'
 labels:
   - documents
 milestone: m-3
@@ -31,10 +31,16 @@ The invoicing publish machinery, generalized to a second domain and married to v
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Preview writes the page and PDF locally with no network call and no configuration
-- [ ] #2 Withdraw commits first, replaces the published page with a withdrawn notice best-effort, and reports teardown warnings as data
-- [ ] #3 All outbound traffic goes through the AssetPublisher/Mailer traits and is fake-tested; no test in the module can reach the network
-- [ ] #4 Every printed or returned URL names the index.html object, never the directory
-- [ ] #5 Send takes one signer (default: the client's billing contact) and any number of collaborators, freezes the version, publishes the PDF and one page per recipient to the public bucket, writes the manifest to the private bucket, and emails each recipient their own link; any failure leaves a draft with no recipients
-- [ ] #6 Revise takes a new PDF from sent or changes_requested, creates the next draft version, closes the manifest and republishes every live page as being revised with no form; the next send reuses the document token with new recipient tokens
+- [x] #1 Preview writes the page and PDF locally with no network call and no configuration
+- [x] #2 Withdraw commits first, replaces the published page with a withdrawn notice best-effort, and reports teardown warnings as data
+- [x] #3 All outbound traffic goes through the AssetPublisher/Mailer traits and is fake-tested; no test in the module can reach the network
+- [x] #4 Every printed or returned URL names the index.html object, never the directory
+- [x] #5 Send takes one signer (default: the client's billing contact) and any number of collaborators, freezes the version, publishes the PDF and one page per recipient to the public bucket, writes the manifest to the private bucket, and emails each recipient their own link; any failure leaves a draft with no recipients
+- [x] #6 Revise takes a new PDF from sent or changes_requested, creates the next draft version, closes the manifest and republishes every live page as being revised with no form; the next send reuses the document token with new recipient tokens
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #53 (d79ea21).
+<!-- SECTION:FINAL_SUMMARY:END -->

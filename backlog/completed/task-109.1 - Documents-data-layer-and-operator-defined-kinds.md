@@ -1,11 +1,11 @@
 ---
 id: TASK-109.1
 title: Documents data layer and operator-defined kinds
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:54'
 labels:
   - documents
 milestone: m-3
@@ -31,11 +31,17 @@ The foundation: `documents`, `document_kinds` and `document_versions` tables, in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Kinds are rows: adding, renaming and deactivating a kind are data operations exercised by tests, and no Rust enum mirrors the kind list
-- [ ] #2 Terminal-state, accepted-admits-countersign-only, draft-only-edit and archived-client guards are data-layer functions raising typed NigelError variants, and client delete is blocked while documents exist, with the count in the DeleteBlock
-- [ ] #3 All fixtures use the fictional cast
-- [ ] #4 Migration v15 creates document_kinds, documents, document_versions, document_recipients, document_signatures and document_change_requests, and seeds Proposal, Estimate and Agreement exactly once
-- [ ] #5 Status (draft, sent, changes_requested, accepted, declined, executed, withdrawn) is derived by one function from the rows per the spec's status table; a test pins that nothing writes status
-- [ ] #6 Versions are immutable once sent and carry a SHA-256 checksum; every signature and change request references the version (and recipient, when online) it binds to and records the checksum the respondent saw
-- [ ] #7 A version is sent with exactly one signer; at most one online response per recipient per version is enforced across signatures and change requests
+- [x] #1 Kinds are rows: adding, renaming and deactivating a kind are data operations exercised by tests, and no Rust enum mirrors the kind list
+- [x] #2 Terminal-state, accepted-admits-countersign-only, draft-only-edit and archived-client guards are data-layer functions raising typed NigelError variants, and client delete is blocked while documents exist, with the count in the DeleteBlock
+- [x] #3 All fixtures use the fictional cast
+- [x] #4 Migration v15 creates document_kinds, documents, document_versions, document_recipients, document_signatures and document_change_requests, and seeds Proposal, Estimate and Agreement exactly once
+- [x] #5 Status (draft, sent, changes_requested, accepted, declined, executed, withdrawn) is derived by one function from the rows per the spec's status table; a test pins that nothing writes status
+- [x] #6 Versions are immutable once sent and carry a SHA-256 checksum; every signature and change request references the version (and recipient, when online) it binds to and records the checksum the respondent saw
+- [x] #7 A version is sent with exactly one signer; at most one online response per recipient per version is enforced across signatures and change requests
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #53 (d79ea21).
+<!-- SECTION:FINAL_SUMMARY:END -->

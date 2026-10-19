@@ -1,11 +1,11 @@
 ---
 id: TASK-109.5
 title: 'HTTP API: /api/documents'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:54'
 labels:
   - documents
 milestone: m-3
@@ -33,10 +33,16 @@ The route family, on the invoices routes' rules:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every route validates then calls the same data layer the CLI uses; guardrail refusals carry structured details.reason with the Display sentences unchanged
-- [ ] #2 Send requires confirm:true at the wire level, answering 400 confirmation_required without it
-- [ ] #3 token never crosses the wire; a computed publicUrl carries the address instead
-- [ ] #4 Upload reuses the uploads spool (sanitized name, 0600/0700, purge rules) and refuses non-PDF content; drafted creation and PATCH edits refuse non-draft states with the data layer's sentence
-- [ ] #5 docs/api.md documents the new routes
-- [ ] #6 The detail carries versions, recipients, signatures, change requests and can* flags that call the data-layer guards; drafted (Markdown) create is deferred to 109.9
+- [x] #1 Every route validates then calls the same data layer the CLI uses; guardrail refusals carry structured details.reason with the Display sentences unchanged
+- [x] #2 Send requires confirm:true at the wire level, answering 400 confirmation_required without it
+- [x] #3 token never crosses the wire; a computed publicUrl carries the address instead
+- [x] #4 Upload reuses the uploads spool (sanitized name, 0600/0700, purge rules) and refuses non-PDF content; drafted creation and PATCH edits refuse non-draft states with the data layer's sentence
+- [x] #5 docs/api.md documents the new routes
+- [x] #6 The detail carries versions, recipients, signatures, change requests and can* flags that call the data-layer guards; drafted (Markdown) create is deferred to 109.9
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #53 (d79ea21).
+<!-- SECTION:FINAL_SUMMARY:END -->

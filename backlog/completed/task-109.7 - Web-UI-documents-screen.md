@@ -1,11 +1,11 @@
 ---
 id: TASK-109.7
 title: 'Web UI: documents screen'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16 04:22'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:54'
 labels:
   - documents
   - spa
@@ -33,9 +33,15 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every new component ships with a co-located preview and passing describePreviewA11y, reads theme tokens, and adopts controlsCss where it renders a wa-* primitive
-- [ ] #2 Guardrails render from details.reason with the two deliberate fallbacks (a 400 and an unrecognized 409 render the server's sentence)
-- [ ] #3 All server access goes through src/api and the guard test stays green
-- [ ] #4 A filed PDF can be filed, sent to a signer and collaborators, revised after a change request, accepted and countersigned to executed entirely in the browser; drafting and wc-markdown-editor are deferred to 109.9
-- [ ] #5 The detail shows a per-version timeline of recipients, signatures and change-request notes (notes rendered as text), and send uses a wc-recipient-editor with exactly one signer
+- [x] #1 Every new component ships with a co-located preview and passing describePreviewA11y, reads theme tokens, and adopts controlsCss where it renders a wa-* primitive
+- [x] #2 Guardrails render from details.reason with the two deliberate fallbacks (a 400 and an unrecognized 409 render the server's sentence)
+- [x] #3 All server access goes through src/api and the guard test stays green
+- [x] #4 A filed PDF can be filed, sent to a signer and collaborators, revised after a change request, accepted and countersigned to executed entirely in the browser; drafting and wc-markdown-editor are deferred to 109.9
+- [x] #5 The detail shows a per-version timeline of recipients, signatures and change-request notes (notes rendered as text), and send uses a wc-recipient-editor with exactly one signer
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #53 (d79ea21).
+<!-- SECTION:FINAL_SUMMARY:END -->
