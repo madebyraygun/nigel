@@ -37,9 +37,13 @@ pub struct SigningRecord {
     pub signatures: Vec<RecordedSignature>,
 }
 
-/// The sentence a build without the `pdf` feature answers instead of a record.
-pub const RECORD_UNAVAILABLE: &str =
-    "Notice: this build has no PDF support, so no signing record was generated.";
+/// The warning a countersignature carries in a build without the `pdf`
+/// feature.
+pub const RECORD_UNAVAILABLE: &str = "Warning: this build has no PDF support, so no signing record was generated. Use a build with the `pdf` feature (the release builds have it), then run `nigel document signing-record` for this document.";
+
+/// The refusal a request for a record answers in a build without the `pdf`
+/// feature.
+pub const PDF_UNAVAILABLE: &str = "This build has no PDF support, so it cannot generate a signing record. Use a build with the `pdf` feature (the release builds have it).";
 
 /// `text` with every control character removed, along with the Unicode line
 /// separators and bidirectional overrides, so a value a recipient typed prints

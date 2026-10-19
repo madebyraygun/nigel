@@ -641,6 +641,27 @@ describe('nigel-documents-screen', () => {
     expect(el.shadowRoot?.querySelectorAll('[data-action-warning]')).toHaveLength(1);
   });
 
+  it('an executed document can republish its signing record and shows what failed', async () => {
+    const fake = withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') }));
+    fake.documentWarnings = [
+      'Warning: the countersignature is recorded, but the signing record could not be published (r2 403). To republish, run `nigel document signing-record 12` or choose Republish signing record on the document in the web UI.',
+    ];
+    const { el } = await mount('id=12', fake);
+    expect(actions(el)).toEqual(['republishSigningRecord']);
+    expect(find(el, '[data-action="republishSigningRecord"]').textContent?.trim()).toBe(
+      'Republish signing record',
+    );
+
+    find(el, '[data-action="republishSigningRecord"]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('republishSigningRecord:12');
+    const warnings = [...(el.shadowRoot?.querySelectorAll('[data-action-warning]') ?? [])];
+    expect(warnings.map((warning) => warning.getAttribute('message'))).toEqual(
+      fake.documentWarnings,
+    );
+  });
+
   it('a wrong-state refusal says so and refreshes the detail', async () => {
     const fake = withDetail(documentDetail({ status: 'sent', ...documentFlags('sent') }));
     const { el } = await mount('id=12', fake);
@@ -943,7 +964,7 @@ describe('nigel-documents-screen', () => {
       expect(fake.calls).toContain(
         `countersignDocument:700:${JSON.stringify({ name: 'Sam Example' })}`,
       );
-      expect(state(el)).toEqual({ status: 'executed', actions: [], versions: 2 });
+      expect(state(el)).toEqual({ status: 'executed', actions: ['republishSigningRecord'], versions: 2 });
     });
   });
 });

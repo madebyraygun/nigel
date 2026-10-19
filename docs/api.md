@@ -643,7 +643,7 @@ client's name, every version, and what may be done to it next:
   ],
   "canEdit": false, "canSend": false, "canRevise": true, "canAccept": true,
   "canRequestChanges": true, "canDecline": true, "canCountersign": false,
-  "canWithdraw": true
+  "canWithdraw": true, "canRepublishSigningRecord": false
 }
 ```
 
@@ -675,6 +675,7 @@ metadata. `checksum` always carries the `sha256:` prefix.
 | `canRequestChanges` | `sent` |
 | `canCountersign` | `accepted` |
 | `canWithdraw` | `draft`, `sent`, `changes_requested` |
+| `canRepublishSigningRecord` | `executed` |
 
 A version newer than the last one sent reads as `draft`: after a revision the
 change request still sits on the earlier version, and the document must be
@@ -764,6 +765,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/documents/:id/decline` | `POST` | `note?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/countersign` | `POST` | `name`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/withdraw` | `POST` | `{}` | `DocumentActionResult` |
+| `/api/documents/:id/signing-record` | `POST` | `{}` | `DocumentActionResult` with `published` |
 | `/api/documents/sync` | `POST` | — | `DocumentSyncReport` |
 
 ### Write conventions
@@ -1490,8 +1492,19 @@ and hold the database while they do, each bounded by the 30s call timeout.
 record and publishes it beside the version's PDF, republishes the pages with a
 link to it, then emails every recipient of the executed version the signed PDF
 and the record — see [Documents](invoicing.md#documents). A record that could
-not be published, a Mailgun key that is unset or a message Mailgun refused is a
-sentence in `warnings`; the document stays `executed`.
+not be published, R2 or Mailgun unset, partly set or refused, a message Mailgun
+refused or one over its 25 MB limit is a sentence in `warnings`, one per
+situation, ending with what to do; the document stays `executed`.
+
+`POST /api/documents/{id}/signing-record` takes `{}` and regenerates an
+executed document's signing record: it writes the local copy, publishes it, and
+republishes the pages linking it. It emails nobody. It answers the document,
+`warnings` and `published`, which is `true` only when the record reached the
+public bucket; an R2 that is unset or a failed upload is a `200` with
+`published: false` and the reason in `warnings`. A document that is not
+executed is `409` `document_not_executed`, a missing one `404`, and a build
+without the `pdf` feature `501 feature_disabled`. It may make network calls, as
+the routes above do.
 
 #### Syncing responses
 
@@ -1698,7 +1711,7 @@ its own words instead of parsing ours:
 | `client_archived` | `step` (on send) | Filing, revising or sending a document for an archived client |
 | `duplicate_document` | — | Filing a PDF already filed for that client on a document that is not withdrawn or declined |
 | `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
-| `document_not_executed` | — | Asking for the signing record of a document that is not executed |
+| `document_not_executed` | — | Asking for, or republishing, the signing record of a document that is not executed |
 | `kind_inactive` | — | Filing or changing a draft to a kind that is no longer in use |
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
 | `signer_count` | `step` | Sending to anything but exactly one signer |

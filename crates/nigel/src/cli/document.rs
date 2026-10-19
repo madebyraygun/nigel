@@ -3,7 +3,7 @@ use std::path::Path;
 use comfy_table::{Cell, Table};
 
 use nigel_core::db::get_connection;
-use nigel_core::documents::execute::{complete_execution, regenerate_signing_record};
+use nigel_core::documents::execute::RegeneratedRecord;
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
 use nigel_core::documents::lifecycle::{
@@ -28,8 +28,8 @@ use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
 use nigel_core::invoicing::wiring::{
-    build_document_clients, company_name, optional_document_mailer, optional_document_publisher,
-    optional_response_source,
+    build_document_clients, company_name, complete_execution_configured,
+    optional_document_publisher, optional_response_source, regenerate_signing_record_configured,
 };
 use nigel_core::settings::{
     derive_documents_base, documents_config, documents_status, get_data_dir, DocumentsConfig,
@@ -549,18 +549,13 @@ pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
     let conn = get_connection(&data_dir.join("nigel.db"))?;
     record_countersign(&conn, id, name, &date)?;
     println!("Recorded: document #{id} is executed.");
-    let config = documents_config();
-    let company = company_name(&conn);
-    let (mailer, mut warnings) = optional_document_mailer(&config, &company);
-    warnings.extend(complete_execution(
+    let warnings = complete_execution_configured(
         &conn,
         &data_dir,
         id,
-        &company,
-        optional_document_publisher(&config).as_ref(),
-        optional_response_source(&config).as_ref(),
-        mailer.as_ref(),
-    ));
+        &company_name(&conn),
+        &documents_config(),
+    );
     for warning in warnings {
         eprintln!("{}", printable(&warning));
     }
@@ -570,27 +565,47 @@ pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
 pub fn signing_record(id: i64) -> Result<()> {
     let data_dir = get_data_dir();
     let conn = get_connection(&data_dir.join("nigel.db"))?;
-    let config = documents_config();
-    let publisher = optional_document_publisher(&config);
-    let regenerated = regenerate_signing_record(
+    let regenerated = regenerate_signing_record_configured(
         &conn,
         &data_dir,
         id,
         &company_name(&conn),
-        publisher.as_ref(),
-        optional_response_source(&config).as_ref(),
+        &documents_config(),
     )?;
-    println!(
+    let (lines, outcome) = report_regenerated(id, &regenerated);
+    for line in lines {
+        println!("{line}");
+    }
+    for warning in &regenerated.warnings {
+        eprintln!("{}", printable(warning));
+    }
+    outcome
+}
+
+/// What `document signing-record` prints, and whether it failed: a record that
+/// R2 was configured to take and did not is an error, so a script sees it.
+pub fn report_regenerated(id: i64, regenerated: &RegeneratedRecord) -> (Vec<String>, Result<()>) {
+    let mut lines = vec![format!(
         "Wrote the signing record for document #{id}: {}",
         regenerated.path.display()
-    );
-    if publisher.is_some() && regenerated.warnings.is_empty() {
-        println!("Published it as {}.", regenerated.filename);
+    )];
+    if regenerated.published {
+        lines.push(format!("Published it as {}.", regenerated.filename));
+    } else if regenerated
+        .unavailable
+        .as_ref()
+        .is_some_and(|u| !u.is_configured())
+    {
+        lines.push("Wrote it locally; R2 is not configured, so it was not published.".into());
     }
-    for warning in regenerated.warnings {
-        eprintln!("{}", printable(&warning));
-    }
-    Ok(())
+    let outcome = if regenerated.failed() {
+        Err(NigelError::Other(format!(
+            "The signing record for document #{id} was not published."
+        )))
+    } else {
+        Ok(())
+    };
+    (lines, outcome)
 }
 
 fn confirm_unless_piped(id: i64) -> Result<()> {
@@ -1185,5 +1200,47 @@ mod tests {
         assert!(err.contains(
             "Unknown status: bogus. Use one of: draft, sent, changes_requested, accepted, declined, executed, withdrawn."
         ));
+    }
+
+    #[test]
+    fn signing_record_says_published_only_when_it_was_and_fails_when_r2_was_set() {
+        use nigel_core::invoicing::gateway::{Unavailable, UnavailableState};
+        let record = |published: bool, state: Option<UnavailableState>| RegeneratedRecord {
+            path: std::path::PathBuf::from("/data/documents/3/v1-signing-record.pdf"),
+            filename: "Website-rebuild-v1-signing-record.pdf".into(),
+            published,
+            unavailable: state.map(|state| Unavailable {
+                service: "R2",
+                keys: &["r2_bucket"],
+                state,
+            }),
+            warnings: Vec::new(),
+        };
+
+        let (lines, outcome) = report_regenerated(3, &record(true, None));
+        assert_eq!(
+            lines[1],
+            "Published it as Website-rebuild-v1-signing-record.pdf."
+        );
+        assert!(outcome.is_ok());
+
+        let (lines, outcome) =
+            report_regenerated(3, &record(false, Some(UnavailableState::NotConfigured)));
+        assert_eq!(
+            lines[1],
+            "Wrote it locally; R2 is not configured, so it was not published."
+        );
+        assert!(outcome.is_ok());
+
+        let (lines, outcome) = report_regenerated(3, &record(false, None));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(outcome.is_err(), "a configured publish that failed");
+
+        let (lines, outcome) = report_regenerated(
+            3,
+            &record(false, Some(UnavailableState::Partial(vec!["r2_bucket"]))),
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(outcome.is_err(), "a partly configured R2 is an error");
     }
 }

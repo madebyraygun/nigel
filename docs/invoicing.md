@@ -1845,11 +1845,27 @@ signer's assent against the version's checksum. `decline` is terminal.
    message each, with the subject `Signed: <title> for <company>` (just
    `Signed: <title>` when no business name is set), a short plain-text body
    with their page link, and two attachments: the signed PDF and the signing
-   record. It needs the Mailgun keys and nothing else.
+   record. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
+   nothing from R2 except for the page link, which is left out when R2 is not
+   configured.
 
-Each of the three is best-effort. A failed upload, a missing Mailgun key or a
-refused message is printed as a warning (in the web UI, a notice on the
-document) and never undoes the countersignature.
+Each of the three is best-effort and never undoes the countersignature. What
+did not happen is printed as a warning (in the web UI, a notice on the
+document), one sentence per situation, each saying what it means and what to
+do:
+
+- R2 unset, partly set (naming the missing keys) or refused: the record was not
+  published and is kept in the data directory.
+- An upload or a page republish that failed: the sentence ends with how to
+  republish (below).
+- Mailgun unset, partly set (naming the missing keys among `mailgun_api_key`,
+  `mailgun_domain` and `from_email`) or refused: no signed copy was emailed;
+  send the two PDFs yourself.
+- A message Mailgun refused: one warning per recipient with their name and
+  address, then a summary such as `emailed the signed copy to 1 of 2
+  recipients; not sent to Sam Example <sam@example.test>`.
+- An email larger than Mailgun's 25 MB once its attachments are encoded is not
+  sent at all.
 
 #### The signing record
 
@@ -1865,17 +1881,21 @@ removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.
 `Website-rebuild-v3-signing-record.pdf`.
 
 The record needs the `pdf` feature, which the release builds have. A build
-without it skips the record with a notice and emails the signed PDF alone.
+without it skips the record with a warning and emails the signed PDF alone.
 
 If the record could not be generated or published, regenerate it and publish it
-again:
+again, from the terminal or with **Republish signing record** on the document in
+the web UI:
 
 ```bash
 nigel document signing-record 3
 ```
 
-It writes the local copy, uploads it and republishes the pages linking it when
-R2 is configured, and emails nobody.
+It writes the local copy and, when R2 is configured, uploads it and republishes
+the pages linking it. It emails nobody. It says `Published it as …` only when
+the upload succeeded, says the record was written locally when R2 is not
+configured, and exits non-zero when R2 is configured, even partly, and the
+record was not published.
 
 `withdraw` is terminal and works from `draft`, `sent` and `changes_requested`.
 It replaces every published page with a withdrawn notice and closes the

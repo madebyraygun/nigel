@@ -30,7 +30,6 @@ use axum::{Json, Router};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::documents::execute::complete_execution;
 use crate::documents::guards::{can, ensure_client_active_for_documents, Action};
 use crate::documents::kinds::list_kinds;
 use crate::documents::lifecycle::{
@@ -51,7 +50,7 @@ use crate::documents::send::{
     SendContext,
 };
 use crate::documents::signing_record::{
-    generate_signing_record, read_signing_record, RECORD_UNAVAILABLE,
+    generate_signing_record, read_signing_record, PDF_UNAVAILABLE,
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
@@ -63,8 +62,8 @@ use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
 use crate::invoicing::send::StepOutcome;
 use crate::invoicing::wiring::{
-    build_document_clients, company_name, optional_document_mailer, optional_document_publisher,
-    optional_response_source,
+    build_document_clients, company_name, complete_execution_configured,
+    optional_document_publisher, optional_response_source, regenerate_signing_record_configured,
 };
 use crate::settings::DocumentsConfig;
 
@@ -98,6 +97,10 @@ pub fn routes() -> Router<AppState> {
             "/documents/{id}/signing-record.pdf",
             get(signing_record_pdf),
         )
+        .route(
+            "/documents/{id}/signing-record",
+            post(republish_signing_record),
+        )
         .route("/document-kinds", get(kinds))
 }
 
@@ -123,6 +126,7 @@ struct DocumentDetail {
     can_decline: bool,
     can_countersign: bool,
     can_withdraw: bool,
+    can_republish_signing_record: bool,
 }
 
 /// A document after an action whose follow-up work is best-effort: the action
@@ -245,6 +249,7 @@ fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
         can_decline: can(status, Action::Decline),
         can_countersign: can(status, Action::Countersign),
         can_withdraw: can(status, Action::Withdraw),
+        can_republish_signing_record: status == DocumentStatus::Executed,
     })
 }
 
@@ -793,25 +798,70 @@ async fn countersign(
 ) -> ApiResult<Json<ActionResult>> {
     let date = response_date(request.date)?;
     let config = crate::settings::documents_config();
-    let publisher = optional_document_publisher(&config);
-    let source = optional_response_source(&config);
     let result = with_conn_api(&state, {
         let state = state.clone();
         move |conn| {
             record_countersign(conn, id, &request.name, &date)
                 .map_err(|e| not_found_because(e, "document_not_found"))?;
-            let company = company_name(conn);
-            let (mailer, mut warnings) = optional_document_mailer(&config, &company);
-            warnings.extend(complete_execution(
+            let warnings = complete_execution_configured(
                 conn,
                 &state.data_dir(),
                 id,
-                &company,
-                publisher.as_ref(),
-                source.as_ref(),
-                mailer.as_ref(),
-            ));
+                &company_name(conn),
+                &config,
+            );
             Ok(ActionResult::after_commit(conn, id, warnings))
+        }
+    })
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RepublishRequest {}
+
+/// The document after its signing record was regenerated, and whether the
+/// record reached the public bucket.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SigningRecordResult {
+    #[serde(flatten)]
+    result: ActionResult,
+    published: bool,
+}
+
+/// `POST /api/documents/{id}/signing-record` — regenerate an executed
+/// document's signing record, keep it, and republish it and the pages linking
+/// it. Nobody is emailed; what could not be published comes back as
+/// `warnings`.
+async fn republish_signing_record(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(RepublishRequest {}): ApiJson<RepublishRequest>,
+) -> ApiResult<Json<SigningRecordResult>> {
+    let config = crate::settings::documents_config();
+    let result = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            get_document(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
+            let regenerated = regenerate_signing_record_configured(
+                conn,
+                &state.data_dir(),
+                id,
+                &company_name(conn),
+                &config,
+            )
+            .map_err(|e| match e {
+                NigelError::Invalid(message) if message == PDF_UNAVAILABLE => {
+                    ApiError::feature_disabled(message)
+                }
+                other => other.into(),
+            })?;
+            Ok(SigningRecordResult {
+                result: ActionResult::after_commit(conn, id, regenerated.warnings),
+                published: regenerated.published,
+            })
         }
     })
     .await?;
@@ -1022,7 +1072,7 @@ async fn signing_record_pdf(
                 return Ok(record);
             }
             generate_signing_record(conn, &data_dir, id, &company_name(conn))?
-                .ok_or_else(|| ApiError::feature_disabled(RECORD_UNAVAILABLE))
+                .ok_or_else(|| ApiError::feature_disabled(PDF_UNAVAILABLE))
         }
     })
     .await?;
@@ -1933,6 +1983,17 @@ mod tests {
         let (status, body) = get_json(&app, &uri, &token).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"]["details"]["reason"], "document_not_executed");
+        let (status, body) = post_json(
+            &app,
+            &format!("/api/documents/{id}/signing-record"),
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_not_executed");
+        let before = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+        assert_eq!(before["canRepublishSigningRecord"], false, "{before}");
 
         for (step, name) in [("accept", "Pat Example"), ("countersign", "Sam Example")] {
             post_ok(
@@ -1961,6 +2022,37 @@ mod tests {
         assert_eq!(body_bytes(response).await, kept);
 
         let (status, _) = get_json(&app, "/api/documents/999/signing-record.pdf", &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let republished = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/signing-record"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(republished["status"], "executed", "{republished}");
+        assert_eq!(
+            republished["canRepublishSigningRecord"], true,
+            "{republished}"
+        );
+        assert_eq!(republished["published"], false, "{republished}");
+        assert!(
+            republished["warnings"].as_array().unwrap().iter().any(|w| w
+                .as_str()
+                .unwrap()
+                .starts_with(
+                    "Warning: R2 is not configured, so the signing record was not published"
+                )),
+            "{republished}"
+        );
+        let (status, _) = post_json(
+            &app,
+            "/api/documents/999/signing-record",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 

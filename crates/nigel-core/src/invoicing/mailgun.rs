@@ -179,19 +179,34 @@ pub fn attachment_part(attachment: &Attachment<'_>) -> Result<reqwest::blocking:
         .map_err(|e| NigelError::Other(format!("mailgun attachment: {e}")))
 }
 
-/// Mailgun's limit on one message, attachments included.
+/// Mailgun's limit on one message as sent: headers, text and every attachment
+/// after encoding.
 pub const MAILGUN_MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
 
-/// Refuses a message whose attachments alone exceed
-/// [`MAILGUN_MAX_MESSAGE_BYTES`], before anything is sent.
-pub fn ensure_attachments_fit(attachments: &[Attachment<'_>]) -> Result<()> {
-    let total: usize = attachments.iter().map(|a| a.bytes.len()).sum();
+/// Room left for the headers, the multipart boundaries and the line breaks an
+/// encoder adds, which the estimate does not count byte by byte.
+pub const MESSAGE_OVERHEAD_BYTES: usize = 256 * 1024;
+
+/// What a message comes to once sent: each attachment base64-encoded
+/// (4 bytes per 3, rounded up), the text, and [`MESSAGE_OVERHEAD_BYTES`].
+pub fn encoded_message_bytes(attachments: &[Attachment<'_>], text: &str) -> usize {
+    let encoded: usize = attachments
+        .iter()
+        .map(|a| a.bytes.len().div_ceil(3) * 4)
+        .sum();
+    encoded + text.len() + MESSAGE_OVERHEAD_BYTES
+}
+
+/// Refuses a message that would exceed [`MAILGUN_MAX_MESSAGE_BYTES`] once
+/// encoded, before anything is sent.
+pub fn ensure_message_fits(attachments: &[Attachment<'_>], text: &str) -> Result<()> {
+    let total = encoded_message_bytes(attachments, text);
     if total <= MAILGUN_MAX_MESSAGE_BYTES {
         return Ok(());
     }
     let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
     Err(NigelError::Invalid(format!(
-        "The attachments come to {:.1} MB, over Mailgun's {:.0} MB message limit, so the email was not sent.",
+        "The email would come to {:.1} MB once its attachments are encoded, over Mailgun's {:.0} MB message limit, so it was not sent.",
         mb(total),
         mb(MAILGUN_MAX_MESSAGE_BYTES)
     )))
@@ -203,7 +218,7 @@ pub fn message_form(
     envelope: &EmailEnvelope,
     mail: &OutgoingMail<'_>,
 ) -> Result<reqwest::blocking::multipart::Form> {
-    ensure_attachments_fit(mail.attachments)?;
+    ensure_message_fits(mail.attachments, mail.text)?;
     let mut form = reqwest::blocking::multipart::Form::new();
     for (name, value) in message_fields(envelope, mail.to, mail.cc, mail.subject, mail.text) {
         form = form.text(name, value);
@@ -293,20 +308,13 @@ mod tests {
     }
 
     #[test]
-    fn attachments_over_the_message_limit_are_refused_before_sending() {
-        let big = vec![0u8; 15 * 1024 * 1024];
-        let attachments = [
-            Attachment {
-                filename: "a.pdf",
-                content_type: "application/pdf",
-                bytes: &big,
-            },
-            Attachment {
-                filename: "b.pdf",
-                content_type: "application/pdf",
-                bytes: &big,
-            },
-        ];
+    fn a_message_is_measured_encoded_and_refused_before_any_request() {
+        let big = vec![0u8; 20 * 1024 * 1024];
+        let attachments = [Attachment {
+            filename: "a.pdf",
+            content_type: "application/pdf",
+            bytes: &big,
+        }];
         let client = MailgunClient {
             api_key: "key".into(),
             domain: "mg.invalid".into(),
@@ -316,9 +324,22 @@ mod tests {
         assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
         assert_eq!(
             err.to_string(),
-            "The attachments come to 30.0 MB, over Mailgun's 25 MB message limit, so the email was not sent."
+            "The email would come to 26.9 MB once its attachments are encoded, over Mailgun's 25 MB message limit, so it was not sent."
         );
-        assert!(ensure_attachments_fit(&attachments[..1]).is_ok());
+        assert_eq!(
+            encoded_message_bytes(&attachments, "hi"),
+            big.len().div_ceil(3) * 4 + 2 + MESSAGE_OVERHEAD_BYTES
+        );
+        let fits = vec![0u8; 18 * 1024 * 1024];
+        assert!(ensure_message_fits(
+            &[Attachment {
+                filename: "a.pdf",
+                content_type: "application/pdf",
+                bytes: &fits,
+            }],
+            "hi"
+        )
+        .is_ok());
     }
 
     #[test]

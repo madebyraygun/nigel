@@ -24,6 +24,7 @@ import {
   type DeclineRequest,
   type Deleted,
   type DocumentActionResult,
+  type SigningRecordResult,
   type DocumentDetail,
   type DocumentKind,
   type DocumentListParams,
@@ -529,6 +530,8 @@ export interface ApiClient {
   declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult>;
   countersignDocument(id: number, input: CountersignRequest): Promise<DocumentActionResult>;
   withdrawDocument(id: number): Promise<DocumentActionResult>;
+  /** Regenerate an executed document's signing record and republish it and its pages. Emails nobody. */
+  republishSigningRecord(id: number): Promise<SigningRecordResult>;
   /** Fetch and record the responses signers left online. */
   syncDocuments(): Promise<DocumentSyncResult>;
 
@@ -1011,6 +1014,10 @@ export class FetchApiClient implements ApiClient {
 
   withdrawDocument(id: number): Promise<DocumentActionResult> {
     return this.request<DocumentActionResult>('POST', `/documents/${id}/withdraw`, {});
+  }
+
+  republishSigningRecord(id: number): Promise<SigningRecordResult> {
+    return this.request<SigningRecordResult>('POST', `/documents/${id}/signing-record`, {});
   }
 
   syncDocuments(): Promise<DocumentSyncResult> {

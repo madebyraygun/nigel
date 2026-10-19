@@ -34,6 +34,7 @@ import type {
   DeclineRequest,
   Deleted,
   DocumentActionResult,
+  SigningRecordResult,
   DocumentsConfigStatus,
   DocumentDetail,
   DocumentKind,
@@ -315,6 +316,7 @@ export function documentFlags(status: DocumentStatus): Pick<
   | 'canDecline'
   | 'canCountersign'
   | 'canWithdraw'
+  | 'canRepublishSigningRecord'
 > {
   return {
     canEdit: documentAllows(status, 'edit'),
@@ -325,6 +327,7 @@ export function documentFlags(status: DocumentStatus): Pick<
     canDecline: documentAllows(status, 'decline'),
     canCountersign: documentAllows(status, 'countersign'),
     canWithdraw: documentAllows(status, 'withdraw'),
+    canRepublishSigningRecord: status === 'executed',
   };
 }
 
@@ -1618,6 +1621,8 @@ export class FakeApiClient implements ApiClient {
   declineDocumentError: Error | null = null;
   countersignDocumentError: Error | null = null;
   withdrawDocumentError: Error | null = null;
+  republishSigningRecordError: Error | null = null;
+  signingRecordPublished = true;
   syncDocumentsError: Error | null = null;
   documentPreviewHtmlError: Error | null = null;
 
@@ -1817,6 +1822,12 @@ export class FakeApiClient implements ApiClient {
         this.withSignature(current, 'executed', 'countersign', input),
       ),
     );
+  }
+
+  async republishSigningRecord(id: number): Promise<SigningRecordResult> {
+    this.calls.push(`republishSigningRecord:${id}`);
+    if (this.republishSigningRecordError) throw this.republishSigningRecordError;
+    return { ...this.withWarnings(this.document(id)), published: this.signingRecordPublished };
   }
 
   async withdrawDocument(id: number): Promise<DocumentActionResult> {

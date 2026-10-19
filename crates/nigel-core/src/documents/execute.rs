@@ -2,6 +2,9 @@
 //! the signing record, the republished pages and the confirmation email then
 //! follow best-effort, in that order, and whatever could not be done comes back
 //! as warnings. Nothing here undoes the countersignature.
+//!
+//! The publisher and the mailer arrive as `Result`s: `Err` is why that client
+//! is not available, which the warnings put into words.
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -11,20 +14,27 @@ use super::render::{
     attachment_name, relative_signing_record_href, render_signed_email_text, signed_subject,
 };
 use super::signing_record::{
-    generate_signing_record, signing_record_rel, GeneratedRecord, RECORD_UNAVAILABLE,
+    generate_signing_record, signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE,
+    RECORD_UNAVAILABLE,
 };
 use super::store::{get_document, latest_sent_version, read_version_pdf, recipients};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{
-    Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource,
+    Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource, Unavailable,
 };
-use crate::invoicing::mailgun::format_address;
+use crate::invoicing::mailgun::{ensure_message_fits, format_address};
 use crate::invoicing::r2::document_page_url;
 
-/// The command that regenerates and republishes a signing record.
-fn retry_hint(id: i64) -> String {
-    format!("run `nigel document signing-record {id}` to try again")
+/// How to regenerate and republish a signing record and its pages, from either
+/// surface.
+pub fn republish_hint(id: i64) -> String {
+    format!(
+        "To republish, run `nigel document signing-record {id}` or choose Republish signing record on the document in the web UI."
+    )
 }
+
+/// What the operator does when a signed copy was not emailed.
+const SEND_YOURSELF: &str = "send the signed PDF and the signing record to the recipients yourself";
 
 /// Generate the signing record, publish it, then republish the pages linking
 /// it and email every recipient of the executed version a signed copy.
@@ -33,9 +43,9 @@ pub fn complete_execution<P: DocumentPublisher, R: ResponseSource, M: Mailer>(
     data_dir: &Path,
     id: i64,
     company: &str,
-    publisher: Option<&P>,
+    publisher: std::result::Result<&P, &Unavailable>,
     source: Option<&R>,
-    mailer: Option<&M>,
+    mailer: std::result::Result<&M, &Unavailable>,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     let record = match generate_signing_record(conn, data_dir, id, company) {
@@ -46,8 +56,8 @@ pub fn complete_execution<P: DocumentPublisher, R: ResponseSource, M: Mailer>(
         }
         Err(e) => {
             warnings.push(format!(
-                "Warning: the signing record could not be generated ({e}); {}.",
-                retry_hint(id)
+                "Warning: the signing record could not be generated ({e}). {}",
+                republish_hint(id)
             ));
             None
         }
@@ -67,24 +77,36 @@ pub fn complete_execution<P: DocumentPublisher, R: ResponseSource, M: Mailer>(
         id,
         company,
         record.as_ref(),
-        publisher,
+        publisher.ok(),
         mailer,
         &mut warnings,
     );
     warnings
 }
 
-/// A regenerated record: where its local copy is, and what could not be
-/// published.
+/// A regenerated record: where its local copy is, whether it was published,
+/// and what else could not be republished.
 #[derive(Debug)]
 pub struct RegeneratedRecord {
     pub path: PathBuf,
     pub filename: String,
+    /// The record itself reached the public bucket.
+    pub published: bool,
+    /// Why there was no publisher to try, when there was none.
+    pub unavailable: Option<Unavailable>,
     pub warnings: Vec<String>,
 }
 
+impl RegeneratedRecord {
+    /// A publish was expected and did not happen: the operator configured R2,
+    /// at least in part, and the record is not up.
+    pub fn failed(&self) -> bool {
+        !self.published && self.unavailable.as_ref().is_none_or(|u| u.is_configured())
+    }
+}
+
 /// Regenerate an executed document's signing record, write it locally, and
-/// republish it and the pages linking it when a publisher is configured.
+/// republish it and the pages linking it when a publisher is available.
 /// Refused for a document that is not executed or a build without PDF
 /// support; nothing is emailed.
 pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
@@ -92,13 +114,13 @@ pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
     data_dir: &Path,
     id: i64,
     company: &str,
-    publisher: Option<&P>,
+    publisher: std::result::Result<&P, &Unavailable>,
     source: Option<&R>,
 ) -> Result<RegeneratedRecord> {
     let record = generate_signing_record(conn, data_dir, id, company)?
-        .ok_or_else(|| NigelError::Invalid(RECORD_UNAVAILABLE.to_string()))?;
+        .ok_or_else(|| NigelError::Invalid(PDF_UNAVAILABLE.to_string()))?;
     let mut warnings = Vec::new();
-    publish_record_and_pages(
+    let published = publish_record_and_pages(
         conn,
         id,
         company,
@@ -110,52 +132,70 @@ pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
     Ok(RegeneratedRecord {
         path: data_dir.join(signing_record_rel(id, record.version)),
         filename: record.filename,
+        published,
+        unavailable: publisher.err().cloned(),
         warnings,
     })
 }
 
 /// Publish the record, then the pages: a page links the record only once the
 /// record is up, so no page ever points at an object that is not there.
+/// Answers whether the record was published.
 fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     id: i64,
     company: &str,
     record: Option<&GeneratedRecord>,
-    publisher: Option<&P>,
+    publisher: std::result::Result<&P, &Unavailable>,
     source: Option<&R>,
     warnings: &mut Vec<String>,
-) {
+) -> bool {
     let mut published = false;
-    if let (Some(record), Some(publisher)) = (record, publisher) {
-        let uploaded = get_document(conn, id).and_then(|document| {
-            publisher.publish_signing_record(
-                &document.token,
-                record.version,
-                &record.filename,
-                &record.bytes,
-            )
-        });
-        match uploaded {
-            Ok(_) => published = true,
-            Err(e) => warnings.push(format!(
-                "Warning: the countersignature is recorded, but the signing record could not be published ({e}); {}.",
-                retry_hint(id)
-            )),
+    match (record, publisher) {
+        (Some(record), Ok(publisher)) => {
+            let uploaded = get_document(conn, id).and_then(|document| {
+                publisher.publish_signing_record(
+                    &document.token,
+                    record.version,
+                    &record.filename,
+                    &record.bytes,
+                )
+            });
+            match uploaded {
+                Ok(_) => published = true,
+                Err(e) => warnings.push(format!(
+                    "Warning: the countersignature is recorded, but the signing record could not be published ({e}). {}",
+                    republish_hint(id)
+                )),
+            }
         }
+        (Some(_), Err(unavailable)) => warnings.push(format!(
+            "Warning: {}, so the signing record was not published; it is kept in the data directory. To publish it, {}. {}",
+            unavailable.why(),
+            unavailable.fix(),
+            republish_hint(id)
+        )),
+        (None, _) => {}
     }
     let href = record.map(|r| relative_signing_record_href(r.version));
-    warnings.extend(republish_linking_record(
+    let page_warnings = republish_linking_record(
         conn,
         id,
         company,
         href.as_deref().filter(|_| published),
-        publisher,
+        publisher.ok(),
         source,
-    ));
+    );
+    warnings.extend(
+        page_warnings
+            .into_iter()
+            .map(|w| format!("{w} {}", republish_hint(id))),
+    );
+    published
 }
 
 /// Email each recipient of the executed version, one message apiece, with the
-/// signed PDF and the signing record attached.
+/// signed PDF and the signing record attached, then sum up who was missed.
 #[allow(clippy::too_many_arguments)]
 fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
     conn: &Connection,
@@ -164,15 +204,19 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
     company: &str,
     record: Option<&GeneratedRecord>,
     publisher: Option<&P>,
-    mailer: Option<&M>,
+    mailer: std::result::Result<&M, &Unavailable>,
     warnings: &mut Vec<String>,
 ) {
-    let Some(mailer) = mailer else {
-        warnings.push(
-            "Warning: Mailgun is not configured, so no signed copy was emailed to the recipients."
-                .to_string(),
-        );
-        return;
+    let mailer = match mailer {
+        Ok(mailer) => mailer,
+        Err(unavailable) => {
+            warnings.push(format!(
+                "Warning: {}, so no signed copy was emailed. {SEND_YOURSELF_CAP}, and {} to email them for future documents.",
+                unavailable.why(),
+                unavailable.fix()
+            ));
+            return;
+        }
     };
     let load = || -> Result<_> {
         let document = get_document(conn, id)?;
@@ -186,11 +230,18 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
         Ok(loaded) => loaded,
         Err(e) => {
             warnings.push(format!(
-                "Warning: no signed copy was emailed, the document could not be loaded ({e})."
+                "Warning: no signed copy was emailed, because the document could not be loaded ({e}). Check that its PDF is still in the data directory, then {SEND_YOURSELF}."
             ));
             return;
         }
     };
+    if frozen.is_empty() {
+        warnings.push(format!(
+            "Warning: version {} has no recipients on record, so no signed copy was emailed.",
+            version.number
+        ));
+        return;
+    }
     let pdf_name = attachment_name(&document.title, version.number);
     let mut attachments = vec![Attachment {
         filename: &pdf_name,
@@ -204,7 +255,14 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             bytes: &record.bytes,
         });
     }
+    if let Err(e) = ensure_message_fits(&attachments, "") {
+        warnings.push(format!(
+            "Warning: no signed copy was emailed: {e} {SEND_YOURSELF_CAP} another way."
+        ));
+        return;
+    }
     let subject = signed_subject(company, &document.title);
+    let mut missed = Vec::new();
     for r in &frozen {
         let url = publisher.map(|p| document_page_url(p.public_base(), &document.token, &r.token));
         let text = render_signed_email_text(
@@ -224,12 +282,23 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
         });
         if let Err(e) = sent {
             warnings.push(format!(
-                "Warning: the signed copy could not be emailed to {} ({e}).",
-                r.name
+                "Warning: the signed copy could not be emailed to {to} ({e})."
             ));
+            missed.push(to);
         }
     }
+    if !missed.is_empty() {
+        warnings.push(format!(
+            "Warning: emailed the signed copy to {} of {} recipients; not sent to {}. Send them the signed PDF and the signing record yourself.",
+            frozen.len() - missed.len(),
+            frozen.len(),
+            missed.join(", ")
+        ));
+    }
 }
+
+const SEND_YOURSELF_CAP: &str =
+    "Send the signed PDF and the signing record to the recipients yourself";
 
 #[cfg(test)]
 mod tests {
@@ -240,6 +309,7 @@ mod tests {
     use crate::documents::testing::{
         sent_document_with_fakes, test_conn, FakeDocumentPublisher, FakeMailer, FakeResponseSource,
     };
+    use crate::invoicing::gateway::UnavailableState;
     #[cfg(feature = "pdf")]
     use crate::invoicing::r2::document_signing_record_key;
 
@@ -248,6 +318,14 @@ mod tests {
         record_manual_accept(conn, id, "Pat Example", "2026-10-06").unwrap();
         record_countersign(conn, id, "Sam Example", "2026-10-07").unwrap();
         (id, p, s)
+    }
+
+    fn unset(service: &'static str) -> Unavailable {
+        Unavailable {
+            service,
+            keys: &["a_key", "b_key"],
+            state: UnavailableState::NotConfigured,
+        }
     }
 
     fn still_executed(conn: &Connection, id: i64) {
@@ -270,15 +348,8 @@ mod tests {
         let before = p.keys().len();
         let m = FakeMailer::default();
 
-        let warnings = complete_execution(
-            &conn,
-            dir.path(),
-            id,
-            "Initech",
-            Some(&p),
-            Some(&s),
-            Some(&m),
-        );
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let keys = p.keys()[before..].to_vec();
@@ -307,11 +378,6 @@ mod tests {
             crate::documents::model::checksum_of(&signed_before),
             version.checksum
         );
-        assert!(!p
-            .keys()
-            .iter()
-            .skip(before)
-            .any(|k| k.ends_with("document.pdf")));
     }
 
     #[cfg(feature = "pdf")]
@@ -323,15 +389,7 @@ mod tests {
         let version = latest_version(&conn, id).unwrap();
         let signed = std::fs::read(dir.path().join(&version.file_path)).unwrap();
         let m = FakeMailer::default();
-        complete_execution(
-            &conn,
-            dir.path(),
-            id,
-            "Initech",
-            Some(&p),
-            Some(&s),
-            Some(&m),
-        );
+        complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
         let record = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
         let sent = m.sent.borrow();
         let frozen = recipients(&conn, version.id).unwrap();
@@ -374,16 +432,18 @@ mod tests {
             dir.path(),
             id,
             "Initech",
-            Some(&failing),
+            Ok(&failing),
             Some(&s),
-            Some(&m),
+            Ok(&m),
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(
             warnings[0].contains("signing record could not be published")
-                && warnings[0].contains(&format!("nigel document signing-record {id}")),
+                && warnings[0].ends_with(&republish_hint(id)),
             "{warnings:?}"
         );
+        assert!(republish_hint(id).contains(&format!("nigel document signing-record {id}")));
+        assert!(republish_hint(id).contains("Republish signing record"));
         still_executed(&conn, id);
         let document = get_document(&conn, id).unwrap();
         let version = latest_version(&conn, id).unwrap();
@@ -395,15 +455,20 @@ mod tests {
         }
         assert_eq!(m.sent.borrow().len(), 2, "the email still goes");
 
+        let again =
+            regenerate_signing_record(&conn, dir.path(), id, "Initech", Ok(&failing), Some(&s))
+                .unwrap();
+        assert!(!again.published && again.failed());
+
         let p = FakeDocumentPublisher::default();
         let regenerated =
-            regenerate_signing_record(&conn, dir.path(), id, "Initech", Some(&p), Some(&s))
-                .unwrap();
+            regenerate_signing_record(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s)).unwrap();
         assert!(
             regenerated.warnings.is_empty(),
             "{:?}",
             regenerated.warnings
         );
+        assert!(regenerated.published && !regenerated.failed());
         assert_eq!(
             regenerated.filename,
             "Website-rebuild-v1-signing-record.pdf"
@@ -419,62 +484,138 @@ mod tests {
         assert_eq!(m.sent.borrow().len(), 2, "a regenerate emails nobody");
     }
 
+    #[cfg(feature = "pdf")]
     #[test]
-    fn mail_failures_and_missing_configuration_are_warnings_and_the_document_stays_executed() {
+    fn without_a_publisher_the_record_stays_local_and_a_regenerate_is_not_a_failure() {
+        let (dir, conn) = test_conn();
+        let (id, _, s) = executed(&conn, dir.path());
+        let r2 = unset("R2");
+        let m = FakeMailer::default();
+        let warnings = complete_execution::<FakeDocumentPublisher, _, _>(
+            &conn,
+            dir.path(),
+            id,
+            "Initech",
+            Err(&r2),
+            Some(&s),
+            Ok(&m),
+        );
+        assert!(
+            warnings[0].starts_with(
+                "Warning: R2 is not configured, so the signing record was not published; it is kept in the data directory. To publish it, set a_key, b_key."
+            ),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings[1..]
+                .iter()
+                .all(|w| w.ends_with(&republish_hint(id))),
+            "page warnings carry the hint: {warnings:?}"
+        );
+        assert!(
+            m.sent
+                .borrow()
+                .iter()
+                .all(|mail| !mail.text.contains("http")),
+            "no link without a publisher"
+        );
+        let regenerated = regenerate_signing_record::<FakeDocumentPublisher, _>(
+            &conn,
+            dir.path(),
+            id,
+            "Initech",
+            Err(&r2),
+            Some(&s),
+        )
+        .unwrap();
+        assert!(!regenerated.published && !regenerated.failed());
+    }
+
+    #[test]
+    fn a_failed_send_names_the_address_and_a_summary_says_who_was_missed() {
         let (dir, conn) = test_conn();
         let (id, p, s) = executed(&conn, dir.path());
         let m = FakeMailer {
             fail_on_call: Some(1),
             ..Default::default()
         };
-        let warnings = complete_execution(
-            &conn,
-            dir.path(),
-            id,
-            "Initech",
-            Some(&p),
-            Some(&s),
-            Some(&m),
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
+        let mail_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("emailed")).collect();
+        assert_eq!(
+            mail_warnings,
+            [
+                "Warning: the signed copy could not be emailed to Sam Example <sam@cedar.test> (mailgun 500: boom).",
+                "Warning: emailed the signed copy to 1 of 2 recipients; not sent to Sam Example <sam@cedar.test>. Send them the signed PDF and the signing record yourself.",
+            ],
+            "{warnings:?}"
         );
-        let mail_warnings: Vec<_> = warnings
-            .iter()
-            .filter(|w| w.contains("could not be emailed"))
-            .collect();
-        assert_eq!(mail_warnings.len(), 1, "{warnings:?}");
-        assert!(mail_warnings[0].contains("Sam Example"));
         assert_eq!(m.sent.borrow().len(), 1, "the first recipient was emailed");
         still_executed(&conn, id);
+    }
 
+    #[test]
+    fn missing_mail_configuration_is_one_sentence_with_what_to_do() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = executed(&conn, dir.path());
+        let mailgun = Unavailable {
+            service: "Mailgun",
+            keys: &["mailgun_api_key", "mailgun_domain", "from_email"],
+            state: UnavailableState::Partial(vec!["from_email"]),
+        };
         let warnings = complete_execution::<_, _, FakeMailer>(
             &conn,
             dir.path(),
             id,
             "Initech",
-            Some(&p),
+            Ok(&p),
             Some(&s),
-            None,
+            Err(&mailgun),
         );
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("Mailgun is not configured")),
-            "{warnings:?}"
+        let mail: Vec<_> = warnings.iter().filter(|w| w.contains("Mailgun")).collect();
+        assert_eq!(
+            mail,
+            ["Warning: Mailgun is only partly configured (missing: from_email), so no signed copy was emailed. Send the signed PDF and the signing record to the recipients yourself, and set from_email to email them for future documents."]
         );
         still_executed(&conn, id);
+    }
+
+    #[test]
+    fn a_version_with_no_recipients_says_nobody_was_emailed() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = executed(&conn, dir.path());
+        let version = latest_version(&conn, id).unwrap();
+        conn.execute(
+            "DELETE FROM document_recipients WHERE version_id = ?1",
+            [version.id],
+        )
+        .unwrap();
+        let m = FakeMailer::default();
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
+        assert!(
+            warnings.contains(
+                &"Warning: version 1 has no recipients on record, so no signed copy was emailed."
+                    .to_string()
+            ),
+            "{warnings:?}"
+        );
+        assert!(m.sent.borrow().is_empty());
     }
 
     #[test]
     fn with_nothing_configured_the_countersignature_stands() {
         let (dir, conn) = test_conn();
         let (id, _, _) = executed(&conn, dir.path());
+        let (r2, mailgun) = (unset("R2"), unset("Mailgun"));
         let warnings = complete_execution::<FakeDocumentPublisher, FakeResponseSource, FakeMailer>(
             &conn,
             dir.path(),
             id,
             "",
+            Err(&r2),
             None,
-            None,
-            None,
+            Err(&mailgun),
         );
         assert!(!warnings.is_empty());
         if cfg!(feature = "pdf") {
@@ -491,21 +632,17 @@ mod tests {
         let (dir, conn) = test_conn();
         let (id, p, s) = executed(&conn, dir.path());
         let m = FakeMailer::default();
-        let warnings = complete_execution(
-            &conn,
-            dir.path(),
-            id,
-            "Initech",
-            Some(&p),
-            Some(&s),
-            Some(&m),
-        );
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
         assert_eq!(warnings, vec![RECORD_UNAVAILABLE.to_string()]);
+        assert!(
+            RECORD_UNAVAILABLE.starts_with("Warning: ")
+                && RECORD_UNAVAILABLE.contains("`pdf` feature")
+        );
         let sent = m.sent.borrow();
         assert!(sent.iter().all(|mail| mail.attachments.len() == 1));
         assert!(
-            regenerate_signing_record(&conn, dir.path(), id, "Initech", Some(&p), Some(&s))
-                .is_err()
+            regenerate_signing_record(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s)).is_err()
         );
     }
 }

@@ -21,7 +21,7 @@ use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource,
 };
 use crate::invoicing::logo::{fingerprint, COMPANY_LOGO_KEY, PUBLISHED_LOGO_KEY};
-use crate::invoicing::mailgun::format_address;
+use crate::invoicing::mailgun::{ensure_message_fits, format_address};
 use crate::invoicing::render::usable_logo;
 use crate::invoicing::send::StepOutcome;
 
@@ -361,6 +361,16 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     ensure_client_active_for_documents(conn, document.client_id).map_err(load)?;
     let version = latest_version(conn, document_id).map_err(load)?;
     let pdf = read_version_pdf(ctx.data_dir, &version).map_err(load)?;
+    let filename = attachment_name(&document.title, version.number);
+    ensure_message_fits(
+        &[Attachment {
+            filename: &filename,
+            content_type: "application/pdf",
+            bytes: &pdf,
+        }],
+        "",
+    )
+    .map_err(load)?;
     let client = get_client(conn, document.client_id).map_err(load)?;
     trace.done(Step::Load);
 
@@ -444,7 +454,6 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     trace.open_manifest = Some((document.token.clone(), manifest));
     trace.done(Step::Manifest);
 
-    let filename = attachment_name(&document.title, version.number);
     for (r, link) in frozen.iter().zip(&links) {
         let recipient = PageRecipient {
             token: &r.token,
@@ -859,6 +868,41 @@ mod tests {
             }
         ));
         assert!(p.keys().is_empty() && m.sent.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_pdf_too_large_to_email_stops_the_send_before_anything_is_published() {
+        let (dir, conn) = test_conn();
+        let client = seed_client(&conn, "Cedar Systems");
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        pdf.resize(20 * 1024 * 1024, b' ');
+        let id = crate::documents::store::file_document(
+            &conn,
+            dir.path(),
+            &crate::documents::store::NewDocument {
+                client_id: client,
+                kind: "Proposal",
+                title: "Website rebuild",
+            },
+            &pdf,
+            "2026-10-01",
+        )
+        .unwrap();
+        let (p, m, s) = (
+            FakeDocumentPublisher::default(),
+            FakeMailer::default(),
+            FakeResponseSource::default(),
+        );
+        let failure =
+            send_document_traced(&conn, id, &[pat()], &ctx(dir.path()), &p, &m, &s).unwrap_err();
+        assert_eq!(failure.step, DocumentSendStep::Load);
+        assert!(
+            failure.source.to_string().contains("25 MB message limit"),
+            "{}",
+            failure.source
+        );
+        assert!(p.keys().is_empty() && m.sent.borrow().is_empty());
+        assert!(s.manifests.borrow().is_empty());
     }
 
     #[test]

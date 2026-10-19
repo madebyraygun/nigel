@@ -122,6 +122,60 @@ macro_rules! fake_logo_publishing {
 #[cfg(test)]
 pub(crate) use fake_logo_publishing;
 
+/// Why a client a best-effort step needs could not be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnavailableState {
+    /// None of its keys is set.
+    NotConfigured,
+    /// Some keys are set and these are not.
+    Partial(Vec<&'static str>),
+    /// Every key is set and the configuration was refused, for this reason.
+    Refused(String),
+}
+
+/// A client that is not available, worded so a warning can say why and what
+/// to do about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unavailable {
+    /// The service, as a sentence names it: `Mailgun`, `R2`.
+    pub service: &'static str,
+    /// Every key the service needs.
+    pub keys: &'static [&'static str],
+    pub state: UnavailableState,
+}
+
+impl Unavailable {
+    /// Whether the operator set any of the service's keys.
+    pub fn is_configured(&self) -> bool {
+        self.state != UnavailableState::NotConfigured
+    }
+
+    /// The clause saying why, e.g. `Mailgun is only partly configured
+    /// (missing: mailgun_domain)`.
+    pub fn why(&self) -> String {
+        match &self.state {
+            UnavailableState::NotConfigured => format!("{} is not configured", self.service),
+            UnavailableState::Partial(missing) => format!(
+                "{} is only partly configured (missing: {})",
+                self.service,
+                missing.join(", ")
+            ),
+            UnavailableState::Refused(reason) => {
+                format!("the {} configuration was refused ({reason})", self.service)
+            }
+        }
+    }
+
+    /// The clause saying what to do, e.g. `set mailgun_domain`.
+    pub fn fix(&self) -> String {
+        match &self.state {
+            UnavailableState::NotConfigured => format!("set {}", self.keys.join(", ")),
+            UnavailableState::Partial(missing) => format!("set {}", missing.join(", ")),
+            UnavailableState::Refused(_) => format!("correct the {} settings", self.service),
+        }
+    }
+}
+
 pub const INVOICE_ATTACHMENT: &str = "invoice.pdf";
 
 #[derive(Debug, Clone, Copy)]

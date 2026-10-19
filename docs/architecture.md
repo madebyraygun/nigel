@@ -186,7 +186,7 @@ crates/
           reconcile.rs           # POST /api/reconcile, GET /api/reconciliations
           clients.rs             # GET/POST /api/clients, GET/PATCH/DELETE /api/clients/:id
           documents.rs           # GET/POST /api/documents, GET/PATCH /api/documents/:id (+/send, /accept, /request-changes,
-                                  #   /decline, /countersign, /withdraw, /revise, /preview[.pdf]), POST /api/documents/sync, GET /api/document-kinds
+                                  #   /decline, /countersign, /withdraw, /revise, /preview[.pdf], /signing-record[.pdf]), POST /api/documents/sync, GET /api/document-kinds
           invoices.rs            # GET/POST /api/invoices, GET/PATCH /api/invoices/:number(+/void, /pay,
                                   #   /send, /preview[.pdf]), /aging, /next-number, POST /api/invoices/sync
           settings.rs            # GET/PUT /api/settings/app, PUT company-name, POST data-dir, POST password/{set,change,remove}

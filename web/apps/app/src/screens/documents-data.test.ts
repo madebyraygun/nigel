@@ -58,6 +58,7 @@ function detail(versions: DocumentVersionDetail[]): DocumentDetail {
     canDecline: true,
     canCountersign: false,
     canWithdraw: true,
+    canRepublishSigningRecord: false,
   };
 }
 

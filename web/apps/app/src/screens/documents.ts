@@ -1143,6 +1143,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     if (detail.canEdit) {
       available.push({ action: 'edit', label: 'Edit…', run: () => this.openDialog('edit') });
     }
+    if (detail.canRepublishSigningRecord) {
+      available.push({
+        action: 'republishSigningRecord',
+        label: 'Republish signing record',
+        run: () => void this.runAction((id) => this.client.republishSigningRecord(id)),
+      });
+    }
     if (detail.canWithdraw) {
       available.push({
         action: 'withdraw',
