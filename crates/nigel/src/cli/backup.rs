@@ -23,6 +23,7 @@ pub fn run(output: Option<String>) -> Result<()> {
         }
     };
 
+    check_documents_destination(&data_dir, &dest_path)?;
     snapshot(&conn, &dest_path)?;
 
     let size = std::fs::metadata(&dest_path)?.len();

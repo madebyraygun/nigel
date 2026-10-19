@@ -93,6 +93,21 @@ describe('wc-dropzone', () => {
     expect(failed.mock.calls[0][0]).toContain('.csv');
   });
 
+  it('uses the owner’s wrong-type message when one is set', async () => {
+    const el = await mount({
+      accept: '.pdf',
+      unsupportedMessage: 'Only PDF files can be filed.',
+    });
+    const failed = vi.fn();
+    el.addEventListener('nc-file-error', (e) =>
+      failed((e as CustomEvent).detail.message),
+    );
+
+    drop(el, [file('notes.txt')]);
+
+    expect(failed.mock.calls[0][0]).toBe('Only PDF files can be filed.');
+  });
+
   it('refuses a file over the size limit', async () => {
     const el = await mount();
     const selected = vi.fn();

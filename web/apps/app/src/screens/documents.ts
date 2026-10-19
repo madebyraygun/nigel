@@ -363,8 +363,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
     try {
       if (id === null) {
-        // Archived clients included, so the filter can still name one whose
-        // documents outlived them; filing offers active clients only.
+        // Archived clients are fetched too, so a filter link to one can still
+        // show its name; the filter and filing offer active clients only.
         const [rows, clients, kinds] = await Promise.all([
           this.client.getDocuments(documentListParams(this.params)),
           this.client.getClients(true),
@@ -954,7 +954,9 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         >
           <wa-option value="">All clients</wa-option>
           ${this.clients
-            .filter((client) => client.archivedAt === null)
+            .filter(
+              (client) => client.archivedAt === null || String(client.id) === clientId,
+            )
             .map(
               (client) =>
                 html`<wa-option value=${String(client.id)}>${client.name}</wa-option>`,
@@ -972,6 +974,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           <wc-dropzone
             accept=".pdf"
             prompt="Drop a PDF here, or choose a file"
+          unsupported-message="Only PDF files can be filed."
             filename=${this.file?.name ?? ''}
             .size=${this.file?.size ?? 0}
             error=${this.fileError}
@@ -1271,6 +1274,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         return html`<wc-dropzone
           accept=".pdf"
           prompt="Drop a PDF here, or choose a file"
+            unsupported-message="Only PDF files can be filed."
           filename=${this.revision?.name ?? ''}
           .size=${this.revision?.size ?? 0}
           error=${this.revisionError}

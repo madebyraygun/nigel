@@ -187,6 +187,13 @@ export class WcDropzone extends LitElement {
   @property({ type: String })
   prompt = DEFAULT_PROMPT;
 
+  /**
+   * What a file with the wrong extension produces. Empty means the default,
+   * which names the accepted extensions and speaks of statements.
+   */
+  @property({ type: String, attribute: 'unsupported-message' })
+  unsupportedMessage = '';
+
   /** Largest file to emit. Zero disables the check. */
   @property({ type: Number, attribute: 'max-bytes' })
   maxBytes = DEFAULT_MAX_BYTES;
@@ -243,7 +250,7 @@ export class WcDropzone extends LitElement {
     const extensions = this.extensions;
     const name = file.name.toLowerCase();
     if (extensions.length > 0 && !extensions.some((ext) => name.endsWith(ext))) {
-      return unsupportedFileMessage(extensions);
+      return this.unsupportedMessage || unsupportedFileMessage(extensions);
     }
     if (this.maxBytes > 0 && file.size > this.maxBytes) {
       const limit = Math.round(this.maxBytes / (1024 * 1024));

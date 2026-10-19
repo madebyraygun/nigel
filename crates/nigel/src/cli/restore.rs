@@ -73,7 +73,8 @@ pub fn run(path: &str) -> Result<()> {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let safety_path = backups_dir.join(format!("nigel-pre-restore-{stamp}.db"));
 
-    if db_path.exists() {
+    let db_existed = db_path.exists();
+    if db_existed {
         let conn = get_connection(&db_path)?;
         crate::cli::backup::snapshot(&conn, &safety_path)?;
         drop(conn);
@@ -92,7 +93,8 @@ pub fn run(path: &str) -> Result<()> {
     drop(src_conn);
     restrict_file_permissions(&db_path)?;
 
-    match crate::cli::backup::restore_documents_in(&data_dir, &backup_path)? {
+    let safety = db_existed.then_some(safety_path.as_path());
+    match crate::cli::backup::restore_documents_in(&data_dir, &backup_path, safety)? {
         Some(files) => println!("Restored {files} filed PDF(s)."),
         None => println!(
             "No documents folder next to the backup ({}); filed PDFs were left as they are.",

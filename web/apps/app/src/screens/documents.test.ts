@@ -346,6 +346,21 @@ describe('nigel-documents-screen', () => {
     );
   });
 
+  it('still labels the filter when the URL names an archived client', async () => {
+    const { el } = await mount('clientId=3');
+    const options = [...find(el, '[data-client-filter]').querySelectorAll('wa-option')].map(
+      (option) => option.textContent?.trim(),
+    );
+    expect(options).toEqual(['All clients', 'Cedar Systems', 'Harbor & Vale', 'Juniper Labs']);
+  });
+
+  it('says only PDFs can be filed when another type is dropped', async () => {
+    const { el } = await mount();
+    expect(find<WcDropzone>(el, 'wc-dropzone').unsupportedMessage).toBe(
+      'Only PDF files can be filed.',
+    );
+  });
+
   it('offers active clients and the server’s kinds for filing', async () => {
     const { el, fake } = await mount();
     expect(fake.calls).toContain('getDocumentKinds');
