@@ -126,7 +126,7 @@ pub struct CapturedMail {
     pub to: String,
     pub subject: String,
     pub text: String,
-    pub attachment: Option<(String, Vec<u8>)>,
+    pub attachments: Vec<(String, Vec<u8>)>,
 }
 
 /// Records every message instead of sending it. `fail_on_call` makes the
@@ -146,9 +146,11 @@ impl crate::invoicing::gateway::Mailer for FakeMailer {
             to: mail.to.to_string(),
             subject: mail.subject.to_string(),
             text: mail.text.to_string(),
-            attachment: mail
-                .attachment
-                .map(|a| (a.filename.to_string(), a.bytes.to_vec())),
+            attachments: mail
+                .attachments
+                .iter()
+                .map(|a| (a.filename.to_string(), a.bytes.to_vec()))
+                .collect(),
         });
         Ok(())
     }

@@ -122,7 +122,8 @@ pub struct Attachment<'a> {
     pub bytes: &'a [u8],
 }
 
-/// One message to a single recipient with an optional attachment.
+/// One message to a single recipient with any number of attachments, sent in
+/// the order given.
 ///
 /// `cc` entries are already formatted header values, so a name carrying a
 /// comma is quoted before it gets here — `mailgun::format_address` is the one
@@ -133,7 +134,7 @@ pub struct OutgoingMail<'a> {
     pub cc: &'a [String],
     pub subject: &'a str,
     pub text: &'a str,
-    pub attachment: Option<Attachment<'a>>,
+    pub attachments: &'a [Attachment<'a>],
 }
 
 pub trait Mailer {
@@ -154,11 +155,11 @@ pub trait Mailer {
             cc,
             subject,
             text,
-            attachment: Some(Attachment {
+            attachments: &[Attachment {
                 filename: INVOICE_ATTACHMENT,
                 content_type: "application/pdf",
                 bytes: pdf,
-            }),
+            }],
         })
     }
 }
@@ -173,7 +174,9 @@ mod tests {
         struct Capture(RefCell<Option<(String, String)>>);
         impl Mailer for Capture {
             fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
-                let a = mail.attachment.unwrap();
+                let [a] = mail.attachments else {
+                    panic!("one attachment, got {}", mail.attachments.len());
+                };
                 *self.0.borrow_mut() = Some((a.filename.to_string(), a.content_type.to_string()));
                 Ok(())
             }

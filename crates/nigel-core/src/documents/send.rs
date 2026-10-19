@@ -460,11 +460,11 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
                 cc: &[],
                 subject: &subject,
                 text: &text,
-                attachment: Some(Attachment {
+                attachments: &[Attachment {
                     filename: &filename,
                     content_type: "application/pdf",
                     bytes: &pdf,
-                }),
+                }],
             })
             .map_err(|e| (Step::Email, e))?;
         trace.emailed.push(r.email.clone());
@@ -702,10 +702,7 @@ mod tests {
             mails[1].subject,
             "Please review: Website rebuild for Initech"
         );
-        assert_eq!(
-            mails[0].attachment.as_ref().unwrap().0,
-            "Website-rebuild-v1.pdf"
-        );
+        assert_eq!(mails[0].attachments[0].0, "Website-rebuild-v1.pdf");
         for (mail, link) in mails.iter().zip(&out.links) {
             assert!(mail.text.contains(&link.url) && link.url.ends_with("/index.html"));
         }
