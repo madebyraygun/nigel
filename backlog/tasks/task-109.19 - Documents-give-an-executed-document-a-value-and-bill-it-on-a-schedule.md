@@ -4,7 +4,7 @@ title: 'Documents: give an executed document a value and bill it on a schedule'
 status: To Do
 assignee: []
 created_date: '2026-10-07 14:24'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-19 18:28'
 labels:
   - documents
   - invoicing
@@ -41,4 +41,6 @@ Open questions for the design: is the value part of what is signed (frozen per s
 
 <!-- SECTION:NOTES:BEGIN -->
 Attachment option: the invoice email today carries exactly one attachment (Mailer::send / OutgoingMail.attachment is an Option), so this needs a list. Attach the executed version's PDF as filed (the checksum the signatures bind to), named from the document title via render::attachment_name.
+
+Attach the signing record (the task that adds it under TASK-109) alongside the executed document on each invoice.
 <!-- SECTION:NOTES:END -->
