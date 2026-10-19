@@ -6,7 +6,7 @@ export class MemoryBucket implements PrivateBucket {
   async get(key: string): Promise<StoredObject | null> {
     const value = this.objects.get(key);
     if (value === undefined) return null;
-    return { json: async <T>() => JSON.parse(value) as T };
+    return { json: async <T>() => JSON.parse(value) as T, text: async () => value };
   }
 
   async put(key: string, value: string, options?: PutOptions): Promise<object | null> {

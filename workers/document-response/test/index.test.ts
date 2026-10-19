@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BODY_MAX_BYTES, changesRequestedKey, handle, manifestKey, responseKey } from '../src/index.js';
+import { BODY_MAX_BYTES, closedKey, handle, manifestKey, responseKey } from '../src/index.js';
 import { MemoryBucket, CountingLimiter } from './memory-r2.js';
 
 const DOC = '0123456789abcdef0123456789abcdef';
@@ -15,7 +15,7 @@ let env: { PRIVATE: MemoryBucket; RATE_LIMITER: CountingLimiter };
 const postRaw = (body: string, path = '/d/respond', headers: Record<string, string> = { 'CF-Connecting-IP': '203.0.113.7', 'User-Agent': 'UA' }) =>
   handle(new Request(`https://docs.example.test${path}`, { method: 'POST', body, headers }), env, () => new Date('2026-10-05T17:04:11.123Z'));
 const post = (body: unknown, path = '/d/respond') => postRaw(JSON.stringify(body), path);
-const responses = () => [...bucket.objects.keys()].filter((k) => k !== manifestKey(DOC));
+const responses = () => [...bucket.objects.keys()].filter((k) => k !== manifestKey(DOC) && !k.endsWith('/closed'));
 
 beforeEach(() => {
   bucket = new MemoryBucket();
@@ -62,7 +62,7 @@ describe('POST /d/respond', () => {
   });
   it('rate-limits per recipient token', async () => {
     env.RATE_LIMITER = new CountingLimiter(1);
-    expect((await post({ ...ACCEPT, typedName: 'wrong' })).status).toBe(422);
+    expect((await post({ ...ACCEPT, typedName: ' ' })).status).toBe(422);
     const limited = await post(ACCEPT);
     expect(limited.status).toBe(429);
     expect((await limited.json()).code).toBe('rate_limited');
@@ -82,13 +82,14 @@ describe('POST /d/respond', () => {
     expect((await handle(new Request('https://docs.example.test/d/respond'), env)).status).toBe(405);
     expect((await postRaw('{')).status).toBe(400);
   });
-  it('never writes to anything but the response key under the document', async () => {
+  it('never writes to anything but the response and the closure under the document', async () => {
     await post(ACCEPT);
-    expect(responses()).toEqual([`d/${DOC}/v2/${SIGNER}.json`]);
+    expect([...bucket.objects.keys()].sort()).toEqual([manifestKey(DOC), `d/${DOC}/v2/${SIGNER}.json`, closedKey(DOC, 2)].sort());
   });
   it('a change request closes the version: a later accept is refused and nothing is written', async () => {
     expect((await post(CHANGES)).status).toBe(200);
-    expect(responses().sort()).toEqual([`d/${DOC}/v2/${COLLABORATOR}.json`, changesRequestedKey(DOC, 2)].sort());
+    expect(responses()).toEqual([`d/${DOC}/v2/${COLLABORATOR}.json`]);
+    expect(bucket.objects.get(closedKey(DOC, 2))).toBe('request_changes');
     const accept = await post(ACCEPT);
     expect(accept.status).toBe(409);
     expect(await accept.json()).toEqual({
@@ -97,9 +98,20 @@ describe('POST /d/respond', () => {
     });
     expect(bucket.objects.has(responseKey(DOC, 2, SIGNER))).toBe(false);
   });
-  it('an accept writes no marker', async () => {
+  it('an acceptance closes the version: a later change request is refused and nothing is written', async () => {
     expect((await post(ACCEPT)).status).toBe(200);
-    expect(bucket.objects.has(changesRequestedKey(DOC, 2))).toBe(false);
+    expect(bucket.objects.get(closedKey(DOC, 2))).toBe('accept');
+    const changes = await post(CHANGES);
+    expect(changes.status).toBe(409);
+    expect(await changes.json()).toEqual({ code: 'accepted', message: 'This document has already been accepted.' });
+    expect(bucket.objects.has(responseKey(DOC, 2, COLLABORATOR))).toBe(false);
+  });
+  it('the first response names the closure; a later one never rewrites it', async () => {
+    const [a, b] = await Promise.all([post(ACCEPT), post(CHANGES)]);
+    expect([a.status, b.status]).toContain(200);
+    const first = bucket.objects.get(closedKey(DOC, 2));
+    await post(CHANGES);
+    expect(bucket.objects.get(closedKey(DOC, 2))).toBe(first);
   });
   it('a change request on one version does not close the next', async () => {
     await post(CHANGES);
@@ -155,7 +167,7 @@ describe('hostile and malformed input', () => {
     }
     expect(responses()).toHaveLength(0);
   });
-  it('matches an NFD-typed signer name against an NFC manifest name', async () => {
+  it('records the typed name exactly as typed', async () => {
     bucket.objects.set(manifestKey(DOC), JSON.stringify({ ...MANIFEST, recipients: [{ token: SIGNER, role: 'signer', name: 'Zoë Example' }] }));
     expect((await post({ ...ACCEPT, typedName: 'zoë example' })).status).toBe(200);
   });

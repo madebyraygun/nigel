@@ -38,10 +38,6 @@ export function isRefusal(value: unknown): value is Refusal {
   return typeof value === 'object' && value !== null && 'status' in value && 'code' in value && 'message' in value;
 }
 
-export function normalizeName(name: string): string {
-  return name.normalize('NFC').trim().replace(/\s+/gu, ' ').toUpperCase().toLowerCase();
-}
-
 export function parseRequest(body: unknown): ResponseRequest | Refusal {
   const bad = (message: string) => refuse(400, 'bad_request', message);
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return bad('Expected a JSON object.');
@@ -80,11 +76,8 @@ export function checkRequest(request: ResponseRequest, manifest: Manifest | null
   if (request.action === 'accept') {
     if (request.consent !== true) return refuse(422, 'consent_required', 'Consent to sign electronically is required.');
     const typed = (request.typedName ?? '').trim();
-    if ([...typed].length > TYPED_NAME_MAX || ANY_CONTROL.test(typed) || LONE_SURROGATE.test(typed)) {
-      return refuse(422, 'name_invalid', `The typed name must be at most ${TYPED_NAME_MAX} characters of plain text.`);
-    }
-    if (normalizeName(request.typedName ?? '') !== normalizeName(recipient.name)) {
-      return refuse(422, 'name_mismatch', 'The typed name does not match the signer.');
+    if (typed === '' || [...typed].length > TYPED_NAME_MAX || ANY_CONTROL.test(typed) || LONE_SURROGATE.test(typed)) {
+      return refuse(422, 'name_invalid', `Type your full name, at most ${TYPED_NAME_MAX} characters of plain text.`);
     }
     return null;
   }

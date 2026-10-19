@@ -1,5 +1,6 @@
 export interface StoredObject {
   json<T>(): Promise<T>;
+  text(): Promise<string>;
 }
 
 export interface PutOptions {

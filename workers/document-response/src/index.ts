@@ -14,10 +14,21 @@ export function responseKey(token: string, version: number, recipientToken: stri
   return `d/${token}/v${version}/${recipientToken}.json`;
 }
 
-/** Written once any recipient asks for changes: the version is closed to every later response. */
-export function changesRequestedKey(token: string, version: number): string {
-  return `d/${token}/v${version}/changes-requested`;
+/**
+ * Written by the first response to a version, holding its action: an
+ * acceptance or a change request closes the version to every later response.
+ */
+export function closedKey(token: string, version: number): string {
+  return `d/${token}/v${version}/closed`;
 }
+
+const CLOSED: Record<string, Refusal> = {
+  accept: { status: 409, code: 'accepted', message: 'This document has already been accepted.' },
+  request_changes: {
+    status: 409, code: 'changes_requested',
+    message: 'Changes have been requested on this version. A new document will be sent.',
+  },
+};
 
 const json = (body: unknown, status: number) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -84,9 +95,13 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
   }
   const refusal = checkRequest(parsed, manifest);
   if (refusal) return reply(refusal);
-  const closedBy = changesRequestedKey(parsed.token, parsed.version);
-  if (await env.PRIVATE.get(closedBy)) {
-    return reply({ status: 409, code: 'changes_requested', message: 'Changes have been requested on this version. A new document will be sent.' });
+  const ownKey = responseKey(parsed.token, parsed.version, parsed.recipientToken);
+  const closed = await env.PRIVATE.get(closedKey(parsed.token, parsed.version));
+  if (closed) {
+    if (await env.PRIVATE.get(ownKey)) {
+      return reply({ status: 409, code: 'already_responded', message: 'A response for this version is already recorded.' });
+    }
+    return reply(CLOSED[await closed.text()] ?? CLOSED.request_changes);
   }
   const record = {
     action: parsed.action,
@@ -100,16 +115,16 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
     userAgent: userAgent(request),
   };
   const written = await env.PRIVATE.put(
-    responseKey(parsed.token, parsed.version, parsed.recipientToken),
+    ownKey,
     JSON.stringify(record),
     { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'application/json' } },
   );
   if (written === null) return reply({ status: 409, code: 'already_responded', message: 'A response for this version is already recorded.' });
-  if (parsed.action === 'request_changes') {
-    // Best-effort: the response is stored either way, and sync refuses an
-    // acceptance that arrived after it.
-    await env.PRIVATE.put(closedBy, record.receivedAt, { httpMetadata: { contentType: 'text/plain' } }).catch(() => null);
-  }
+  // Best-effort and first-writer-wins: the response is stored either way, and
+  // sync, ordering by receivedAt, refuses whatever arrived after the first.
+  await env.PRIVATE.put(closedKey(parsed.token, parsed.version), parsed.action, {
+    onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'text/plain' },
+  }).catch(() => null);
   return json({ ok: true, message: 'Received: thank you' }, 200);
 }
 

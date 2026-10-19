@@ -213,12 +213,16 @@ the documents hostname (`…/d/respond`), so the page posts same-origin and need
 3. The recipient must be in the manifest, and the role must allow the action: signers may
    `accept` or `request_changes`, collaborators only `request_changes`. Otherwise 403.
 4. `version` and `checksum` must equal the manifest's, or return 409 `version_mismatch`.
-5. For `accept`: `consent === true`, and `typedName` must equal the recipient's name after
-   trimming, collapsing internal whitespace and Unicode case-folding. Otherwise 422.
+5. For `accept`: `consent === true`, and `typedName` is non-blank plain text of at most 200
+   characters, recorded as typed rather than matched against the name on file. Otherwise 422.
 6. For `request_changes`: `note` is required, 1–4000 characters, plain text. Otherwise 422.
-7. Write `d/{token}/v{n}/{recipientToken}.json` with `onlyIf: { etagDoesNotMatch: "*" }`.
-   If a response already exists, return 409 `already_responded`.
-8. Return 200. The page then shows "Thank you, your acceptance has been received." or "Thank you, your request has been received.", by action.
+7. If `d/{token}/v{n}/closed` exists, the version already has its first response: return 409
+   `already_responded` to the recipient who gave it, and 409 `accepted` or `changes_requested`
+   to everyone else.
+8. Write `d/{token}/v{n}/{recipientToken}.json` with `onlyIf: { etagDoesNotMatch: "*" }`.
+   If a response already exists, return 409 `already_responded`. Then write
+   `d/{token}/v{n}/closed` holding the action, again only if absent.
+9. Return 200. The page then shows "Thank you, your acceptance has been received." or "Thank you, your request has been received.", by action.
 
 The Worker never edits pages or the public bucket.
 

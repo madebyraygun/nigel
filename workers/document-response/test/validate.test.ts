@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkRequest, normalizeName, parseRequest, isRefusal, type Manifest, type ResponseRequest } from '../src/validate.js';
+import { checkRequest, parseRequest, isRefusal, type Manifest, type ResponseRequest } from '../src/validate.js';
 
 const manifest: Manifest = {
   version: 2, checksum: 'sha256:ab', state: 'open',
@@ -26,14 +26,15 @@ describe('the role matrix', () => {
 });
 
 describe('names', () => {
-  it('names_match_across_case_whitespace_and_normalization_but_not_letters', () => {
-    for (const typed of ['zoë example', '  ZOË   Example ', 'Zoë Example']) {
+  it('takes any typed name, not only the signer\'s own', () => {
+    for (const typed of ['Zoë Example', 'Zoë J. Example', 'zoe example', 'Someone Else']) {
       expect(checkRequest({ ...accept, typedName: typed }, manifest), typed).toBeNull();
     }
-    for (const typed of ['Zoe Example', 'Zoë Exampl', '']) {
-      expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, typed).toBe('name_mismatch');
+  });
+  it('refuses a blank typed name', () => {
+    for (const typed of ['', '   ']) {
+      expect(checkRequest({ ...accept, typedName: typed }, manifest)?.code, JSON.stringify(typed)).toBe('name_invalid');
     }
-    expect(normalizeName('STRASSE')).toBe(normalizeName('straße'));
   });
   it('refuses a typed name carrying a control character', () => {
     for (const typed of ['Zoë\tExample', 'Zoë\nExample', 'Zoë\u0085Example', 'Zoë Example\u0000']) {
