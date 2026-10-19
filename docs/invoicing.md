@@ -1708,6 +1708,7 @@ pair is the capability in a recipient's link.
 | Object | Bucket | Written by |
 |---|---|---|
 | `d/{token}/v{n}/document.pdf` | public | Nigel, once per version, never changed |
+| `d/{token}/v{n}/signing-record.pdf` | public | Nigel, when that version is countersigned, and again by `document signing-record` |
 | `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
 | `d/{token}/manifest.json` | private | Nigel |
 | `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
@@ -1719,7 +1720,9 @@ reason the invoice links do. The private bucket has **no public domain**: it is
 read and written only with the R2 keys and by the Worker's binding.
 
 Every version of every filed PDF also stays in the data directory under
-`documents/<id>/v<n>.pdf`, and its checksum is verified on each read.
+`documents/<id>/v<n>.pdf`, and its checksum is verified on each read. An
+executed version's signing record is kept beside it as
+`documents/<id>/v<n>-signing-record.pdf`.
 
 The **manifest** tells the Worker whether a recipient may still respond:
 
@@ -1831,7 +1834,48 @@ rewrites the recipients' pages to show the outcome. `accept` records the named
 signer's assent against the version's checksum. `decline` is terminal.
 
 `countersign` records your own signature on an `accepted` document and makes it
-`executed`; the pages then show both signatures.
+`executed`. Then, in order:
+
+1. **The signing record** is generated, kept in the data directory and
+   published beside the version's PDF.
+2. **The pages** are republished showing both signatures, with a **Download the
+   signing record** button beside **Download the PDF** once the record is
+   published.
+3. **A confirmation email** goes to every recipient of the executed version, one
+   message each, with the subject `Signed: <title> for <company>` (just
+   `Signed: <title>` when no business name is set), a short plain-text body
+   with their page link, and two attachments: the signed PDF and the signing
+   record. It needs the Mailgun keys and nothing else.
+
+Each of the three is best-effort. A failed upload, a missing Mailgun key or a
+refused message is printed as a warning (in the web UI, a notice on the
+document) and never undoes the countersignature.
+
+#### The signing record
+
+The signing record is a one-page PDF that sits **beside** the signed file. The
+signed PDF itself never changes: every signature is bound to its SHA-256
+checksum, and the record names that checksum so anyone can verify the copy they
+hold. It shows the document's title, kind, client, version and checksum, then
+the client's acceptance and your countersignature, each with the name, the
+typed name, the method (`online` or `manual`), the time, and for an online
+acceptance the IP address and browser. Text a recipient supplied — the typed
+name, the browser string — is printed as plain text with control characters
+removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.
+`Website-rebuild-v3-signing-record.pdf`.
+
+The record needs the `pdf` feature, which the release builds have. A build
+without it skips the record with a notice and emails the signed PDF alone.
+
+If the record could not be generated or published, regenerate it and publish it
+again:
+
+```bash
+nigel document signing-record 3
+```
+
+It writes the local copy, uploads it and republishes the pages linking it when
+R2 is configured, and emails nobody.
 
 `withdraw` is terminal and works from `draft`, `sent` and `changes_requested`.
 It replaces every published page with a withdrawn notice and closes the
@@ -1889,7 +1933,8 @@ page links, and every response; **Send…**, **Revise…**, **Record acceptance�
 **Record change request…**, **Record decline…**, **Countersign…**, **Withdraw…**
 and **Sync** are enabled by the server's guards, and Send and Sync stay disabled
 until their keys are configured. A preview shows the page the signer will
-receive before anything is sent.
+receive before anything is sent. An executed document offers **Download signing
+record** beside **Download PDF**.
 
 ### Deploying the response Worker
 

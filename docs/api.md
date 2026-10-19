@@ -605,6 +605,7 @@ filing form needs.
 | `GET /api/documents/{id}` | `DocumentDetail` |
 | `GET /api/documents/{id}/preview` | `text/html; charset=utf-8` |
 | `GET /api/documents/{id}/preview.pdf` | `application/pdf` |
+| `GET /api/documents/{id}/signing-record.pdf` | `application/pdf` |
 | `GET /api/document-kinds` | `DocumentKind[]`, active kinds only |
 
 `GET /api/documents` takes `clientId`, `status` and `kind`, all optional and
@@ -688,6 +689,15 @@ needed. The HTML response carries the same `Content-Security-Policy: sandbox`
 and `X-Frame-Options: SAMEORIGIN` the invoice preview does, for the same reason;
 `preview.pdf` keeps `DENY`. A PDF whose bytes no longer match the checksum
 recorded at filing is `409` `file_changed`.
+
+`signing-record.pdf` is an executed document's signing record: the one-page PDF
+naming the signed file's checksum and every signature on it, the same file a
+countersign publishes beside the version's PDF and attaches to the signed-copy
+email. It is served from the copy kept in the data directory, `inline`, named
+`<Title>-v<n>-signing-record.pdf`; when there is no copy yet it is generated and
+kept first. A document that is not executed is `409` `document_not_executed`,
+and a build without the `pdf` feature is `501 feature_disabled`. It makes no
+network call.
 
 ### Not-found reasons
 
@@ -1454,7 +1464,7 @@ the published page:
 | `accept` | `name`, `date?` | The client's acceptance of the latest sent version, a manual signature |
 | `request-changes` | `name`, `note`, `date?` | A change request, `note` 1 to 4000 characters |
 | `decline` | `note?`, `date?` | The client declining; the document is `declined` and terminal |
-| `countersign` | `name`, `date?` | The company's countersignature on an accepted document; it becomes `executed` |
+| `countersign` | `name`, `date?` | The company's countersignature on an accepted document; it becomes `executed`, and the signing record and the signed-copy email follow |
 | `withdraw` | `{}` | The document withdrawn; every published page becomes a withdrawn notice |
 
 `date` is `YYYY-MM-DD` or an RFC 3339 instant and defaults to today; one that
@@ -1475,6 +1485,13 @@ failure is a `200` carrying a correct document plus a sentence in `warnings`
 naming what a person still has to do. If reloading the document after the
 commit fails, the `200` carries only `warnings`, one of which says to refresh. These routes **may make network calls**
 and hold the database while they do, each bounded by the 30s call timeout.
+
+`countersign` does more after the commit, in order: it generates the signing
+record and publishes it beside the version's PDF, republishes the pages with a
+link to it, then emails every recipient of the executed version the signed PDF
+and the record — see [Documents](invoicing.md#documents). A record that could
+not be published, a Mailgun key that is unset or a message Mailgun refused is a
+sentence in `warnings`; the document stays `executed`.
 
 #### Syncing responses
 
@@ -1681,6 +1698,7 @@ its own words instead of parsing ours:
 | `client_archived` | `step` (on send) | Filing, revising or sending a document for an archived client |
 | `duplicate_document` | — | Filing a PDF already filed for that client on a document that is not withdrawn or declined |
 | `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
+| `document_not_executed` | — | Asking for the signing record of a document that is not executed |
 | `kind_inactive` | — | Filing or changing a draft to a kind that is no longer in use |
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
 | `signer_count` | `step` | Sending to anything but exactly one signer |

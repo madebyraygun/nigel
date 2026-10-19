@@ -130,7 +130,8 @@ nigel document accept 3 --name "Pat Example"      # Record an acceptance receive
 nigel document request-changes 3 --name "Pat Example" --note "Move the start date"  # Record a change request (--date)
 nigel document decline 3 --note "Going another way"  # Record a decline (--note and --date optional); terminal
 nigel document sync                               # Pull online responses and record them (cron; never prompts)
-nigel document countersign 3 --name "Sam Example" # Record your countersignature on an accepted document (--date)
+nigel document countersign 3 --name "Sam Example" # Record your countersignature on an accepted document (--date), then publish its signing record and email the signed copy
+nigel document signing-record 3                   # Regenerate an executed document's signing record and republish it
 nigel reconcile "BofA Checking" --month 2025-03 --balance 12345.67
 nigel serve                                       # Web UI + JSON API on 127.0.0.1:5731 (opens a browser)
 nigel serve --port 8080                           # Bind a different port (0 = ephemeral)
