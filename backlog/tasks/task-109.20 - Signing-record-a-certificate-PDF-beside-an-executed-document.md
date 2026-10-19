@@ -4,6 +4,7 @@ title: 'Signing record: a certificate PDF beside an executed document'
 status: To Do
 assignee: []
 created_date: '2026-10-19 18:28'
+updated_date: '2026-10-19 19:16'
 labels:
   - documents
   - pdf
@@ -33,4 +34,6 @@ Published as d/{token}/v{n}/signing-record.pdf in the public bucket, named from 
 - [ ] #5 A failed record upload never undoes the countersignature: the operator gets a warning and a way to republish it
 - [ ] #6 Recipient-supplied text (typed name, user agent) is printed as plain text, with control characters removed
 - [ ] #7 docs/invoicing.md describes the signing record; tests cover generation, publish and the page link
+- [ ] #8 When a document is executed, every recipient of the executed version gets a confirmation email ('Signed: <title> for <company>') with the signed PDF and the signing record attached; it is sent after the countersignature commits, best-effort, and a failure or missing mail configuration is reported to the operator without undoing anything
+- [ ] #9 Mail carries more than one attachment: OutgoingMail holds a list, every existing email is unchanged, and a message whose attachments exceed the provider's size limit is refused with a clear sentence before sending
 <!-- AC:END -->
