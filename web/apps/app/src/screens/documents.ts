@@ -539,19 +539,33 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   }
 
   /** The desktop shell saves through a dialog rather than following a link. */
-  private handlePdf = async (event: Event): Promise<void> => {
+  private handlePdf = (event: Event): Promise<void> =>
+    this.saveTarget(event, (id) => this.client.documentPreviewTarget(id), 'the PDF');
+
+  private handleSigningRecord = (event: Event): Promise<void> =>
+    this.saveTarget(
+      event,
+      (id) => this.client.documentSigningRecordTarget(id),
+      'the signing record',
+    );
+
+  private async saveTarget(
+    event: Event,
+    targetFor: (id: number) => ReturnType<ApiClient['documentPreviewTarget']>,
+    what: string,
+  ): Promise<void> {
     const detail = this.detail;
     if (!detail) return;
-    const target = this.client.documentPreviewTarget(detail.id);
+    const target = targetFor(detail.id);
     if (target.kind !== 'action') return;
     event.preventDefault();
     try {
       await target.run();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      this.actionError = `Couldn’t save the PDF. ${reason}`;
+      this.actionError = `Couldn’t save ${what}. ${reason}`;
     }
-  };
+  }
 
   private signerName(detail: DocumentDetail): string {
     const signer = latestSentVersion(detail)?.recipients.find((r) => r.role === 'signer');
@@ -1068,7 +1082,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           >
             ${this.previewOpen ? 'Hide preview' : 'Show preview'}
           </wa-button>
-          ${this.renderPdfLink(detail)}
+          ${this.renderPdfLink(detail)} ${this.renderSigningRecordLink(detail)}
         </div>
         ${this.previewOpen ? this.renderPreview(detail) : nothing}
       </wc-panel>
@@ -1148,6 +1162,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     if (detail.canEdit) {
       available.push({ action: 'edit', label: 'Edit…', run: () => this.openDialog('edit') });
     }
+    if (detail.canRepublishSigningRecord) {
+      available.push({
+        action: 'republishSigningRecord',
+        label: 'Republish signing record',
+        run: () => void this.runAction((id) => this.client.republishSigningRecord(id)),
+      });
+    }
     if (detail.canWithdraw) {
       available.push({
         action: 'withdraw',
@@ -1200,6 +1221,21 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       @click=${this.handlePdf}
     >
       Download PDF
+    </wa-button>`;
+  }
+
+  /** An executed document's signing record, beside its PDF. */
+  private renderSigningRecordLink(detail: DocumentDetail) {
+    if (detail.status !== 'executed') return nothing;
+    const target = this.client.documentSigningRecordTarget(detail.id);
+    return html`<wa-button
+      data-signing-record-link
+      appearance="outlined"
+      href=${target.kind === 'href' ? target.href : nothing}
+      download=${target.kind === 'href' ? '' : nothing}
+      @click=${this.handleSigningRecord}
+    >
+      Download signing record
     </wa-button>`;
   }
 

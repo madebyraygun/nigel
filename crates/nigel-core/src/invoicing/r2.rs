@@ -55,6 +55,31 @@ pub fn document_page_key(token: &str, recipient_token: &str) -> String {
     )
 }
 
+pub const SIGNING_RECORD_OBJECT: &str = "signing-record.pdf";
+
+/// An executed version's signing record, beside that version's PDF.
+pub fn document_signing_record_key(token: &str, version: i64) -> String {
+    object_key(
+        KeyPrefix::Documents,
+        token,
+        &format!("v{version}/{SIGNING_RECORD_OBJECT}"),
+    )
+}
+
+pub fn document_signing_record_url(base: &str, token: &str, version: i64) -> String {
+    format!(
+        "{}/{token}/v{version}/{SIGNING_RECORD_OBJECT}",
+        base.trim_end_matches('/')
+    )
+}
+
+/// The `Content-Disposition` an object served for download carries: shown
+/// inline, saved under `filename`. `filename` is one `attachment_name` built,
+/// ASCII letters, digits and dashes only.
+pub fn inline_disposition(filename: &str) -> String {
+    format!("inline; filename=\"{filename}\"")
+}
+
 pub fn document_page_url(base: &str, token: &str, recipient_token: &str) -> String {
     format!(
         "{}/{token}/{recipient_token}/{PAGE_OBJECT}",
@@ -250,6 +275,7 @@ fn r2_bucket(account_id: &str, bucket: &str) -> Result<Bucket> {
         .map_err(|e| NigelError::Other(format!("r2 bucket: {e}")))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn put_object(
     account_id: &str,
     access_key: &str,
@@ -258,6 +284,7 @@ fn put_object(
     key: &str,
     body: &[u8],
     content_type: &str,
+    content_disposition: Option<&str>,
 ) -> Result<()> {
     let bucket = r2_bucket(account_id, bucket)?;
     let creds = Credentials::new(access_key.to_string(), secret_key.to_string());
@@ -265,9 +292,13 @@ fn put_object(
         .put_object(Some(&creds), key)
         .sign(Duration::from_secs(300));
 
-    let resp = crate::invoicing::http_client()
+    let mut request = crate::invoicing::http_client()
         .put(signed)
-        .header("content-type", content_type)
+        .header("content-type", content_type);
+    if let Some(disposition) = content_disposition {
+        request = request.header("content-disposition", disposition);
+    }
+    let resp = request
         .body(body.to_vec())
         .send()
         .map_err(|e| transport_error("put", e))?;
@@ -320,6 +351,7 @@ impl R2Publisher {
             key,
             body,
             content_type,
+            None,
         )
     }
 }
@@ -354,6 +386,7 @@ impl ResponseSource for R2PrivateStore {
             &manifest_key(token),
             &body,
             "application/json",
+            None,
         )
     }
 }
@@ -411,6 +444,30 @@ impl DocumentPublisher for R2Publisher {
         ))
     }
 
+    fn publish_signing_record(
+        &self,
+        token: &str,
+        version: i64,
+        filename: &str,
+        pdf: &[u8],
+    ) -> Result<String> {
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &document_signing_record_key(token, version),
+            pdf,
+            "application/pdf",
+            Some(&inline_disposition(filename)),
+        )?;
+        Ok(document_signing_record_url(
+            &self.public_base_url,
+            token,
+            version,
+        ))
+    }
+
     fn public_base(&self) -> &str {
         &self.public_base_url
     }
@@ -432,6 +489,10 @@ mod tests {
         );
         assert_eq!(document_pdf_key("abc", 2), "d/abc/v2/document.pdf");
         assert_eq!(document_page_key("abc", "r1"), "d/abc/r1/index.html");
+        assert_eq!(
+            document_signing_record_key("abc", 3),
+            "d/abc/v3/signing-record.pdf"
+        );
     }
 
     #[test]
@@ -443,6 +504,14 @@ mod tests {
         assert_eq!(
             document_pdf_url("https://docs.example.test/d", "abc", 2),
             "https://docs.example.test/d/abc/v2/document.pdf"
+        );
+        assert_eq!(
+            document_signing_record_url("https://docs.example.test/d/", "abc", 3),
+            "https://docs.example.test/d/abc/v3/signing-record.pdf"
+        );
+        assert_eq!(
+            inline_disposition("Website-rebuild-v3-signing-record.pdf"),
+            "inline; filename=\"Website-rebuild-v3-signing-record.pdf\""
         );
     }
 

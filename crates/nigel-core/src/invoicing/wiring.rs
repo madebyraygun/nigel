@@ -11,8 +11,10 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+use crate::documents::execute::{complete_execution, regenerate_signing_record, RegeneratedRecord};
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
+use crate::invoicing::gateway::{Unavailable, UnavailableState};
 use crate::invoicing::invoices::get_invoice_by_number;
 use crate::invoicing::mailgun::{
     from_address_domain_warning, validate_bare_address, validate_header_value, EmailEnvelope,
@@ -373,19 +375,167 @@ pub fn build_document_clients(cfg: DocumentsConfig, company: &str) -> Result<Doc
     })
 }
 
-/// The document publisher, when its keys and a documents base are all set.
-pub fn optional_document_publisher(cfg: &DocumentsConfig) -> Option<R2Publisher> {
-    let inv = &cfg.invoicing;
-    Some(R2Publisher {
-        account_id: inv.r2_account_id.clone()?,
-        access_key: inv.r2_access_key.clone()?,
-        secret_key: inv.r2_secret_key.clone()?,
-        bucket: inv.r2_bucket.clone()?,
-        public_base_url: derive_documents_base(
-            cfg.documents_base_url.as_deref(),
-            inv.public_base_url.as_deref(),
-        )?,
+/// The keys a document publisher needs, in `documents_status` order.
+pub const DOCUMENT_PUBLISHER_KEYS: &[&str] = &[
+    "r2_account_id",
+    "r2_access_key",
+    "r2_secret_key",
+    "r2_bucket",
+    "documents_base_url",
+];
+
+/// The keys a document email needs.
+pub const DOCUMENT_MAILER_KEYS: &[&str] = &["mailgun_api_key", "mailgun_domain", "from_email"];
+
+/// Which of `keys` are unset, given each one's value in order; `Err` names the
+/// state for a client that cannot be built.
+fn presence(
+    service: &'static str,
+    keys: &'static [&'static str],
+    values: &[bool],
+) -> std::result::Result<(), Unavailable> {
+    let missing: Vec<&'static str> = keys
+        .iter()
+        .zip(values)
+        .filter(|(_, set)| !**set)
+        .map(|(key, _)| *key)
+        .collect();
+    let state = if missing.is_empty() {
+        return Ok(());
+    } else if missing.len() == keys.len() {
+        UnavailableState::NotConfigured
+    } else {
+        UnavailableState::Partial(missing)
+    };
+    Err(Unavailable {
+        service,
+        keys,
+        state,
     })
+}
+
+/// The document publisher, or why there is none: unset, partly set, or a
+/// documents base that cannot produce a working link — the check
+/// `build_document_clients` makes.
+pub fn document_publisher_setup(
+    cfg: &DocumentsConfig,
+) -> std::result::Result<R2Publisher, Unavailable> {
+    let inv = &cfg.invoicing;
+    let base = derive_documents_base(
+        cfg.documents_base_url.as_deref(),
+        inv.public_base_url.as_deref(),
+    );
+    presence(
+        "R2",
+        DOCUMENT_PUBLISHER_KEYS,
+        &[
+            inv.r2_account_id.is_some(),
+            inv.r2_access_key.is_some(),
+            inv.r2_secret_key.is_some(),
+            inv.r2_bucket.is_some(),
+            base.is_some(),
+        ],
+    )?;
+    let base = base.unwrap_or_default();
+    validate_public_base_url(&base).map_err(|e| Unavailable {
+        service: "R2",
+        keys: DOCUMENT_PUBLISHER_KEYS,
+        state: UnavailableState::Refused(e.to_string()),
+    })?;
+    Ok(R2Publisher {
+        account_id: inv.r2_account_id.clone().unwrap_or_default(),
+        access_key: inv.r2_access_key.clone().unwrap_or_default(),
+        secret_key: inv.r2_secret_key.clone().unwrap_or_default(),
+        bucket: inv.r2_bucket.clone().unwrap_or_default(),
+        public_base_url: base,
+    })
+}
+
+/// The document publisher, when its keys are set and its documents base would
+/// produce a working link.
+pub fn optional_document_publisher(cfg: &DocumentsConfig) -> Option<R2Publisher> {
+    document_publisher_setup(cfg).ok()
+}
+
+/// The document mail client and the cautions its configuration earns, or why
+/// there is none: unset, partly set, or refused the way `build_document_clients`
+/// would refuse it.
+pub fn document_mailer_setup(
+    cfg: &DocumentsConfig,
+    company: &str,
+) -> std::result::Result<(MailgunClient, Vec<String>), Unavailable> {
+    let inv = &cfg.invoicing;
+    presence(
+        "Mailgun",
+        DOCUMENT_MAILER_KEYS,
+        &[
+            inv.mailgun_api_key.is_some(),
+            inv.mailgun_domain.is_some(),
+            inv.from_email.is_some(),
+        ],
+    )?;
+    build_mailer(
+        inv.mailgun_api_key.clone(),
+        inv.mailgun_domain.clone(),
+        inv.from_email.clone(),
+        inv.from_name.clone(),
+        inv.reply_to_email.clone(),
+        company,
+    )
+    .map_err(|e| Unavailable {
+        service: "Mailgun",
+        keys: DOCUMENT_MAILER_KEYS,
+        state: UnavailableState::Refused(e.to_string()),
+    })
+}
+
+/// What follows a countersignature, with the clients this configuration
+/// provides: the signing record, the pages and the signed-copy email.
+pub fn complete_execution_configured(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    company: &str,
+    cfg: &DocumentsConfig,
+) -> Vec<String> {
+    let publisher = document_publisher_setup(cfg);
+    let source = optional_response_source(cfg);
+    let mailer = document_mailer_setup(cfg, company);
+    let mut warnings = Vec::new();
+    if let Ok((_, cautions)) = &mailer {
+        warnings.extend(cautions.iter().cloned());
+    }
+    warnings.extend(complete_execution(
+        conn,
+        data_dir,
+        id,
+        company,
+        publisher.as_ref(),
+        source.as_ref(),
+        mailer.as_ref().map(|(mail, _)| mail),
+    ));
+    warnings
+}
+
+/// Regenerate and republish an executed document's signing record with the
+/// publisher this configuration provides. Emails nobody.
+pub fn regenerate_signing_record_configured(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    company: &str,
+    cfg: &DocumentsConfig,
+) -> Result<RegeneratedRecord> {
+    let publisher = document_publisher_setup(cfg);
+    let source = optional_response_source(cfg);
+    regenerate_signing_record(
+        conn,
+        data_dir,
+        id,
+        company,
+        publisher.as_ref(),
+        source.as_ref(),
+    )
 }
 
 /// The private response store, when its four keys are set.
@@ -501,6 +651,157 @@ mod tests {
             r2_bucket: Some("billing".into()),
             public_base_url: Some("https://billing.example.com/i".into()),
         }
+    }
+
+    #[test]
+    fn each_setup_names_unset_partial_and_refused_apart() {
+        let unavailable = |r: std::result::Result<_, Unavailable>| r.err().map(|u| u.state);
+        assert_eq!(
+            unavailable(document_mailer_setup(
+                &DocumentsConfig::default(),
+                "Initech"
+            )),
+            Some(UnavailableState::NotConfigured)
+        );
+        let partial = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                mailgun_domain: None,
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            unavailable(document_mailer_setup(&partial, "Initech")),
+            Some(UnavailableState::Partial(vec!["mailgun_domain"]))
+        );
+        let refused = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                from_name: Some("Cedar\r\nBcc: x@y.test".into()),
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            unavailable(document_mailer_setup(&refused, "Initech")),
+            Some(UnavailableState::Refused(reason)) if reason.contains("from_name")
+        ));
+        let configured = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            ..Default::default()
+        };
+        assert!(document_mailer_setup(&configured, "Initech").is_ok());
+
+        assert_eq!(
+            document_publisher_setup(&DocumentsConfig::default())
+                .err()
+                .map(|u| u.state),
+            Some(UnavailableState::NotConfigured)
+        );
+        assert!(document_publisher_setup(&configured).is_ok());
+        let bad_base = DocumentsConfig {
+            invoicing: configured_for_documents(),
+            documents_base_url: Some("docs.example.com/d".into()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            document_publisher_setup(&bad_base).err().map(|u| u.state),
+            Some(UnavailableState::Refused(_))
+        ));
+        assert!(optional_document_publisher(&bad_base).is_none());
+        let no_bucket = DocumentsConfig {
+            invoicing: InvoicingConfig {
+                r2_bucket: None,
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            document_publisher_setup(&no_bucket).err().map(|u| u.state),
+            Some(UnavailableState::Partial(vec!["r2_bucket"]))
+        );
+    }
+
+    /// The countersign path end to end: one sentence per situation, never a
+    /// refusal and a "not configured" for the same thing.
+    #[test]
+    fn executing_with_this_configuration_says_one_thing_per_missing_client() {
+        use crate::documents::record::{record_countersign, record_manual_accept};
+        use crate::documents::testing::{sent_document_with_fakes, test_conn};
+
+        let run = |cfg: DocumentsConfig| {
+            let (dir, conn) = test_conn();
+            let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
+            record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+            record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+            complete_execution_configured(&conn, dir.path(), id, "Initech", &cfg)
+        };
+        let mail = |warnings: &[String]| -> Vec<String> {
+            warnings
+                .iter()
+                .filter(|w| w.contains("Mailgun"))
+                .cloned()
+                .collect()
+        };
+
+        let nothing = run(DocumentsConfig::default());
+        assert_eq!(
+            mail(&nothing),
+            vec!["Warning: Mailgun is not configured, so no signed copy was emailed. Send the signed PDF and the signing record to the recipients yourself, and set mailgun_api_key, mailgun_domain, from_email to email them for future documents.".to_string()]
+        );
+        if cfg!(feature = "pdf") {
+            assert!(
+                nothing.iter().any(|w| w.starts_with(
+                    "Warning: R2 is not configured, so the signing record was not published"
+                )),
+                "{nothing:?}"
+            );
+        }
+
+        let partial = run(DocumentsConfig {
+            invoicing: InvoicingConfig {
+                mailgun_domain: None,
+                r2_bucket: None,
+                r2_account_id: None,
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        });
+        let partial_mail = mail(&partial);
+        assert_eq!(partial_mail.len(), 1, "{partial:?}");
+        assert!(partial_mail[0].starts_with(
+            "Warning: Mailgun is only partly configured (missing: mailgun_domain), so no signed copy was emailed."
+        ));
+        if cfg!(feature = "pdf") {
+            assert!(
+                partial.iter().any(|w| w.contains(
+                    "R2 is only partly configured (missing: r2_account_id, r2_bucket), so the signing record was not published"
+                )),
+                "{partial:?}"
+            );
+        }
+
+        let refused = run(DocumentsConfig {
+            invoicing: InvoicingConfig {
+                from_name: Some("Cedar\r\nBcc: x@y.test".into()),
+                r2_bucket: None,
+                ..configured_for_documents()
+            },
+            ..Default::default()
+        });
+        let refused_mail = mail(&refused);
+        assert_eq!(refused_mail.len(), 1, "{refused:?}");
+        assert!(
+            refused_mail[0].starts_with("Warning: the Mailgun configuration was refused (")
+                && refused_mail[0].contains("from_name")
+                && refused_mail[0].contains("so no signed copy was emailed"),
+            "{refused_mail:?}"
+        );
+        assert!(
+            !refused
+                .iter()
+                .any(|w| w.contains("Mailgun is not configured")),
+            "{refused:?}"
+        );
     }
 
     #[test]

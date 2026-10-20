@@ -527,6 +527,23 @@ describe('nigel-documents-screen', () => {
     );
   });
 
+  it('offers the signing record beside the PDF only once the document is executed', async () => {
+    const sent = await mount('id=12', withDetail(documentDetail()));
+    expect(sent.el.shadowRoot?.querySelector('[data-signing-record-link]')).toBeNull();
+
+    document.body.innerHTML = '';
+    resetAppStore();
+
+    const { el } = await mount(
+      'id=12',
+      withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') })),
+    );
+    const link = find(el, '[data-signing-record-link]');
+    expect(link.getAttribute('href')).toBe('/document-signing-record/12.pdf');
+    expect(link.textContent?.trim()).toBe('Download signing record');
+    expect(find(el, '[data-pdf-link]').nextElementSibling).toBe(link);
+  });
+
   it('send posts the recipient editor’s value', async () => {
     const fake = withDetail(documentDetail());
     fake.clientContacts[1] = CEDAR_CONTACTS;
@@ -666,6 +683,27 @@ describe('nigel-documents-screen', () => {
     warnings[0].dispatchEvent(new CustomEvent('nc-notice-action'));
     await settle(el);
     expect(el.shadowRoot?.querySelectorAll('[data-action-warning]')).toHaveLength(1);
+  });
+
+  it('an executed document can republish its signing record and shows what failed', async () => {
+    const fake = withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') }));
+    fake.documentWarnings = [
+      'Warning: the countersignature is recorded, but the signing record could not be published (r2 403). To republish, run `nigel document signing-record 12` or choose Republish signing record on the document in the web UI.',
+    ];
+    const { el } = await mount('id=12', fake);
+    expect(actions(el)).toEqual(['republishSigningRecord']);
+    expect(find(el, '[data-action="republishSigningRecord"]').textContent?.trim()).toBe(
+      'Republish signing record',
+    );
+
+    find(el, '[data-action="republishSigningRecord"]').click();
+    await settle(el);
+
+    expect(fake.calls).toContain('republishSigningRecord:12');
+    const warnings = [...(el.shadowRoot?.querySelectorAll('[data-action-warning]') ?? [])];
+    expect(warnings.map((warning) => warning.getAttribute('message'))).toEqual(
+      fake.documentWarnings,
+    );
   });
 
   it('a wrong-state refusal says so and refreshes the detail', async () => {
@@ -971,7 +1009,7 @@ describe('nigel-documents-screen', () => {
       expect(fake.calls).toContain(
         `countersignDocument:700:${JSON.stringify({ name: 'Sam Example' })}`,
       );
-      expect(state(el)).toEqual({ status: 'executed', actions: [], versions: 2 });
+      expect(state(el)).toEqual({ status: 'executed', actions: ['republishSigningRecord'], versions: 2 });
     });
   });
 });

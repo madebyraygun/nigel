@@ -679,7 +679,8 @@ pub enum DocumentCommands {
     },
     /// Pull online responses and record them. Run from cron beside `invoice schedule run`.
     Sync,
-    /// Record your countersignature on an accepted document.
+    /// Record your countersignature on an accepted document, then publish its
+    /// signing record and email every recipient the signed copy.
     Countersign {
         id: i64,
         #[arg(long)]
@@ -687,6 +688,8 @@ pub enum DocumentCommands {
         #[arg(long)]
         date: Option<String>,
     },
+    /// Regenerate an executed document's signing record and republish it.
+    SigningRecord { id: i64 },
 }
 
 #[derive(Subcommand)]

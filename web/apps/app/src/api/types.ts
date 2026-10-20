@@ -1466,6 +1466,8 @@ export interface DocumentDetail {
   canDecline: boolean;
   canCountersign: boolean;
   canWithdraw: boolean;
+  /** The document is executed, so its signing record can be regenerated and republished. */
+  canRepublishSigningRecord: boolean;
 }
 
 /** `GET /api/documents` filters. Omitted when absent, like the invoice list's. */
@@ -1575,6 +1577,11 @@ export interface CountersignRequest {
  */
 export type DocumentActionResult = Partial<DocumentDetail> & {
   warnings: string[];
+};
+
+/** `POST /api/documents/{id}/signing-record`: the action's result, and whether the record reached the public bucket. */
+export type SigningRecordResult = DocumentActionResult & {
+  published: boolean;
 };
 
 export interface DocumentSyncLine {

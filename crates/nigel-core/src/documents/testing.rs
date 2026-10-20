@@ -116,6 +116,24 @@ impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
         ))
     }
 
+    fn publish_signing_record(
+        &self,
+        token: &str,
+        version: i64,
+        _filename: &str,
+        pdf: &[u8],
+    ) -> crate::error::Result<String> {
+        self.write(
+            crate::invoicing::r2::document_signing_record_key(token, version),
+            pdf,
+        )?;
+        Ok(crate::invoicing::r2::document_signing_record_url(
+            Self::BASE,
+            token,
+            version,
+        ))
+    }
+
     fn public_base(&self) -> &str {
         Self::BASE
     }
@@ -126,7 +144,7 @@ pub struct CapturedMail {
     pub to: String,
     pub subject: String,
     pub text: String,
-    pub attachment: Option<(String, Vec<u8>)>,
+    pub attachments: Vec<(String, Vec<u8>)>,
 }
 
 /// Records every message instead of sending it. `fail_on_call` makes the
@@ -146,9 +164,11 @@ impl crate::invoicing::gateway::Mailer for FakeMailer {
             to: mail.to.to_string(),
             subject: mail.subject.to_string(),
             text: mail.text.to_string(),
-            attachment: mail
-                .attachment
-                .map(|a| (a.filename.to_string(), a.bytes.to_vec())),
+            attachments: mail
+                .attachments
+                .iter()
+                .map(|a| (a.filename.to_string(), a.bytes.to_vec()))
+                .collect(),
         });
         Ok(())
     }
@@ -303,4 +323,28 @@ pub fn sent_document_with_fakes(
     )
     .unwrap();
     (id, publisher, source)
+}
+
+/// Records the signer's acceptance of the latest version as if it arrived
+/// through the published page, from 203.0.113.7 with `user_agent`.
+pub fn accept_online(conn: &rusqlite::Connection, id: i64, typed_name: &str, user_agent: &str) {
+    let version = crate::documents::store::latest_version(conn, id).unwrap();
+    let signer = crate::documents::store::recipients(conn, version.id)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.role == crate::documents::model::RecipientRole::Signer)
+        .unwrap();
+    crate::documents::record::record_online_response(
+        conn,
+        &crate::documents::record::OnlineResponse {
+            version_id: version.id,
+            recipient_id: signer.id,
+            kind: crate::documents::model::ResponseKind::Accept { typed_name },
+            received_at: "2026-10-06T17:04:11Z",
+            ip: Some("203.0.113.7"),
+            user_agent: Some(user_agent),
+            checksum: &version.checksum,
+        },
+    )
+    .unwrap();
 }

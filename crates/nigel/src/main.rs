@@ -333,6 +333,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
             DocumentCommands::Countersign { id, name, date } => {
                 cli::document::countersign(id, &name, &date.unwrap_or_else(cli::today))
             }
+            DocumentCommands::SigningRecord { id } => cli::document::signing_record(id),
         },
         Commands::Invoice { command } => match command {
             InvoiceCommands::New {

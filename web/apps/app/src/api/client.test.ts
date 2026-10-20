@@ -861,6 +861,10 @@ describe('FetchApiClient', () => {
         kind: 'href',
         href: '/api/documents/7/preview.pdf',
       });
+      expect(client.documentSigningRecordTarget(7)).toEqual({
+        kind: 'href',
+        href: '/api/documents/7/signing-record.pdf',
+      });
       expect(await client.documentPreviewHtml(7)).toBe('<h1>Website rebuild</h1>');
       expect(fetchImpl.mock.calls[0][0]).toBe('/api/documents/7/preview');
     });

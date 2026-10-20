@@ -39,6 +39,15 @@ pub trait DocumentPublisher {
     fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> Result<String>;
     /// Write one recipient's page and answer its address.
     fn publish_page(&self, token: &str, recipient_token: &str, html: &[u8]) -> Result<String>;
+    /// Write an executed version's signing record beside its PDF, saved as
+    /// `filename` when downloaded, and answer its address.
+    fn publish_signing_record(
+        &self,
+        token: &str,
+        version: i64,
+        filename: &str,
+        pdf: &[u8],
+    ) -> Result<String>;
     /// The address every published document object is served under.
     fn public_base(&self) -> &str;
 }
@@ -113,6 +122,60 @@ macro_rules! fake_logo_publishing {
 #[cfg(test)]
 pub(crate) use fake_logo_publishing;
 
+/// Why a client a best-effort step needs could not be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnavailableState {
+    /// None of its keys is set.
+    NotConfigured,
+    /// Some keys are set and these are not.
+    Partial(Vec<&'static str>),
+    /// Every key is set and the configuration was refused, for this reason.
+    Refused(String),
+}
+
+/// A client that is not available, worded so a warning can say why and what
+/// to do about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unavailable {
+    /// The service, as a sentence names it: `Mailgun`, `R2`.
+    pub service: &'static str,
+    /// Every key the service needs.
+    pub keys: &'static [&'static str],
+    pub state: UnavailableState,
+}
+
+impl Unavailable {
+    /// Whether the operator set any of the service's keys.
+    pub fn is_configured(&self) -> bool {
+        self.state != UnavailableState::NotConfigured
+    }
+
+    /// The clause saying why, e.g. `Mailgun is only partly configured
+    /// (missing: mailgun_domain)`.
+    pub fn why(&self) -> String {
+        match &self.state {
+            UnavailableState::NotConfigured => format!("{} is not configured", self.service),
+            UnavailableState::Partial(missing) => format!(
+                "{} is only partly configured (missing: {})",
+                self.service,
+                missing.join(", ")
+            ),
+            UnavailableState::Refused(reason) => {
+                format!("the {} configuration was refused ({reason})", self.service)
+            }
+        }
+    }
+
+    /// The clause saying what to do, e.g. `set mailgun_domain`.
+    pub fn fix(&self) -> String {
+        match &self.state {
+            UnavailableState::NotConfigured => format!("set {}", self.keys.join(", ")),
+            UnavailableState::Partial(missing) => format!("set {}", missing.join(", ")),
+            UnavailableState::Refused(_) => format!("correct the {} settings", self.service),
+        }
+    }
+}
+
 pub const INVOICE_ATTACHMENT: &str = "invoice.pdf";
 
 #[derive(Debug, Clone, Copy)]
@@ -122,7 +185,8 @@ pub struct Attachment<'a> {
     pub bytes: &'a [u8],
 }
 
-/// One message to a single recipient with an optional attachment.
+/// One message to a single recipient with any number of attachments, sent in
+/// the order given.
 ///
 /// `cc` entries are already formatted header values, so a name carrying a
 /// comma is quoted before it gets here — `mailgun::format_address` is the one
@@ -133,7 +197,7 @@ pub struct OutgoingMail<'a> {
     pub cc: &'a [String],
     pub subject: &'a str,
     pub text: &'a str,
-    pub attachment: Option<Attachment<'a>>,
+    pub attachments: &'a [Attachment<'a>],
 }
 
 pub trait Mailer {
@@ -154,11 +218,11 @@ pub trait Mailer {
             cc,
             subject,
             text,
-            attachment: Some(Attachment {
+            attachments: &[Attachment {
                 filename: INVOICE_ATTACHMENT,
                 content_type: "application/pdf",
                 bytes: pdf,
-            }),
+            }],
         })
     }
 }
@@ -173,7 +237,9 @@ mod tests {
         struct Capture(RefCell<Option<(String, String)>>);
         impl Mailer for Capture {
             fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
-                let a = mail.attachment.unwrap();
+                let [a] = mail.attachments else {
+                    panic!("one attachment, got {}", mail.attachments.len());
+                };
                 *self.0.borrow_mut() = Some((a.filename.to_string(), a.content_type.to_string()));
                 Ok(())
             }

@@ -1569,6 +1569,140 @@ pub fn render_invoice_pdf(
     pdf.into_bytes()
 }
 
+// ---------------------------------------------------------------------------
+// Signing record
+// ---------------------------------------------------------------------------
+
+/// Where a signing record's values start, right of their labels.
+const RECORD_VALUE_X: f32 = MARGIN_LEFT + 38.0;
+const RECORD_VALUE_W: f32 = PAGE_W - MARGIN_RIGHT - RECORD_VALUE_X;
+
+/// `wrap_text`, with any word still wider than `max_width` (a checksum, a
+/// user agent with no spaces) cut into pieces that fit.
+fn wrap_hard(text: &str, max_width: f32, size: f32) -> Vec<String> {
+    let per_line = ((max_width / (size * 0.18)) as usize).max(1);
+    wrap_text(text, max_width, size)
+        .into_iter()
+        .flat_map(|line| {
+            if approx_text_width(&line, size) <= max_width {
+                return vec![line];
+            }
+            let chars: Vec<char> = line.chars().collect();
+            chars.chunks(per_line).map(|c| c.iter().collect()).collect()
+        })
+        .collect()
+}
+
+impl PdfWriter {
+    /// One labelled row of the signing record, its value wrapped under itself.
+    fn record_row(&mut self, label: &str, value: &str) {
+        let lines = wrap_hard(value, RECORD_VALUE_W, FONT_SIZE);
+        self.ensure_space(lines.len() as f32 * ROW_H);
+        self.text(label, MARGIN_LEFT, FONT_SIZE, true);
+        for line in lines {
+            self.text(&line, RECORD_VALUE_X, FONT_SIZE, false);
+            self.y += ROW_H;
+        }
+    }
+}
+
+/// A stored moment as the record prints it: a date as is, an online
+/// `YYYY-MM-DDTHH:MM:SSZ` as `YYYY-MM-DD HH:MM:SS UTC`.
+fn record_moment(at: &str) -> String {
+    match at.strip_suffix('Z') {
+        Some(rest) if at.len() > 10 => format!("{} UTC", rest.replacen('T', " ", 1)),
+        _ => at.to_string(),
+    }
+}
+
+/// The one-page signing record for an executed document. Every value arrives
+/// as plain text from `documents::signing_record`.
+pub fn render_signing_record(
+    record: &crate::documents::signing_record::SigningRecord,
+) -> Result<Vec<u8>> {
+    use crate::documents::model::{Method, SignatureRole};
+
+    let title = format!("{} - signing record", record.title);
+    let mut pdf = PdfWriter::new(&document_title(&title, &record.company))?;
+    pdf.rule_color = BORDER_GRAY;
+
+    pdf.text("Signing record", MARGIN_LEFT, TITLE_SIZE, true);
+    pdf.y += 7.0;
+    if !record.company.is_empty() {
+        pdf.text(&record.company, MARGIN_LEFT, SUBTITLE_SIZE, false);
+        pdf.y += 5.0;
+    }
+    pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+    pdf.y += 7.0;
+
+    pdf.record_row("Document", &record.title);
+    pdf.record_row("Kind", &record.kind);
+    pdf.record_row("Client", &record.client);
+    pdf.record_row("Version", &record.version.to_string());
+    pdf.record_row("SHA-256", &record.checksum);
+    pdf.y += 2.0;
+    pdf.table_row_wrapped(
+        NOTE_COLS,
+        &[
+            "Every signature below is bound to the file with this checksum. This record \
+           is a separate file; the signed document is unchanged, and any copy whose \
+           SHA-256 checksum matches is the file that was signed.",
+        ],
+        false,
+        SUBTITLE_SIZE - 1.0,
+    );
+
+    if record.network_details_withheld {
+        pdf.y += 1.0;
+        let keeper = if record.company.is_empty() {
+            "the sender".to_string()
+        } else {
+            record.company.clone()
+        };
+        pdf.table_row_wrapped(
+            NOTE_COLS,
+            &[&format!(
+                "This copy leaves out the IP address and browser recorded with an online \
+                 signature; {keeper} keeps them in the full record."
+            )],
+            false,
+            SUBTITLE_SIZE - 1.0,
+        );
+    }
+
+    for signature in &record.signatures {
+        pdf.y += 4.0;
+        pdf.ensure_space(ROW_H * 6.0);
+        pdf.hline(MARGIN_LEFT, PAGE_W - MARGIN_RIGHT);
+        pdf.y += 6.0;
+        pdf.section_label(match signature.role {
+            SignatureRole::Client => "Client acceptance",
+            SignatureRole::Countersign => "Countersignature",
+        });
+        pdf.y += 1.0;
+        pdf.record_row("Name", &signature.name);
+        if let Some(typed) = &signature.typed_name {
+            pdf.record_row("Typed name", typed);
+        }
+        pdf.record_row(
+            "Method",
+            match signature.method {
+                Method::Online => "Online",
+                Method::Manual => "Manual",
+            },
+        );
+        pdf.record_row("Time", &record_moment(&signature.signed_at));
+        if let Some(ip) = &signature.ip {
+            pdf.record_row("IP address", ip);
+        }
+        if let Some(agent) = &signature.user_agent {
+            pdf.record_row("Browser", agent);
+        }
+    }
+
+    pdf.into_bytes()
+}
+
 /// A real PNG, painted by `image` so a decoder has something genuine to read.
 /// Transparent and, at the sizes the tests ask for, wider than it is tall — the
 /// shape printpdf's soft-mask path gets wrong.
@@ -1626,7 +1760,7 @@ pub(crate) fn extract_text(bytes: &[u8]) -> String {
 
 /// One page's decompressed content stream, in page order.
 #[cfg(test)]
-fn page_streams(bytes: &[u8]) -> Vec<String> {
+pub(crate) fn page_streams(bytes: &[u8]) -> Vec<String> {
     let doc = lopdf::Document::load_mem(bytes).expect("rendered pdf parses");
     doc.get_pages()
         .values()

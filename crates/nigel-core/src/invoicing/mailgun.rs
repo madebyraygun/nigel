@@ -179,20 +179,60 @@ pub fn attachment_part(attachment: &Attachment<'_>) -> Result<reqwest::blocking:
         .map_err(|e| NigelError::Other(format!("mailgun attachment: {e}")))
 }
 
+/// Mailgun's limit on one message as sent: headers, text and every attachment
+/// after encoding.
+pub const MAILGUN_MAX_MESSAGE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Room left for the headers, the multipart boundaries and the line breaks an
+/// encoder adds, which the estimate does not count byte by byte.
+pub const MESSAGE_OVERHEAD_BYTES: usize = 256 * 1024;
+
+/// What a message comes to once sent: each attachment base64-encoded
+/// (4 bytes per 3, rounded up), the text, and [`MESSAGE_OVERHEAD_BYTES`].
+pub fn encoded_message_bytes(attachments: &[Attachment<'_>], text: &str) -> usize {
+    let encoded: usize = attachments
+        .iter()
+        .map(|a| a.bytes.len().div_ceil(3) * 4)
+        .sum();
+    encoded + text.len() + MESSAGE_OVERHEAD_BYTES
+}
+
+/// Refuses a message that would exceed [`MAILGUN_MAX_MESSAGE_BYTES`] once
+/// encoded, before anything is sent.
+pub fn ensure_message_fits(attachments: &[Attachment<'_>], text: &str) -> Result<()> {
+    let total = encoded_message_bytes(attachments, text);
+    if total <= MAILGUN_MAX_MESSAGE_BYTES {
+        return Ok(());
+    }
+    let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+    Err(NigelError::Invalid(format!(
+        "The email would come to {:.1} MB once its attachments are encoded, over Mailgun's {:.0} MB message limit, so it was not sent.",
+        mb(total),
+        mb(MAILGUN_MAX_MESSAGE_BYTES)
+    )))
+}
+
+/// The multipart body of one message: the text fields, then one `attachment`
+/// part per attachment in order.
+pub fn message_form(
+    envelope: &EmailEnvelope,
+    mail: &OutgoingMail<'_>,
+) -> Result<reqwest::blocking::multipart::Form> {
+    ensure_message_fits(mail.attachments, mail.text)?;
+    let mut form = reqwest::blocking::multipart::Form::new();
+    for (name, value) in message_fields(envelope, mail.to, mail.cc, mail.subject, mail.text) {
+        form = form.text(name, value);
+    }
+    for attachment in mail.attachments {
+        form = form.part("attachment", attachment_part(attachment)?);
+    }
+    Ok(form)
+}
+
 impl Mailer for MailgunClient {
     fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
+        let form = message_form(&self.envelope, mail)?;
         let url = format!("https://api.mailgun.net/v3/{}/messages", self.domain);
-
-        let mut form = reqwest::blocking::multipart::Form::new();
-        for (name, value) in
-            message_fields(&self.envelope, mail.to, mail.cc, mail.subject, mail.text)
-        {
-            form = form.text(name, value);
-        }
-        if let Some(attachment) = &mail.attachment {
-            form = form.part("attachment", attachment_part(attachment)?);
-        }
-
         let resp = crate::invoicing::http_client()
             .post(&url)
             .basic_auth("api", Some(&self.api_key))
@@ -208,6 +248,99 @@ impl Mailer for MailgunClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn form_body(mail: &OutgoingMail<'_>) -> String {
+        use std::io::Read;
+        let mut body = Vec::new();
+        message_form(&envelope(None, None), mail)
+            .unwrap()
+            .into_reader()
+            .read_to_end(&mut body)
+            .unwrap();
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    fn mail<'a>(attachments: &'a [Attachment<'a>]) -> OutgoingMail<'a> {
+        OutgoingMail {
+            to: "pat@cedar.test",
+            cc: &[],
+            subject: "Signed: Website rebuild for Initech",
+            text: "Hello Pat",
+            attachments,
+        }
+    }
+
+    #[test]
+    fn every_attachment_is_its_own_part_in_order() {
+        let body = form_body(&mail(&[
+            Attachment {
+                filename: "Website-rebuild-v2.pdf",
+                content_type: "application/pdf",
+                bytes: b"%PDF-signed",
+            },
+            Attachment {
+                filename: "Website-rebuild-v2-signing-record.pdf",
+                content_type: "application/pdf",
+                bytes: b"%PDF-record",
+            },
+        ]));
+        assert_eq!(body.matches("name=\"attachment\"").count(), 2);
+        let first = body
+            .find("filename=\"Website-rebuild-v2.pdf\"")
+            .expect("the signed copy");
+        let second = body
+            .find("filename=\"Website-rebuild-v2-signing-record.pdf\"")
+            .expect("the signing record");
+        assert!(first < second);
+        assert!(body.contains("%PDF-signed") && body.contains("%PDF-record"));
+    }
+
+    #[test]
+    fn one_attachment_is_one_part_and_none_is_no_part() {
+        let one = form_body(&mail(&[Attachment {
+            filename: "invoice.pdf",
+            content_type: "application/pdf",
+            bytes: b"%PDF-",
+        }]));
+        assert_eq!(one.matches("name=\"attachment\"").count(), 1);
+        assert!(one.contains("filename=\"invoice.pdf\""));
+        assert!(!form_body(&mail(&[])).contains("name=\"attachment\""));
+    }
+
+    #[test]
+    fn a_message_is_measured_encoded_and_refused_before_any_request() {
+        let big = vec![0u8; 20 * 1024 * 1024];
+        let attachments = [Attachment {
+            filename: "a.pdf",
+            content_type: "application/pdf",
+            bytes: &big,
+        }];
+        let client = MailgunClient {
+            api_key: "key".into(),
+            domain: "mg.invalid".into(),
+            envelope: envelope(None, None),
+        };
+        let err = client.send(&mail(&attachments)).unwrap_err();
+        assert!(matches!(err, NigelError::Invalid(_)), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            "The email would come to 26.9 MB once its attachments are encoded, over Mailgun's 25 MB message limit, so it was not sent."
+        );
+        assert_eq!(
+            encoded_message_bytes(&attachments, "hi"),
+            big.len().div_ceil(3) * 4 + 2 + MESSAGE_OVERHEAD_BYTES
+        );
+        let fits = vec![0u8; 18 * 1024 * 1024];
+        assert!(ensure_message_fits(
+            &[Attachment {
+                filename: "a.pdf",
+                content_type: "application/pdf",
+                bytes: &fits,
+            }],
+            "hi"
+        )
+        .is_ok());
+    }
 
     #[test]
     fn an_attachment_part_takes_the_given_filename() {

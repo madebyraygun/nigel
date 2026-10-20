@@ -92,10 +92,26 @@ pub fn withdraw_with_teardown<P: DocumentPublisher, R: ResponseSource>(
 type Stamp = (SignatureRole, String, String);
 type Loaded = (Document, DocumentVersion, Vec<Stamp>, Vec<RequestedChange>);
 
+/// Close the manifest and rewrite every page of the latest sent version to
+/// show the document's current state. An executed page drawn here offers no
+/// signing record; [`super::execute`] republishes it with one.
 pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     id: i64,
     company: &str,
+    publisher: Option<&P>,
+    source: Option<&R>,
+) -> Vec<String> {
+    republish_linking_record(conn, id, company, None, publisher, source)
+}
+
+/// [`republish_after_change`], with an executed page linking the signing
+/// record at `signing_record_href`.
+pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
+    conn: &Connection,
+    id: i64,
+    company: &str,
+    signing_record_href: Option<&str>,
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
@@ -135,6 +151,7 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
             Some(countersign) => PageState::Executed {
                 client,
                 countersign,
+                signing_record_href,
             },
             None => return Vec::new(),
         },

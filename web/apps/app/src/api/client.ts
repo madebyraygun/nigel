@@ -24,6 +24,7 @@ import {
   type DeclineRequest,
   type Deleted,
   type DocumentActionResult,
+  type SigningRecordResult,
   type DocumentDetail,
   type DocumentKind,
   type DocumentListParams,
@@ -529,6 +530,8 @@ export interface ApiClient {
   declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult>;
   countersignDocument(id: number, input: CountersignRequest): Promise<DocumentActionResult>;
   withdrawDocument(id: number): Promise<DocumentActionResult>;
+  /** Regenerate an executed document's signing record and republish it and its pages. Emails nobody. */
+  republishSigningRecord(id: number): Promise<SigningRecordResult>;
   /** Fetch and record the responses signers left online. */
   syncDocuments(): Promise<DocumentSyncResult>;
 
@@ -536,6 +539,8 @@ export interface ApiClient {
   documentPreviewUrl(id: number, format: 'html' | 'pdf'): string;
   /** The latest version's PDF, in the form the running client can use. */
   documentPreviewTarget(id: number): ExportTarget;
+  /** An executed document's signing record PDF, in the form the running client can use. */
+  documentSigningRecordTarget(id: number): ExportTarget;
   /** The signer's page as HTML: an iframe cannot report a failed load, bytes can. */
   documentPreviewHtml(id: number): Promise<string>;
 }
@@ -1011,6 +1016,10 @@ export class FetchApiClient implements ApiClient {
     return this.request<DocumentActionResult>('POST', `/documents/${id}/withdraw`, {});
   }
 
+  republishSigningRecord(id: number): Promise<SigningRecordResult> {
+    return this.request<SigningRecordResult>('POST', `/documents/${id}/signing-record`, {});
+  }
+
   syncDocuments(): Promise<DocumentSyncResult> {
     return this.request<DocumentSyncResult>('POST', '/documents/sync', {});
   }
@@ -1022,6 +1031,14 @@ export class FetchApiClient implements ApiClient {
 
   documentPreviewTarget(id: number): ExportTarget {
     return { kind: 'href', href: this.documentPreviewUrl(id, 'pdf') };
+  }
+
+  protected documentSigningRecordUrl(id: number): string {
+    return `${this.baseUrl}/documents/${id}/signing-record.pdf`;
+  }
+
+  documentSigningRecordTarget(id: number): ExportTarget {
+    return { kind: 'href', href: this.documentSigningRecordUrl(id) };
   }
 
   documentPreviewHtml(id: number): Promise<string> {
