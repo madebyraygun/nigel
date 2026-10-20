@@ -192,7 +192,7 @@ nigel completions bash                            # Also: zsh, fish, powershell
 
 ## Automated backups
 
-`nigel backup` uses SQLite's online-backup API, so it produces a consistent snapshot even while Nigel is running, and an encrypted database yields an encrypted backup.
+`nigel backup` uses SQLite's online-backup API, so it produces a consistent snapshot even while Nigel is running, and an encrypted database yields an encrypted backup. Filed document PDFs are copied beside it into a folder named like the backup with a `.documents` extension (`nigel-2026-10-19.documents/`); `nigel restore` brings them back when that folder is next to the backup file. Keep the two together. The PDFs in that folder are not encrypted: they are copied exactly as they sit in `<data_dir>/documents/`.
 
 On an encrypted database, `nigel` normally prompts for the password on the terminal. Scheduled jobs have no terminal, so set `NIGEL_DB_PASSWORD` instead:
 

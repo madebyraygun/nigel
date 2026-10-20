@@ -1434,6 +1434,8 @@ export interface DocumentVersionDetail {
   recipients: DocumentRecipient[];
   signatures: DocumentSignature[];
   changeRequests: DocumentChangeRequest[];
+  /** The version's PDF is absent from the data directory. */
+  fileMissing: boolean;
 }
 
 /**

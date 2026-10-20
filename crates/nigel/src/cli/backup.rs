@@ -23,11 +23,19 @@ pub fn run(output: Option<String>) -> Result<()> {
         }
     };
 
+    check_documents_destination(&data_dir, &dest_path)?;
     snapshot(&conn, &dest_path)?;
 
     let size = std::fs::metadata(&dest_path)?.len();
     println!("Backup saved to {}", dest_path.display());
     println!("Size: {}", format_bytes(size));
+    let files = copy_documents_out(&data_dir, &dest_path)?;
+    if files > 0 {
+        println!(
+            "Documents: {files} filed PDF(s) saved to {}",
+            documents_path_for(&dest_path).display()
+        );
+    }
     Ok(())
 }
 

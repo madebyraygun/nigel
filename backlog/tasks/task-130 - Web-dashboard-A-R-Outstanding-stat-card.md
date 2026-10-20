@@ -4,7 +4,7 @@ title: 'Web dashboard: A/R Outstanding stat card'
 status: To Do
 assignee: []
 created_date: '2026-08-22 14:02'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - frontend
 milestone: m-3
@@ -25,3 +25,9 @@ Prerequisite for deprecating the TUI dashboard; the data half of the dashboard g
 - [ ] #2 Books with no invoice activity render gracefully — no empty-noise card
 - [ ] #3 The card links through to the invoices or aging view
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Lands in the refreshed stat strip (TASK-154.5).
+<!-- SECTION:NOTES:END -->

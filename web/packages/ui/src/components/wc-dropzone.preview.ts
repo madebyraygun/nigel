@@ -15,6 +15,23 @@ const preview: Preview = {
       render: () => html`<wc-dropzone></wc-dropzone>`,
     },
     {
+      name: 'custom-prompt',
+      render: () =>
+        html`<wc-dropzone
+          accept=".pdf"
+          prompt="Drop a PDF here, or choose a file"
+        ></wc-dropzone>`,
+    },
+    {
+      name: 'custom-error',
+      render: () =>
+        html`<wc-dropzone
+          accept=".pdf"
+          prompt="Drop a PDF here, or choose a file"
+          error="Only PDF files can be filed."
+        ></wc-dropzone>`,
+    },
+    {
       name: 'selected',
       render: () =>
         html`<wc-dropzone filename="april-2025.csv" .size=${8214}></wc-dropzone>`,

@@ -1959,6 +1959,7 @@ export class FakeApiClient implements ApiClient {
       recipients: [],
       signatures: [],
       changeRequests: [],
+      fileMissing: false,
     };
   }
 

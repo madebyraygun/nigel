@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-16 16:58'
-updated_date: '2026-08-16 17:01'
+updated_date: '2026-10-20 22:57'
 labels:
   - web
   - ui
@@ -47,4 +47,6 @@ Related: task-91 (virtualize or lazy-load the register table) addresses the row 
 
 <!-- SECTION:NOTES:BEGIN -->
 Measurements above (screen host 14,092px, table 13,831px, toolbar 172px, scroller 680px in a 336px box) were taken on 2026-08-16 against the register BEFORE virtualization landed. PR #17 for task-91 is expected to merge shortly and changes the table height directly. Re-measure at 390x844 before designing anything: if the table stops rendering at full height, the page may stop scrolling, the toolbar may stop leaving, and what is left of this task is the toolbar width and the sideways truncation.
+
+Absorbed by TASK-154.6 (Register refresh); close when that lands.
 <!-- SECTION:NOTES:END -->

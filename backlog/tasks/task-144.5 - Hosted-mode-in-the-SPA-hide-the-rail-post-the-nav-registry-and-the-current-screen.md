@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:06'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - web
   - ui
@@ -31,3 +31,9 @@ Phase 1. With ?shell=native on the initial URL the SPA hides its sidebar rail an
 - [ ] #2 nav is posted on boot and when the registry changes (profile switch); navigated is posted on every hash change, with the screen title
 - [ ] #3 No file under web/packages/ui reads the flag or the host; web tests cover both messages through the fake api client
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Hosted mode hides the refreshed web sidebar and the floating status line (TASK-154.2, 154.4) and keeps the breadcrumb top bar. Follows docs/design/app-refresh/ (epic TASK-154).
+<!-- SECTION:NOTES:END -->
