@@ -3,9 +3,10 @@ id: TASK-109.21
 title: >-
   Documents screen: the client filter lists archived clients, and the drop zone
   asks for a statement
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-19 19:05'
+updated_date: '2026-10-20 23:08'
 labels:
   - documents
   - web
@@ -30,7 +31,13 @@ Note for 1: an archived client can still have documents filed before archiving. 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Documents screen's Client filter lists active clients only
-- [ ] #2 wc-dropzone takes its prompt as a property, with a preview state for it; the Documents screen asks for a PDF ('Drop a PDF here, or choose a file') and bank imports keep their wording
-- [ ] #3 Tests cover both, and describePreviewA11y passes with zero violations
+- [x] #1 The Documents screen's Client filter lists active clients only
+- [x] #2 wc-dropzone takes its prompt as a property, with a preview state for it; the Documents screen asks for a PDF ('Drop a PDF here, or choose a file') and bank imports keep their wording
+- [x] #3 Tests cover both, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #55 (9125202).
+<!-- SECTION:FINAL_SUMMARY:END -->
