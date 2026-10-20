@@ -10,7 +10,7 @@ use nigel_core::documents::lifecycle::{
 };
 use nigel_core::documents::model::{
     parse_recipient, validate_moment, DocumentKind, DocumentListRow, DocumentRecord,
-    DocumentStatus, Method, NewRecipient, RecipientRole, SignatureRole,
+    DocumentStatus, DocumentVersion, Method, NewRecipient, RecipientRole, SignatureRole,
 };
 use nigel_core::documents::record::{
     record_countersign, record_decline, record_manual_accept, record_manual_change_request,
@@ -19,8 +19,8 @@ use nigel_core::documents::send::{
     default_signer, send_document_traced, write_preview, DocumentSendFailure, SendContext,
 };
 use nigel_core::documents::store::{
-    document_record, file_document, get_document, latest_version, list_documents, DocumentFilter,
-    NewDocument,
+    document_record, file_document, get_document, latest_version, list_documents,
+    version_file_missing, DocumentFilter, NewDocument,
 };
 use nigel_core::documents::sync::{sync_documents, DocumentSyncReport};
 use nigel_core::error::{NigelError, Result};
@@ -107,7 +107,12 @@ pub fn list(client: Option<i64>, status: Option<&str>, kind: Option<&str>) -> Re
 
 pub fn show(id: i64) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    println!("{}", format_document_show(&document_record(&conn, id)?));
+    let data_dir = get_data_dir();
+    let record = document_record(&conn, id)?;
+    println!(
+        "{}",
+        format_document_show(&record, |v| version_file_missing(&data_dir, v))
+    );
     Ok(())
 }
 
@@ -601,7 +606,10 @@ fn evidence(method: Method, ip: Option<&str>) -> String {
     }
 }
 
-pub fn format_document_show(record: &DocumentRecord) -> String {
+pub fn format_document_show(
+    record: &DocumentRecord,
+    file_missing: impl Fn(&DocumentVersion) -> bool,
+) -> String {
     let document = &record.document;
     let mut out = format!(
         "Document #{}  [{}]  {}\nTitle:    {}\nClient:   {}\nFiled:    {}\n",
@@ -627,6 +635,12 @@ pub fn format_document_show(record: &DocumentRecord) -> String {
             "Version {}  {}  {state}\n",
             version.number, version.checksum
         ));
+        if file_missing(version) {
+            out.push_str(&format!(
+                "  PDF MISSING: {} is not on disk; restore it from a backup that includes the documents folder\n",
+                version.file_path
+            ));
+        }
         for recipient in &record.recipients {
             out.push_str(&format!(
                 "  {:<12}  {} <{}>\n",
@@ -1065,7 +1079,7 @@ mod tests {
 
     #[test]
     fn show_prints_every_version_with_its_checksum_recipients_and_responses() {
-        let out = format_document_show(&fixture_record());
+        let out = format_document_show(&fixture_record(), |_| false);
         assert!(out.contains("Document #1  [changes_requested]  Proposal"));
         assert!(out.contains("Client:   Cedar Systems"));
         assert!(out.contains("Version 1  sha256:aa  sent 2026-10-05"));
@@ -1079,10 +1093,18 @@ mod tests {
     }
 
     #[test]
+    fn show_flags_a_version_whose_pdf_is_missing() {
+        let out = format_document_show(&fixture_record(), |v| v.number == 2);
+        let (v1, v2) = out.split_once("Version 2").unwrap();
+        assert!(!v1.contains("PDF MISSING"));
+        assert!(v2.contains("PDF MISSING: documents/1/v2.pdf is not on disk"));
+    }
+
+    #[test]
     fn a_note_prints_as_its_own_text() {
         let mut record = fixture_record();
         record.versions[0].change_requests[0].note = "<b>x</b>\nsecond line".into();
-        let out = format_document_show(&record);
+        let out = format_document_show(&record, |_| false);
         assert!(out.contains("    | <b>x</b>\n    | second line"));
     }
 
@@ -1093,7 +1115,7 @@ mod tests {
             signature(SignatureRole::Client, Method::Online),
             signature(SignatureRole::Countersign, Method::Manual),
         ];
-        let out = format_document_show(&record);
+        let out = format_document_show(&record, |_| false);
         assert!(out.contains(
             "accepted by Pat Example (online) at 2026-10-06T10:00:00Z, typed \"Pat E.\", ip 203.0.113.9"
         ));
@@ -1105,7 +1127,7 @@ mod tests {
         let mut record = fixture_record();
         record.document.declined_at = Some("2026-10-07".into());
         record.document.decline_note = Some("Out of budget".into());
-        let out = format_document_show(&record);
+        let out = format_document_show(&record, |_| false);
         assert!(out.contains("Declined: 2026-10-07\n    | Out of budget"));
     }
 

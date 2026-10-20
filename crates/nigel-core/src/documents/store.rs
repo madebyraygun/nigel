@@ -51,7 +51,21 @@ pub fn write_version_file(data_dir: &Path, rel: &str, pdf: &[u8]) -> Result<()> 
     Ok(())
 }
 
+/// Whether the version's PDF is absent from the data directory.
+pub fn version_file_missing(data_dir: &Path, version: &DocumentVersion) -> bool {
+    !data_dir.join(&version.file_path).is_file()
+}
+
 pub fn read_version_pdf(data_dir: &Path, version: &DocumentVersion) -> Result<Vec<u8>> {
+    if version_file_missing(data_dir, version) {
+        return Err(NigelError::Conflict {
+            code: "file_missing",
+            message: format!(
+                "The PDF for version {} of document #{} is missing ({}). Restore it from a backup that includes the documents folder.",
+                version.number, version.document_id, version.file_path
+            ),
+        });
+    }
     let bytes = std::fs::read(data_dir.join(&version.file_path))?;
     if checksum_of(&bytes) != version.checksum {
         return Err(NigelError::Conflict {
@@ -729,6 +743,24 @@ mod tests {
             read_version_pdf(dir.path(), &v),
             Err(NigelError::Conflict {
                 code: "file_changed",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_missing_pdf_is_reported_not_read() {
+        let (dir, conn) = test_conn();
+        let client = seed_client(&conn, "Cedar Systems");
+        let id = seed_document(&conn, dir.path(), client, "Lost");
+        let v = latest_version(&conn, id).unwrap();
+        assert!(!version_file_missing(dir.path(), &v));
+        std::fs::remove_file(dir.path().join(&v.file_path)).unwrap();
+        assert!(version_file_missing(dir.path(), &v));
+        assert!(matches!(
+            read_version_pdf(dir.path(), &v),
+            Err(NigelError::Conflict {
+                code: "file_missing",
                 ..
             })
         ));

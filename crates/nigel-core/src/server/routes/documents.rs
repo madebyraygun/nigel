@@ -50,7 +50,7 @@ use crate::documents::send::{
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
-    update_document, DocumentFilter, DocumentUpdate, NewDocument,
+    update_document, version_file_missing, DocumentFilter, DocumentUpdate, NewDocument,
 };
 use crate::documents::sync::{sync_documents, DocumentSyncReport};
 use crate::error::NigelError;
@@ -128,8 +128,13 @@ struct ActionResult {
 }
 
 impl ActionResult {
-    fn after_commit(conn: &Connection, id: i64, mut warnings: Vec<String>) -> Self {
-        let document = detail_after_commit(conn, id, &mut warnings);
+    fn after_commit(
+        conn: &Connection,
+        data_dir: &Path,
+        id: i64,
+        mut warnings: Vec<String>,
+    ) -> Self {
+        let document = detail_after_commit(conn, data_dir, id, &mut warnings);
         ActionResult { document, warnings }
     }
 }
@@ -142,6 +147,8 @@ struct VersionDetail {
     recipients: Vec<RecipientDetail>,
     signatures: Vec<Signature>,
     change_requests: Vec<ChangeRequest>,
+    /// `true` when the version's PDF is absent from the data directory.
+    file_missing: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -176,10 +183,11 @@ fn documents_base() -> Option<String> {
 /// would invite a retry of something already done.
 fn detail_after_commit(
     conn: &Connection,
+    data_dir: &Path,
     id: i64,
     warnings: &mut Vec<String>,
 ) -> Option<DocumentDetail> {
-    match detail_for(conn, id) {
+    match detail_for(conn, data_dir, id) {
         Ok(detail) => Some(detail),
         Err(e) => {
             warnings.push(format!(
@@ -191,7 +199,7 @@ fn detail_after_commit(
     }
 }
 
-fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
+fn detail_for(conn: &Connection, data_dir: &Path, id: i64) -> ApiResult<DocumentDetail> {
     let record =
         document_record(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
     let status = record.document.status;
@@ -215,6 +223,7 @@ fn detail_for(conn: &Connection, id: i64) -> ApiResult<DocumentDetail> {
                 })
                 .collect();
             VersionDetail {
+                file_missing: version_file_missing(data_dir, &v.version),
                 version: v.version,
                 recipients,
                 signatures: v.signatures,
@@ -298,7 +307,8 @@ async fn detail(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<i64>,
 ) -> ApiResult<Json<DocumentDetail>> {
-    let detail = with_conn_api(&state, move |conn| detail_for(conn, id)).await?;
+    let data_dir = state.data_dir();
+    let detail = with_conn_api(&state, move |conn| detail_for(conn, &data_dir, id)).await?;
     Ok(Json(detail))
 }
 
@@ -411,7 +421,7 @@ async fn file(
                 };
                 let id = file_document(conn, &state.data_dir(), &new, pdf, &today)
                     .map_err(|e| not_found_because(e, "client_not_found"))?;
-                detail_for(conn, id)
+                detail_for(conn, &state.data_dir(), id)
             })
         }
     })
@@ -437,10 +447,11 @@ async fn edit(
         title: request.title,
         kind: request.kind,
     };
+    let data_dir = state.data_dir();
     let detail = with_conn_api(&state, move |conn| {
         update_document(conn, id, &update, &today)
             .map_err(|e| not_found_because(e, "document_not_found"))?;
-        detail_for(conn, id)
+        detail_for(conn, &data_dir, id)
     })
     .await?;
     Ok(Json(detail))
@@ -479,7 +490,12 @@ async fn revise(
                     source.as_ref(),
                 )
                 .map_err(|e| not_found_because(e, "document_not_found"))?;
-                Ok(ActionResult::after_commit(conn, id, outcome.warnings))
+                Ok(ActionResult::after_commit(
+                    conn,
+                    &state.data_dir(),
+                    id,
+                    outcome.warnings,
+                ))
             })
         }
     })
@@ -656,7 +672,7 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     let mut outcome = send_document_traced(conn, id, &recipients, &ctx, publisher, mailer, source)?;
 
     Ok(SendResult {
-        document: detail_after_commit(conn, id, &mut outcome.warnings),
+        document: detail_after_commit(conn, data_dir, id, &mut outcome.warnings),
         steps: outcome
             .steps
             .into_iter()
@@ -716,6 +732,7 @@ async fn record_and_republish(
     let config = crate::settings::documents_config();
     let publisher = optional_document_publisher(&config);
     let source = optional_response_source(&config);
+    let data_dir = state.data_dir();
     let result = with_conn_api(state, move |conn| {
         record(conn).map_err(|e| not_found_because(e, "document_not_found"))?;
         let warnings = republish_after_change(
@@ -725,7 +742,7 @@ async fn record_and_republish(
             publisher.as_ref(),
             source.as_ref(),
         );
-        Ok(ActionResult::after_commit(conn, id, warnings))
+        Ok(ActionResult::after_commit(conn, &data_dir, id, warnings))
     })
     .await?;
     Ok(Json(result))
@@ -797,6 +814,7 @@ async fn withdraw(
     let config = crate::settings::documents_config();
     let publisher = optional_document_publisher(&config);
     let source = optional_response_source(&config);
+    let data_dir = state.data_dir();
     let result = with_conn_api(&state, move |conn| {
         let warnings = withdraw_with_teardown(
             conn,
@@ -807,7 +825,7 @@ async fn withdraw(
             source.as_ref(),
         )
         .map_err(|e| not_found_because(e, "document_not_found"))?;
-        Ok(ActionResult::after_commit(conn, id, warnings))
+        Ok(ActionResult::after_commit(conn, &data_dir, id, warnings))
     })
     .await?;
     Ok(Json(result))
@@ -1060,6 +1078,19 @@ mod tests {
                 "{uri}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn detail_flags_a_version_whose_pdf_is_missing() {
+        let _config = TempConfig::new();
+        let (dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let body = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(body["versions"][0]["fileMissing"], false, "{body}");
+
+        std::fs::remove_file(dir.path().join("documents/1/v1.pdf")).unwrap();
+        let body = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(body["versions"][0]["fileMissing"], true, "{body}");
     }
 
     #[tokio::test]

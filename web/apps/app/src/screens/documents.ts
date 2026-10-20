@@ -363,8 +363,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
     try {
       if (id === null) {
-        // Archived clients included, so the filter can still name one whose
-        // documents outlived them; filing offers active clients only.
+        // Archived clients are fetched too, so a filter link to one can still
+        // show its name; the filter and filing offer active clients only.
         const [rows, clients, kinds] = await Promise.all([
           this.client.getDocuments(documentListParams(this.params)),
           this.client.getClients(true),
@@ -953,8 +953,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           @change=${this.handleClientFilter}
         >
           <wa-option value="">All clients</wa-option>
-          ${this.clients.map(
-            (client) => html`<wa-option value=${String(client.id)}>${client.name}</wa-option>`,
+          ${this.clients
+            .filter(
+              (client) => client.archivedAt === null || String(client.id) === clientId,
+            )
+            .map(
+              (client) =>
+                html`<wa-option value=${String(client.id)}>${client.name}</wa-option>`,
           )}
         </wa-select>
       </div>
@@ -968,6 +973,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         <div class="filing">
           <wc-dropzone
             accept=".pdf"
+            prompt="Drop a PDF here, or choose a file"
+          unsupported-message="Only PDF files can be filed."
             filename=${this.file?.name ?? ''}
             .size=${this.file?.size ?? 0}
             error=${this.fileError}
@@ -1048,7 +1055,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         <wc-document-status status=${detail.status}></wc-document-status>
       </header>
 
-      ${this.renderActions(detail)} ${this.renderClosure(detail)}
+      ${this.renderMissingFiles(detail)} ${this.renderActions(detail)}
+      ${this.renderClosure(detail)}
 
       <wc-panel heading="Preview">
         <div class="actions">
@@ -1074,6 +1082,17 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
       ${this.renderActionDialog(detail)} ${this.renderSendDialog(detail)}
     `;
+  }
+
+  private renderMissingFiles(detail: DocumentDetail) {
+    const missing = detail.versions.filter((version) => version.fileMissing);
+    if (missing.length === 0) return nothing;
+    const numbers = missing.map((version) => `v${version.number}`).join(', ');
+    return html`<wc-notice-bar
+      variant="warning"
+      data-file-missing
+      message=${`The PDF for ${numbers} is missing from this computer, so it cannot be previewed or sent. Restore it from a backup that includes the documents folder.`}
+    ></wc-notice-bar>`;
   }
 
   /** Only what the server's flags allow, never what the status word suggests. */
@@ -1254,6 +1273,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       case 'revise':
         return html`<wc-dropzone
           accept=".pdf"
+          prompt="Drop a PDF here, or choose a file"
+            unsupported-message="Only PDF files can be filed."
           filename=${this.revision?.name ?? ''}
           .size=${this.revision?.size ?? 0}
           error=${this.revisionError}

@@ -18,6 +18,9 @@ export const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 /** What the importers read, which is also what the picker offers. */
 export const DEFAULT_EXTENSIONS = ['.csv', '.xlsx', '.xls'] as const;
 
+/** The well's prompt when its owner does not set one. */
+export const DEFAULT_PROMPT = 'Drop a statement here, or choose a file';
+
 /**
  * The one sentence a file nigel cannot read produces.
  *
@@ -180,6 +183,17 @@ export class WcDropzone extends LitElement {
   @property({ type: String })
   accept = DEFAULT_EXTENSIONS.join(',');
 
+  /** The line inviting a drop. */
+  @property({ type: String })
+  prompt = DEFAULT_PROMPT;
+
+  /**
+   * What a file with the wrong extension produces. Empty means the default,
+   * which names the accepted extensions and speaks of statements.
+   */
+  @property({ type: String, attribute: 'unsupported-message' })
+  unsupportedMessage = '';
+
   /** Largest file to emit. Zero disables the check. */
   @property({ type: Number, attribute: 'max-bytes' })
   maxBytes = DEFAULT_MAX_BYTES;
@@ -236,7 +250,7 @@ export class WcDropzone extends LitElement {
     const extensions = this.extensions;
     const name = file.name.toLowerCase();
     if (extensions.length > 0 && !extensions.some((ext) => name.endsWith(ext))) {
-      return unsupportedFileMessage(extensions);
+      return this.unsupportedMessage || unsupportedFileMessage(extensions);
     }
     if (this.maxBytes > 0 && file.size > this.maxBytes) {
       const limit = Math.round(this.maxBytes / (1024 * 1024));
@@ -348,7 +362,7 @@ export class WcDropzone extends LitElement {
         @click=${this.handleBrowse}
       >
         <wc-icon-import class="icon"></wc-icon-import>
-        <span class="prompt">Drop a statement here, or choose a file</span>
+        <span class="prompt">${this.prompt}</span>
         <span class="hint">${this.extensions.join(', ')}</span>
       </button>
     `;
