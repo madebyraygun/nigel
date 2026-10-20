@@ -50,7 +50,7 @@ use crate::documents::send::{
     SendContext,
 };
 use crate::documents::signing_record::{
-    generate_signing_record, read_signing_record, PDF_UNAVAILABLE,
+    generate_signing_record, read_signing_record, KeptRecord, PDF_UNAVAILABLE,
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
@@ -827,7 +827,12 @@ async fn countersign(
                 &company_name(conn),
                 &config,
             );
-            Ok(ActionResult::after_commit(conn, id, warnings))
+            Ok(ActionResult::after_commit(
+                conn,
+                &state.data_dir(),
+                id,
+                warnings,
+            ))
         }
     })
     .await?;
@@ -876,7 +881,12 @@ async fn republish_signing_record(
                 other => other.into(),
             })?;
             Ok(SigningRecordResult {
-                result: ActionResult::after_commit(conn, id, regenerated.warnings),
+                result: ActionResult::after_commit(
+                    conn,
+                    &state.data_dir(),
+                    id,
+                    regenerated.warnings,
+                ),
                 published: regenerated.published,
             })
         }
@@ -1090,6 +1100,11 @@ async fn signing_record_pdf(
                 return Ok(record);
             }
             generate_signing_record(conn, &data_dir, id, &company_name(conn))?
+                .map(|r| KeptRecord {
+                    version: r.version,
+                    filename: r.filename,
+                    bytes: r.bytes,
+                })
                 .ok_or_else(|| ApiError::feature_disabled(PDF_UNAVAILABLE))
         }
     })
@@ -2000,6 +2015,34 @@ mod tests {
                 .any(|w| w.contains("Mailgun is not configured")),
             "{executed}"
         );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[tokio::test]
+    async fn the_operator_download_is_the_full_record_with_the_signers_network_details() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let (id, _, _) = sent_document_with_fakes(&conn, db_path.parent().unwrap());
+        crate::documents::testing::accept_online(&conn, id, "Pat Example", "Mozilla/5.0 (X11)");
+        crate::documents::record::record_countersign(&conn, id, "Sam Example", "2026-10-07")
+            .unwrap();
+        drop(conn);
+        let (app, token) = app_for(&db_path);
+
+        let response = get_response(
+            &app,
+            &format!("/api/documents/{id}/signing-record.pdf"),
+            &token,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = crate::pdf::extract_text(&body_bytes(response).await);
+        assert!(
+            text.contains("203.0.113.7") && text.contains("Mozilla/5.0 (X11)"),
+            "{text}"
+        );
+        assert!(!text.contains("This copy leaves out"), "{text}");
     }
 
     #[cfg(feature = "pdf")]

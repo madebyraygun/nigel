@@ -1708,7 +1708,7 @@ pair is the capability in a recipient's link.
 | Object | Bucket | Written by |
 |---|---|---|
 | `d/{token}/v{n}/document.pdf` | public | Nigel, once per version, never changed |
-| `d/{token}/v{n}/signing-record.pdf` | public | Nigel, when that version is countersigned, and again by `document signing-record` |
+| `d/{token}/v{n}/signing-record.pdf` | public | Nigel, when that version is countersigned, and again by `document signing-record`; the redacted record, without IP address or browser |
 | `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
 | `d/{token}/manifest.json` | private | Nigel |
 | `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
@@ -1721,7 +1721,7 @@ read and written only with the R2 keys and by the Worker's binding.
 
 Every version of every filed PDF also stays in the data directory under
 `documents/<id>/v<n>.pdf`, and its checksum is verified on each read. An
-executed version's signing record is kept beside it as
+executed version's full signing record is kept beside it as
 `documents/<id>/v<n>-signing-record.pdf`.
 
 The **manifest** tells the Worker whether a recipient may still respond:
@@ -1836,8 +1836,9 @@ signer's assent against the version's checksum. `decline` is terminal.
 `countersign` records your own signature on an `accepted` document and makes it
 `executed`. Then, in order:
 
-1. **The signing record** is generated, kept in the data directory and
-   published beside the version's PDF.
+1. **The signing record** is generated in its two variants (below): the full
+   one is kept in the data directory and the redacted one is published beside
+   the version's PDF.
 2. **The pages** are republished showing both signatures, with a **Download the
    signing record** button beside **Download the PDF** once the record is
    published.
@@ -1845,7 +1846,8 @@ signer's assent against the version's checksum. `decline` is terminal.
    message each, with the subject `Signed: <title> for <company>` (just
    `Signed: <title>` when no business name is set), a short plain-text body
    with their page link, and two attachments: the signed PDF and the signing
-   record. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
+   record — the full record for the signer, the redacted one for each
+   collaborator. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
    nothing from R2 except for the page link, which is left out when R2 is not
    configured.
 
@@ -1880,6 +1882,18 @@ name, the browser string — is printed as plain text with control characters
 removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.
 `Website-rebuild-v3-signing-record.pdf`.
 
+The record comes in two variants, because the signer's IP address and browser
+are personal data about the signer and the published copy can be fetched by
+anyone holding a page link:
+
+| Variant | Contents | Who gets it |
+|---|---|---|
+| Full | Everything above, including the IP address and browser of an online acceptance | You: the copy in the data directory, **Download signing record** in the web UI and `GET /api/documents/{id}/signing-record.pdf`. The signer: attached to their confirmation email |
+| Redacted | The same, without IP address and browser, and a line saying the sender keeps them in the full record | Each collaborator's confirmation email, and the published `d/{token}/v{n}/signing-record.pdf` that every recipient page links |
+
+Both name the same checksum and the same signatures, so either verifies the
+signed file.
+
 The record needs the `pdf` feature, which the release builds have. A build
 without it skips the record with a warning and emails the signed PDF alone.
 
@@ -1891,8 +1905,8 @@ the web UI:
 nigel document signing-record 3
 ```
 
-It writes the local copy and, when R2 is configured, uploads it and republishes
-the pages linking it. It emails nobody. It says `Published it as …` only when
+It writes the full local copy and, when R2 is configured, uploads the redacted
+copy and republishes the pages linking it. It emails nobody. It says `Published it as …` only when
 the upload succeeded, says the record was written locally when R2 is not
 configured, and exits non-zero when R2 is configured, even partly, and the
 record was not published.

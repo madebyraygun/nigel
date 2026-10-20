@@ -1,7 +1,13 @@
 //! The signing record: a one-page PDF beside an executed version that names the
 //! signed file's checksum and every signature on it. The signed PDF itself is
-//! never touched; the record is a separate file, kept beside the version's PDF
-//! in the data directory and published beside it under `d/`.
+//! never touched; the record is a separate file.
+//!
+//! It comes in two variants. The **full** record carries the signer's IP
+//! address and browser and goes only to the operator (the copy kept beside the
+//! version's PDF in the data directory, and the API download) and to the
+//! signer (their confirmation email). The **redacted** record leaves those two
+//! out and says so; it is what collaborators are emailed and what is published
+//! under `d/`, where anyone holding a page link can fetch it.
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -35,6 +41,29 @@ pub struct SigningRecord {
     pub checksum: String,
     /// The client's acceptance first, then the countersignature.
     pub signatures: Vec<RecordedSignature>,
+    /// This is the redacted variant: IP addresses and browsers are left out,
+    /// and the record says the sender keeps them.
+    pub network_details_withheld: bool,
+}
+
+impl SigningRecord {
+    /// The variant for collaborators and the public bucket: the same record
+    /// with every IP address and browser removed.
+    pub fn redacted(&self) -> SigningRecord {
+        SigningRecord {
+            signatures: self
+                .signatures
+                .iter()
+                .map(|s| RecordedSignature {
+                    ip: None,
+                    user_agent: None,
+                    ..s.clone()
+                })
+                .collect(),
+            network_details_withheld: true,
+            ..self.clone()
+        }
+    }
 }
 
 /// The warning a countersignature carries in a build without the `pdf`
@@ -121,6 +150,7 @@ pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<Signi
                 user_agent: online(s.method, s.user_agent),
             })
             .collect(),
+        network_details_withheld: false,
     })
 }
 
@@ -137,9 +167,20 @@ pub fn render_signing_record(record: &SigningRecord) -> Option<Result<Vec<u8>>> 
     }
 }
 
-/// A generated record and where it was written.
+/// A generated record in both variants. `bytes` is the full record, which is
+/// the one written to the data directory; `redacted` is the one published and
+/// sent to collaborators.
 #[derive(Debug, Clone)]
 pub struct GeneratedRecord {
+    pub version: i64,
+    pub filename: String,
+    pub bytes: Vec<u8>,
+    pub redacted: Vec<u8>,
+}
+
+/// The full record as kept in the data directory.
+#[derive(Debug, Clone)]
+pub struct KeptRecord {
     pub version: i64,
     pub filename: String,
     pub bytes: Vec<u8>,
@@ -158,29 +199,32 @@ pub fn generate_signing_record(
         return Ok(None);
     };
     let bytes = bytes?;
+    let redacted = render_signing_record(&record.redacted())
+        .expect("rendered once, so the pdf feature is on")?;
     write_version_file(data_dir, &signing_record_rel(id, record.version), &bytes)?;
     let title = get_document(conn, id)?.title;
     Ok(Some(GeneratedRecord {
         version: record.version,
         filename: signing_record_name(&title, record.version),
         bytes,
+        redacted,
     }))
 }
 
-/// The local copy of an executed document's record, or `None` when none has
-/// been written.
+/// The local copy of an executed document's full record, or `None` when none
+/// has been written.
 pub fn read_signing_record(
     conn: &Connection,
     data_dir: &Path,
     id: i64,
-) -> Result<Option<GeneratedRecord>> {
+) -> Result<Option<KeptRecord>> {
     let document = get_document(conn, id)?;
     let Some(version) = latest_sent_version(conn, id)? else {
         return Ok(None);
     };
     let path = data_dir.join(signing_record_rel(id, version.number));
     match std::fs::read(&path) {
-        Ok(bytes) => Ok(Some(GeneratedRecord {
+        Ok(bytes) => Ok(Some(KeptRecord {
             version: version.number,
             filename: signing_record_name(&document.title, version.number),
             bytes,
@@ -307,6 +351,33 @@ mod tests {
             1,
             "the record is one page"
         );
+        assert!(!text.contains("This copy leaves out"));
+
+        let redacted = record.redacted();
+        assert!(redacted.network_details_withheld);
+        assert!(redacted
+            .signatures
+            .iter()
+            .all(|s| s.ip.is_none() && s.user_agent.is_none()));
+        let bytes = render_signing_record(&redacted).unwrap().unwrap();
+        let text = crate::pdf::extract_text(&bytes);
+        for absent in ["203.0.113.7", "Mozilla", "Browser"] {
+            assert!(
+                !text.contains(absent),
+                "{absent:?} in the redacted record: {text}"
+            );
+        }
+        for present in [
+            record.checksum.as_str(),
+            "Pat[31m Example",
+            "Online",
+            "2026-10-06 17:04:11 UTC",
+            "Sam Example",
+            "Initech keeps them in",
+            "the full record.",
+        ] {
+            assert!(text.contains(present), "{present:?} missing from {text}");
+        }
     }
 
     #[cfg(feature = "pdf")]

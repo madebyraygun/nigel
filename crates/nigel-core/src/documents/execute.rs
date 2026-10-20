@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use super::lifecycle::republish_linking_record;
+use super::model::RecipientRole;
 use super::render::{
     attachment_name, relative_signing_record_href, render_signed_email_text, signed_subject,
 };
@@ -158,7 +159,7 @@ fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
                     &document.token,
                     record.version,
                     &record.filename,
-                    &record.bytes,
+                    &record.redacted,
                 )
             });
             match uploaded {
@@ -195,7 +196,9 @@ fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
 }
 
 /// Email each recipient of the executed version, one message apiece, with the
-/// signed PDF and the signing record attached, then sum up who was missed.
+/// signed PDF and the signing record attached, then sum up who was missed. The
+/// signer gets the full record, with their own IP address and browser; a
+/// collaborator gets the redacted one.
 #[allow(clippy::too_many_arguments)]
 fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
     conn: &Connection,
@@ -243,19 +246,30 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
         return;
     }
     let pdf_name = attachment_name(&document.title, version.number);
-    let mut attachments = vec![Attachment {
-        filename: &pdf_name,
-        content_type: "application/pdf",
-        bytes: &pdf,
-    }];
-    if let Some(record) = record {
-        attachments.push(Attachment {
-            filename: &record.filename,
+    let attachments_for = |role: RecipientRole| {
+        let mut attachments = vec![Attachment {
+            filename: &pdf_name,
             content_type: "application/pdf",
-            bytes: &record.bytes,
-        });
-    }
-    if let Err(e) = ensure_message_fits(&attachments, "") {
+            bytes: &pdf,
+        }];
+        if let Some(record) = record {
+            attachments.push(Attachment {
+                filename: &record.filename,
+                content_type: "application/pdf",
+                bytes: match role {
+                    RecipientRole::Signer => &record.bytes,
+                    RecipientRole::Collaborator => &record.redacted,
+                },
+            });
+        }
+        attachments
+    };
+    let largest = [RecipientRole::Signer, RecipientRole::Collaborator]
+        .map(&attachments_for)
+        .into_iter()
+        .max_by_key(|a| a.iter().map(|x| x.bytes.len()).sum::<usize>())
+        .unwrap_or_default();
+    if let Err(e) = ensure_message_fits(&largest, "") {
         warnings.push(format!(
             "Warning: no signed copy was emailed: {e} {SEND_YOURSELF_CAP} another way."
         ));
@@ -278,7 +292,7 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             cc: &[],
             subject: &subject,
             text: &text,
-            attachments: &attachments,
+            attachments: &attachments_for(r.role),
         });
         if let Err(e) = sent {
             warnings.push(format!(
@@ -364,10 +378,10 @@ mod tests {
             ));
         }
         let published = p.objects.borrow()[before].1.clone();
-        assert_eq!(
-            std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap(),
-            published,
-            "the local copy is the published one"
+        assert!(published.starts_with(b"%PDF-"));
+        assert!(
+            dir.path().join(signing_record_rel(id, 1)).exists(),
+            "the full record is kept locally"
         );
         assert_eq!(
             std::fs::read(dir.path().join(&version.file_path)).unwrap(),
@@ -390,13 +404,24 @@ mod tests {
         let signed = std::fs::read(dir.path().join(&version.file_path)).unwrap();
         let m = FakeMailer::default();
         complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
-        let record = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
+        let full = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
+        let redacted = p
+            .objects
+            .borrow()
+            .iter()
+            .find(|(k, _)| k.ends_with("signing-record.pdf"))
+            .map(|(_, b)| b.clone())
+            .unwrap();
         let sent = m.sent.borrow();
         let frozen = recipients(&conn, version.id).unwrap();
         assert_eq!(sent.len(), frozen.len());
         for (mail, r) in sent.iter().zip(&frozen) {
             assert_eq!(mail.to, format_address(Some(&r.name), &r.email));
             assert_eq!(mail.subject, "Signed: Website rebuild for Initech");
+            let record = match r.role {
+                crate::documents::model::RecipientRole::Signer => &full,
+                crate::documents::model::RecipientRole::Collaborator => &redacted,
+            };
             assert_eq!(
                 mail.attachments,
                 vec![
@@ -529,6 +554,59 @@ mod tests {
         )
         .unwrap();
         assert!(!regenerated.published && !regenerated.failed());
+    }
+
+    /// The full record reaches only the operator and the signer; the public
+    /// object and a collaborator's attachment carry no IP address or browser.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_signer_gets_the_full_record_and_everyone_else_the_redacted_one() {
+        use crate::documents::model::RecipientRole;
+        use crate::documents::testing::accept_online;
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        accept_online(&conn, id, "Pat Example", "Mozilla/5.0 (X11) Firefox/131.0");
+        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        let m = FakeMailer::default();
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let has_network = |bytes: &[u8]| {
+            let text = crate::pdf::extract_text(bytes);
+            let ip = text.contains("203.0.113.7");
+            assert_eq!(ip, text.contains("Mozilla"), "{text}");
+            ip
+        };
+        let document = get_document(&conn, id).unwrap();
+        let key = document_signing_record_key(&document.token, 1);
+        let public = p
+            .objects
+            .borrow()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(!has_network(&public), "the public object is redacted");
+        let kept = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
+        assert!(has_network(&kept), "the operator's copy is full");
+
+        let frozen = recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap();
+        let sent = m.sent.borrow();
+        assert_eq!(sent.len(), 2);
+        for (mail, r) in sent.iter().zip(&frozen) {
+            let record = &mail.attachments[1].1;
+            match r.role {
+                RecipientRole::Signer => {
+                    assert!(has_network(record), "{} gets the full record", r.name);
+                    assert_eq!(record, &kept);
+                }
+                RecipientRole::Collaborator => {
+                    assert!(!has_network(record), "{} gets the redacted one", r.name);
+                    assert_eq!(record, &public);
+                }
+            }
+        }
     }
 
     #[test]

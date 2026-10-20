@@ -1652,6 +1652,24 @@ pub fn render_signing_record(
         SUBTITLE_SIZE - 1.0,
     );
 
+    if record.network_details_withheld {
+        pdf.y += 1.0;
+        let keeper = if record.company.is_empty() {
+            "the sender".to_string()
+        } else {
+            record.company.clone()
+        };
+        pdf.table_row_wrapped(
+            NOTE_COLS,
+            &[&format!(
+                "This copy leaves out the IP address and browser recorded with an online \
+                 signature; {keeper} keeps them in the full record."
+            )],
+            false,
+            SUBTITLE_SIZE - 1.0,
+        );
+    }
+
     for signature in &record.signatures {
         pdf.y += 4.0;
         pdf.ensure_space(ROW_H * 6.0);

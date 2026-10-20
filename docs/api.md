@@ -695,10 +695,13 @@ and `X-Frame-Options: SAMEORIGIN` the invoice preview does, for the same reason;
 `preview.pdf` keeps `DENY`. A PDF whose bytes no longer match the checksum
 recorded at filing is `409` `file_changed`.
 
-`signing-record.pdf` is an executed document's signing record: the one-page PDF
-naming the signed file's checksum and every signature on it, the same file a
-countersign publishes beside the version's PDF and attaches to the signed-copy
-email. It is served from the copy kept in the data directory, `inline`, named
+`signing-record.pdf` is an executed document's **full** signing record: the
+one-page PDF naming the signed file's checksum and every signature on it,
+including the IP address and browser of an online acceptance — the copy the
+operator keeps and the signer is emailed. Collaborators and the published object
+get a redacted copy without those two; see
+[Documents](invoicing.md#the-signing-record). It is served from the copy kept in
+the data directory, `inline`, named
 `<Title>-v<n>-signing-record.pdf`; when there is no copy yet it is generated and
 kept first. A document that is not executed is `409` `document_not_executed`,
 and a build without the `pdf` feature is `501 feature_disabled`. It makes no
@@ -1501,8 +1504,8 @@ refused or one over its 25 MB limit is a sentence in `warnings`, one per
 situation, ending with what to do; the document stays `executed`.
 
 `POST /api/documents/{id}/signing-record` takes `{}` and regenerates an
-executed document's signing record: it writes the local copy, publishes it, and
-republishes the pages linking it. It emails nobody. It answers the document,
+executed document's signing record: it writes the full local copy, publishes
+the redacted copy, and republishes the pages linking it. It emails nobody. It answers the document,
 `warnings` and `published`, which is `true` only when the record reached the
 public bucket; an R2 that is unset or a failed upload is a `200` with
 `published: false` and the reason in `warnings`. A document that is not
