@@ -4,7 +4,7 @@ title: 'Command palette (Cmd+K) over screens, actions and records'
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - swift
   - macos
@@ -31,3 +31,9 @@ Phase 3. A native panel with three sources: screens from the posted registry, ac
 - [ ] #2 Screens, actions and records rank in one list; choosing a record deep-links to it by hash with params
 - [ ] #3 Ranking and source decoding are covered by Swift tests in NigelKit
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Same sections, matching and keys as the web palette (TASK-154.3), drawn natively. Follows docs/design/app-refresh/ (epic TASK-154).
+<!-- SECTION:NOTES:END -->

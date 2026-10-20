@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:06'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - swift
   - macos
@@ -33,3 +33,9 @@ Phase 2. NavigationSplitView renders the registry the SPA posts; selecting an it
 - [ ] #3 The sidebar shows vibrancy in light and dark, Reduce Transparency yields an opaque sidebar, and the window uses the unified title bar with the toggle and title in the toolbar
 - [ ] #4 TASK-33.20, 33.26 and 33.27 are closed against this task
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The native sidebar follows the refresh's structure: grouped nav (no label; Statements; Billing; Setup), Review's count, Settings pinned at the foot, the active item's treatment, the 224/58 collapse. Follows docs/design/app-refresh/ (epic TASK-154).
+<!-- SECTION:NOTES:END -->

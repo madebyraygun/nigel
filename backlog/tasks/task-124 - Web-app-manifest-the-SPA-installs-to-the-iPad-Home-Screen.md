@@ -4,7 +4,7 @@ title: 'Web app manifest: the SPA installs to the iPad Home Screen'
 status: To Do
 assignee: []
 created_date: '2026-08-19 20:55'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - enhancement
   - frontend
@@ -46,3 +46,9 @@ This is the cheap half of the iPad story: TASK-33.8 (remote mode against a stand
 - [ ] #8 All linting checks pass
 - [ ] #9 **IMPORTANT**: Any PRs created from this issue must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Pairs with TASK-154.10 (mobile top bar and drawer).
+<!-- SECTION:NOTES:END -->

@@ -4,7 +4,7 @@ title: 'Settings window (Cmd+,) and the native directory chooser'
 status: To Do
 assignee: []
 created_date: '2026-09-15 16:07'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-20 22:57'
 labels:
   - swift
   - macos
@@ -30,3 +30,9 @@ Phase 2. A second WKWebView at nigel://localhost/#/settings?shell=native in its 
 - [ ] #2 Changing Data Directory opens a native directory chooser and the setting round-trips through the existing settings API
 - [ ] #3 The browser build still reaches settings as a route; TASK-33.14 and 33.19 are closed against this task
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The window hosts the refreshed Settings screen (TASK-154.8): This book and This device groups, the sticky index and the save bar. Follows docs/design/app-refresh/ (epic TASK-154).
+<!-- SECTION:NOTES:END -->
