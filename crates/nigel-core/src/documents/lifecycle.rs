@@ -93,8 +93,10 @@ type Stamp = (SignatureRole, String, String);
 type Loaded = (Document, DocumentVersion, Vec<Stamp>, Vec<RequestedChange>);
 
 /// Close the manifest and rewrite every page of the latest sent version to
-/// show the document's current state. An executed page drawn here offers no
-/// signing record; [`super::execute`] republishes it with one.
+/// show the document's current state, then every page of the earlier sent
+/// versions as superseded, which repairs one a send could not rewrite. An
+/// executed page drawn here offers no signing record; [`super::execute`]
+/// republishes it with one.
 pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     id: i64,
@@ -161,9 +163,19 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
         (DocumentStatus::Declined, _) => PageState::Declined,
         _ => return Vec::new(),
     };
-    close_and_republish(
+    let mut warnings = close_and_republish(
         conn, &document, &version, company, &state, publisher, source,
-    )
+    );
+    if let Some(publisher) = publisher {
+        warnings.extend(supersede_earlier_versions(
+            conn,
+            &document,
+            version.number,
+            company,
+            publisher,
+        ));
+    }
+    warnings
 }
 
 /// Rewrite every page of each sent version before `latest` as superseded by
@@ -317,7 +329,7 @@ fn teardown<P: DocumentPublisher, R: ResponseSource>(
                 if let Err(e) = publisher.publish_page(&document.token, &r.token, page.as_bytes())
                 {
                     warnings.push(format!(
-                        "Warning: could not republish {}'s page ({e}).",
+                        "Warning: version {n}: could not republish {}'s page ({e}).",
                         r.name
                     ));
                 }
@@ -468,6 +480,61 @@ mod tests {
         }
         let manifest = s.last_manifest(&token).unwrap();
         assert_eq!((manifest.version, manifest.state), (2, ManifestState::Open));
+    }
+
+    #[test]
+    fn a_supersede_the_send_could_not_finish_names_the_version_and_the_next_republish_repairs_it() {
+        let (dir, conn) = test_conn();
+        let (id, mut p, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_change_request(&conn, id, "Sam Example", "Fix the dates", "2026-10-06")
+            .unwrap();
+        revise_with_republish(
+            &conn,
+            dir.path(),
+            id,
+            &fixture_pdf("v2"),
+            "2026-10-07",
+            "Initech",
+            Some(&p),
+            Some(&s),
+        )
+        .unwrap();
+        let v1 = versions(&conn, id).unwrap()[0].clone();
+        let pat_v1 = recipients(&conn, v1.id)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.name == "Pat Example")
+            .unwrap();
+        p.fail_when_key_contains = Some(pat_v1.token.clone());
+        let ctx = SendContext {
+            data_dir: dir.path(),
+            company: "Initech",
+            response_url: None,
+            today: "2026-10-08",
+        };
+        let outcome =
+            send_document(&conn, id, &[pat()], &ctx, &p, &FakeMailer::default(), &s).unwrap();
+        assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
+        assert!(
+            outcome.warnings[0]
+                .starts_with("Warning: version 1: could not republish Pat Example's page"),
+            "{:?}",
+            outcome.warnings
+        );
+        let token = get_document(&conn, id).unwrap().token;
+        assert!(p
+            .page(&token, &pat_v1.token)
+            .unwrap()
+            .contains("being revised"));
+
+        p.fail_when_key_contains = None;
+        record_manual_accept(&conn, id, "Pat Example", "2026-10-09").unwrap();
+        let warnings = republish_after_change(&conn, id, "Initech", Some(&p), Some(&s));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(p
+            .page(&token, &pat_v1.token)
+            .unwrap()
+            .contains("superseded by version 2"));
     }
 
     #[test]

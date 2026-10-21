@@ -1837,7 +1837,11 @@ and the earlier version cannot be answered. Sending it again issues links for
 the new version and rewrites every page of each earlier version to say it has
 been superseded by the new one, with no form — including the pages of anyone
 the new version was not sent to. A page that could not be rewritten is a
-warning on the send, never a failure. It works from `sent` and
+warning on the send naming its version (`Warning: version 1: could not
+republish Pat Example's page (…)`), never a failure. Every later republish
+of the document's pages — a response recorded by hand or by sync, a
+countersignature, `nigel document signing-record` — rewrites the earlier
+versions as superseded again, which repairs it. It works from `sent` and
 `changes_requested`.
 
 `accept`, `request-changes` and `decline` record a response that arrived outside
