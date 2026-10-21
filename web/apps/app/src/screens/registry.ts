@@ -53,6 +53,11 @@ export interface ScreenDef {
   /** Pinned to the sidebar's footer rather than listed in a group. */
   pinned?: boolean;
   /**
+   * The screen draws its own page heading, so the shell draws none over it.
+   * `title` still names it in the breadcrumb and the window title.
+   */
+  ownsHeading?: boolean;
+  /**
    * Render the screen. The context carries the api client, the route's query
    * parameters, and navigation — everything a screen needs from the shell,
    * handed over rather than imported, so a screen can be driven by a fake.
@@ -190,6 +195,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-settings',
     inNav: true,
     pinned: true,
+    ownsHeading: true,
     render: renderSettings,
   },
   setup: {

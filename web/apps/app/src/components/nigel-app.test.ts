@@ -80,6 +80,14 @@ describe('nigel-app', () => {
     expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
   });
 
+  it('draws no shell heading over a screen that has its own', async () => {
+    window.location.hash = '#/settings';
+    const el = await mount();
+    expect(shell(el)?.getAttribute('screen-title')).toBe('');
+    expect(shell(el)?.trail.map((item) => item.label)).toEqual(['Settings']);
+    expect(document.title).toBe('Settings · Test Consultancy');
+  });
+
   it('swaps screens on hashchange', async () => {
     const el = await mount();
     expect(shell(el)?.getAttribute('screen-title')).toBe('Dashboard');
@@ -237,7 +245,7 @@ describe('nigel-app', () => {
       const el = await mount();
       expect(sidebar(el)).toBeNull();
       expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
-      expect(shell(el)?.getAttribute('screen-title')).toBe('Settings');
+      expect(shell(el)?.trail.map((item) => item.label)).toEqual(['Settings']);
     });
 
     it('keeps the breadcrumb top bar', async () => {

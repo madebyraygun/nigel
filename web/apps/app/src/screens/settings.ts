@@ -1,14 +1,20 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { live } from 'lit/directives/live.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
-import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
   dispatchNcToast,
+  type NcLogoFileDetail,
   type NcPasswordSubmitDetail,
+  type NcSecurityPanelDetail,
+  type NcSettingsSectionDetail,
+  type NcSwitchChangeDetail,
+  type SecurityPanel,
+  type SettingsIndexGroup,
   type WcPasswordMode,
 } from '@nigel/ui';
 
@@ -16,23 +22,32 @@ import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
 import type { AppSettings, Company } from '../api/types.js';
+import type { ScreenContext } from './context.js';
+import { activeSection, scrolledToBottom, scrollingAncestor } from './settings-spy.js';
+import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@nigel/theme';
 
 /**
  * The cap `document::parse_logo` enforces, in the one place the browser needs
  * it: `MAX_LOGO_BYTES` in `crates/nigel-core/src/invoicing/document.rs`.
  */
 const MAX_LOGO_BYTES = 128 * 1024;
-import type { ScreenContext } from './context.js';
-import {
-  applyMode,
-  controlsCss,
-  darkModeQuery,
-  readMode,
-  resolveMode,
-  writeMode,
-  type ColorMode,
-  type ResolvedMode,
-} from '@nigel/theme';
+
+const LOGO_HELP =
+  'Up to 128 KiB. It is embedded in the PDF and inlined in the page; Gmail readers see your name in the email body and the logo on the attachment.';
+
+/** How long "✓ Saved" stays beside the Letterhead title. */
+const SAVED_FLASH_MS = 2200;
+
+/** How long a section picked from the index holds the highlight while the page scrolls to it. */
+const SCROLL_SETTLE_MS = 900;
+
+const COMPANY_FIELDS: readonly (keyof Company)[] = [
+  'name',
+  'phone',
+  'address',
+  'paymentInstructions',
+  'logo',
+];
 
 interface PasswordFailure {
   mode: WcPasswordMode;
@@ -52,12 +67,15 @@ const PASSWORD_FAILURE: Record<WcPasswordMode, string> = {
 };
 
 /**
- * Settings: business name, auto-update check, data directory, and the database
- * password — what `settings_manager.rs` covers, plus `nigel load`.
+ * Settings, in two groups under a sticky index that follows the scroll
+ * position. **This book** is what is stored with the books: the letterhead,
+ * the database password, and the folder they live in. **This device** is
+ * what this browser or window keeps for itself: the colour mode, and the
+ * update check.
  *
- * A screen with state is a custom element under `screens/`; visual primitives
- * still live in `@nigel/ui`. This is the first of them, and the convention the
- * remaining screen tasks follow.
+ * The letterhead is a draft against the stored values. While the two differ a
+ * save bar holds Discard and Save; saving refreshes `/api/status`, which is
+ * where the breadcrumb, the status line and the window title read the name.
  */
 @customElement('nigel-settings-screen')
 export class NigelSettingsScreen extends SignalWatcher(LitElement) {
@@ -67,22 +85,40 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       :host {
         display: flex;
         flex-direction: column;
-        gap: var(--wa-space-l, 16px);
-        padding: var(--wa-space-l, 16px);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
 
-      /* The reading width belongs to what is being read. The screen itself is
-         the whole content area, so an empty state on it centres in the area
-         rather than in a column down its left. */
-      wc-panel {
-        max-width: 48rem;
+      .layout {
+        display: grid;
+        grid-template-columns: 184px minmax(0, 1fr);
+        gap: 36px;
+        align-items: start;
+      }
+
+      .sections {
+        max-width: 720px;
+        min-width: 0;
+      }
+
+      .device {
+        margin-top: 36px;
+      }
+
+      .pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--wa-space-m);
+      }
+
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m);
       }
 
       .row {
         display: flex;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
         align-items: flex-end;
         flex-wrap: wrap;
       }
@@ -91,52 +127,35 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         flex: 1 1 18rem;
       }
 
-      .path {
-        font-family: var(--wa-font-family-mono, monospace);
-        font-size: var(--wa-font-size-s, 13px);
-        background: var(--wa-color-surface-alt);
-        border-radius: var(--wa-radius-s, 6px);
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
-        overflow-wrap: anywhere;
+      .switch-to {
+        margin-top: var(--wa-space-l);
       }
 
       .note {
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
-        margin: var(--wa-space-xs, 6px) 0 0;
+        font-size: var(--nc-font-size-meta);
+        margin: var(--wa-space-xs) 0 0;
       }
 
       .error {
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
-        margin: var(--wa-space-xs, 6px) 0 0;
+        font-size: var(--wa-font-size-s);
+        margin: var(--wa-space-xs) 0 0;
       }
 
-      wa-textarea {
-        display: block;
-        margin-top: var(--wa-space-s, 8px);
+      wc-save-bar {
+        margin-top: var(--wa-space-s);
       }
 
-      .operations {
-        display: grid;
-        gap: var(--wa-space-l, 16px);
-      }
+      @media (max-width: 48rem) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+          gap: var(--wa-space-l);
+        }
 
-      .logo-field {
-        display: grid;
-        gap: var(--wa-space-2xs, 4px);
-        font-size: var(--wa-font-size-s, 13px);
-      }
-
-      .logo-preview {
-        max-height: 3rem;
-        max-width: 12rem;
-        /* The stored image may be transparent, and both documents flatten it
-           onto white. Showing it on the card would misrepresent it in dark
-           mode, which is why this token is deliberately mode-independent. */
-        background: var(--nc-color-document-bg);
-        border-radius: var(--wa-radius-s, 6px);
-        padding: var(--wa-space-2xs, 4px);
+        .pair {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
     `,
   ];
@@ -146,63 +165,102 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   client!: ApiClient;
 
   @state() private appSettings: AppSettings | null = null;
+  /** The letterhead as edited. */
   @state() private company: Company | null = null;
+  /** The letterhead as stored, which Discard goes back to. */
+  @state() private savedCompany: Company | null = null;
   @state() private companyError = '';
   /** A failed *load*, which is a different state from a failed save. */
   @state() private companyLoadError = '';
+  @state() private savedFlash = false;
   @state() private dataDirDraft = '';
   @state() private busy: string | null = null;
   /**
    * A failed password operation and which operation it was. An encrypted
-   * database has two password forms on screen, both collecting a field called
-   * "Current password", so a message without its operation lands under
-   * whichever form happens to be first. The two travel as one object because
-   * a message filed against nothing is not a state worth being able to write.
+   * database has two password forms, both collecting a field called "Current
+   * password", so a message without its operation lands under whichever form
+   * happens to be first. The two travel as one object because a message filed
+   * against nothing is not a state worth being able to write.
    */
   @state() private passwordFailure: PasswordFailure | null = null;
+  @state() private securityPanel: SecurityPanel = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
-  @state() private resolvedMode: ResolvedMode = 'light';
+  @state() private active = 'letterhead';
 
   private store: AppStore = getAppStore();
-
-  /**
-   * Only there to keep the "currently dark" hint honest while System is
-   * selected. The colours themselves need no listener — System writes no
-   * class and the CSS media query does the tracking.
-   */
-  private darkQuery?: MediaQueryList;
-  private readonly onSystemChange = () => {
-    this.resolvedMode = resolveMode(this.colorMode, this.darkQuery);
-  };
+  private savedTimer: ReturnType<typeof setTimeout> | undefined;
+  private scroller: HTMLElement | null = null;
+  private spyFrame = 0;
+  private spyHeldUntil = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
     void this.loadAppSettings();
     void this.loadCompany();
-
     this.colorMode = readMode();
-    this.darkQuery = darkModeQuery();
-    this.resolvedMode = resolveMode(this.colorMode, this.darkQuery);
-    this.darkQuery?.addEventListener('change', this.onSystemChange);
+  }
+
+  firstUpdated(): void {
+    this.scroller = scrollingAncestor(this);
+    (this.scroller ?? window).addEventListener('scroll', this.onScroll, { passive: true });
   }
 
   disconnectedCallback(): void {
-    this.darkQuery?.removeEventListener('change', this.onSystemChange);
+    (this.scroller ?? window).removeEventListener('scroll', this.onScroll);
+    cancelAnimationFrame(this.spyFrame);
+    clearTimeout(this.savedTimer);
     super.disconnectedCallback();
   }
 
-  private handleColorMode(event: CustomEvent<{ mode: ColorMode }>): void {
-    const mode = event.detail.mode;
-    this.colorMode = mode;
-    // The container owns persistence; the switcher stays controlled. Nothing
-    // is sent to the server: every /api/settings/* route is behind the locked
-    // guard, so a server-stored mode could not be honoured on the unlock
-    // screen, and the preference is per-browser by nature anyway.
-    writeMode(mode);
-    applyMode(mode);
-    this.resolvedMode = resolveMode(mode, this.darkQuery);
+  // -- the index ------------------------------------------------------------
+
+  private sections(): HTMLElement[] {
+    return [...(this.shadowRoot?.querySelectorAll<HTMLElement>('wc-settings-section') ?? [])];
   }
+
+  private onScroll = () => {
+    cancelAnimationFrame(this.spyFrame);
+    this.spyFrame = requestAnimationFrame(() => this.spy());
+  };
+
+  private spy(): void {
+    if (performance.now() < this.spyHeldUntil) return;
+    const area = this.scroller ?? document.scrollingElement;
+    if (!area) return;
+    const areaTop = this.scroller ? this.scroller.getBoundingClientRect().top : 0;
+    const tops = this.sections().map((section) => ({
+      id: section.id,
+      top: section.getBoundingClientRect().top - areaTop,
+    }));
+    const next = activeSection(tops, scrolledToBottom(area));
+    if (next) this.active = next;
+  }
+
+  private goToSection = (event: CustomEvent<NcSettingsSectionDetail>) => {
+    const section = this.shadowRoot?.getElementById(event.detail.id);
+    if (!section) return;
+    this.active = event.detail.id;
+    // Held while the smooth scroll runs, or the spy would walk the highlight
+    // through every section in between — and land on the last one when the
+    // section asked for is too close to the bottom to reach the top.
+    this.spyHeldUntil = performance.now() + SCROLL_SETTLE_MS;
+    const reduce =
+      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const behavior: ScrollBehavior = reduce ? 'auto' : 'smooth';
+    // The content area is scrolled directly: `scrollIntoView` also scrolls
+    // every ancestor that can be scrolled from script, the document included,
+    // and would slide the whole shell up out of the window.
+    if (this.scroller) {
+      const offset =
+        section.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top;
+      this.scroller.scrollTo({ top: this.scroller.scrollTop + offset, behavior });
+    } else {
+      section.scrollIntoView?.({ behavior, block: 'start' });
+    }
+  };
+
+  // -- shared ---------------------------------------------------------------
 
   private async loadAppSettings(): Promise<void> {
     try {
@@ -231,7 +289,9 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   private async loadCompany(): Promise<void> {
     this.companyLoadError = '';
     try {
-      this.company = await this.client.getCompany();
+      const company = await this.client.getCompany();
+      this.company = company;
+      this.savedCompany = company;
     } catch (error) {
       // A failed load is its own state, never a form the data could not fill:
       // an empty letterhead form would save five blank fields over whatever is
@@ -245,6 +305,13 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   private retryCompany = () => {
     void this.loadCompany();
   };
+
+  private get companyDirty(): boolean {
+    const draft = this.company;
+    const saved = this.savedCompany;
+    if (!draft || !saved) return false;
+    return COMPANY_FIELDS.some((field) => draft[field] !== saved[field]);
+  }
 
   private editCompany(field: keyof Company, value: string): void {
     if (!this.company) return;
@@ -275,18 +342,14 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
    * The size is checked **before** anything is read. Base64 inflates the
    * payload by a third, so an oversized image would arrive as a body axum
    * refuses outright — a generic 413 in place of the server's own sentence
-   * about the 128 KiB cap. `wc-dropzone` checks extension and size client-side
-   * for exactly this reason. Everything else about the file — the magic bytes,
+   * about the 128 KiB cap. Everything else about the file — the magic bytes,
    * the type actually inside it, whether it decodes — is still the server's to
    * answer, because only it can.
    */
-  private handleLogoFile = async (event: Event) => {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  private handleLogoFile = async (event: CustomEvent<NcLogoFileDetail>) => {
+    const file = event.detail.file;
     if (file.size > MAX_LOGO_BYTES) {
       this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KiB; the limit is ${MAX_LOGO_BYTES / 1024} KiB.`;
-      input.value = '';
       return;
     }
     try {
@@ -300,14 +363,17 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       this.companyError = '';
     } catch {
       this.companyError = `Could not read ${file.name}.`;
-    } finally {
-      // So choosing the same file twice still fires a change event.
-      input.value = '';
     }
   };
 
   private clearLogo = () => {
     this.editCompany('logo', '');
+  };
+
+  private discardCompany = () => {
+    if (!this.savedCompany) return;
+    this.company = this.savedCompany;
+    this.companyError = '';
   };
 
   private saveCompany = async () => {
@@ -317,10 +383,13 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     try {
       // The response is the stored values, trimmed — so the form shows what
       // was actually saved rather than what was typed.
-      this.company = await this.client.setCompany(this.company);
-      // The sidebar and the document title read the name from status.
+      const stored = await this.client.setCompany(this.company);
+      this.company = stored;
+      this.savedCompany = stored;
+      // The breadcrumb, the status line and the window title read the name
+      // from status.
       await this.store.refreshStatus();
-      this.toastOk('Letterhead saved.');
+      this.flashSaved();
     } catch (error) {
       // Kept beside the fields rather than only in a toast: a refused logo is
       // about one control, and the form must not be cleared under it.
@@ -332,32 +401,35 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     }
   };
 
+  private flashSaved(): void {
+    clearTimeout(this.savedTimer);
+    this.savedFlash = true;
+    this.savedTimer = setTimeout(() => {
+      this.savedFlash = false;
+    }, SAVED_FLASH_MS);
+  }
+
   // -- update check ---------------------------------------------------------
 
-  private toggleUpdateCheck = async (event: Event) => {
-    const control = event.target as HTMLElement & { checked: boolean };
-    const wanted = control.checked;
-    const previous = this.appSettings;
+  /**
+   * The switch is controlled, so it shows what `appSettings` says. On a
+   * failed write `appSettings` is left as it was and the switch with it: a
+   * control whose write failed must not keep claiming it succeeded.
+   */
+  private toggleUpdateCheck = async (event: CustomEvent<NcSwitchChangeDetail>) => {
     this.busy = 'update';
     try {
-      this.appSettings = await this.client.updateAppSettings({ updateCheck: wanted });
+      this.appSettings = await this.client.updateAppSettings({
+        updateCheck: event.detail.checked,
+      });
     } catch (error) {
-      // Put the switch back where the server still has it: a control whose
-      // write failed must not keep claiming it succeeded.
-      //
-      // The control is reset directly rather than by re-rendering the old
-      // value. The user moved the DOM property out from under lit, so lit's
-      // dirty check sees the value it already committed and skips the update,
-      // leaving the switch showing a state nobody saved.
-      this.appSettings = previous;
-      control.checked = previous?.updateCheck ?? true;
       this.toastError(error, 'Could not save the update setting.');
     } finally {
       this.busy = null;
     }
   };
 
-  // -- data directory -------------------------------------------------------
+  // -- location -------------------------------------------------------------
 
   private handleDataDirInput = (event: Event) => {
     this.dataDirDraft = (event.target as HTMLInputElement).value;
@@ -381,7 +453,35 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     if (!outcome.ok) this.dataDirError = outcome.message;
   };
 
+  private revealDataDir = async () => {
+    try {
+      await this.client.dataDirReveal()?.run();
+    } catch (error) {
+      dispatchNcToast(this, {
+        message: typeof error === 'string' ? error : 'Could not open the folder.',
+        variant: 'danger',
+      });
+    }
+  };
+
+  // -- appearance -----------------------------------------------------------
+
+  private handleColorMode(event: CustomEvent<{ mode: ColorMode }>): void {
+    const mode = event.detail.mode;
+    this.colorMode = mode;
+    // The container owns persistence; the picker stays controlled. Nothing
+    // is sent to the server: every /api/settings/* route is behind the locked
+    // guard, so a server-stored mode could not be honoured on the unlock
+    // screen, and the preference is per-device by nature anyway.
+    writeMode(mode);
+    applyMode(mode);
+  }
+
   // -- password -------------------------------------------------------------
+
+  private handleSecurityPanel = (event: CustomEvent<NcSecurityPanelDetail>) => {
+    this.securityPanel = event.detail.panel;
+  };
 
   private handlePasswordSubmit = async (event: CustomEvent<NcPasswordSubmitDetail>) => {
     const detail = event.detail;
@@ -414,6 +514,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         });
         this.toastOk('Password removed.');
       }
+      this.securityPanel = null;
       // Re-read rather than assume: the encryption state the next render draws
       // comes from the server, never from an optimistic local flag.
       await this.store.refreshStatus();
@@ -446,14 +547,19 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     return slot === mode ? (this.passwordFailure?.message ?? '') : '';
   }
 
+  // -- rendering ------------------------------------------------------------
+
   /**
-   * The three states this panel has: loaded, loading, and could-not-load. The
-   * last one is not a form — an empty letterhead over a load failure would save
-   * five blank fields on top of whatever is really stored.
+   * The three states the letterhead has: loaded, loading, and could-not-load.
+   * The last one is not a form — an empty letterhead over a load failure would
+   * save five blank fields on top of whatever is really stored.
    */
   private renderCompanyBody(nameLabel: string): TemplateResult {
     if (this.companyLoadError) {
-      return html`<p class="error">${this.companyLoadError}</p>`;
+      return html`<p class="error">${this.companyLoadError}</p>
+        <div class="row">
+          <wa-button variant="brand" @click=${this.retryCompany}>Retry</wa-button>
+        </div>`;
     }
     if (!this.company) {
       return html`<wc-spinner label="Loading the letterhead"></wc-spinner>`;
@@ -463,59 +569,133 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
 
   private renderCompanyFields(company: Company, nameLabel: string): TemplateResult {
     const disabled = this.busy === 'company';
+    const native = this.client.importSource().kind === 'native';
     return html`
-      <div class="row">
-        <wa-input
-          label=${nameLabel}
-          .value=${company.name}
-          ?disabled=${disabled}
-          @input=${this.companyInput.name}
-        ></wa-input>
-        <wa-input
-          label="Phone"
-          .value=${company.phone}
-          ?disabled=${disabled}
-          @input=${this.companyInput.phone}
-        ></wa-input>
-      </div>
-      <wa-textarea
-        label="Address"
-        rows="3"
-        .value=${company.address}
-        ?disabled=${disabled}
-        @input=${this.companyInput.address}
-      ></wa-textarea>
-      <wa-textarea
-        label="Payment instructions"
-        rows="3"
-        .value=${company.paymentInstructions}
-        ?disabled=${disabled}
-        @input=${this.companyInput.paymentInstructions}
-      ></wa-textarea>
-      <p class="note">
-        Printed on both the invoice page and the PDF, or on neither. Leave it
-        empty if you do not take bank transfers.
-      </p>
-      <div class="row">
-        <label class="logo-field">
-          Logo
-          <input
-            type="file"
-            accept="image/png,image/jpeg"
+      <div class="fields">
+        <div class="pair">
+          <wa-input
+            label=${nameLabel}
+            .value=${live(company.name)}
             ?disabled=${disabled}
-            @change=${this.handleLogoFile}
-          />
-        </label>
-        ${company.logo
-          ? html`<img class="logo-preview" src=${company.logo} alt="The configured logo" />
-              <wa-button ?disabled=${disabled} @click=${this.clearLogo}>Remove</wa-button>`
-          : nothing}
+            @input=${this.companyInput.name}
+          ></wa-input>
+          <wa-input
+            label="Phone"
+            .value=${live(company.phone)}
+            ?disabled=${disabled}
+            @input=${this.companyInput.phone}
+          ></wa-input>
+        </div>
+        <wa-textarea
+          label="Address"
+          rows="3"
+          .value=${live(company.address)}
+          ?disabled=${disabled}
+          @input=${this.companyInput.address}
+        ></wa-textarea>
+        <div>
+          <wa-textarea
+            label="Payment instructions"
+            rows="3"
+            .value=${live(company.paymentInstructions)}
+            ?disabled=${disabled}
+            @input=${this.companyInput.paymentInstructions}
+          ></wa-textarea>
+          <p class="note">
+            Printed on both the invoice page and the PDF, or on neither. Leave it
+            empty if you do not take bank transfers.
+          </p>
+        </div>
+        <wc-logo-field
+          name=${company.name}
+          logo=${company.logo}
+          help=${LOGO_HELP}
+          prompt=${native ? 'Choose a PNG or JPEG' : 'Drop a PNG or JPEG here'}
+          ?disabled=${disabled}
+          @nc-logo-file=${this.handleLogoFile}
+          @nc-logo-clear=${this.clearLogo}
+        ></wc-logo-field>
+        ${this.companyError ? html`<p class="error">${this.companyError}</p>` : nothing}
       </div>
-      <p class="note">
-        PNG or JPEG, up to 128 KiB. It is embedded in the PDF and inlined in the
-        page; Gmail does not render inlined images, so a Gmail reader sees your
-        name in the email body and the logo on the attachment.
-      </p>
+    `;
+  }
+
+  private renderSecurity(encrypted: boolean): TemplateResult {
+    const operations: readonly WcPasswordMode[] = encrypted ? ['change', 'remove'] : ['set'];
+    const slot = this.failureSlot(operations);
+    const busy = this.busy === 'password';
+    return html`
+      <wc-security-card
+        ?encrypted=${encrypted}
+        ?busy=${busy}
+        .panel=${encrypted ? this.securityPanel : null}
+        @nc-security-panel=${this.handleSecurityPanel}
+        @nc-password-submit=${this.handlePasswordSubmit}
+      >
+        ${operations.map(
+          (mode) => html`<wc-password-form
+            slot=${mode}
+            mode=${mode}
+            layout="inline"
+            ?busy=${busy}
+            error=${this.errorAt(mode, slot)}
+          ></wc-password-form>`,
+        )}
+      </wc-security-card>
+    `;
+  }
+
+  private renderLocation(dataDir: string): TemplateResult {
+    const reveal = this.client.dataDirReveal();
+    return html`
+      <wc-folder-path path=${dataDir}>
+        ${reveal
+          ? html`<wa-button size="small" appearance="outlined" @click=${this.revealDataDir}
+              >${reveal.label}</wa-button
+            >`
+          : nothing}
+      </wc-folder-path>
+      <div class="row switch-to">
+        <wa-input
+          label="Switch to"
+          placeholder="~/Documents/other-books"
+          spellcheck="false"
+          .value=${this.dataDirDraft}
+          ?disabled=${this.busy === 'data-dir'}
+          @input=${this.handleDataDirInput}
+        ></wa-input>
+        <wa-button
+          data-switch
+          ?disabled=${this.busy === 'data-dir'}
+          @click=${this.switchDataDir}
+          >Switch</wa-button
+        >
+      </div>
+      ${this.dataDirError ? html`<p class="error">${this.dataDirError}</p>` : nothing}
+    `;
+  }
+
+  private renderUpdates(version: string, updateAvailable: string | null): TemplateResult {
+    const current = `v${version.replace(/^v/, '')}`;
+    return html`
+      <wc-settings-section id="updates" heading="Updates">
+        ${this.appSettings
+          ? html`<wc-switch-row
+              label="Check for updates automatically"
+              description="Checks GitHub for a newer version once a day when Nigel starts."
+              ?checked=${this.appSettings.updateCheck}
+              ?disabled=${this.busy === 'update'}
+              @nc-switch-change=${this.toggleUpdateCheck}
+            ></wc-switch-row>`
+          : html`<wc-spinner label="Loading settings"></wc-spinner>`}
+        ${version
+          ? html`<p class="note">
+              ${updateAvailable
+                ? `Version ${updateAvailable} is available; you're on ${current}.`
+                : `You're on ${current}.`}
+            </p>`
+          : nothing}
+      </wc-settings-section>
     `;
   }
 
@@ -524,104 +704,96 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     const encrypted = status?.encrypted ?? false;
     // Same metadata field either way; only the label follows the books profile.
     const nameLabel = status?.profile === 'personal' ? 'Household name' : 'Business name';
-    const operations: readonly [WcPasswordMode, ...WcPasswordMode[]] = encrypted
-      ? ['change', 'remove']
-      : ['set'];
-    const failureSlot = this.failureSlot(operations);
+    // An app-store build updates through the store. `/api/status` reports
+    // `distribution` once TASK-150.4 lands; until then this is always shown.
+    const showUpdates = status?.distribution !== 'store';
+    const groups: SettingsIndexGroup[] = [
+      {
+        label: 'This book',
+        items: [
+          { id: 'letterhead', label: 'Letterhead' },
+          { id: 'security', label: 'Security' },
+          { id: 'location', label: 'Location' },
+        ],
+      },
+      {
+        label: 'This device',
+        items: [
+          { id: 'appearance', label: 'Appearance' },
+          ...(showUpdates ? [{ id: 'updates', label: 'Updates' }] : []),
+        ],
+      },
+    ];
 
     return html`
-      <wc-panel
-        heading="Letterhead"
-        description="What the invoice page and the PDF say about you. The name is also shown in the sidebar, on reports, and in the browser tab."
-      >
-        ${this.renderCompanyBody(nameLabel)}
-        ${this.companyError ? html`<p class="error">${this.companyError}</p>` : nothing}
-        ${this.companyLoadError
-          ? html`<wa-button slot="actions" variant="brand" @click=${this.retryCompany}
-              >Retry</wa-button
-            >`
-          : html`<wa-button
-              slot="actions"
-              variant="brand"
-              ?disabled=${this.busy === 'company' || this.company === null}
-              @click=${this.saveCompany}
-              >Save</wa-button
-            >`}
-      </wc-panel>
+      <div class="layout">
+        <wc-settings-index
+          .groups=${groups}
+          active=${this.active}
+          @nc-settings-section=${this.goToSection}
+        ></wc-settings-index>
 
-      <wc-panel
-        heading="Appearance"
-        description="Light, dark, or whatever this device is set to. Saved in this browser only — a laptop and a desktop on the same books can differ."
-      >
-        <wc-mode-switcher
-          .mode=${this.colorMode}
-          .resolved=${this.resolvedMode}
-          @nc-color-mode-change=${this.handleColorMode}
-        ></wc-mode-switcher>
-      </wc-panel>
+        <div class="sections">
+          <wc-settings-scope
+            kind="book"
+            label="This book"
+            heading=${this.store.companyName.get()}
+            seed=${status?.dataDir ?? ''}
+          ></wc-settings-scope>
 
-      <wc-panel
-        heading="Updates"
-        description="Check GitHub for a newer version once a day when nigel starts."
-      >
-        ${this.appSettings
-          ? html`<wa-switch
-              ?checked=${this.appSettings.updateCheck}
-              ?disabled=${this.busy === 'update'}
-              @change=${this.toggleUpdateCheck}
-              >Check for updates automatically</wa-switch
-            >`
-          : html`<wc-spinner label="Loading settings"></wc-spinner>`}
-      </wc-panel>
+          <wc-settings-section
+            id="letterhead"
+            heading="Letterhead"
+            description="What the invoice page and the PDF say about you. The name also appears in the breadcrumb, on reports and in the window title."
+            ?saved=${this.savedFlash}
+          >
+            ${this.renderCompanyBody(nameLabel)}
+          </wc-settings-section>
 
-      <wc-panel
-        heading="Data directory"
-        description="Where this set of books lives. Switching reloads nigel onto the other database."
-      >
-        <p class="path">${status?.dataDir ?? ''}</p>
-        <div class="row">
-          <wa-input
-            label="Switch to"
-            placeholder="~/Documents/other-books"
-            .value=${this.dataDirDraft}
-            ?disabled=${this.busy === 'data-dir'}
-            @input=${this.handleDataDirInput}
-          ></wa-input>
-        </div>
-        ${this.dataDirError
-          ? html`<p class="error">${this.dataDirError}</p>`
-          : nothing}
-        <wa-button
-          slot="actions"
-          ?disabled=${this.busy === 'data-dir'}
-          @click=${this.switchDataDir}
-          >Switch</wa-button
-        >
-      </wc-panel>
+          <wc-settings-section id="security" heading="Security">
+            ${this.renderSecurity(encrypted)}
+          </wc-settings-section>
 
-      <wc-panel
-        heading="Database password"
-        description=${encrypted
-          ? 'This database is encrypted. You can change the password, or remove it altogether.'
-          : 'Warning, this database is not encrypted, anyone with access to the file can read it. It is strongly recommended that you set a password and store it in a safe place.'}
-      >
-        <div class="operations">
-          <wc-password-form
-            mode=${operations[0]}
-            ?busy=${this.busy === 'password'}
-            error=${this.errorAt(operations[0], failureSlot)}
-            @nc-password-submit=${this.handlePasswordSubmit}
-          ></wc-password-form>
-          ${encrypted
-            ? html`<wc-password-form
-                mode="remove"
-                ?busy=${this.busy === 'password'}
-                error=${this.errorAt('remove', failureSlot)}
-                @nc-password-submit=${this.handlePasswordSubmit}
-              ></wc-password-form>`
+          <wc-settings-section
+            id="location"
+            heading="Location"
+            description="Where this set of books lives. Each set is a folder with a nigel.db inside; switching reloads Nigel onto the other database."
+          >
+            ${this.renderLocation(status?.dataDirDisplay || status?.dataDir || '')}
+          </wc-settings-section>
+
+          <wc-settings-scope
+            class="device"
+            kind="device"
+            label="This device"
+            heading="Applies to every set of books"
+          ></wc-settings-scope>
+
+          <wc-settings-section
+            id="appearance"
+            heading="Appearance"
+            description="Light, dark, or whatever this device is set to. Kept on this device only, so a laptop and a desktop on the same books can differ."
+          >
+            <wc-appearance-picker
+              .mode=${this.colorMode}
+              @nc-color-mode-change=${this.handleColorMode}
+            ></wc-appearance-picker>
+          </wc-settings-section>
+
+          ${showUpdates
+            ? this.renderUpdates(status?.version ?? '', status?.updateAvailable ?? null)
+            : nothing}
+
+          ${this.companyDirty
+            ? html`<wc-save-bar
+                message="Unsaved changes to the letterhead"
+                ?busy=${this.busy === 'company'}
+                @nc-save-bar-discard=${this.discardCompany}
+                @nc-save-bar-save=${this.saveCompany}
+              ></wc-save-bar>`
             : nothing}
         </div>
-      </wc-panel>
+      </div>
     `;
   }
 }

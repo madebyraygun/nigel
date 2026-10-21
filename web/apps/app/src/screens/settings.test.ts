@@ -39,27 +39,30 @@ const inputLabelled = (el: NigelSettingsScreen, label: string) =>
     (i) => i.getAttribute('label') === label,
   ) as HTMLElement & { value: string };
 
-/**
- * Panels move as settings are added; the heading is the stable handle. The
- * action slot is named explicitly because a panel may hold other buttons — the
- * letterhead's Remove-logo control sits above its Save.
- */
-function buttonIn(el: NigelSettingsScreen, heading: string) {
-  const found = [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
-    (p) => p.getAttribute('heading') === heading,
-  );
-  return found?.querySelector('wa-button[slot="actions"]') as HTMLElement | undefined;
-}
+/** A section, by the id the index scrolls to. */
+const section = (el: NigelSettingsScreen, id: string) =>
+  el.shadowRoot?.getElementById(id) as HTMLElement | null;
 
-/** The panel itself, for assertions about what one panel is showing. */
-function panel(el: NigelSettingsScreen, heading: string) {
-  return [...(el.shadowRoot?.querySelectorAll('wc-panel') ?? [])].find(
-    (p) => p.getAttribute('heading') === heading,
+const saveBar = (el: NigelSettingsScreen) => el.shadowRoot?.querySelector('wc-save-bar');
+
+function barButton(el: NigelSettingsScreen, label: string): HTMLElement {
+  const bar = saveBar(el);
+  if (!bar) throw new Error('no save bar');
+  const found = [...(bar.shadowRoot?.querySelectorAll('wa-button') ?? [])].find((b) =>
+    b.textContent?.includes(label),
   );
+  if (!found) throw new Error(`no ${label} button`);
+  return found as HTMLElement;
 }
 
 async function settle(el: NigelSettingsScreen): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
+  await el.updateComplete;
+}
+
+async function type(el: NigelSettingsScreen, field: HTMLElement & { value: string }, value: string) {
+  field.value = value;
+  field.dispatchEvent(new Event('input'));
   await el.updateComplete;
 }
 
@@ -72,6 +75,7 @@ describe('settings screen', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('loads the application settings when it mounts', async () => {
@@ -79,9 +83,44 @@ describe('settings screen', () => {
     expect(client.calls).toContain('getAppSettings');
   });
 
-  it('shows the active data directory', async () => {
+  it('groups the sections under This book and This device', async () => {
     const { el } = await mount();
-    expect(el.shadowRoot?.textContent).toContain('/tmp/nigel');
+    const index = el.shadowRoot?.querySelector('wc-settings-index');
+    expect(index?.groups.map((g) => g.label)).toEqual(['This book', 'This device']);
+    expect(index?.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual([
+      'letterhead',
+      'security',
+      'location',
+      'appearance',
+      'updates',
+    ]);
+    for (const id of ['letterhead', 'security', 'location', 'appearance', 'updates']) {
+      expect(section(el, id), id).toBeTruthy();
+    }
+    expect(index?.active).toBe('letterhead');
+  });
+
+  it('scrolls to a section picked from the index and marks it', async () => {
+    const { el } = await mount();
+    const target = section(el, 'appearance');
+    const scroll = vi.fn();
+    if (target) target.scrollIntoView = scroll;
+
+    el.shadowRoot
+      ?.querySelector('wc-settings-index')
+      ?.dispatchEvent(
+        new CustomEvent('nc-settings-section', { detail: { id: 'appearance' }, bubbles: true }),
+      );
+    await el.updateComplete;
+
+    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }));
+    expect(el.shadowRoot?.querySelector('wc-settings-index')?.active).toBe('appearance');
+  });
+
+  it('names the open book in the This book header', async () => {
+    const { el } = await mount();
+    const scope = el.shadowRoot?.querySelector('wc-settings-scope[kind="book"]');
+    expect(scope?.getAttribute('heading')).toBe('Test Consultancy');
   });
 
   it('labels the name field from the books profile', async () => {
@@ -100,63 +139,107 @@ describe('settings screen', () => {
         value: string;
       };
 
+    const logoField = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wc-logo-field') as HTMLElement & { logo: string };
+
+    function chooseLogo(el: NigelSettingsScreen, file: File): void {
+      logoField(el).dispatchEvent(
+        new CustomEvent('nc-logo-file', { detail: { file }, bubbles: true, composed: true }),
+      );
+    }
+
     it('seeds all five fields once and does not clobber typing', async () => {
       const client = new FakeApiClient();
       client.company = {
-        name: 'Bluepeak LLC',
-        address: 'P.O. Box 1234',
-        phone: '619.555.0123',
+        name: 'Juniper Labs',
+        address: '1 Juniper Way',
+        phone: '555-0100',
         logo: '',
-        paymentInstructions: 'Wells Fargo',
+        paymentInstructions: 'ACH to Juniper Labs',
       };
       const { el } = await mount(client);
 
       expect(client.calls).toContain('getCompany');
-      expect(input(el, 0).value).toBe('Bluepeak LLC');
-      expect(input(el, 1).value).toBe('619.555.0123');
-      expect(textarea(el, 0).value).toBe('P.O. Box 1234');
-      expect(textarea(el, 1).value).toBe('Wells Fargo');
+      expect(input(el, 0).value).toBe('Juniper Labs');
+      expect(input(el, 1).value).toBe('555-0100');
+      expect(textarea(el, 0).value).toBe('1 Juniper Way');
+      expect(textarea(el, 1).value).toBe('ACH to Juniper Labs');
 
       // A store refresh must not re-seed the form under someone typing.
-      input(el, 0).value = 'Bluepeak Studio';
-      input(el, 0).dispatchEvent(new Event('input'));
+      await type(el, input(el, 0), 'Juniper Studio');
+      await getAppStore().refreshStatus();
       await el.updateComplete;
-      await client.getStatus();
-      await el.updateComplete;
-      expect(input(el, 0).value).toBe('Bluepeak Studio');
+      expect(input(el, 0).value).toBe('Juniper Studio');
     });
 
-    it('saves the whole letterhead in one request', async () => {
-      const { el, client } = await mount();
-      input(el, 0).value = 'Bluepeak LLC';
-      input(el, 0).dispatchEvent(new Event('input'));
-      textarea(el, 0).value = 'P.O. Box 1234';
-      textarea(el, 0).dispatchEvent(new Event('input'));
-      textarea(el, 1).value = 'Wells Fargo';
-      textarea(el, 1).dispatchEvent(new Event('input'));
-      await el.updateComplete;
+    it('shows the save bar only while something differs from what is stored', async () => {
+      const { el } = await mount();
+      expect(saveBar(el)).toBeFalsy();
 
-      buttonIn(el, 'Letterhead')?.click();
+      await type(el, input(el, 1), '555-0199');
+      expect(saveBar(el)?.getAttribute('message')).toBe('Unsaved changes to the letterhead');
+
+      // Typed back to the stored value: nothing is unsaved any more.
+      await type(el, input(el, 1), '');
+      expect(saveBar(el)).toBeFalsy();
+    });
+
+    it('discards back to the stored values', async () => {
+      const { el, client } = await mount();
+      await type(el, input(el, 0), 'Cedar Systems');
+      await type(el, textarea(el, 0), '9 Cedar Court');
+
+      barButton(el, 'Discard').click();
+      await settle(el);
+
+      expect(input(el, 0).value).toBe('Test Consultancy');
+      expect(textarea(el, 0).value).toBe('');
+      expect(saveBar(el)).toBeFalsy();
+      expect(client.calls).not.toContain('setCompany');
+    });
+
+    it('saves the whole letterhead in one request and refreshes the name everywhere', async () => {
+      const { el, client } = await mount();
+      await type(el, input(el, 0), 'Cedar Systems');
+      await type(el, textarea(el, 0), '9 Cedar Court');
+      await type(el, textarea(el, 1), 'ACH to Cedar Systems');
+
+      barButton(el, 'Save').click();
       await settle(el);
 
       expect(client.calls.filter((c) => c === 'setCompany')).toHaveLength(1);
-      expect(client.company.name).toBe('Bluepeak LLC');
-      expect(client.company.address).toBe('P.O. Box 1234');
-      expect(client.company.paymentInstructions).toBe('Wells Fargo');
-      // The name is shown from status, so a save that skipped the refresh would
-      // leave a stale sidebar behind it.
+      expect(client.company.name).toBe('Cedar Systems');
+      expect(client.company.address).toBe('9 Cedar Court');
+      expect(client.company.paymentInstructions).toBe('ACH to Cedar Systems');
+      // The breadcrumb, the status line and the window title read the name
+      // from status, so a save that skipped the refresh would leave them stale.
       expect(client.calls.lastIndexOf('getStatus')).toBeGreaterThan(
         client.calls.indexOf('setCompany'),
       );
-      expect(client.status.companyName).toBe('Bluepeak LLC');
+      expect(getAppStore().companyName.get()).toBe('Cedar Systems');
+      expect(
+        el.shadowRoot?.querySelector('wc-settings-scope[kind="book"]')?.getAttribute('heading'),
+      ).toBe('Cedar Systems');
+      expect(saveBar(el)).toBeFalsy();
+    });
+
+    it('says Saved beside the title for a moment after a save', async () => {
+      const { el } = await mount();
+      await type(el, input(el, 1), '555-0142');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+      barButton(el, 'Save').click();
+      await vi.waitFor(() => expect(section(el, 'letterhead')?.hasAttribute('saved')).toBe(true));
+
+      vi.advanceTimersByTime(2300);
+      await el.updateComplete;
+      expect(section(el, 'letterhead')?.hasAttribute('saved')).toBe(false);
     });
 
     it('surfaces the server refusal for a bad logo without clearing the form', async () => {
       const client = new FakeApiClient();
       const { el } = await mount(client);
-      input(el, 0).value = 'Bluepeak LLC';
-      input(el, 0).dispatchEvent(new Event('input'));
-      await el.updateComplete;
+      await type(el, input(el, 0), 'Cedar Systems');
 
       client.companyError = new ApiError({
         code: 'bad_request',
@@ -164,35 +247,41 @@ describe('settings screen', () => {
         message: 'A logo of type image/svg+xml cannot be used.',
         status: 400,
       });
-      buttonIn(el, 'Letterhead')?.click();
+      barButton(el, 'Save').click();
       await settle(el);
 
       expect(el.shadowRoot?.textContent).toContain('image/svg+xml');
-      expect(input(el, 0).value).toBe('Bluepeak LLC');
+      expect(input(el, 0).value).toBe('Cedar Systems');
       expect(client.company.name).toBe('Test Consultancy');
+      // Still unsaved, so the way to try again is still there.
+      expect(saveBar(el)).toBeTruthy();
     });
 
     it('reads a chosen file as a data URI before sending', async () => {
       const { el, client } = await mount();
-      const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', {
-        type: 'image/png',
-      });
-      const picker = el.shadowRoot?.querySelector(
-        'input[type="file"]',
-      ) as HTMLInputElement;
-      expect(picker, 'the logo picker is on the screen').toBeTruthy();
-      Object.defineProperty(picker, 'files', { value: [file], configurable: true });
-      picker.dispatchEvent(new Event('change'));
+      chooseLogo(el, new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' }));
       // FileReader resolves on its own task; the save must see the result.
       await vi.waitFor(() => {
-        expect(el.shadowRoot?.querySelector('.logo-preview')).toBeTruthy();
+        expect(logoField(el).logo).toMatch(/^data:/);
       });
       await settle(el);
 
-      buttonIn(el, 'Letterhead')?.click();
+      barButton(el, 'Save').click();
       await settle(el);
 
       expect(client.company.logo).toMatch(/^data:/);
+    });
+
+    it('clears the logo as an unsaved change', async () => {
+      const client = new FakeApiClient();
+      client.company = { ...client.company, logo: 'data:image/png;base64,AAAA' };
+      const { el } = await mount(client);
+
+      logoField(el).dispatchEvent(new CustomEvent('nc-logo-clear', { bubbles: true }));
+      await el.updateComplete;
+
+      expect(logoField(el).logo).toBe('');
+      expect(saveBar(el)).toBeTruthy();
     });
 
     it('offers a retry when the letterhead cannot be loaded', async () => {
@@ -206,14 +295,15 @@ describe('settings screen', () => {
       const { el } = await mount(client);
 
       // A failed load is its own state, never a form the data could not fill.
-      const letterhead = panel(el, 'Letterhead');
+      const letterhead = section(el, 'letterhead');
       expect(letterhead?.querySelector('wc-spinner')).toBeFalsy();
       expect(letterhead?.querySelector('wa-input')).toBeFalsy();
       expect(letterhead?.textContent).toContain('the database is unreadable');
-      expect(buttonIn(el, 'Letterhead')?.textContent).toContain('Retry');
+      const retry = letterhead?.querySelector('wa-button') as HTMLElement;
+      expect(retry.textContent).toContain('Retry');
 
       client.companyLoadError = null;
-      buttonIn(el, 'Letterhead')?.click();
+      retry.click();
       await settle(el);
 
       expect(client.calls.filter((c) => c === 'getCompany')).toHaveLength(2);
@@ -222,29 +312,24 @@ describe('settings screen', () => {
 
     it('refuses an oversized logo before it reaches the server', async () => {
       const { el, client } = await mount();
-      const oversized = new File([new Uint8Array(200 * 1024)], 'huge.png', {
-        type: 'image/png',
-      });
-      const picker = el.shadowRoot?.querySelector(
-        'input[type="file"]',
-      ) as HTMLInputElement;
-      Object.defineProperty(picker, 'files', { value: [oversized], configurable: true });
-      picker.dispatchEvent(new Event('change'));
+      chooseLogo(
+        el,
+        new File([new Uint8Array(200 * 1024)], 'huge.png', { type: 'image/png' }),
+      );
       await settle(el);
 
       // Named, so it is a refusal about the file that was chosen and not the
       // standing note about the cap.
       expect(el.shadowRoot?.textContent).toContain('huge.png');
-      expect(el.shadowRoot?.querySelector('.logo-preview')).toBeFalsy();
-
-      buttonIn(el, 'Letterhead')?.click();
-      await settle(el);
-      expect(client.company.logo).toBe('');
+      expect(logoField(el).logo).toBe('');
+      expect(saveBar(el)).toBeFalsy();
+      expect(client.calls).not.toContain('setCompany');
     });
 
     it('reports a failed save without changing what is shown', async () => {
       const client = new FakeApiClient();
       const { el } = await mount(client);
+      await type(el, input(el, 0), 'Globex');
       client.companyError = new ApiError({
         code: 'internal',
         rawCode: 'internal',
@@ -252,28 +337,35 @@ describe('settings screen', () => {
         status: 500,
       });
 
-      buttonIn(el, 'Letterhead')?.click();
+      barButton(el, 'Save').click();
       await settle(el);
 
       expect(client.status.companyName).toBe('Test Consultancy');
+      expect(section(el, 'letterhead')?.textContent).toContain('disk is full');
     });
   });
 
   describe('update check', () => {
+    const row = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wc-switch-row') as HTMLElement & { checked: boolean };
+
+    function flip(el: NigelSettingsScreen, checked: boolean): void {
+      row(el).dispatchEvent(
+        new CustomEvent('nc-switch-change', { detail: { checked }, bubbles: true }),
+      );
+    }
+
     it('writes the new value', async () => {
       const { el, client } = await mount();
-      const toggle = el.shadowRoot?.querySelector('wa-switch') as HTMLElement & {
-        checked: boolean;
-      };
-      toggle.checked = false;
-      toggle.dispatchEvent(new Event('change'));
+      flip(el, false);
       await settle(el);
 
       expect(client.calls).toContain('updateAppSettings');
       expect(client.appSettings.updateCheck).toBe(false);
+      expect(row(el).checked).toBe(false);
     });
 
-    it('puts the switch back when the write fails', async () => {
+    it('keeps the switch where the server has it when the write fails', async () => {
       const client = new FakeApiClient();
       const { el } = await mount(client);
       expect(client.appSettings.updateCheck).toBe(true);
@@ -284,33 +376,71 @@ describe('settings screen', () => {
         status: 500,
       });
 
-      const toggle = el.shadowRoot?.querySelector('wa-switch') as HTMLElement & {
-        checked: boolean;
-      };
-      toggle.checked = false;
-      toggle.dispatchEvent(new Event('change'));
+      flip(el, false);
       await settle(el);
 
       // A control whose write failed must not keep claiming it succeeded.
-      // Asserted on the property, not the attribute: the property is what the
-      // user moved, and re-rendering the old value does not move it back.
-      expect(toggle.checked).toBe(true);
+      expect(row(el).checked).toBe(true);
       expect(client.appSettings.updateCheck).toBe(true);
+    });
+
+    it('says which version is running', async () => {
+      const { el } = await mount();
+      expect(section(el, 'updates')?.textContent).toContain("You're on v0.0.0-test.");
+    });
+
+    it('is not offered in a store build', async () => {
+      const client = new FakeApiClient();
+      client.status = { ...client.status, distribution: 'store' };
+      const { el } = await mount(client);
+
+      expect(section(el, 'updates')).toBeNull();
+      const ids = el.shadowRoot
+        ?.querySelector('wc-settings-index')
+        ?.groups.flatMap((g) => g.items.map((i) => i.id));
+      expect(ids).not.toContain('updates');
     });
   });
 
-  describe('data directory', () => {
+  describe('location', () => {
+    const switchButton = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wa-button[data-switch]') as HTMLElement;
+
+    it('shows the active data directory', async () => {
+      const { el } = await mount();
+      expect(el.shadowRoot?.querySelector('wc-folder-path')?.getAttribute('path')).toBe(
+        '/tmp/nigel',
+      );
+    });
+
+    it('offers no reveal where the client cannot open a folder', async () => {
+      const { el } = await mount();
+      expect(section(el, 'location')?.querySelector('wc-folder-path wa-button')).toBeNull();
+    });
+
+    it("reveals the folder through the client's file manager", async () => {
+      const client = new FakeApiClient();
+      const run = vi.fn(async () => {});
+      client.dataDirRevealValue = { label: 'Reveal in Finder', run };
+      const { el } = await mount(client);
+
+      const reveal = section(el, 'location')?.querySelector(
+        'wc-folder-path wa-button',
+      ) as HTMLElement;
+      expect(reveal.textContent).toBe('Reveal in Finder');
+      reveal.click();
+      await settle(el);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
     it('asks before switching, and does nothing when refused', async () => {
       const ui = await import('@nigel/ui');
       vi.spyOn(ui, 'confirmDialog').mockResolvedValue(false);
 
       const { el, client } = await mount();
-      const field = inputLabelled(el, 'Switch to');
-      field.value = '/tmp/other';
-      field.dispatchEvent(new Event('input'));
-      await el.updateComplete;
+      await type(el, inputLabelled(el, 'Switch to'), '/tmp/other');
 
-      buttonIn(el, 'Data directory')?.click();
+      switchButton(el).click();
       await settle(el);
 
       expect(client.calls).not.toContain('setDataDir');
@@ -321,12 +451,9 @@ describe('settings screen', () => {
       vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
 
       const { el, client } = await mount();
-      const field = inputLabelled(el, 'Switch to');
-      field.value = '/tmp/other';
-      field.dispatchEvent(new Event('input'));
-      await el.updateComplete;
+      await type(el, inputLabelled(el, 'Switch to'), '/tmp/other');
 
-      buttonIn(el, 'Data directory')?.click();
+      switchButton(el).click();
       await settle(el);
 
       expect(client.calls).toContain('setDataDir');
@@ -335,7 +462,7 @@ describe('settings screen', () => {
 
     it('does nothing when the path is blank', async () => {
       const { el, client } = await mount();
-      buttonIn(el, 'Data directory')?.click();
+      switchButton(el).click();
       await settle(el);
       expect(client.calls).not.toContain('setDataDir');
     });
@@ -357,10 +484,18 @@ describe('settings screen', () => {
       );
     }
 
+    const card = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wc-security-card') as HTMLElement & {
+        panel: string | null;
+        encrypted: boolean;
+      };
+
     it('offers set on a plaintext database', async () => {
       const { el } = await mount();
       const form = el.shadowRoot?.querySelector('wc-password-form');
       expect(form?.getAttribute('mode')).toBe('set');
+      expect(form?.getAttribute('slot')).toBe('set');
+      expect(card(el).encrypted).toBe(false);
     });
 
     it('encrypts and then re-reads the encryption state', async () => {
@@ -372,6 +507,7 @@ describe('settings screen', () => {
       expect(client.calls.lastIndexOf('getStatus')).toBeGreaterThan(
         client.calls.indexOf('setPassword'),
       );
+      expect(card(el).encrypted).toBe(true);
     });
 
     it('offers change and remove on an encrypted database', async () => {
@@ -379,10 +515,25 @@ describe('settings screen', () => {
       client.status = { ...client.status, encrypted: true };
       const { el } = await mount(client);
 
-      const modes = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])].map(
-        (f) => f.getAttribute('mode'),
+      const forms = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])];
+      expect(forms.map((f) => f.getAttribute('mode'))).toEqual(['change', 'remove']);
+      expect(forms.map((f) => f.getAttribute('slot'))).toEqual(['change', 'remove']);
+    });
+
+    it('closes the open panel once its operation succeeds', async () => {
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+
+      card(el).dispatchEvent(
+        new CustomEvent('nc-security-panel', { detail: { panel: 'change' }, bubbles: true }),
       );
-      expect(modes).toEqual(['change', 'remove']);
+      await el.updateComplete;
+      expect(card(el).panel).toBe('change');
+
+      submitPassword(el, { mode: 'change', currentPassword: 'a', newPassword: 'b' });
+      await settle(el);
+      expect(card(el).panel).toBeNull();
     });
 
     it('confirms before removing the password', async () => {
@@ -454,8 +605,8 @@ describe('settings screen', () => {
       submitPassword(el, { mode: 'remove', currentPassword: 'nope' }, 1);
       await settle(el);
 
-      // The change form is first on screen and collects a field by the same
-      // name; a remove failure rendered there would be about the wrong one.
+      // The change form collects a field by the same name; a remove failure
+      // rendered there would be about the wrong one.
       const errors = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])].map(
         (f) => f.getAttribute('error'),
       );
@@ -530,14 +681,11 @@ describe('settings screen', () => {
   });
 
   describe('appearance', () => {
-    const switcher = (el: NigelSettingsScreen) =>
-      el.shadowRoot?.querySelector('wc-mode-switcher') as HTMLElement & {
-        mode: string;
-        resolved: string;
-      };
+    const picker = (el: NigelSettingsScreen) =>
+      el.shadowRoot?.querySelector('wc-appearance-picker') as HTMLElement & { mode: string };
 
     function choose(el: NigelSettingsScreen, mode: string) {
-      switcher(el).dispatchEvent(
+      picker(el).dispatchEvent(
         new CustomEvent('nc-color-mode-change', {
           detail: { mode },
           bubbles: true,
@@ -551,30 +699,30 @@ describe('settings screen', () => {
       document.documentElement.classList.remove('light-mode', 'dark-mode');
     });
 
-    it('offers the switcher', async () => {
+    it('offers the picker', async () => {
       const { el } = await mount();
-      expect(switcher(el)).toBeTruthy();
+      expect(picker(el)).toBeTruthy();
     });
 
     it('shows the stored mode as the current one', async () => {
       localStorage.setItem('nigel.color-mode', 'dark');
       const { el } = await mount();
-      expect(switcher(el).mode).toBe('dark');
+      expect(picker(el).mode).toBe('dark');
     });
 
     it('defaults to system with nothing stored', async () => {
       const { el } = await mount();
-      expect(switcher(el).mode).toBe('system');
+      expect(picker(el).mode).toBe('system');
     });
 
-    it('persists a choice and applies it', async () => {
+    it('persists a choice and applies it at once', async () => {
       const { el } = await mount();
       choose(el, 'dark');
       await el.updateComplete;
 
       expect(localStorage.getItem('nigel.color-mode')).toBe('dark');
       expect(document.documentElement.classList.contains('dark-mode')).toBe(true);
-      expect(switcher(el).mode).toBe('dark');
+      expect(picker(el).mode).toBe('dark');
     });
 
     it('removes both classes for system, leaving the media query in charge', async () => {
@@ -589,7 +737,19 @@ describe('settings screen', () => {
       expect(document.documentElement.classList.contains('light-mode')).toBe(false);
     });
 
-    it('sends nothing to the server — the preference is per-browser', async () => {
+    it('still applies the choice when storage refuses it', async () => {
+      const { el } = await mount();
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('SecurityError');
+      });
+      choose(el, 'light');
+      await el.updateComplete;
+
+      expect(document.documentElement.classList.contains('light-mode')).toBe(true);
+      expect(picker(el).mode).toBe('light');
+    });
+
+    it('sends nothing to the server — the preference is per-device', async () => {
       // Every /api/settings/* route is behind the locked guard, so a
       // server-stored mode could not be honoured on the unlock screen.
       const { el, client } = await mount();

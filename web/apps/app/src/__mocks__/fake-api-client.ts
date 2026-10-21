@@ -4,6 +4,7 @@ import type {
   CashflowParams,
   ExpenseParams,
   ExportTarget,
+  FolderReveal,
   ImportSource,
   ReconciliationParams,
   RegisterParams,
@@ -515,6 +516,12 @@ export class FakeApiClient implements ApiClient {
   }
 
   /** No chrome by default; the chrome-bridge tests hand in a recorder. */
+  dataDirRevealValue: FolderReveal | null = null;
+
+  dataDirReveal(): FolderReveal | null {
+    return this.dataDirRevealValue;
+  }
+
   shellChromeValue: ShellChrome | null = null;
 
   shellChrome(): ShellChrome | null {

@@ -104,6 +104,25 @@ export const colorCss = css`
     --nc-color-arcade-bg: #17171d;
     --nc-color-arcade-ink: #ece9f5;
     --nc-color-arcade-food: #50dc64;
+
+    /* A switch's knob: white on the brand track and on the off track, in
+       both modes. */
+    --nc-color-knob: #ffffff;
+
+    /* The Appearance picker's miniature windows. Each draws one mode while
+       the app is in either, so neither flips with the colour mode: the light
+       set is the light canvas, sidebar, card, border and brand, the dark set
+       the same roles in dark. */
+    --nc-color-preview-light-bg: #f3f2f7;
+    --nc-color-preview-light-panel: #fbfafe;
+    --nc-color-preview-light-card: #ffffff;
+    --nc-color-preview-light-line: #dedaeb;
+    --nc-color-preview-light-accent: #5a3fd6;
+    --nc-color-preview-dark-bg: #17171d;
+    --nc-color-preview-dark-panel: #22222b;
+    --nc-color-preview-dark-card: #1f1f28;
+    --nc-color-preview-dark-line: #2e2e3c;
+    --nc-color-preview-dark-accent: #c4b7ff;
   }
 `;
 

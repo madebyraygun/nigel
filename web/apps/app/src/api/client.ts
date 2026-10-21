@@ -271,6 +271,16 @@ export interface ShellChrome {
 export type PaletteSource = 'explicit' | 'system';
 
 /**
+ * Showing the books folder in the platform's file manager, where the client
+ * can: `label` is that platform's name for it ("Reveal in Finder") and `run`
+ * opens the folder the open books live in.
+ */
+export interface FolderReveal {
+  label: string;
+  run(): Promise<void>;
+}
+
+/**
  * Where a statement comes from in this client, in the shape of
  * `ExportTarget`: a discriminant plus whatever the running platform can
  * actually do.
@@ -388,6 +398,12 @@ export interface ApiClient {
    * Answered by the client rather than sniffed, for `importSource`'s reason.
    */
   shellChrome(): ShellChrome | null;
+  /**
+   * How to show the books folder in a file manager, or `null` where the page
+   * cannot reach one — a browser tab. Answered by the client for
+   * `importSource`'s reason.
+   */
+  dataDirReveal(): FolderReveal | null;
   /** A dry run: reports what an import would do, having written nothing. */
   previewImport(input: ImportRequest): Promise<ImportPreview>;
   /** Snapshot, import, categorize — the sequence the TUI has always used. */
@@ -800,6 +816,10 @@ export class FetchApiClient implements ApiClient {
   }
 
   shellChrome(): ShellChrome | null {
+    return null;
+  }
+
+  dataDirReveal(): FolderReveal | null {
     return null;
   }
 

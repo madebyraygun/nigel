@@ -8,6 +8,7 @@ export {
   type CashflowParams,
   type DragDropEvent,
   type FetchApiClientOptions,
+  type FolderReveal,
   type ImportSource,
   type RegisterParams,
   type ReportDateParams,
