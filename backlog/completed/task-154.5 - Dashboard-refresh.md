@@ -1,9 +1,10 @@
 ---
 id: TASK-154.5
 title: Dashboard refresh
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-21 20:08'
 labels:
   - web
   - design
@@ -23,6 +24,12 @@ Spec section 4: title row with the review pill, a three-cell stat strip (income 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The Dashboard matches the spec in light and dark, and every figure equals what the existing dashboard and reports compute for the same books
-- [ ] #2 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 The Dashboard matches the spec in light and dark, and every figure equals what the existing dashboard and reports compute for the same books
+- [x] #2 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #64 (bar tops 7px per the user).
+<!-- SECTION:FINAL_SUMMARY:END -->
