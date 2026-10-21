@@ -62,9 +62,9 @@ export class WcSwitchRow extends LitElement {
       }
 
       wa-switch::part(control) {
-        background: var(--wa-color-border);
+        background: var(--nc-color-switch-off);
         border-color: transparent;
-        transition: background 150ms ease;
+        transition: background var(--nc-transition-fast);
       }
 
       wa-switch.on::part(control) {

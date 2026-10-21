@@ -24,6 +24,7 @@ import { getAppStore, type AppStore } from '../state/app-store.js';
 import type { AppSettings, Company } from '../api/types.js';
 import type { ScreenContext } from './context.js';
 import { activeSection, scrolledToBottom, scrollingAncestor } from './settings-spy.js';
+import { setUnsavedChanges, type UnsavedChanges } from '../state/unsaved.js';
 import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@nigel/theme';
 
 /**
@@ -48,6 +49,11 @@ const COMPANY_FIELDS: readonly (keyof Company)[] = [
   'paymentInstructions',
   'logo',
 ];
+
+const LETTERHEAD_UNSAVED: UnsavedChanges = {
+  heading: 'Discard unsaved letterhead changes?',
+  message: 'The letterhead has edits that are not saved yet. Leaving now throws them away.',
+};
 
 interface PasswordFailure {
   mode: WcPasswordMode;
@@ -193,9 +199,22 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   private scroller: HTMLElement | null = null;
   private spyFrame = 0;
   private spyHeldUntil = 0;
+  /** Whether the app has been told about the letterhead draft. */
+  private reportedDirty = false;
+
+  /**
+   * Closing the window or reloading the page is the one way out no dialog of
+   * ours can ask about, so the browser's own prompt does it.
+   */
+  private onBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!this.companyDirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
+    window.addEventListener('beforeunload', this.onBeforeUnload);
     void this.loadAppSettings();
     void this.loadCompany();
     this.colorMode = readMode();
@@ -206,7 +225,17 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     (this.scroller ?? window).addEventListener('scroll', this.onScroll, { passive: true });
   }
 
+  updated(): void {
+    const dirty = this.companyDirty;
+    if (dirty === this.reportedDirty) return;
+    this.reportedDirty = dirty;
+    setUnsavedChanges(dirty ? LETTERHEAD_UNSAVED : null);
+  }
+
   disconnectedCallback(): void {
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
+    if (this.reportedDirty) setUnsavedChanges(null);
+    this.reportedDirty = false;
     (this.scroller ?? window).removeEventListener('scroll', this.onScroll);
     cancelAnimationFrame(this.spyFrame);
     clearTimeout(this.savedTimer);
@@ -374,7 +403,17 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     if (!this.savedCompany) return;
     this.company = this.savedCompany;
     this.companyError = '';
+    void this.focusLetterhead();
   };
+
+  /**
+   * The save bar goes once nothing is unsaved, and with it the button that
+   * had focus; the first letterhead field is where the work was.
+   */
+  private async focusLetterhead(): Promise<void> {
+    await this.updateComplete;
+    this.shadowRoot?.querySelector<HTMLElement>('#letterhead wa-input')?.focus();
+  }
 
   private saveCompany = async () => {
     if (!this.company) return;
@@ -390,6 +429,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       // from status.
       await this.store.refreshStatus();
       this.flashSaved();
+      void this.focusLetterhead();
     } catch (error) {
       // Kept beside the fields rather than only in a toast: a refused logo is
       // about one control, and the form must not be cleared under it.
@@ -481,6 +521,9 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
 
   private handleSecurityPanel = (event: CustomEvent<NcSecurityPanelDetail>) => {
     this.securityPanel = event.detail.panel;
+    // A failure belongs to the attempt in the panel it was shown in; the
+    // panel closing ends that attempt.
+    this.passwordFailure = null;
   };
 
   private handlePasswordSubmit = async (event: CustomEvent<NcPasswordSubmitDetail>) => {
@@ -518,6 +561,9 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       // Re-read rather than assume: the encryption state the next render draws
       // comes from the server, never from an optimistic local flag.
       await this.store.refreshStatus();
+      // Encrypting or decrypting swaps the forms, taking the one that had
+      // focus; a change only closes its panel, which hands focus back itself.
+      if (detail.mode !== 'change') void this.focusSecurity();
     } catch (error) {
       this.passwordFailure = {
         mode: detail.mode,
@@ -528,6 +574,13 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       this.busy = null;
     }
   };
+
+  private async focusSecurity(): Promise<void> {
+    await this.updateComplete;
+    const card = this.shadowRoot?.querySelector('wc-security-card');
+    await card?.updateComplete;
+    card?.focusFirstAction();
+  }
 
   /**
    * Which of the forms on screen carries the failure. Normally the operation

@@ -163,6 +163,21 @@ describe('wc-password-form', () => {
     );
   });
 
+  it('reset empties every field and its own validation, leaving the server error', async () => {
+    const el = await mount({ mode: 'change', layout: 'inline', error: 'Wrong password.' });
+    field(el, 'current').value = 'hunter2';
+    field(el, 'new').value = 'a';
+    field(el, 'confirm').value = 'b';
+    submit(el);
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.message')?.textContent).toBe('Passwords do not match.');
+
+    el.reset();
+    await el.updateComplete;
+    for (const name of ['current', 'new', 'confirm']) expect(field(el, name).value).toBe('');
+    expect(el.shadowRoot?.querySelector('.message')?.textContent).toBe('Wrong password.');
+  });
+
   it('does not submit while busy', async () => {
     const el = await mount({ mode: 'set', busy: true });
     field(el, 'new').value = 'hunter2';

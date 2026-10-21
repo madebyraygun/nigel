@@ -109,6 +109,11 @@ export const colorCss = css`
        both modes. */
     --nc-color-knob: #ffffff;
 
+    /* A switch's track while it is off. The track is the control's only
+       boundary, so it owes WCAG 1.4.11's 3:1 against the card it sits on,
+       which the border colour is far too light to give. */
+    --nc-color-switch-off: #85819a;
+
     /* The Appearance picker's miniature windows. Each draws one mode while
        the app is in either, so neither flips with the colour mode: the light
        set is the light canvas, sidebar, card, border and brand, the dark set
@@ -151,6 +156,7 @@ const darkTokens = css`
   --nc-color-hover: #2a2a35;
   --nc-color-sidebar-bg: #22222b;
   --nc-color-field: #1b1b22;
+  --nc-color-switch-off: #76738c;
   --nc-color-ring: rgb(196 183 255 / 25%);
   --wa-color-overlay-modal: rgb(0 0 0 / 45%);
 

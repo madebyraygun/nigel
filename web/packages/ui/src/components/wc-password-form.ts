@@ -211,6 +211,16 @@ export class WcPasswordForm extends LitElement {
     }
   }
 
+  /**
+   * Empty every field and drop what the form found itself, as when the panel
+   * holding it is closed. A server failure is the `error` property, which
+   * stays its owner's to clear.
+   */
+  reset(): void {
+    this.clearFields();
+    this.localError = '';
+  }
+
   private handleSubmit = (event: Event) => {
     event.preventDefault();
     if (this.busy) return;

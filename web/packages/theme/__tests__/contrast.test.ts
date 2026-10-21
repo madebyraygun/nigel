@@ -79,6 +79,8 @@ describe.each([
     ['expense fill on surface', '--nc-color-expense-fill', '--wa-color-surface'],
     ['income fill on bg', '--nc-color-income-fill', '--wa-color-bg'],
     ['expense fill on bg', '--nc-color-expense-fill', '--wa-color-bg'],
+    ['switch off track on surface', '--nc-color-switch-off', '--wa-color-surface'],
+    ['switch off track on surface-alt', '--nc-color-switch-off', '--wa-color-surface-alt'],
   ])('%s clears the graphic threshold', (_label, fg, bg) => {
     expect(contrast(t(fg), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
   });

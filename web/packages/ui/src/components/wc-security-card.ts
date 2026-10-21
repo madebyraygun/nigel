@@ -136,6 +136,51 @@ export class WcSecurityCard extends LitElement {
   @property({ type: Boolean, reflect: true })
   busy = false;
 
+  /**
+   * Move focus to what acts on the database now: the Change… toggle when it
+   * is encrypted, the status line when it is not. For an owner whose
+   * operation just removed the form that had focus.
+   */
+  focusFirstAction(): void {
+    const target = this.encrypted
+      ? this.shadowRoot?.querySelector<HTMLElement>('.row wa-button')
+      : this.shadowRoot?.querySelector<HTMLElement>('.status .title');
+    target?.focus();
+  }
+
+  protected willUpdate(changed: Map<string, unknown>): void {
+    if (!changed.has('panel')) return;
+    const closing = changed.get('panel') as SecurityPanel | undefined;
+    if (!closing || closing === this.panel) return;
+    // A closed panel keeps nothing typed into it: a password left in a
+    // hidden field is one somebody else can submit by opening it again. Every
+    // form outside the panel now open is hidden, so every one is emptied.
+    for (const form of this.querySelectorAll('[slot="change"], [slot="remove"]')) {
+      if (form.slot !== this.panel) (form as HTMLElement & { reset?: () => void }).reset?.();
+    }
+    const forms = this.formsIn(closing);
+    // Focus inside the panel would go with it; its toggle is where it was
+    // opened from.
+    if (forms.some((form) => form.matches(':focus-within'))) {
+      this.refocus = closing;
+    }
+  }
+
+  protected updated(): void {
+    if (!this.refocus) return;
+    const which = this.refocus;
+    this.refocus = null;
+    this.shadowRoot
+      ?.querySelector<HTMLElement>(`wa-button[aria-controls="${which}-panel"]`)
+      ?.focus();
+  }
+
+  private refocus: 'change' | 'remove' | null = null;
+
+  private formsIn(which: 'change' | 'remove'): Element[] {
+    return [...this.querySelectorAll(`[slot="${which}"]`)];
+  }
+
   private toggle(which: 'change' | 'remove'): void {
     this.panel = this.panel === which ? null : which;
     this.dispatchEvent(
@@ -152,7 +197,7 @@ export class WcSecurityCard extends LitElement {
       ? html`<div class="card status">
           <span class="tile" aria-hidden="true"><wc-icon-lock></wc-icon-lock></span>
           <div>
-            <p class="title">Encrypted</p>
+            <p class="title" tabindex="-1">Encrypted</p>
             <p class="sub">
               This database is encrypted with a password. Lose the password and the books
               cannot be opened.
@@ -162,7 +207,7 @@ export class WcSecurityCard extends LitElement {
       : html`<div class="card status">
           <span class="tile" aria-hidden="true"><wc-icon-lock-open></wc-icon-lock-open></span>
           <div>
-            <p class="title">Not encrypted</p>
+            <p class="title" tabindex="-1">Not encrypted</p>
             <p class="sub">
               Anyone with access to the file can read it. Set a password and store it
               somewhere safe.

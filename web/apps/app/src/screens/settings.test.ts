@@ -4,6 +4,7 @@ import type { NigelSettingsScreen } from './settings.js';
 import { ApiError, appLocked } from '../api/index.js';
 import { getAppStore, initializeAppStore, resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
+import { setUnsavedChanges, unsavedChanges } from '../state/unsaved.js';
 
 /**
  * The settings screen driven entirely by FakeApiClient — no network, no server,
@@ -76,6 +77,7 @@ describe('settings screen', () => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
     vi.useRealTimers();
+    setUnsavedChanges(null);
   });
 
   it('loads the application settings when it mounts', async () => {
@@ -234,6 +236,53 @@ describe('settings screen', () => {
       vi.advanceTimersByTime(2300);
       await el.updateComplete;
       expect(section(el, 'letterhead')?.hasAttribute('saved')).toBe(false);
+    });
+
+    it('tells the app about the draft while it differs, so leaving asks first', async () => {
+      const { el } = await mount();
+      expect(unsavedChanges()).toBeNull();
+
+      await type(el, input(el, 1), '555-0199');
+      expect(unsavedChanges()?.heading).toBe('Discard unsaved letterhead changes?');
+
+      barButton(el, 'Discard').click();
+      await settle(el);
+      expect(unsavedChanges()).toBeNull();
+    });
+
+    it('drops its claim when it goes away', async () => {
+      const { el } = await mount();
+      await type(el, input(el, 1), '555-0199');
+      el.remove();
+      expect(unsavedChanges()).toBeNull();
+    });
+
+    it('has the browser ask before the window closes on a draft', async () => {
+      const { el } = await mount();
+      const clean = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(clean);
+      expect(clean.defaultPrevented).toBe(false);
+
+      await type(el, input(el, 1), '555-0199');
+      const dirty = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(dirty);
+      expect(dirty.defaultPrevented).toBe(true);
+    });
+
+    it('puts focus on the first field when the save bar goes', async () => {
+      const { el } = await mount();
+      await type(el, input(el, 1), '555-0199');
+      const focus = vi.spyOn(input(el, 0), 'focus');
+      barButton(el, 'Discard').click();
+      await settle(el);
+      expect(focus).toHaveBeenCalled();
+
+      await type(el, input(el, 1), '555-0199');
+      const again = vi.spyOn(input(el, 0), 'focus');
+      barButton(el, 'Save').click();
+      await settle(el);
+      await settle(el);
+      expect(again).toHaveBeenCalled();
     });
 
     it('surfaces the server refusal for a bad logo without clearing the form', async () => {
@@ -534,6 +583,37 @@ describe('settings screen', () => {
       submitPassword(el, { mode: 'change', currentPassword: 'a', newPassword: 'b' });
       await settle(el);
       expect(card(el).panel).toBeNull();
+    });
+
+    it('clears a failure when its panel closes', async () => {
+      const client = new FakeApiClient();
+      client.status = { ...client.status, encrypted: true };
+      const { el } = await mount(client);
+      client.settingsError = new Error('socket hang up');
+      submitPassword(el, { mode: 'change', currentPassword: 'a', newPassword: 'b' });
+      await settle(el);
+      expect(el.shadowRoot?.querySelector('wc-password-form')?.getAttribute('error')).toBe(
+        'Could not change the password.',
+      );
+
+      card(el).dispatchEvent(
+        new CustomEvent('nc-security-panel', { detail: { panel: null }, bubbles: true }),
+      );
+      await el.updateComplete;
+      const errors = [...(el.shadowRoot?.querySelectorAll('wc-password-form') ?? [])].map((f) =>
+        f.getAttribute('error'),
+      );
+      expect(errors).toEqual(['', '']);
+    });
+
+    it('moves focus to the new Change… button once the database is encrypted', async () => {
+      const { el } = await mount();
+      const focus = vi.spyOn(card(el) as unknown as { focusFirstAction: () => void }, 'focusFirstAction');
+      submitPassword(el, { mode: 'set', newPassword: 'hunter2' });
+      await settle(el);
+      await settle(el);
+      expect(card(el).encrypted).toBe(true);
+      expect(focus).toHaveBeenCalled();
     });
 
     it('confirms before removing the password', async () => {

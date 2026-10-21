@@ -241,6 +241,9 @@ a button opens it in the platform's file manager: `reveal_data_dir`
 (`crates/nigel-desktop/src/reveal.rs`) runs `open` on macOS, `explorer` on
 Windows and `xdg-open` elsewhere. The command takes no argument — it reads the
 folder from settings itself — so the page cannot point it anywhere else.
+A Windows path loses its `\\?\` verbatim prefix first (`\\?\UNC\` goes back to
+`\\`), which Explorer does not understand, and the child is reaped on a thread
+so `open` and `xdg-open` leave no zombies.
 `DesktopApiClient.dataDirReveal()` answers the command and the platform's name
 for it ("Reveal in Finder", "Show in Explorer", "Open folder"); the web client
 answers `null` and the button is not drawn.
