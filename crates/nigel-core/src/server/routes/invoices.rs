@@ -795,16 +795,18 @@ async fn send(
     // sentence quotes the value for the terminal that is answering whoever
     // typed the command. No response carries a configured setting, so the same
     // refusal is answered here in the key-and-defect wording instead.
-    if let Some(base) = config.public_base_url.as_deref() {
-        if crate::invoicing::r2::validate_public_base_url(base).is_err() {
-            return Err(ApiError::conflict(
-                crate::invoicing::r2::PUBLIC_BASE_URL_DEFECT,
-                serde_json::json!({
-                    "reason": "invalid_public_base_url",
-                    "step": SendStep::Config.as_str(),
-                }),
-            ));
-        }
+    if let Some(defect) = config
+        .public_base_url
+        .as_deref()
+        .and_then(crate::invoicing::r2::public_base_url_defect)
+    {
+        return Err(ApiError::conflict(
+            defect,
+            serde_json::json!({
+                "reason": "invalid_public_base_url",
+                "step": SendStep::Config.as_str(),
+            }),
+        ));
     }
     // One extra connection open on a request about to make five network calls,
     // and it keeps `build_clients` — and its 409 — outside the database work
@@ -2813,6 +2815,18 @@ mod tests {
     /// it names the key and the defect without echoing the address.
     #[tokio::test]
     async fn a_send_with_an_unusable_public_base_url_fails_at_config() {
+        for (value, defect) in [
+            ("books.example.test", "not an absolute http(s) address"),
+            (
+                "https://books.example.test/i\0\0\0\0",
+                "may not contain control characters",
+            ),
+        ] {
+            a_send_with_this_public_base_url_fails_at_config(value, defect).await;
+        }
+    }
+
+    async fn a_send_with_this_public_base_url_fails_at_config(value: &str, defect: &str) {
         let _config = TempConfig::new();
         let mut settings = crate::settings::load_settings();
         settings.stripe_secret_key = Some("sk_test".into());
@@ -2823,7 +2837,7 @@ mod tests {
         settings.r2_access_key = Some("access".into());
         settings.r2_secret_key = Some("secret".into());
         settings.r2_bucket = Some("billing".into());
-        settings.public_base_url = Some("books.example.test".into());
+        settings.public_base_url = Some(value.into());
         crate::settings::save_settings(&settings).expect("settings");
 
         let (_dir, db_path) = seeded_db();
@@ -2848,6 +2862,13 @@ mod tests {
                 .as_str()
                 .unwrap_or_default()
                 .contains("public_base_url"),
+            "{json}"
+        );
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(defect),
             "{json}"
         );
         // The key and the defect, never the value.

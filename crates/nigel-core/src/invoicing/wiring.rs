@@ -22,7 +22,8 @@ use crate::invoicing::mailgun::{
 };
 use crate::invoicing::r2::R2PrivateStore;
 use crate::invoicing::r2::{
-    documents_base_url_warning, public_base_url_warning, validate_public_base_url, R2Publisher,
+    documents_base_url_warning, public_base_url_warning, validate_documents_base,
+    validate_public_base_url, validate_url_setting, R2Publisher,
 };
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::republish::republish_invoice;
@@ -347,7 +348,10 @@ pub fn build_document_clients(cfg: DocumentsConfig, company: &str) -> Result<Doc
         ),
         "documents_base_url",
     )?;
-    validate_public_base_url(&documents_base)?;
+    validate_documents_base(&documents_base, cfg.documents_base_url.is_some())?;
+    if let Some(response_url) = &cfg.document_response_url {
+        validate_url_setting(response_url, "document_response_url")?;
+    }
 
     let (mail, mut warnings) = build_mailer(
         Some(api_key),
@@ -442,7 +446,7 @@ pub fn document_publisher_setup(
         ],
     )?;
     let base = base.unwrap_or_default();
-    validate_public_base_url(&base).map_err(|e| Unavailable {
+    validate_documents_base(&base, cfg.documents_base_url.is_some()).map_err(|e| Unavailable {
         service: "R2",
         keys: DOCUMENT_PUBLISHER_KEYS,
         state: UnavailableState::Refused(e.to_string()),
@@ -905,5 +909,73 @@ mod tests {
         assert!(optional_document_publisher(&cfg).is_some());
         cfg.r2_private_bucket = Some("private".into());
         assert_eq!(optional_response_source(&cfg).unwrap().bucket, "private");
+    }
+
+    #[test]
+    fn an_invoice_send_refuses_a_base_url_with_trailing_nuls_by_name() {
+        let cfg = InvoicingConfig {
+            stripe_secret_key: Some("sk_test".into()),
+            public_base_url: Some("https://billing.example.com/i\0\0\0".into()),
+            ..configured_for_documents()
+        };
+        let err = build_clients(cfg, "Acme").err().expect("refused");
+        let message = err.to_string();
+        assert!(message.contains("public_base_url"), "got: {message}");
+        assert!(message.contains("control characters"), "got: {message}");
+        assert!(!message.contains('\0'), "the value is not quoted back");
+    }
+
+    #[test]
+    fn a_document_send_refuses_control_characters_in_each_url_setting_by_name() {
+        let base = || DocumentsConfig {
+            invoicing: configured_for_documents(),
+            r2_private_bucket: Some("private".into()),
+            ..Default::default()
+        };
+        let refusal = |cfg: DocumentsConfig| {
+            build_document_clients(cfg, "Acme")
+                .err()
+                .expect("refused")
+                .to_string()
+        };
+
+        let explicit = refusal(DocumentsConfig {
+            documents_base_url: Some("https://docs.example.com/d\0".into()),
+            ..base()
+        });
+        assert!(
+            explicit.contains("documents_base_url may not contain control characters"),
+            "got: {explicit}"
+        );
+
+        let derived = refusal(DocumentsConfig {
+            invoicing: InvoicingConfig {
+                public_base_url: Some("https://billing.example.com\0/i".into()),
+                ..configured_for_documents()
+            },
+            ..base()
+        });
+        assert!(
+            derived.contains("public_base_url may not contain control characters"),
+            "got: {derived}"
+        );
+
+        let response = refusal(DocumentsConfig {
+            document_response_url: Some("https://docs.example.com/d/respond\u{1b}[2J".into()),
+            ..base()
+        });
+        assert!(
+            response.contains("document_response_url may not contain control characters"),
+            "got: {response}"
+        );
+
+        let publisher = document_publisher_setup(&DocumentsConfig {
+            documents_base_url: Some("https://docs.example.com/d\0".into()),
+            ..base()
+        });
+        assert!(matches!(
+            publisher.err().map(|u| u.state),
+            Some(UnavailableState::Refused(reason)) if reason.contains("documents_base_url")
+        ));
     }
 }
