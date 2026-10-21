@@ -198,6 +198,58 @@ describe('wc-command-palette', () => {
     expect(escape.defaultPrevented).toBe(true);
   });
 
+  it('keeps focus in the input when the rest of the panel is pressed', async () => {
+    const el = await mount({ open: true });
+    const press = (target: Element | null | undefined) => {
+      const event = new MouseEvent('mousedown', { bubbles: true, composed: true, cancelable: true });
+      target?.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const root = el.shadowRoot!;
+    expect(press(root.querySelector('.heading'))).toBe(true);
+    expect(press(root.querySelector('footer'))).toBe(true);
+    expect(press(root.querySelector('[role="option"]'))).toBe(true);
+    expect(press(root.querySelector('.results'))).toBe(true);
+    expect(press(input(el))).toBe(false);
+  });
+
+  it('answers keys wherever in the panel they arrive', async () => {
+    const el = await mount({ open: true });
+    const spy = vi.fn();
+    document.addEventListener('nc-palette-close', spy);
+    el.shadowRoot
+      ?.querySelector('footer')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    document.removeEventListener('nc-palette-close', spy);
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('leaves Enter and the arrows to an IME mid-composition', async () => {
+    const el = await mount({ open: true });
+    const picks = listen<NcPaletteSelectDetail>('nc-palette-select');
+    const compose = (init: KeyboardEventInit) =>
+      input(el).dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }),
+      );
+    compose({ key: 'Enter', isComposing: true });
+    compose({ key: 'Enter', keyCode: 229 });
+    compose({ key: 'ArrowDown', isComposing: true });
+    await el.updateComplete;
+    expect(picks).toEqual([]);
+    expect(input(el).getAttribute('aria-activedescendant')).toBe('option-0');
+  });
+
+  it('returns focus to the opener it is given rather than what had focus', async () => {
+    const opener = document.createElement('button');
+    const other = document.createElement('button');
+    document.body.append(opener, other);
+    other.focus();
+    const el = await mount({ open: true, opener });
+    el.open = false;
+    await el.updateComplete;
+    expect(document.activeElement).toBe(opener);
+  });
+
   it('keeps Tab inside the dialog', async () => {
     const el = await mount({ open: true });
     const tab = await press(el, 'Tab');

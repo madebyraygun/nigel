@@ -54,8 +54,10 @@ function deepActiveElement(): Element | null {
  *
  * A modal dialog holding a combobox and its listbox. Focus stays in the
  * input the whole time it is open — the options are reached with
- * `aria-activedescendant`, not focus — so Tab has nowhere to go and is held
- * there, and whatever had focus before it opened gets it back when it closes.
+ * `aria-activedescendant`, not focus, and a press anywhere else in the panel
+ * is kept from taking it — so Tab has nowhere to go and is held there. On
+ * close, focus goes back to `opener`, or to whatever had it when the palette
+ * opened if no opener was given.
  * The host fixes itself over the viewport, backdrop included; a caller that
  * wants the page behind it out of the tab order as well makes it `inert`.
  *
@@ -307,19 +309,27 @@ export class WcCommandPalette extends LitElement {
   @property({ type: String })
   query = '';
 
+  /**
+   * Where focus returns on close. A caller that knows which control asked
+   * passes it: WebKit does not focus a button on click, so what had focus
+   * then is not always the control that was pressed.
+   */
+  @property({ attribute: false })
+  opener: HTMLElement | null = null;
+
   @state()
   private active = 0;
 
   @query('input')
   private input!: HTMLInputElement | null;
 
-  private opener: HTMLElement | null = null;
+  private returnTo: HTMLElement | null = null;
 
   protected willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('open')) {
       if (this.open) {
         const active = deepActiveElement();
-        this.opener = active instanceof HTMLElement ? active : null;
+        this.returnTo = this.opener ?? (active instanceof HTMLElement ? active : null);
       } else if (changed.get('open') === true) {
         this.query = '';
       }
@@ -332,9 +342,9 @@ export class WcCommandPalette extends LitElement {
     if (this.open) {
       this.input?.focus();
     } else if (changed.get('open') === true) {
-      const opener = this.opener;
-      this.opener = null;
-      if (opener?.isConnected) opener.focus();
+      const target = this.returnTo;
+      this.returnTo = null;
+      if (target?.isConnected) target.focus();
     }
   }
 
@@ -372,6 +382,8 @@ export class WcCommandPalette extends LitElement {
   }
 
   private handleKeydown = (event: KeyboardEvent): void => {
+    // Mid-composition, Enter and the arrows belong to the IME.
+    if (event.isComposing || event.keyCode === 229) return;
     const { books, screens } = this.rows;
     const flat = [...books, ...screens];
     switch (event.key) {
@@ -404,6 +416,11 @@ export class WcCommandPalette extends LitElement {
     }
   };
 
+  /** A press on a heading, a row or the footer would otherwise take focus to the body. */
+  private keepFocus = (event: MouseEvent): void => {
+    if (event.target !== this.input) event.preventDefault();
+  };
+
   private handleInput = (event: Event): void => {
     this.query = (event.target as HTMLInputElement).value;
   };
@@ -419,7 +436,14 @@ export class WcCommandPalette extends LitElement {
 
     return html`
       <div class="backdrop" @click=${() => this.close()}></div>
-      <div class="panel" role="dialog" aria-modal="true" aria-label=${label}>
+      <div
+        class="panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label=${label}
+        @mousedown=${this.keepFocus}
+        @keydown=${this.handleKeydown}
+      >
         <div class="search">
           <wc-icon-search></wc-icon-search>
           <input
@@ -435,7 +459,6 @@ export class WcCommandPalette extends LitElement {
             spellcheck="false"
             .value=${this.query}
             @input=${this.handleInput}
-            @keydown=${this.handleKeydown}
           />
           <kbd aria-hidden="true">esc</kbd>
         </div>

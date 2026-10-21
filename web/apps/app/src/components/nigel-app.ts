@@ -23,6 +23,7 @@ import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/r
 import { trailFor, windowTitle } from '../screens/trail.js';
 import {
   isHostedShell,
+  isApplePlatform,
   paletteShortcut,
   readSidebarCollapsed,
   writeSidebarCollapsed,
@@ -31,6 +32,7 @@ import type { ScreenContext } from '../screens/context.js';
 import { isPaletteShortcut, paletteBooks, paletteScreens } from '../palette.js';
 import {
   deepActiveElement,
+  hasOpenModal,
   isSnakeTrigger,
   snakeAllowedOnBoot,
 } from '../snake-trigger.js';
@@ -107,6 +109,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
   @state()
   private paletteScope: PaletteScope = 'all';
 
+  /** The control that opened the palette; focus goes back to it on close. */
+  private paletteOpener: HTMLElement | null = null;
+
+  /**
+   * A screen was picked from the palette. The opener may be in the screen
+   * that pick replaces, so focus is checked again once the route has swapped.
+   */
+  private refocusAfterRoute = false;
+
   /** Bumped by the top bar's refresh, which remounts the screen so it loads afresh. */
   @state()
   private refreshes = 0;
@@ -119,6 +130,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private readonly hosted = isHostedShell();
 
   private readonly shortcut = paletteShortcut();
+  private readonly apple = isApplePlatform();
   private wasReady = false;
 
   private store: AppStore | null = null;
@@ -149,6 +161,10 @@ export class NigelApp extends SignalWatcher(LitElement) {
     this.closeSnake();
     this.paletteOpen = false;
     this.syncRouteFromHash();
+    if (this.refocusAfterRoute) {
+      this.refocusAfterRoute = false;
+      this.settlePaletteFocus();
+    }
     void this.loadReviewCount();
   };
 
@@ -266,37 +282,82 @@ export class NigelApp extends SignalWatcher(LitElement) {
         restore.focus();
         return;
       }
-      const shell = this.shadowRoot?.querySelector('wc-app-shell');
-      if (!shell) return;
-      if (!shell.hasAttribute('tabindex')) shell.setAttribute('tabindex', '-1');
-      shell.focus();
+      this.focusShell();
     });
   };
 
-  /** ⌘K or Ctrl+K toggles the palette from anywhere, a field included. */
+  /** Where focus lands when what had it is gone: a `focus()` on a detached element lands on the body. */
+  private focusShell(): void {
+    const shell = this.shadowRoot?.querySelector('wc-app-shell');
+    if (!shell) return;
+    if (!shell.hasAttribute('tabindex')) shell.setAttribute('tabindex', '-1');
+    shell.focus();
+  }
+
+  /**
+   * The platform's chord toggles the palette from anywhere, a field included
+   * — but not over another dialog, which holds the top layer and would leave
+   * the palette drawn underneath it.
+   */
   private handlePaletteKeydown = (event: KeyboardEvent): void => {
-    if (!isPaletteShortcut(event) || this.snakeOpen) return;
+    if (!isPaletteShortcut(event, this.apple) || this.snakeOpen) return;
     if ((this.store ?? getAppStore()).boot.get() !== 'ready') return;
+    if (this.paletteOpen) {
+      event.preventDefault();
+      this.closePalette();
+      return;
+    }
+    if (hasOpenModal()) return;
     event.preventDefault();
-    this.paletteScope = 'all';
-    this.paletteOpen = !this.paletteOpen;
+    const active = deepActiveElement();
+    this.openPalette('all', active instanceof HTMLElement ? active : null);
   };
 
   private handlePaletteOpen = (event: CustomEvent<NcPaletteOpenDetail>): void => {
     if (this.hosted) return;
-    this.paletteScope = event.detail.scope;
-    this.paletteOpen = true;
+    // The request comes from a control's host; the opener is the focusable
+    // control inside it, which a WebKit click leaves unfocused.
+    const origin = event
+      .composedPath()
+      .find((node): node is HTMLElement => node instanceof HTMLElement && node.tabIndex >= 0);
+    this.openPalette(event.detail.scope, origin ?? null);
   };
+
+  private openPalette(scope: PaletteScope, opener: HTMLElement | null): void {
+    this.paletteScope = scope;
+    this.paletteOpener = opener;
+    this.refocusAfterRoute = false;
+    this.paletteOpen = true;
+  }
 
   private closePalette = (): void => {
     this.paletteOpen = false;
+    this.settlePaletteFocus();
   };
 
   /** A screen navigates; the open book is where the reader already is. */
   private handlePaletteSelect = (event: CustomEvent<NcPaletteSelectDetail>): void => {
-    this.paletteOpen = false;
-    if (event.detail.kind === 'screen') this.navigate(event.detail.id as ScreenId);
+    if (event.detail.kind === 'screen') {
+      this.refocusAfterRoute = true;
+      this.navigate(event.detail.id as ScreenId);
+    }
+    this.closePalette();
   };
+
+  /**
+   * The palette hands focus back to its opener; when the opener is gone —
+   * the screen it sat in was swapped out — the shell takes it instead.
+   */
+  private settlePaletteFocus(): void {
+    const palette = this.shadowRoot?.querySelector('wc-command-palette');
+    void this.updateComplete
+      .then(() => palette?.updateComplete)
+      .then(() => {
+        if (this.paletteOpen || this.paletteOpener?.isConnected) return;
+        this.paletteOpener = null;
+        this.focusShell();
+      });
+  }
 
   private handleRetry = (): void => {
     this.reportedError = null;
@@ -383,6 +444,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
         : html`<wc-command-palette
             ?open=${this.paletteOpen}
             scope=${this.paletteScope}
+            .opener=${this.paletteOpener}
             .books=${paletteBooks(store.status.get(), book)}
             .screens=${paletteScreens()}
             @nc-palette-close=${this.closePalette}

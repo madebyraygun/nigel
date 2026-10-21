@@ -110,15 +110,22 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   status and the Review count.
 - **Palette.** `wc-command-palette` (section 2 of the handoff) searches the
   open book and every sidebar screen in one list. ⌘K or Ctrl+K toggles it
-  unscoped from anywhere, a field included; the search pill opens it
-  unscoped and the breadcrumb book opens it scoped to Books. Esc and the
-  backdrop close it. Matching is a case-insensitive substring over a book's
+  unscoped from anywhere, a field included — ⌘K on Apple platforms and
+  Ctrl+K elsewhere, the one chord the keycap advertises, so Ctrl+K in a Mac
+  text field keeps its system meaning. A held key and an IME composition do
+  not count, and the chord does nothing while another dialog is open. The
+  search pill opens it unscoped and the breadcrumb book opens it scoped to
+  Books. Esc and the backdrop close it. Matching is a case-insensitive substring over a book's
   name, kind and path and a screen's title; ↑/↓ move through books then
   screens as one list, wrapping at the ends, and ↵ opens the row — a screen
   navigates, the open book just closes the palette. It is a modal dialog
-  around a combobox and its listbox: focus stays in the input and the rows
-  are reached through `aria-activedescendant`, so Tab is held there, and the
-  element that had focus gets it back on close. `nigel-app` makes the shell
+  around a combobox and its listbox: focus stays in the input — the rows are
+  reached through `aria-activedescendant`, and a press elsewhere in the panel
+  does not take focus — so Tab is held there. On close focus goes back to
+  the control that opened it, taken from the `nc-palette-open` event's
+  origin rather than from what had focus, since a click in WebKit does not
+  focus a button; when that control has gone with the screen it sat in, the
+  shell takes focus instead, as it does after Snake. `nigel-app` makes the shell
   `inert` while it is up, feeds it the book from `/api/status` and the
   screens from the registry (`apps/app/src/palette.ts`), and closes it on a
   route change or when the books lock. The Books section lists only the open

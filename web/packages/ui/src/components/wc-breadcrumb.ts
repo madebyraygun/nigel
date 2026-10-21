@@ -1,8 +1,8 @@
-import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import { controlsCss } from '@nigel/theme';
-import './wc-monogram.js';
-import '../icons/icons.js';
+import { LitElement, html, css, nothing } from "lit";
+import { customElement, property } from "lit/decorators.js";
+import { controlsCss } from "@nigel/theme";
+import "./wc-monogram.js";
+import "../icons/icons.js";
 
 /** One level of the trail after the book. */
 export interface BreadcrumbItem {
@@ -15,16 +15,23 @@ export interface BreadcrumbItem {
 }
 
 /** Which part of the palette a control asks for. */
-export type PaletteScope = 'books' | 'all';
+export type PaletteScope = "books" | "all";
 
 export interface NcPaletteOpenDetail {
   scope: PaletteScope;
 }
 
-/** Ask for the palette. Bubbles and composes, so it reaches the document. */
-export function dispatchPaletteOpen(from: EventTarget, scope: PaletteScope): void {
+/**
+ * Ask for the palette. Bubbles and composes, so it reaches the document.
+ * `from` is the control that was pressed, not its host: the palette hands
+ * focus back to the event's origin on close.
+ */
+export function dispatchPaletteOpen(
+  from: EventTarget,
+  scope: PaletteScope,
+): void {
   from.dispatchEvent(
-    new CustomEvent<NcPaletteOpenDetail>('nc-palette-open', {
+    new CustomEvent<NcPaletteOpenDetail>("nc-palette-open", {
       detail: { scope },
       bubbles: true,
       composed: true,
@@ -40,7 +47,7 @@ export function dispatchPaletteOpen(from: EventTarget, scope: PaletteScope): voi
  * (`nc-palette-open`); an earlier level is a button that navigates back to
  * its screen (`nc-navigate`), the same event the sidebar sends.
  */
-@customElement('wc-breadcrumb')
+@customElement("wc-breadcrumb")
 export class WcBreadcrumb extends LitElement {
   static styles = [
     controlsCss,
@@ -137,12 +144,12 @@ export class WcBreadcrumb extends LitElement {
   ];
 
   /** The open book's name. */
-  @property({ type: String, attribute: 'book-name' })
-  bookName = '';
+  @property({ type: String, attribute: "book-name" })
+  bookName = "";
 
   /** What picks the monogram's colour: something that names the book for good. */
-  @property({ type: String, attribute: 'book-key' })
-  bookKey = '';
+  @property({ type: String, attribute: "book-key" })
+  bookKey = "";
 
   /** The levels after the book, outermost first. */
   @property({ attribute: false })
@@ -150,7 +157,7 @@ export class WcBreadcrumb extends LitElement {
 
   private navigate(id: string): void {
     this.dispatchEvent(
-      new CustomEvent<{ id: string }>('nc-navigate', {
+      new CustomEvent<{ id: string }>("nc-navigate", {
         detail: { id },
         bubbles: true,
         composed: true,
@@ -170,33 +177,38 @@ export class WcBreadcrumb extends LitElement {
               class="book"
               aria-haspopup="dialog"
               title="Switch books"
-              @click=${() => dispatchPaletteOpen(this, 'books')}
+              @click=${(event: Event) => dispatchPaletteOpen(event.currentTarget as HTMLElement, "books")}
             >
-              <wc-monogram name=${this.bookName} seed=${this.bookKey}></wc-monogram>
+              <wc-monogram
+                name=${this.bookName}
+                seed=${this.bookKey}
+              ></wc-monogram>
               <span class="book-name">${this.bookName}</span>
               <wc-icon-chevron-down></wc-icon-chevron-down>
             </button>
           </li>
           ${this.trail.map((item, index) => {
             const current = index === last;
-            const classes = `level${current ? ' current' : ''}${deep ? ' deep' : ''}`;
+            const classes = `level${current ? " current" : ""}${deep ? " deep" : ""}`;
             return html`
               <li>
                 <span class="sep" aria-hidden="true">/</span>
-                ${!current && item.id
-                  ? html`<button
-                      type="button"
-                      class=${classes}
-                      data-level=${item.id}
-                      @click=${() => this.navigate(item.id!)}
-                    >
-                      ${item.label}
-                    </button>`
-                  : html`<span
-                      class=${classes}
-                      aria-current=${current ? 'page' : nothing}
-                      >${item.label}</span
-                    >`}
+                ${
+                  !current && item.id
+                    ? html`<button
+                        type="button"
+                        class=${classes}
+                        data-level=${item.id}
+                        @click=${() => this.navigate(item.id!)}
+                      >
+                        ${item.label}
+                      </button>`
+                    : html`<span
+                        class=${classes}
+                        aria-current=${current ? "page" : nothing}
+                        >${item.label}</span
+                      >`
+                }
               </li>
             `;
           })}
@@ -208,9 +220,9 @@ export class WcBreadcrumb extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'wc-breadcrumb': WcBreadcrumb;
+    "wc-breadcrumb": WcBreadcrumb;
   }
   interface HTMLElementEventMap {
-    'nc-palette-open': CustomEvent<NcPaletteOpenDetail>;
+    "nc-palette-open": CustomEvent<NcPaletteOpenDetail>;
   }
 }

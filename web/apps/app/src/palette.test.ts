@@ -7,20 +7,26 @@ const key = (init: KeyboardEventInit) => new KeyboardEvent('keydown', init);
 
 describe('the palette chord', () => {
   it.each([
-    [{ key: 'k', metaKey: true }],
-    [{ key: 'k', ctrlKey: true }],
-    [{ key: 'K', metaKey: true }],
-  ])('is %o', (init) => {
-    expect(isPaletteShortcut(key(init))).toBe(true);
+    [false, { key: 'k', ctrlKey: true }],
+    [false, { key: 'K', ctrlKey: true }],
+    [true, { key: 'k', metaKey: true }],
+  ])('is, with apple %s, %o', (apple, init) => {
+    expect(isPaletteShortcut(key(init), apple)).toBe(true);
   });
 
   it.each([
-    [{ key: 'k' }],
-    [{ key: 'k', metaKey: true, shiftKey: true }],
-    [{ key: 'k', ctrlKey: true, altKey: true }],
-    [{ key: 'j', metaKey: true }],
-  ])('is not %o', (init) => {
-    expect(isPaletteShortcut(key(init))).toBe(false);
+    [false, { key: 'k' }],
+    [false, { key: 'k', metaKey: true }],
+    [true, { key: 'k', ctrlKey: true }],
+    [false, { key: 'k', ctrlKey: true, shiftKey: true }],
+    [false, { key: 'k', ctrlKey: true, altKey: true }],
+    [false, { key: 'k', ctrlKey: true, metaKey: true }],
+    [false, { key: 'j', ctrlKey: true }],
+    [false, { key: 'k', ctrlKey: true, repeat: true }],
+    [false, { key: 'k', ctrlKey: true, isComposing: true }],
+    [false, { key: 'k', ctrlKey: true, keyCode: 229 }],
+  ])('is not, with apple %s, %o', (apple, init) => {
+    expect(isPaletteShortcut(key(init), apple)).toBe(false);
   });
 });
 

@@ -35,12 +35,14 @@ export function paletteBooks(status: StatusResponse | null, name: string): Palet
   ];
 }
 
-/** ⌘K or Ctrl+K, on any platform, with no other modifier. */
-export function isPaletteShortcut(event: KeyboardEvent): boolean {
-  return (
-    (event.metaKey || event.ctrlKey) &&
-    !event.altKey &&
-    !event.shiftKey &&
-    event.key.toLowerCase() === 'k'
-  );
+/**
+ * The chord the keycap advertises: ⌘K on Apple platforms, Ctrl+K elsewhere,
+ * with no other modifier. Only one per platform, so Ctrl+K in a Mac text
+ * field keeps its system meaning. A held key and a keystroke inside an IME
+ * composition are not the chord.
+ */
+export function isPaletteShortcut(event: KeyboardEvent, apple: boolean): boolean {
+  if (event.repeat || event.isComposing || event.keyCode === 229) return false;
+  const primary = apple ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return primary && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
 }

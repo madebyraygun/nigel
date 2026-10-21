@@ -223,7 +223,7 @@ describe('nigel-app', () => {
       const el = await mount();
       const chord = new KeyboardEvent('keydown', {
         key: 'k',
-        metaKey: true,
+        ctrlKey: true,
         bubbles: true,
         cancelable: true,
       });
@@ -237,7 +237,8 @@ describe('nigel-app', () => {
   describe('the palette', () => {
     const palette = (el: NigelApp) => el.shadowRoot!.querySelector('wc-command-palette')!;
 
-    const chord = (init: KeyboardEventInit = { metaKey: true }) => {
+    // jsdom reports no platform, which is not an Apple one: the chord is Ctrl+K.
+    const chord = (init: KeyboardEventInit = { ctrlKey: true }) => {
       const event = new KeyboardEvent('keydown', {
         key: 'k',
         bubbles: true,
@@ -254,11 +255,24 @@ describe('nigel-app', () => {
       expect(palette(el).open).toBe(false);
     });
 
+    const onPlatform = (platform: string) =>
+      Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+
+    afterEach(() => {
+      onPlatform('');
+    });
+
     it.each([
-      ['Cmd+K', { metaKey: true }],
-      ['Ctrl+K', { ctrlKey: true }],
-    ])('toggles on %s', async (_name, init) => {
+      ['Ctrl+K off Apple platforms', 'Linux x86_64', { ctrlKey: true }, { metaKey: true }],
+      ['Cmd+K on Apple platforms', 'MacIntel', { metaKey: true }, { ctrlKey: true }],
+    ])('toggles on %s, and only that chord', async (_name, platform, init, other) => {
+      onPlatform(platform);
       const el = await mount();
+      const wrong = chord(other);
+      await el.updateComplete;
+      expect(wrong.defaultPrevented).toBe(false);
+      expect(palette(el).open).toBe(false);
+
       const event = chord(init);
       await el.updateComplete;
       expect(event.defaultPrevented).toBe(true);
@@ -272,12 +286,69 @@ describe('nigel-app', () => {
       expect(shell(el)?.hasAttribute('inert')).toBe(false);
     });
 
-    it('ignores a K with another modifier, or none', async () => {
+    it('ignores a K with another modifier, or none, a held key and an IME composition', async () => {
       const el = await mount();
       chord({});
-      chord({ metaKey: true, shiftKey: true });
+      chord({ ctrlKey: true, shiftKey: true });
+      chord({ ctrlKey: true, repeat: true });
+      chord({ ctrlKey: true, isComposing: true });
       await el.updateComplete;
       expect(palette(el).open).toBe(false);
+    });
+
+    it('stays shut over another dialog, but still closes itself', async () => {
+      const el = await mount();
+      const dialog = document.createElement('dialog');
+      dialog.setAttribute('open', '');
+      document.body.appendChild(dialog);
+      const blocked = chord();
+      await el.updateComplete;
+      expect(blocked.defaultPrevented).toBe(false);
+      expect(palette(el).open).toBe(false);
+      dialog.remove();
+
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+      // Its own panel is a modal too; the chord still toggles it shut.
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('hands focus back to the control that asked, even one a click did not focus', async () => {
+      const el = await mount();
+      const pill = shell(el)?.shadowRoot?.querySelector('wc-search-pill');
+      const button = pill?.shadowRoot?.querySelector<HTMLButtonElement>('button');
+      // As WebKit does: the click opens the palette without focusing the button.
+      button?.click();
+      await el.updateComplete;
+      expect(palette(el).opener).toBe(button);
+
+      palette(el).dispatchEvent(new CustomEvent('nc-palette-close', { bubbles: true }));
+      await el.updateComplete;
+      await palette(el).updateComplete;
+      expect(pill?.shadowRoot?.activeElement).toBe(button);
+    });
+
+    it('gives focus to the shell when the screen holding the opener is swapped out', async () => {
+      const el = await mount();
+      const field = document.createElement('input');
+      shell(el)?.appendChild(field);
+      field.focus();
+      chord();
+      await el.updateComplete;
+      expect(palette(el).opener).toBe(field);
+
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'screen', id: 'reports' } }),
+      );
+      await el.updateComplete;
+      field.remove();
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await el.updateComplete;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(el.shadowRoot?.activeElement).toBe(shell(el));
     });
 
     it('opens from every screen', async () => {
