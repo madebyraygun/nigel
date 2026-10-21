@@ -8,6 +8,12 @@ export {
   type PaletteScope,
 } from './wc-breadcrumb.js';
 export { WcSearchPill } from './wc-search-pill.js';
+export {
+  WcCommandPalette,
+  type NcPaletteSelectDetail,
+  type PaletteBook,
+  type PaletteScreen,
+} from './wc-command-palette.js';
 export { WcMonogram, monogramInitials, monogramTone } from './wc-monogram.js';
 export {
   WcToast,

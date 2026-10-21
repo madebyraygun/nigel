@@ -106,8 +106,24 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   screen, and `Invoices / #n` on an open invoice with Invoices a way back to
   the list — then the search pill and refresh. The book and the pill dispatch
   `nc-palette-open` (`{ scope: 'books' | 'all' }`), which bubbles out of
-  `nigel-app` to the document for the palette to answer; refresh remounts the
-  screen and reloads the status and the Review count.
+  the shell to the document; refresh remounts the screen and reloads the
+  status and the Review count.
+- **Palette.** `wc-command-palette` (section 2 of the handoff) searches the
+  open book and every sidebar screen in one list. ⌘K or Ctrl+K toggles it
+  unscoped from anywhere, a field included; the search pill opens it
+  unscoped and the breadcrumb book opens it scoped to Books. Esc and the
+  backdrop close it. Matching is a case-insensitive substring over a book's
+  name, kind and path and a screen's title; ↑/↓ move through books then
+  screens as one list, wrapping at the ends, and ↵ opens the row — a screen
+  navigates, the open book just closes the palette. It is a modal dialog
+  around a combobox and its listbox: focus stays in the input and the rows
+  are reached through `aria-activedescendant`, so Tab is held there, and the
+  element that had focus gets it back on close. `nigel-app` makes the shell
+  `inert` while it is up, feeds it the book from `/api/status` and the
+  screens from the registry (`apps/app/src/palette.ts`), and closes it on a
+  route change or when the books lock. The Books section lists only the open
+  book, marked OPEN with its kind, folder and lock, until books can be
+  switched.
 - **Window title.** `{Screen} · {Book}`, innermost level first on an open
   invoice (`#1254 · Invoices · Acme Consulting LLC`). `nigel-app` sets
   `document.title`; the Tauri window follows it (`docs/desktop.md`).
@@ -124,6 +140,9 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   `parseHash` strips the parameter so no screen sees it. `nigel-app` then
   renders no `wc-nav-sidebar` and sets `hide-sidebar` on the shell, which
   drops the sidebar slot and its toggle and keeps the breadcrumb top bar. The
+  native shell draws its own palette, so a hosted page renders no
+  `wc-command-palette` and binds no ⌘K; `nc-palette-open` from the
+  breadcrumb and the pill still reaches the document for the host. The
   flag is read in the app; no `wc-*` component knows which host it is in.
 
 ## Focus

@@ -265,7 +265,7 @@ web/                    # npm workspace for the SPA (see web/README.md)
       scripts/build-css.js
     ui/                 # @nigel/ui — wc-* components + preview harness
       src/components/   # wc-app-shell, wc-nav-sidebar, wc-breadcrumb, wc-search-pill,
-                        #   wc-monogram, wc-toast, wc-confirm, wc-money,
+                        #   wc-command-palette, wc-monogram, wc-toast, wc-confirm, wc-money,
                         #   wc-empty-state, wc-spinner, wc-panel, the register, review,
                         #   import, report and manager families (wc-report-table,
                         #   wc-export-links, wc-link-grid, wc-manager-*), the reconcile

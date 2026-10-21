@@ -218,6 +218,141 @@ describe('nigel-app', () => {
       expect(shell(el)?.bookName).toBe('Test Consultancy');
       expect(shell(el)?.shadowRoot?.querySelector('header wc-breadcrumb')).toBeTruthy();
     });
+
+    it('leaves the palette and its chord to the native shell', async () => {
+      const el = await mount();
+      const chord = new KeyboardEvent('keydown', {
+        key: 'k',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(chord);
+      await el.updateComplete;
+      expect(chord.defaultPrevented).toBe(false);
+      expect(el.shadowRoot?.querySelector('wc-command-palette')).toBeNull();
+    });
+  });
+
+  describe('the palette', () => {
+    const palette = (el: NigelApp) => el.shadowRoot!.querySelector('wc-command-palette')!;
+
+    const chord = (init: KeyboardEventInit = { metaKey: true }) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'k',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        ...init,
+      });
+      window.dispatchEvent(event);
+      return event;
+    };
+
+    it('is shut until it is asked for', async () => {
+      const el = await mount();
+      expect(palette(el).open).toBe(false);
+    });
+
+    it.each([
+      ['Cmd+K', { metaKey: true }],
+      ['Ctrl+K', { ctrlKey: true }],
+    ])('toggles on %s', async (_name, init) => {
+      const el = await mount();
+      const event = chord(init);
+      await el.updateComplete;
+      expect(event.defaultPrevented).toBe(true);
+      expect(palette(el).open).toBe(true);
+      expect(palette(el).scope).toBe('all');
+      expect(shell(el)?.hasAttribute('inert')).toBe(true);
+
+      chord(init);
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+      expect(shell(el)?.hasAttribute('inert')).toBe(false);
+    });
+
+    it('ignores a K with another modifier, or none', async () => {
+      const el = await mount();
+      chord({});
+      chord({ metaKey: true, shiftKey: true });
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('opens from every screen', async () => {
+      window.location.hash = '#/undo';
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+    });
+
+    it('opens scoped to books from the breadcrumb and unscoped from the pill', async () => {
+      const el = await mount();
+      const crumb = shell(el)?.shadowRoot?.querySelector('wc-breadcrumb');
+      crumb?.shadowRoot?.querySelector<HTMLButtonElement>('.book')?.click();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+      expect(palette(el).scope).toBe('books');
+
+      palette(el).dispatchEvent(new CustomEvent('nc-palette-close', { bubbles: true }));
+      await el.updateComplete;
+      const pill = shell(el)?.shadowRoot?.querySelector('wc-search-pill');
+      pill?.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+      await el.updateComplete;
+      expect(palette(el).scope).toBe('all');
+    });
+
+    it('lists the open book from status and every screen in the sidebar', async () => {
+      const el = await mount();
+      expect(palette(el).books).toEqual([
+        {
+          id: '/tmp/nigel',
+          name: 'Test Consultancy',
+          kind: 'Business',
+          path: '/tmp/nigel',
+          encrypted: false,
+          open: true,
+        },
+      ]);
+      const labels = palette(el).screens.map((s) => s.label);
+      expect(labels).toHaveLength(14);
+      expect(labels).toContain('Undo last import');
+    });
+
+    it('navigates to a chosen screen and closes', async () => {
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'screen', id: 'reports' } }),
+      );
+      await el.updateComplete;
+      expect(window.location.hash).toBe('#/reports');
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('just closes when the open book is chosen', async () => {
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'book', id: '/tmp/nigel' } }),
+      );
+      await el.updateComplete;
+      expect(window.location.hash).toBe('#/dashboard');
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('stays shut while the database is locked', async () => {
+      const client = new FakeApiClient();
+      client.status = LOCKED_STATUS;
+      const el = await mount(client);
+      chord();
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('wc-command-palette')).toBeNull();
+    });
   });
 
   describe('needs setup', () => {

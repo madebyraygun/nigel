@@ -2,7 +2,13 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import '@nigel/ui';
-import { dispatchNcToast, narrowViewport } from '@nigel/ui';
+import {
+  dispatchNcToast,
+  narrowViewport,
+  type NcPaletteOpenDetail,
+  type NcPaletteSelectDetail,
+  type PaletteScope,
+} from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { appUnauthorized, type ApiClient } from '../api/index.js';
@@ -22,6 +28,7 @@ import {
   writeSidebarCollapsed,
 } from '../shell-preferences.js';
 import type { ScreenContext } from '../screens/context.js';
+import { isPaletteShortcut, paletteBooks, paletteScreens } from '../palette.js';
 import {
   deepActiveElement,
   isSnakeTrigger,
@@ -93,6 +100,13 @@ export class NigelApp extends SignalWatcher(LitElement) {
   @state()
   private reviewCount: number | undefined = undefined;
 
+  /** The ⌘K palette, and which part of it was asked for. */
+  @state()
+  private paletteOpen = false;
+
+  @state()
+  private paletteScope: PaletteScope = 'all';
+
   /** Bumped by the top bar's refresh, which remounts the screen so it loads afresh. */
   @state()
   private refreshes = 0;
@@ -116,6 +130,8 @@ export class NigelApp extends SignalWatcher(LitElement) {
     this.store = initializeAppStore(this.client);
     window.addEventListener('hashchange', this.handleHashChange);
     window.addEventListener('keydown', this.handleGlobalKeydown);
+    // On the Mac the native shell draws the palette and owns the chord.
+    if (!this.hosted) window.addEventListener('keydown', this.handlePaletteKeydown);
     this.syncRouteFromHash();
     void this.store.refreshStatus();
   }
@@ -123,6 +139,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
   disconnectedCallback(): void {
     window.removeEventListener('hashchange', this.handleHashChange);
     window.removeEventListener('keydown', this.handleGlobalKeydown);
+    window.removeEventListener('keydown', this.handlePaletteKeydown);
     super.disconnectedCallback();
   }
 
@@ -130,6 +147,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
     // A route change takes the screen out from under the game, so the game
     // goes with it rather than staying up over a screen nobody navigated to.
     this.closeSnake();
+    this.paletteOpen = false;
     this.syncRouteFromHash();
     void this.loadReviewCount();
   };
@@ -160,6 +178,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
     // capture would survive to strand the next one.
     const boot = (this.store ?? getAppStore()).boot.get();
     if (this.snakeOpen && !snakeAllowedOnBoot(boot)) this.closeSnake();
+    if (boot !== 'ready') this.paletteOpen = false;
   }
 
   private syncRouteFromHash(): void {
@@ -254,6 +273,31 @@ export class NigelApp extends SignalWatcher(LitElement) {
     });
   };
 
+  /** ⌘K or Ctrl+K toggles the palette from anywhere, a field included. */
+  private handlePaletteKeydown = (event: KeyboardEvent): void => {
+    if (!isPaletteShortcut(event) || this.snakeOpen) return;
+    if ((this.store ?? getAppStore()).boot.get() !== 'ready') return;
+    event.preventDefault();
+    this.paletteScope = 'all';
+    this.paletteOpen = !this.paletteOpen;
+  };
+
+  private handlePaletteOpen = (event: CustomEvent<NcPaletteOpenDetail>): void => {
+    if (this.hosted) return;
+    this.paletteScope = event.detail.scope;
+    this.paletteOpen = true;
+  };
+
+  private closePalette = (): void => {
+    this.paletteOpen = false;
+  };
+
+  /** A screen navigates; the open book is where the reader already is. */
+  private handlePaletteSelect = (event: CustomEvent<NcPaletteSelectDetail>): void => {
+    this.paletteOpen = false;
+    if (event.detail.kind === 'screen') this.navigate(event.detail.id as ScreenId);
+  };
+
   private handleRetry = (): void => {
     this.reportedError = null;
     void this.store?.refreshStatus();
@@ -316,11 +360,12 @@ export class NigelApp extends SignalWatcher(LitElement) {
         search-shortcut=${this.shortcut.keycap}
         search-key-shortcuts=${this.shortcut.aria}
         ?hide-sidebar=${this.hosted}
-        ?inert=${this.snakeOpen}
+        ?inert=${this.snakeOpen || this.paletteOpen}
         ?sidebar-collapsed=${this.sidebarCollapsed}
         @nc-sidebar-toggle=${this.handleSidebarToggle}
         @nc-navigate=${this.handleNavigate}
         @nc-refresh=${this.handleRefresh}
+        @nc-palette-open=${this.handlePaletteOpen}
       >
         ${this.hosted
           ? nothing
@@ -333,6 +378,16 @@ export class NigelApp extends SignalWatcher(LitElement) {
         ${this.renderBanner(error?.message ?? null)}
         ${keyed(this.refreshes, screen.render(ctx))}
       </wc-app-shell>
+      ${this.hosted
+        ? nothing
+        : html`<wc-command-palette
+            ?open=${this.paletteOpen}
+            scope=${this.paletteScope}
+            .books=${paletteBooks(store.status.get(), book)}
+            .screens=${paletteScreens()}
+            @nc-palette-close=${this.closePalette}
+            @nc-palette-select=${this.handlePaletteSelect}
+          ></wc-command-palette>`}
       ${this.snakeOpen
         ? html`<wc-snake fullscreen @nc-snake-exit=${this.closeSnake}></wc-snake>`
         : nothing}

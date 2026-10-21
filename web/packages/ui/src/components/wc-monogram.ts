@@ -75,6 +75,7 @@ export class WcMonogram extends LitElement {
 
     :host([size='l']) .tile {
       border-radius: var(--wa-radius-md);
+      font-size: var(--nc-font-size-caption);
     }
 
     .tone-2 {
