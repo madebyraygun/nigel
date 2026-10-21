@@ -492,16 +492,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 16,
         description: "documents: one signer per version",
         up: |conn| {
-            // A version holding more than one signer keeps the first in the frozen
-            // order and reads the rest as collaborators, so the index can be built.
+            if let Some(notice) = demote_extra_signers(conn)? {
+                eprintln!("{notice}");
+            }
             conn.execute_batch(
-                "UPDATE document_recipients SET role = 'collaborator'
-                  WHERE role = 'signer'
-                    AND id <> (SELECT s.id FROM document_recipients s
-                                WHERE s.version_id = document_recipients.version_id
-                                  AND s.role = 'signer'
-                                ORDER BY s.position, s.id LIMIT 1);
-                 CREATE UNIQUE INDEX IF NOT EXISTS idx_document_recipients_one_signer
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_document_recipients_one_signer
                      ON document_recipients(version_id) WHERE role = 'signer';",
             )?;
             Ok(())
@@ -510,6 +505,22 @@ const MIGRATIONS: &[Migration] = &[
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// A version holding more than one signer keeps the first in the frozen order
+/// and records the rest as collaborators, so v16's index can be built. The
+/// sentence saying how many changed, for the operator, or `None` when none did.
+fn demote_extra_signers(conn: &Connection) -> Result<Option<String>> {
+    let demoted = conn.execute(
+        "UPDATE document_recipients SET role = 'collaborator'
+          WHERE role = 'signer'
+            AND id <> (SELECT s.id FROM document_recipients s
+                        WHERE s.version_id = document_recipients.version_id
+                          AND s.role = 'signer'
+                        ORDER BY s.position, s.id LIMIT 1)",
+        [],
+    )?;
+    Ok((demoted > 0).then(|| format!("v16: {demoted} extra signer(s) recorded as collaborators")))
+}
 
 /// The sentence the stock invoice page hardcoded before payment instructions
 /// became the operator's own text, with the address `{{CONTACT}}` used to
@@ -1696,6 +1707,11 @@ mod tests {
                  VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r1', 0);",
         )
         .unwrap();
+        assert_eq!(
+            demote_extra_signers(&conn).unwrap().as_deref(),
+            Some("v16: 1 extra signer(s) recorded as collaborators")
+        );
+        assert_eq!(demote_extra_signers(&conn).unwrap(), None);
         set_metadata(&conn, "schema_version", "15").unwrap();
         run_migrations(&conn).unwrap();
         let roles: Vec<(String, String)> = conn
@@ -1712,6 +1728,20 @@ mod tests {
                 ("Lee Example".to_string(), "collaborator".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn v16_says_nothing_about_a_database_with_one_signer_per_version() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(ONE_SENT_VERSION).unwrap();
+        conn.execute_batch(
+            "INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r1', 0);
+             INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'collaborator', 'Sam Example', 'sam@juniper.test', 'r2', 1);",
+        )
+        .unwrap();
+        assert_eq!(demote_extra_signers(&conn).unwrap(), None);
     }
 
     #[test]
