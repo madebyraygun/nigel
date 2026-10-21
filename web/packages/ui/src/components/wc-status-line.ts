@@ -40,7 +40,7 @@ export class WcStatusLine extends LitElement {
         box-sizing: border-box;
         background: var(--nc-color-sidebar-bg);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-xl);
+        border-radius: var(--wa-radius-lg);
         box-shadow: var(--nc-shadow-floating);
         overflow: hidden;
         color: var(--wa-color-muted);

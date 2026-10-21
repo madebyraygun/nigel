@@ -109,7 +109,7 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   `nigel-app` to the document for the palette to answer; refresh remounts the
   screen and reloads the status and the Review count.
 - **Status line.** A second inset panel under the content (`wc-status-line`,
-  34px, the sidebar's material and radius, its bottom edge level with the
+  34px, the sidebar's material, 12px radius, its bottom edge level with the
   sidebar's): a pastel `nigel` block, the open book (monogram and name;
   `nc-palette-open` scoped to books), the data directory as selectable text,
   `encrypted` / `not encrypted`, then `▲ n to review` (`nc-navigate` to Review;
