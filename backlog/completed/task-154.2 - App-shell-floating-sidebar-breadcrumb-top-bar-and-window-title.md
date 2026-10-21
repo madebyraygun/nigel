@@ -1,10 +1,10 @@
 ---
 id: TASK-154.2
 title: 'App shell: floating sidebar, breadcrumb top bar and window title'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
-updated_date: '2026-10-21 00:02'
+updated_date: '2026-10-21 14:29'
 labels:
   - web
   - design
@@ -25,10 +25,16 @@ Spec sections 1 (App shell) and the interactions summary. The sidebar becomes an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The shell matches the spec's layout, sizes and states in light and dark, expanded and collapsed, and the collapsed state survives a reload
-- [ ] #2 The breadcrumb shows the open book's monogram and name and the current screen, with the invoice-detail level; until book switching lands, clicking the book opens the palette
-- [ ] #3 The window title follows '{Screen} · {Book name}' in the browser and in Tauri
-- [ ] #4 Hosted mode hides the sidebar and keeps the breadcrumb and top bar
-- [ ] #5 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
-- [ ] #6 Inputs, selects and textareas draw the spec's focus ring (border --br plus a 3px --nc-color-ring halo) through controlsCss, and buttons use :focus-visible with a 2px brand outline
+- [x] #1 The shell matches the spec's layout, sizes and states in light and dark, expanded and collapsed, and the collapsed state survives a reload
+- [x] #2 The breadcrumb shows the open book's monogram and name and the current screen, with the invoice-detail level; until book switching lands, clicking the book opens the palette
+- [x] #3 The window title follows '{Screen} · {Book name}' in the browser and in Tauri
+- [x] #4 Hosted mode hides the sidebar and keeps the breadcrumb and top bar
+- [x] #5 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #6 Inputs, selects and textareas draw the spec's focus ring (border --br plus a 3px --nc-color-ring halo) through controlsCss, and buttons use :focus-visible with a 2px brand outline
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #59.
+<!-- SECTION:FINAL_SUMMARY:END -->
