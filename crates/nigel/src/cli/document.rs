@@ -443,12 +443,29 @@ fn record_then_republish(
     Ok(())
 }
 
-/// Replaces every control character but newline, so text a recipient typed
-/// cannot move the cursor or rewrite the terminal.
+/// Replaces every control character but newline — a carriage return
+/// included — and every bidirectional formatting character with a space, so
+/// text a recipient typed cannot move the cursor, overwrite a line, rewrite
+/// the terminal or reorder what is printed around it.
 pub fn printable(text: &str) -> String {
     text.chars()
-        .map(|c| if c != '\n' && c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if (c != '\n' && c.is_control()) || is_bidi_control(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
+}
+
+/// The Unicode bidirectional formatting characters: the marks, the embeddings
+/// and overrides, and the isolates.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
@@ -687,7 +704,7 @@ fn date_part(moment: &str) -> &str {
 fn push_note(out: &mut String, note: &str) {
     for line in note.lines() {
         out.push_str("    | ");
-        out.push_str(line);
+        out.push_str(&printable(line));
         out.push('\n');
     }
 }
@@ -708,9 +725,9 @@ pub fn format_document_show(
         "Document #{}  [{}]  {}\nTitle:    {}\nClient:   {}\nFiled:    {}\n",
         document.id,
         document.status.as_str(),
-        document.kind,
-        document.title,
-        record.client_name,
+        printable(&document.kind),
+        printable(&document.title),
+        printable(&record.client_name),
         date_part(&document.created_at),
     );
     if let Some(declined_at) = &document.declined_at {
@@ -738,8 +755,8 @@ pub fn format_document_show(
             out.push_str(&format!(
                 "  {:<12}  {} <{}>\n",
                 recipient.role.as_str(),
-                recipient.name,
-                recipient.email
+                printable(&recipient.name),
+                printable(&recipient.email)
             ));
         }
         for signature in &record.signatures {
@@ -749,12 +766,12 @@ pub fn format_document_show(
             };
             out.push_str(&format!(
                 "  {verb} by {} ({}) at {}",
-                signature.name,
+                printable(&signature.name),
                 signature.method.as_str(),
                 signature.signed_at
             ));
             if let Some(typed) = &signature.typed_name {
-                out.push_str(&format!(", typed \"{typed}\""));
+                out.push_str(&format!(", typed \"{}\"", printable(typed)));
             }
             out.push_str(&evidence(signature.method, signature.ip.as_deref()));
             out.push('\n');
@@ -762,7 +779,7 @@ pub fn format_document_show(
         for request in &record.change_requests {
             out.push_str(&format!(
                 "  changes requested by {} ({}) at {}{}\n",
-                request.name,
+                printable(&request.name),
                 request.method.as_str(),
                 request.requested_at,
                 evidence(request.method, request.ip.as_deref())
@@ -1242,6 +1259,33 @@ mod tests {
             "accepted by Pat Example (online) at 2026-10-06T10:00:00Z, typed \"Pat E.\", ip 203.0.113.9"
         ));
         assert!(out.contains("countersigned by Pat Example (manual) at 2026-10-06T10:00:00Z\n"));
+    }
+
+    #[test]
+    fn show_passes_recipient_supplied_text_through_printable() {
+        let mut record = fixture_record();
+        record.versions[0].change_requests[0].note =
+            "Fix\x1b[2J the dates\roverwritten\nsee \u{202E}txt.exe".into();
+        let mut accepted = signature(SignatureRole::Client, Method::Online);
+        accepted.typed_name = Some("Pat\u{2066} E.\x07".into());
+        record.versions[0].signatures = vec![accepted];
+        let out = format_document_show(&record, |_| false);
+        assert!(
+            !out.contains(['\x1b', '\r', '\x07', '\u{202E}', '\u{2066}']),
+            "{out:?}"
+        );
+        assert!(out.contains("    | Fix [2J the dates overwritten\n    | see  txt.exe\n"));
+        assert!(out.contains("typed \"Pat  E. \""));
+    }
+
+    #[test]
+    fn printable_maps_carriage_returns_and_bidi_controls() {
+        assert_eq!(printable("a\r\nb"), "a \nb");
+        assert_eq!(
+            printable("\u{061C}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}x"),
+            "            x"
+        );
+        assert_eq!(printable("Café — naïve"), "Café — naïve");
     }
 
     #[test]
