@@ -226,6 +226,16 @@ export class WcSendDialog extends LitElement {
         font-size: var(--wa-font-size-s, 13px);
       }
 
+      button.caveat {
+        display: block;
+        padding: 0;
+        border: 0;
+        background: none;
+        font-family: inherit;
+        text-decoration: underline;
+        cursor: default;
+      }
+
       .public-url {
         overflow-wrap: anywhere;
       }
