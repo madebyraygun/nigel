@@ -6,6 +6,28 @@
  * (docs/native-feel.md's placement rule). The components are handed the
  * answers as properties.
  */
+import type { StatusLineInfo } from '@nigel/ui';
+import type { StatusResponse } from './api/types.js';
+
+/**
+ * What the status line shows about the open book, from the server's status.
+ * Absent while there is no status to show.
+ */
+export function statusLineOf(
+  status: Pick<
+    StatusResponse,
+    'dataDir' | 'dataDirDisplay' | 'encrypted' | 'version' | 'distribution'
+  > | null,
+): StatusLineInfo | undefined {
+  if (!status) return undefined;
+  return {
+    path: status.dataDirDisplay,
+    fullPath: status.dataDir,
+    encrypted: status.encrypted,
+    version: status.version,
+    distribution: status.distribution,
+  };
+}
 
 /** Where the sidebar's folded state lives. Per device, like the colour mode. */
 export const SIDEBAR_STORAGE_KEY = 'nigel.sidebar-collapsed';

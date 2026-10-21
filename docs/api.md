@@ -125,6 +125,7 @@ uninitialized, so the SPA can decide which screen to show before it has data.
   "profile": "business",
   "version": "1.0.1",
   "dataDir": "/home/you/Documents/nigel",
+  "dataDirDisplay": "~/Documents/nigel",
   "pdfExport": true,
   "updateAvailable": "1.0.2",
   "invoicing": {
@@ -147,7 +148,9 @@ behind, reads as uninitialized, and a client that sees `false` shows the setup
 gate rather than a dashboard over nothing. `encrypted` is whether it needs
 a key, and `locked` whether this process still lacks that key. `companyName` is
 `null` while locked or uninitialized — reading it requires the key — and
-`dataDir` names the directory of the database the server actually opened.
+`dataDir` names the directory of the database the server actually opened;
+`dataDirDisplay` is the same path with the home directory written as `~`, for
+showing to a person, and is the full path when the directory is outside home.
 `profile` is `business` or `personal` — which chart of accounts the database
 was created with (`nigel init --profile`). The SPA hides the K-1 worksheet
 from the report directory and relabels the name field for personal books;

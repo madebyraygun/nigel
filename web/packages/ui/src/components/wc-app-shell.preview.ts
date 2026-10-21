@@ -31,6 +31,10 @@ const shell = (extra = html``, attrs: ShellAttrs = {}) => {
         .trail=${attrs.trail ?? [{ label: title }]}
         ?sidebar-collapsed=${attrs.collapsed ?? false}
         ?hide-sidebar=${attrs.hosted ?? false}
+        review-count="84"
+        .statusLine=${attrs.hosted
+          ? undefined
+          : { path: '~/Documents/Nigel/acme-consulting', encrypted: true, version: '1.0' }}
         .narrowQuery=${attrs.narrow ? { matches: true } : undefined}
         style="height:100%;"
       >
