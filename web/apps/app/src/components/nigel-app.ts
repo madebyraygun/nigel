@@ -19,7 +19,7 @@ import {
   initializeAppStore,
   type AppStore,
 } from '../state/app-store.js';
-import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
+import { parseHash, routeToHash, screenToHash, type Route } from '../screens/hash-route.js';
 import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
 import { trailFor, windowTitle } from '../screens/trail.js';
 import {
@@ -227,8 +227,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
   /** Navigation for screens: the same one-directional path the sidebar takes. */
   private navigate = (screen: ScreenId, params?: URLSearchParams): void => {
-    const query = params?.toString();
-    window.location.hash = query ? `#/${screen}?${query}` : `#/${screen}`;
+    window.location.hash = routeToHash({ screen, params: params ?? new URLSearchParams() });
   };
 
   private screenContext(): ScreenContext {
@@ -415,7 +414,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
     return html`
       <wc-app-shell
-        screen-title=${screen.title}
+        screen-title=${screen.ownTitle ? '' : screen.title}
         book-name=${book}
         book-key=${store.status.get()?.dataDir ?? book}
         .trail=${trail}

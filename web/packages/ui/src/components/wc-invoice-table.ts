@@ -3,6 +3,8 @@ import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import './wc-invoice-status.js';
+import '../icons/icons.js';
+import { shortDate } from './short-date.js';
 
 /** One invoice as the list shows it. */
 export interface InvoiceTableRow {
@@ -16,6 +18,9 @@ export interface InvoiceTableRow {
    * gets: it owes nothing and it never will, and `$0.00` would read as settled.
    */
   balance: number | null;
+  /** `YYYY-MM-DD`. Absent renders as an em dash. */
+  issueDate?: string;
+  /** Null is an invoice due on receipt, and says so. */
   dueDate: string | null;
   /**
    * The row's own currency, since a list spans clients and need not be in one.
@@ -27,13 +32,17 @@ export interface InvoiceTableRow {
 }
 
 /**
- * The invoice list — `nigel invoice list` plus the balance the TUI's own list
- * carries.
+ * The invoice list: Number · Client · Issued · Due · Status · Total · Balance.
+ *
+ * A row with an address is a link in two ways. The number is a real `<a>`, so
+ * the keyboard, a screen reader and a middle click all have something to land
+ * on; and a click anywhere else on the row follows that same link, because the
+ * row is the target a pointer aims at. The chevron says so and is decoration.
  *
  * Not `wc-report-table`: that renders section and total bands for read-only
- * financial output, and these rows carry a status chip and a link. Not
- * `wc-manager-table` either — an invoice is edited on its own screen, never
- * from a row button, because void and send are not row-level affordances.
+ * financial output. Not `wc-manager-table` either — an invoice is edited on
+ * its own screen, never from a row button, because void and send are not
+ * row-level affordances.
  */
 @customElement('wc-invoice-table')
 export class WcInvoiceTable extends LitElement {
@@ -44,17 +53,27 @@ export class WcInvoiceTable extends LitElement {
       color: var(--wa-color-text);
     }
 
+    .card {
+      background: var(--wa-color-surface);
+      border: 1px solid var(--wa-color-border);
+      border-radius: var(--wa-radius-lg);
+      overflow: hidden;
+    }
+
     .scroll {
       overflow-x: auto;
     }
 
     table {
       width: 100%;
+      min-width: 52rem;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-s);
+      table-layout: fixed;
+      font-size: var(--nc-font-size-body);
     }
 
-    caption {
+    caption,
+    .sr-only {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -63,39 +82,93 @@ export class WcInvoiceTable extends LitElement {
       white-space: nowrap;
     }
 
-    th,
-    td {
-      padding: var(--wa-space-xs) var(--wa-space-s);
-      border-bottom: 1px solid var(--wa-color-border);
-      text-align: start;
-      vertical-align: baseline;
-      white-space: nowrap;
+    col.number {
+      width: 84px;
+    }
+    col.date {
+      width: 120px;
+    }
+    col.status {
+      width: 112px;
+    }
+    col.money {
+      width: 120px;
+    }
+    col.chevron {
+      width: 36px;
     }
 
+    th,
     td {
-      user-select: text;
+      padding: 0 8px;
+      text-align: start;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     th {
+      height: 36px;
+      background: var(--wa-color-surface-alt);
+      border-bottom: 1px solid var(--wa-color-border);
       color: var(--wa-color-muted);
+      font-size: var(--nc-font-size-meta);
       font-weight: var(--wa-font-weight-medium);
     }
 
-    td.end,
-    th.end {
+    td {
+      height: 44px;
+      border-bottom: 1px solid var(--wa-color-border-soft);
+      user-select: text;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tr[data-href]:hover td {
+      background: var(--nc-color-highlight);
+    }
+
+    th:first-child,
+    td:first-child {
+      padding-left: 16px;
+    }
+
+    .end {
       text-align: end;
     }
 
     td.number {
-      font-variant-numeric: tabular-nums;
+      font-weight: var(--wa-font-weight-medium);
     }
 
     td.client {
-      white-space: normal;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .muted {
       color: var(--wa-color-muted);
+    }
+
+    td[data-overdue] {
+      color: var(--nc-color-expense);
+    }
+
+    td[data-void] wc-money {
+      text-decoration: line-through;
+      color: var(--wa-color-muted);
+    }
+
+    td.balance {
+      font-weight: var(--wa-font-weight-medium);
+    }
+
+    td.chevron {
+      padding: 0 8px 0 0;
+      color: var(--wa-color-muted);
+      text-align: center;
     }
 
     a {
@@ -103,19 +176,18 @@ export class WcInvoiceTable extends LitElement {
       text-decoration: none;
     }
 
-    a:hover {
-      text-decoration: underline;
-    }
-
     a:focus-visible {
       outline: 2px solid var(--wa-color-focus);
       outline-offset: 2px;
+      border-radius: var(--wa-radius-xs);
     }
 
     .state {
-      padding: var(--wa-space-l) 0;
+      margin: 0;
+      padding: 28px 16px;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s);
+      font-size: var(--nc-font-size-control);
+      text-align: center;
     }
   `;
 
@@ -131,54 +203,88 @@ export class WcInvoiceTable extends LitElement {
   @property({ type: String, attribute: 'empty-message' })
   emptyMessage = 'No invoices yet.';
 
+  /** Follow the row's own link, so a click on the row and on the number agree. */
+  private handleRowClick(event: MouseEvent): void {
+    if (event.defaultPrevented || event.button !== 0) return;
+    const target = event.target as Element | null;
+    if (target?.closest('a')) return;
+    const row = (event.currentTarget as HTMLElement).querySelector<HTMLAnchorElement>('a[href]');
+    row?.click();
+  }
+
   render() {
     if (this.loading) {
-      return html`<div class="state">
-        <wc-spinner show-label label="Loading invoices"></wc-spinner>
+      return html`<div class="card">
+        <div class="state"><wc-spinner show-label label="Loading invoices"></wc-spinner></div>
       </div>`;
     }
 
     if (this.rows.length === 0) {
-      return html`<p class="state" data-empty>${this.emptyMessage}</p>`;
+      return html`<div class="card"><p class="state" data-empty>${this.emptyMessage}</p></div>`;
     }
 
     return html`
-      <div class="scroll">
-        <table>
-          <caption>
-            ${this.caption}
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col">#</th>
-              <th scope="col">Status</th>
-              <th scope="col">Client</th>
-              <th scope="col" class="end">Total</th>
-              <th scope="col" class="end">Balance</th>
-              <th scope="col">Due</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${this.rows.map((row) => this.renderRow(row))}
-          </tbody>
-        </table>
+      <div class="card">
+        <div class="scroll">
+          <table>
+            <caption>
+              ${this.caption}
+            </caption>
+            <colgroup>
+              <col class="number" />
+              <col />
+              <col class="date" />
+              <col class="date" />
+              <col class="status" />
+              <col class="money" />
+              <col class="money" />
+              <col class="chevron" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th scope="col">Number</th>
+                <th scope="col">Client</th>
+                <th scope="col">Issued</th>
+                <th scope="col">Due</th>
+                <th scope="col">Status</th>
+                <th scope="col" class="end">Total</th>
+                <th scope="col" class="end">Balance</th>
+                <th scope="col"><span class="sr-only">Open</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this.rows.map((row) => this.renderRow(row))}
+            </tbody>
+          </table>
+        </div>
       </div>
     `;
   }
 
   private renderRow(row: InvoiceTableRow) {
-    const number = row.href
-      ? html`<a href=${row.href}>${row.number}</a>`
-      : html`${row.number}`;
+    const label = `#${row.number}`;
+    const number = row.href ? html`<a href=${row.href}>${label}</a>` : label;
+    const isVoid = row.status === 'void';
+    const outstanding = row.balance !== null && row.balance > 0;
 
     return html`
-      <tr data-row=${row.number}>
+      <tr
+        data-row=${row.number}
+        data-href=${row.href || nothing}
+        @click=${row.href ? this.handleRowClick : nothing}
+      >
         <td class="number">${number}</td>
-        <td><wc-invoice-status status=${row.status}></wc-invoice-status></td>
         <td class="client ${row.clientName === null ? 'muted' : ''}">
           ${row.clientName ?? '—'}
         </td>
-        <td class="end">
+        <td data-issued class=${row.issueDate ? nothing : 'muted'}>
+          ${row.issueDate ? shortDate(row.issueDate) : '—'}
+        </td>
+        <td data-due ?data-overdue=${row.status === 'overdue'}>
+          ${row.dueDate === null ? 'On receipt' : shortDate(row.dueDate)}
+        </td>
+        <td><wc-invoice-status status=${row.status}></wc-invoice-status></td>
+        <td class="end" ?data-void=${isVoid}>
           <wc-money
             .amount=${row.total}
             .currency=${row.currency ?? 'USD'}
@@ -186,7 +292,7 @@ export class WcInvoiceTable extends LitElement {
             align="end"
           ></wc-money>
         </td>
-        <td class="end ${row.balance === null ? 'muted' : ''}" data-balance>
+        <td class="end balance ${outstanding ? '' : 'muted'}" data-balance>
           ${row.balance === null
             ? '—'
             : html`<wc-money
@@ -196,7 +302,9 @@ export class WcInvoiceTable extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td class=${row.dueDate === null ? 'muted' : nothing}>${row.dueDate ?? '—'}</td>
+        <td class="chevron" aria-hidden="true">
+          ${row.href ? html`<wc-icon-chevron-right inline></wc-icon-chevron-right>` : nothing}
+        </td>
       </tr>
     `;
   }

@@ -1397,6 +1397,7 @@ export class FakeApiClient implements ApiClient {
       canVoid: true,
       canPay: true,
       canDelete: true,
+      deleteBlocked: null,
     };
     this.invoiceDetails[number] = created;
     return created;
@@ -1446,6 +1447,11 @@ export class FakeApiClient implements ApiClient {
       canVoid: false,
       canPay: false,
       canDelete: false,
+      deleteBlocked: {
+        reason: 'not_deletable',
+        message:
+          'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+      },
     };
     this.invoiceDetails[number] = updated;
     return { ...updated, ...this.voidTeardown };
@@ -1474,6 +1480,7 @@ export class FakeApiClient implements ApiClient {
       canVoid: true,
       canPay: true,
       canDelete: true,
+      deleteBlocked: null,
     };
     this.nextInvoiceNumber += 1;
     this.invoiceDetails[created.number] = created;
@@ -1485,6 +1492,13 @@ export class FakeApiClient implements ApiClient {
     if (this.deleteInvoiceError) throw this.deleteInvoiceError;
 
     const detail = this.detail(number);
+    if (detail.deleteBlocked?.reason === 'from_schedule') {
+      throw conflictError('from_schedule', {
+        message: detail.deleteBlocked.message,
+        status: detail.status,
+        canVoid: detail.canVoid,
+      });
+    }
     if (!detail.canDelete) {
       // The shape the route sends: the code and the sentence are the data
       // layer's, plus the two facts the sentence branches on.

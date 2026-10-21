@@ -13,22 +13,34 @@ function buckets(totals: number[], labels = LABELS): AgingBucketView[] {
   }));
 }
 
-const full = buckets([4200, 1850, 0, 960, 0]);
+const full = buckets([3050, 960, 420, 280, 150]);
+const demo = buckets([3050, 960, 0, 0, 0]);
 
 const preview: Preview = {
   id: 'wc-aging-bars',
-  title: 'Aging strip',
+  title: 'Outstanding card',
   group: 'Invoicing',
   description:
-    'Five receivable buckets and the outstanding total. The bars are decoration over a real table, because a bar has no accessible value.',
+    'What is owed, across how many open invoices, and how old it is: a stacked bar over the five aging buckets and a legend under it. The bar is decoration; every figure is in the legend.',
   layout: 'stack',
   states: [
+    {
+      name: 'default',
+      render: () => html`
+        <wc-aging-bars
+          .buckets=${demo}
+          .total=${4010}
+          as-of="2026-10-19"
+          href="#/reports?report=aging"
+        ></wc-aging-bars>
+      `,
+    },
     {
       name: 'all-buckets',
       render: () => html`
         <wc-aging-bars
           .buckets=${full}
-          .total=${7010}
+          .total=${4860}
           as-of="2026-08-07"
           href="#/reports?report=aging"
         ></wc-aging-bars>

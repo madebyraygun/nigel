@@ -1110,6 +1110,19 @@ export interface InvoiceDetail {
    * one entered by mistake; void is for everything that has left the building.
    */
   canDelete: boolean;
+  /**
+   * Why `canDelete` is false, or null when it is true — the reason and the
+   * sentence the `409` on delete would answer with. `from_schedule` is a draft
+   * a recurring schedule generated, which only void can cancel.
+   */
+  deleteBlocked: DeleteBlocked | null;
+}
+
+/** A delete the detail already knows the server would refuse. */
+export interface DeleteBlocked {
+  /** `not_deletable` or `from_schedule`. */
+  reason: string;
+  message: string;
 }
 
 /**

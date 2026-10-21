@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
+import { roundHalfEven } from './round-half-even.js';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
@@ -198,6 +199,39 @@ export class WcLineItems extends LitElement {
         margin-top: var(--wa-space-s);
       }
 
+      /* The detail view's read-only table: a 12px muted header over a full
+         rule, soft rules between rows, and the Total in 600. */
+      :host([readonly]) table {
+        font-size: var(--nc-font-size-body);
+      }
+
+      :host([readonly]) th {
+        padding: 0 0 8px;
+        font-size: var(--nc-font-size-meta);
+        font-weight: var(--wa-font-weight-normal);
+        border-bottom: 1px solid var(--wa-color-border);
+      }
+
+      :host([readonly]) td {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--wa-color-border-soft);
+        user-select: text;
+      }
+
+      :host([readonly]) th + th,
+      :host([readonly]) td + td {
+        padding-left: 12px;
+      }
+
+      :host([readonly]) tr[data-emphasis] td {
+        border-bottom: 0;
+      }
+
+      :host([readonly]) tr[data-emphasis='total'] td {
+        border-top: 0;
+        font-weight: var(--wa-font-weight-bold);
+      }
+
       .list-error {
         margin: var(--wa-space-xs) 0 0;
         color: var(--wa-color-danger);
@@ -296,6 +330,10 @@ export class WcLineItems extends LitElement {
 
   render() {
     const subtotal = lineItemsSubtotal(this.items);
+    // Read-only, a Subtotal equal to the Total beneath it is the same figure
+    // twice; it earns its row only when something (tax) sits between them.
+    const hideSubtotal =
+      this.readonly && this.total !== null && roundHalfEven(subtotal, 2) === roundHalfEven(this.total, 2);
 
     return html`
       <div class="scroll">
@@ -307,7 +345,7 @@ export class WcLineItems extends LitElement {
             <tr>
               <th scope="col">Description</th>
               <th scope="col" class="end">Qty</th>
-              <th scope="col" class="end">Unit</th>
+              <th scope="col" class="end">${this.readonly ? 'Rate' : 'Unit'}</th>
               <th scope="col" class="end">Amount</th>
               ${this.readonly ? nothing : html`<th scope="col" class="end">Row</th>`}
             </tr>
@@ -316,7 +354,9 @@ export class WcLineItems extends LitElement {
             ${this.items.map((item, index) => this.renderRow(item, index))}
           </tbody>
           <tfoot>
-            <tr data-emphasis="subtotal">
+            ${hideSubtotal
+              ? nothing
+              : html`<tr data-emphasis="subtotal">
               <td colspan="3">Subtotal</td>
               <td class="end">
                 <wc-money
@@ -327,7 +367,7 @@ export class WcLineItems extends LitElement {
                 ></wc-money>
               </td>
               ${this.readonly ? nothing : html`<td></td>`}
-            </tr>
+            </tr>`}
             ${this.total === null
               ? nothing
               : html`

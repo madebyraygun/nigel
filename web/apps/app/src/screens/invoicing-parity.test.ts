@@ -184,9 +184,12 @@ describe('invoicing figure parity with the CLI', () => {
 
     const el = await mount('nigel-invoices-screen', client, `number=${detail.number}`);
 
-    // The detail's line-item table carries its own Subtotal and Total rows,
-    // where `format_invoice_show` prints the total once in its header.
-    const extras = [money(detail.subtotal), money(detail.total)];
+    // The total appears twice on screen — under the balance ("of $3,200.00")
+    // and as the line-item table's Total row — where `format_invoice_show`
+    // prints it once in its header. The table's Subtotal row is hidden while
+    // it equals the Total.
+    expect(detail.subtotal).toBe(detail.total);
+    const extras = [money(detail.total)];
 
     const fromText = moneyTokens(viewText('invoice-1250'));
     expect(fromText.length, 'the fixture has no figures to compare').toBe(7);
@@ -203,6 +206,44 @@ describe('invoicing figure parity with the CLI', () => {
     const fromText = moneyTokens(viewText('aging'));
     expect(fromText.length, 'the fixture has no figures to compare').toBe(9);
     expect(screenMoney(el)).toEqual(fromText);
+  });
+
+  it('puts the totals `nigel invoice aging` prints on the invoice list’s Outstanding card', async () => {
+    // The card is the aging report's summary: five bucket totals and the
+    // outstanding total, which must be the figures the CLI's summary table
+    // prints for the same books — not a re-derivation from the list.
+    const report = viewJson<AgingReport>('aging');
+    const client = seeded();
+    client.aging = report;
+    client.invoices = viewJson<InvoiceListRow[]>('invoices');
+
+    const el = await mount('nigel-invoices-screen', client);
+    const card = el.shadowRoot?.querySelector('wc-aging-bars');
+    expect(card, 'the list rendered no Outstanding card').toBeTruthy();
+
+    const collect = (node: ParentNode | null | undefined): string => {
+      if (!node) return '';
+      let out = '';
+      for (const child of node.childNodes) {
+        const element = child as Element & { shadowRoot?: ShadowRoot | null };
+        if (child.nodeType === Node.TEXT_NODE) out += ` ${child.textContent ?? ''}`;
+        if (element.shadowRoot) out += collect(element.shadowRoot);
+        if (element.childNodes?.length) out += collect(element as unknown as ParentNode);
+      }
+      return out;
+    };
+
+    // The CLI's Summary section: everything before "Open Invoices".
+    const summary = viewText('aging').split('Open Invoices')[0];
+    const fromText = moneyTokens(summary);
+    expect(fromText.length, 'the summary has no figures to compare').toBe(6);
+    expect(moneyTokens(collect(card?.shadowRoot))).toEqual(fromText);
+
+    // "across N open invoices" is the summary's own count.
+    const open = /Total Outstanding\s*\|\s*(\d+)/.exec(summary)?.[1];
+    expect(card?.shadowRoot?.querySelector('[data-meta]')?.textContent).toContain(
+      `across ${open} open invoices`,
+    );
   });
 
   it('shows every figure `nigel client list` prints — which is none', async () => {

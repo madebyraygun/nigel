@@ -419,7 +419,7 @@ pagination.
 ### Invoicing
 
 `{number}` throughout is the **invoice number** — what the CLI takes, what a
-person reads off the invoice, and what `#/invoices?number=1248` carries. Row ids
+person reads off the invoice, and what `#/invoices/1248` carries. Row ids
 stay internal.
 
 #### `GET /api/clients/{id}`
@@ -498,7 +498,11 @@ The invoice's own fields flattened, plus everything a detail screen prints:
   "paid": 2000.0, "balance": 1200.0,
   "publicUrl": "https://billing.example.com/i/aBc123.../index.html",
   "canEdit": false, "canSend": true, "canVoid": false, "canPay": true,
-  "canDelete": false
+  "canDelete": false,
+  "deleteBlocked": {
+    "reason": "not_deletable",
+    "message": "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted"
+  }
 }
 ```
 
@@ -519,6 +523,14 @@ re-derive them from `status`** — an edit is blocked by recorded payments as we
 as by status, and so is a delete, and a second copy of that rule is a second
 copy of the guardrails. The flags disable a control; the `409` is what enforces
 it.
+
+`deleteBlocked` is why `canDelete` is false, and `null` when it is true: the
+`reason` and `message` the `409` on `DELETE` would answer with, from the same
+`delete_blocker` call. `reason` is `not_deletable` for an invoice that has been
+sent, paid or voided, and `from_schedule` for a draft a recurring schedule
+generated — a draft by every other test, which only void can cancel. A screen
+uses it to say why Delete is off, and to point at Void when `canVoid` is true,
+without making the request first.
 
 `asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
 today. An invoice past its due date with money owing reads `overdue` on that day

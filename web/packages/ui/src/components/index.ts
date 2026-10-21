@@ -206,7 +206,8 @@ export {
 } from './wc-document-status.js';
 export {
   WcAgingBars,
-  agingBarHeights,
+  agingBucketLabel,
+  agingShares,
   type AgingBucketView,
 } from './wc-aging-bars.js';
 export { WcInvoiceTable, type InvoiceTableRow } from './wc-invoice-table.js';
@@ -228,6 +229,14 @@ export {
   type RecipientValue,
 } from './wc-recipient-editor.js';
 export { WcInvoiceSummary } from './wc-invoice-summary.js';
+export { shortDate } from './short-date.js';
+export {
+  WcActionPills,
+  type ActionPill,
+  type ActionPillIcon,
+  type NcActionDetail,
+} from './wc-action-pills.js';
+export { WcFilterChips, type FilterChip } from './wc-filter-chips.js';
 export {
   WcPaymentList,
   paymentMethodLabel,

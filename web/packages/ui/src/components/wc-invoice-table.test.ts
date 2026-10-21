@@ -11,8 +11,9 @@ const ROWS: InvoiceTableRow[] = [
     clientName: 'Acme Co',
     total: 3200,
     balance: 1200,
+    issueDate: '2026-07-21',
     dueDate: '2026-08-20',
-    href: '#/invoices?number=1250',
+    href: '#/invoices/1250',
   },
   {
     number: 1247,
@@ -55,14 +56,61 @@ describe('wc-invoice-table', () => {
     expect(cells[1].textContent?.trim()).toBe('—');
   });
 
-  it('shows an em dash for a missing client and a missing due date', async () => {
+  it('shows an em dash for a missing client and says a dateless invoice is due on receipt', async () => {
     const el = await mount();
     const row = el.shadowRoot?.querySelector('tr[data-row="1247"]');
     const cells = [...(row?.querySelectorAll('td') ?? [])].map((td) =>
       td.textContent?.trim(),
     );
-    expect(cells[2]).toBe('—');
-    expect(cells[5]).toBe('—');
+    expect(cells[1]).toBe('—');
+    expect(cells[3]).toBe('On receipt');
+  });
+
+  it('prints the number, the client and both dates in the handoff’s order', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="1250"]');
+    const cells = [...(row?.querySelectorAll('td') ?? [])].map((td) =>
+      td.textContent?.trim(),
+    );
+    expect(cells.slice(0, 4)).toEqual(['#1250', 'Acme Co', 'Jul 21, 2026', 'Aug 20, 2026']);
+    const headers = [...(el.shadowRoot?.querySelectorAll('th') ?? [])].map((th) =>
+      th.textContent?.trim(),
+    );
+    expect(headers).toEqual([
+      'Number',
+      'Client',
+      'Issued',
+      'Due',
+      'Status',
+      'Total',
+      'Balance',
+      'Open',
+    ]);
+  });
+
+  it('marks an overdue invoice’s due date and strikes a void invoice’s total', async () => {
+    const el = await mount({
+      rows: [{ ...ROWS[0], status: 'overdue' }, ROWS[1]],
+    });
+    expect(
+      el.shadowRoot?.querySelector('tr[data-row="1250"] [data-due]')?.hasAttribute('data-overdue'),
+    ).toBe(true);
+    expect(el.shadowRoot?.querySelector('tr[data-row="1247"] [data-void]')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('tr[data-row="1250"] [data-void]')).toBeNull();
+  });
+
+  it('follows the row’s link when the row itself is clicked', async () => {
+    const el = await mount();
+    const link = el.shadowRoot?.querySelector<HTMLAnchorElement>('tr[data-row="1250"] a');
+    let followed = 0;
+    link?.addEventListener('click', (event) => {
+      event.preventDefault();
+      followed += 1;
+    });
+    el.shadowRoot
+      ?.querySelector<HTMLElement>('tr[data-row="1250"] [data-due]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+    expect(followed).toBe(1);
   });
 
   it('links a row only when given an address', async () => {
@@ -70,7 +118,7 @@ describe('wc-invoice-table', () => {
     const links = [...(el.shadowRoot?.querySelectorAll('a') ?? [])].map((a) =>
       a.getAttribute('href'),
     );
-    expect(links).toEqual(['#/invoices?number=1250']);
+    expect(links).toEqual(['#/invoices/1250']);
   });
 
   it('carries the status word into a status chip', async () => {

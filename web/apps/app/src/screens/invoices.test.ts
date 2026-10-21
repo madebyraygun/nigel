@@ -103,8 +103,15 @@ const AGING: AgingReport = {
   outstanding: 4010,
 };
 
+const NOT_DELETABLE = {
+  reason: 'not_deletable',
+  message:
+    'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+};
+
 function detail(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
   return {
+    deleteBlocked: overrides.canDelete ? null : NOT_DELETABLE,
     id: 3,
     number: 1250,
     clientId: 1,
@@ -221,10 +228,38 @@ function table(el: NigelInvoicesScreen): WcInvoiceTable {
   return found;
 }
 
+/**
+ * A control by its hook. `[data-send]` and friends name an action pill by its
+ * key, and live in the action row's own shadow root; anything else is looked
+ * up on the screen.
+ */
 function button(el: NigelInvoicesScreen, hook: string): HTMLElement {
+  const key = /^\[data-([a-z]+)\]$/.exec(hook)?.[1];
+  for (const pills of el.shadowRoot?.querySelectorAll('wc-action-pills') ?? []) {
+    const found = pills.shadowRoot?.querySelector<HTMLElement>(`[data-action="${key}"]`);
+    if (key && found) return found;
+  }
   const found = el.shadowRoot?.querySelector<HTMLElement>(hook);
   if (!found) throw new Error(`no ${hook} on screen`);
   return found;
+}
+
+/** The note an action row prints under a disabled action, by the action's key. */
+function actionNote(el: NigelInvoicesScreen, key: string): string | null {
+  for (const pills of el.shadowRoot?.querySelectorAll('wc-action-pills') ?? []) {
+    for (const note of pills.shadowRoot?.querySelectorAll('[data-note]') ?? []) {
+      if (note.getAttribute('data-note')?.split(' ').includes(key)) {
+        return note.textContent?.trim() ?? '';
+      }
+    }
+  }
+  return null;
+}
+
+function hasAction(el: NigelInvoicesScreen, key: string): boolean {
+  return [...(el.shadowRoot?.querySelectorAll('wc-action-pills') ?? [])].some((pills) =>
+    pills.shadowRoot?.querySelector(`[data-action="${key}"]`),
+  );
 }
 
 function sendDialog(el: NigelInvoicesScreen): WcSendDialog | null {
@@ -263,30 +298,47 @@ describe('nigel-invoices-screen', () => {
     expect(table(el).rows.find((row) => row.number === 1247)?.balance).toBeNull();
   });
 
-  it('filters by status from ?status=open, and navigates rather than mutating state', async () => {
-    const { el, fake } = await mount('status=open');
-    expect(fake.calls).toContain('getInvoices:status=open');
+  it('filters by status from ?status=partial, counting every status from the whole list', async () => {
+    const { el, fake } = await mount('status=partial');
+    // The whole list is fetched, so every chip can carry its count.
+    expect(fake.calls).toContain('getInvoices:');
+    expect(table(el).rows.map((row) => row.number)).toEqual([1250]);
 
+    const filter = el.shadowRoot?.querySelector('wc-filter-chips') as HTMLElement & {
+      active: string;
+      chips: { value: string; count?: number; href: string }[];
+    };
+    expect(filter.active).toBe('partial');
     // The filters are links, so a filtered list is a URL somebody can keep.
-    const chips = [...(el.shadowRoot?.querySelectorAll('[data-filter]') ?? [])];
-    expect(chips.map((chip) => chip.getAttribute('href'))).toEqual([
-      '#/invoices',
-      '#/invoices?status=draft',
-      '#/invoices?status=open',
-      '#/invoices?status=paid',
-      '#/invoices?status=void',
+    expect(filter.chips.map((chip) => [chip.value, chip.count, chip.href])).toEqual([
+      ['all', 3, '#/invoices'],
+      ['draft', 0, '#/invoices?status=draft'],
+      ['sent', 1, '#/invoices?status=sent'],
+      ['partial', 1, '#/invoices?status=partial'],
+      ['overdue', 0, '#/invoices?status=overdue'],
+      ['paid', 0, '#/invoices?status=paid'],
+      ['void', 1, '#/invoices?status=void'],
     ]);
-    expect(
-      chips.find((chip) => chip.getAttribute('data-filter') === 'open')?.getAttribute(
-        'aria-current',
-      ),
-    ).toBe('true');
+  });
+
+  it('says a status has no invoices rather than that there are none at all', async () => {
+    const { el } = await mount('status=overdue');
+    expect(table(el).rows).toEqual([]);
+    expect(table(el).emptyMessage).toBe('No invoices with this status.');
+  });
+
+  it('reads a status no chip offers as the whole list', async () => {
+    const { el } = await mount('status=open');
+    expect(table(el).rows).toHaveLength(3);
   });
 
   it('narrows to one client from ?clientId, and offers a way out', async () => {
     const { el, fake } = await mount('clientId=1');
     expect(fake.calls).toContain('getInvoices:clientId=1');
-    expect(el.shadowRoot?.querySelector('[data-clear-client]')).toBeTruthy();
+    const filter = el.shadowRoot?.querySelector('wc-filter-chips') as HTMLElement & {
+      chips: { value: string; href: string }[];
+    };
+    expect(filter.chips.find((chip) => chip.value === 'clear-client')?.href).toBe('#/invoices');
   });
 
   it('disables Sync now when syncConfigured is false, and says which key is missing', async () => {
@@ -301,9 +353,7 @@ describe('nigel-invoices-screen', () => {
     const { el } = await mount('', fake);
 
     expect(button(el, '[data-sync]').hasAttribute('disabled')).toBe(true);
-    expect(el.shadowRoot?.querySelector('[data-sync-note]')?.textContent).toContain(
-      'stripe_secret_key',
-    );
+    expect(actionNote(el, 'sync')).toContain('stripe_secret_key');
   });
 
   it('syncs and refetches both the list and the strip', async () => {
@@ -359,9 +409,7 @@ describe('nigel-invoices-screen', () => {
     const { el } = await mount('number=1249', fake);
 
     expect(button(el, '[data-send]').hasAttribute('disabled')).toBe(true);
-    expect(el.shadowRoot?.querySelector('[data-send-note]')?.textContent).toContain(
-      'Globex has no email address',
-    );
+    expect(actionNote(el, 'send')).toContain('Globex has no email address');
   });
 
   it('disables Send when the invoicing settings are not configured', async () => {
@@ -508,9 +556,13 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.textContent).toContain('not an invoice number');
   });
 
-  it('hides the account-wide aging strip above a filtered list', async () => {
+  it('hides the account-wide aging strip above one client’s list', async () => {
     const unfiltered = await mount('');
     expect(unfiltered.el.shadowRoot?.querySelector('wc-aging-bars')).toBeTruthy();
+
+    // A status chip narrows the table, not what the card above the chips describes.
+    const byStatus = await mount('status=paid');
+    expect(byStatus.el.shadowRoot?.querySelector('wc-aging-bars')).toBeTruthy();
 
     const filtered = await mount('clientId=2');
     expect(filtered.el.shadowRoot?.querySelector('wc-aging-bars')).toBeNull();
@@ -564,14 +616,56 @@ describe('nigel-invoices-screen', () => {
     ]);
   });
 
+  it('explains a disabled Delete on a schedule-generated draft and offers Void beside it', async () => {
+    const fake = client();
+    fake.invoiceDetails[1260] = detail({
+      number: 1260,
+      status: 'draft',
+      publishedAt: null,
+      payments: [],
+      paid: 0,
+      balance: 3200,
+      canEdit: true,
+      canVoid: true,
+      canPay: true,
+      canDelete: false,
+      deleteBlocked: {
+        reason: 'from_schedule',
+        message:
+          'Cannot delete: invoice was generated by schedule 3, which keeps it as the record of what that period billed — void it instead',
+      },
+    });
+    const { el } = await mount('number=1260', fake);
+
+    expect(button(el, '[data-delete]').hasAttribute('disabled')).toBe(true);
+    expect(actionNote(el, 'delete')).toBe(
+      'A recurring schedule generated this invoice and keeps it as the record of what that period billed. Void it instead.',
+    );
+    expect(button(el, '[data-delete]').getAttribute('aria-describedby')).toBeTruthy();
+    expect(button(el, '[data-void]').hasAttribute('disabled')).toBe(false);
+  });
+
+  it('shows Delete for a draft and Void for everything else', async () => {
+    const fake = client();
+    fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canDelete: true, canVoid: true });
+    const draft = await mount('number=1252', fake);
+    expect(hasAction(draft.el, 'delete')).toBe(true);
+    expect(hasAction(draft.el, 'void')).toBe(false);
+
+    const sent = await mount('number=1250');
+    expect(hasAction(sent.el, 'delete')).toBe(false);
+    expect(hasAction(sent.el, 'void')).toBe(true);
+  });
+
   it('offers Delete only for an invoice the server says is deletable', async () => {
     // The flag is the server's guard called, never re-derived here: a draft
     // with a payment recorded against it is still a draft and still not
     // deletable, which a status comparison would get wrong.
-    const { el } = await mount('number=1250');
+    const fake = client();
+    fake.invoiceDetails[1251] = detail({ number: 1251, status: 'draft', canDelete: false });
+    const { el } = await mount('number=1251', fake);
     expect(button(el, '[data-delete]').hasAttribute('disabled')).toBe(true);
 
-    const fake = client();
     fake.invoiceDetails[1252] = detail({ number: 1252, status: 'draft', canDelete: true });
     const draft = await mount('number=1252', fake);
     expect(button(draft.el, '[data-delete]').hasAttribute('disabled')).toBe(false);

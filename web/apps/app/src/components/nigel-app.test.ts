@@ -116,8 +116,14 @@ describe('nigel-app', () => {
     expect(el).toBeTruthy();
   });
 
+  it('draws no shell heading over a screen that draws its own', async () => {
+    window.location.hash = '#/invoices';
+    const el = await mount();
+    expect(shell(el)?.getAttribute('screen-title')).toBe('');
+  });
+
   it('titles an open invoice innermost first', async () => {
-    window.location.hash = '#/invoices?number=1254';
+    window.location.hash = '#/invoices/1254';
     await mount();
     expect(document.title).toBe('#1254 · Invoices · Test Consultancy');
   });
@@ -132,7 +138,7 @@ describe('nigel-app', () => {
     });
 
     it('adds the invoice level on an open invoice', async () => {
-      window.location.hash = '#/invoices?number=1254';
+      window.location.hash = '#/invoices/1254';
       const el = await mount();
       expect(shell(el)?.trail).toEqual([
         { label: 'Invoices', id: 'invoices' },
@@ -141,7 +147,7 @@ describe('nigel-app', () => {
     });
 
     it('goes back to the invoice list from the breadcrumb', async () => {
-      window.location.hash = '#/invoices?number=1254';
+      window.location.hash = '#/invoices/1254';
       const el = await mount();
       const crumb = shell(el)?.shadowRoot?.querySelector('wc-breadcrumb');
       crumb?.shadowRoot?.querySelector<HTMLButtonElement>('[data-level="invoices"]')?.click();

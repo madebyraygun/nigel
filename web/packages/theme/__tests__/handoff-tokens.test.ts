@@ -31,6 +31,11 @@ const COLORS: [shorthand: string, role: string, light: string, dark: string][] =
   ['--blue', '--wa-color-info', '#266ba1', '#bae1ff'],
   ['--incf', '--nc-color-income-fill', '#5a9473', '#6fcf92'],
   ['--expf', '--nc-color-expense-fill', '#cb6b7b', '#f0919c'],
+  ['aging: current', '--nc-color-aging-1', '#5a9473', '#6fcf92'],
+  ['aging: 1–30', '--nc-color-aging-2', '#c9a13b', '#ffe0a3'],
+  ['aging: 31–60', '--nc-color-aging-3', '#d98b4a', '#ffc8a2'],
+  ['aging: 61–90', '--nc-color-aging-4', '#cb6b7b', '#ff9fa8'],
+  ['aging: over 90', '--nc-color-aging-5', '#a33b5a', '#ffb3de'],
 ];
 
 const VALUES: [shorthand: string, role: string, light: string, dark: string][] = [

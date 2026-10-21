@@ -19,6 +19,7 @@ import {
   type InvoiceClientOption,
   type InvoiceFormErrors,
   type InvoiceFormValue,
+  type NcActionDetail,
   type NcInvoiceFormChangeDetail,
   type NcPaymentFormChangeDetail,
   type PaymentFormErrors,
@@ -37,10 +38,11 @@ import type {
   InvoiceListRow,
 } from '../api/types.js';
 import {
-  STATUS_FILTERS,
   activeStatusFilter,
+  detailActions,
   detailBalance,
   detailLineItems,
+  dueNote,
   emailSubject,
   invoiceFormFrom,
   invoiceListParams,
@@ -48,7 +50,9 @@ import {
   invoiceTableRows,
   newInvoiceRequest,
   payRequest,
+  rowsWithStatus,
   sendStepViews,
+  statusChips,
   today,
   deleteConfirmationMessage,
   voidConfirmationMessage,
@@ -59,6 +63,7 @@ import {
   failedStep,
   completedSteps,
 } from './invoicing-errors.js';
+import { routeToHash } from './hash-route.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -93,14 +98,16 @@ function hasUnusableNumber(params: URLSearchParams): boolean {
 }
 
 /**
- * Whether the list is showing a subset.
+ * Whether the list is one client's invoices.
  *
- * The aging strip is account-wide — `/api/invoices/aging` takes no client or
- * status — so it may only sit above a list of the same invoices it describes.
- * Above a filtered list its total reads as that subset's balance.
+ * The Outstanding card is account-wide — `/api/invoices/aging` takes no
+ * client — so it may only sit above a list of the same invoices it describes.
+ * Above one client's list its total reads as that client's balance. A status
+ * chip does not count: it narrows the table under the chips, while the card
+ * and the chips' own counts above it still describe every invoice.
  */
 function isFilteredList(params: URLSearchParams): boolean {
-  return activeStatusFilter(params) !== 'all' || invoiceListParams(params).clientId !== undefined;
+  return invoiceListParams(params).clientId !== undefined;
 }
 
 /**
@@ -127,8 +134,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     :host {
       display: flex;
       flex-direction: column;
-      gap: var(--wa-space-l, 16px);
-      padding: var(--wa-space-l, 16px);
+      gap: 16px;
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
@@ -138,12 +144,15 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       flex-wrap: wrap;
       align-items: flex-start;
       justify-content: space-between;
-      gap: var(--wa-space-m, 12px);
+      gap: 12px;
     }
 
-    h2 {
+    h1 {
       margin: 0;
-      font-size: var(--wa-font-size-l, 18px);
+      font-size: var(--nc-font-size-display);
+      font-weight: var(--wa-font-weight-medium);
+      letter-spacing: var(--nc-letter-spacing-tight);
+      line-height: 1.2;
     }
 
     .actions {
@@ -152,30 +161,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       gap: var(--wa-space-s, 8px);
     }
 
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--wa-space-xs, 6px);
-      font-size: var(--wa-font-size-s, 13px);
-    }
-
-    .filters .label {
-      color: var(--wa-color-muted);
-    }
-
     .chip {
       padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-pill, 999px);
       color: inherit;
       text-decoration: none;
-    }
-
-    .chip[aria-current='true'] {
-      border-color: var(--wa-color-brand);
-      color: var(--wa-color-brand);
-      font-weight: var(--wa-font-weight-medium, 500);
     }
 
     .chip:focus-visible {
@@ -189,15 +180,10 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       text-decoration: none;
     }
 
-    .stack {
-      display: grid;
-      gap: var(--wa-space-l, 16px);
-    }
-
     .columns {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-      gap: var(--wa-space-l, 16px);
+      gap: 16px;
       align-items: start;
     }
 
@@ -210,21 +196,30 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       display: grid;
       gap: var(--wa-space-2xs, 4px);
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--nc-font-size-control);
       overflow-wrap: anywhere;
     }
 
     .link-list dt {
-      color: var(--wa-color-muted);
+      color: var(--wa-color-text);
     }
 
     .link-list dd {
-      margin: 0 0 var(--wa-space-xs, 6px);
+      margin: 0 0 var(--wa-space-s, 8px);
+    }
+
+    .link-list a {
+      color: var(--wa-color-brand);
+      text-decoration: none;
+    }
+
+    .link-list a:hover {
+      text-decoration: underline;
     }
 
     .note {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--nc-font-size-meta);
       color: var(--wa-color-muted);
     }
   `;
@@ -443,8 +438,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       if (value === null) next.delete(key);
       else next.set(key, value);
     }
-    const query = next.toString();
-    return `#/invoices${query ? `?${query}` : ''}`;
+    return routeToHash({ screen: 'invoices', params: next });
   }
 
   // -- writes ---------------------------------------------------------------
@@ -781,34 +775,38 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
   private renderList() {
     const syncConfigured = this.invoicing?.syncConfigured ?? false;
+    const status = activeStatusFilter(this.params);
+    const shown = rowsWithStatus(this.rows, status);
+    const chips = [
+      ...statusChips(this.rows, (value) => this.href({ status: value })),
+      ...(this.params.get('clientId')
+        ? [{ value: 'clear-client', label: 'Clear client filter', href: this.href({ clientId: null }) }]
+        : []),
+    ];
 
     return html`
       <header>
-        <h2>Invoices</h2>
-        <div class="actions">
-          <wa-button
-            data-sync
-            appearance="outlined"
-            ?disabled=${!syncConfigured || this.busy}
-            title=${syncConfigured
-              ? 'Pull paid Stripe checkouts and record them'
-              : 'stripe_secret_key is not set'}
-            @click=${this.handleSync}
-          >
-            Sync now
-          </wa-button>
-          <wa-button data-new variant="brand" @click=${() => this.go({ new: '1' })}>
-            <wc-icon-plus slot="start"></wc-icon-plus>
-            New invoice
-          </wa-button>
-        </div>
+        <h1>Invoices</h1>
+        <wc-action-pills
+          data-list-actions
+          .actions=${[
+            {
+              key: 'sync',
+              label: 'Sync now',
+              icon: 'refresh',
+              disabled: !syncConfigured || this.busy,
+              hint: 'Pull paid Stripe checkouts and record them',
+              ...(syncConfigured
+                ? {}
+                : { reason: 'Sync needs stripe_secret_key, which is not set.' }),
+            },
+            { key: 'new', label: 'New invoice', icon: 'plus', tone: 'primary' },
+          ]}
+          align="end"
+          @nc-action=${this.handleListAction}
+        ></wc-action-pills>
       </header>
 
-      ${syncConfigured
-        ? nothing
-        : html`<p class="note" data-sync-note>
-            Sync needs stripe_secret_key, which is not set.
-          </p>`}
       ${this.aging
         ? html`<wc-aging-bars
             .buckets=${this.aging.buckets}
@@ -820,35 +818,50 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       ${isFilteredList(this.params)
         ? html`<p class="note" data-aging-filtered>
             A/R aging covers every open invoice, so it is hidden while the list is
-            filtered. <a href="#/reports?report=aging">View the aging report →</a>
+            filtered to one client. <a href="#/reports?report=aging">View the aging report →</a>
           </p>`
         : nothing}
 
-      <div class="filters">
-        <span class="label">Status</span>
-        ${STATUS_FILTERS.map((filter) => {
-          const active = activeStatusFilter(this.params) === filter.value;
-          return html`<a
-            class="chip"
-            data-filter=${filter.value}
-            aria-current=${active ? 'true' : nothing}
-            href=${this.href({ status: filter.value === 'all' ? null : filter.value })}
-            >${filter.label}</a
-          >`;
-        })}
-        ${this.params.get('clientId')
-          ? html`<a class="chip" data-clear-client href=${this.href({ clientId: null })}
-              >Clear client filter</a
-            >`
-          : nothing}
-      </div>
+      <wc-filter-chips label="Status" .chips=${chips} active=${status}></wc-filter-chips>
 
       <wc-invoice-table
-        .rows=${invoiceTableRows(this.rows)}
-        empty-message="No invoices yet — start one with New invoice."
+        .rows=${invoiceTableRows(shown)}
+        empty-message=${this.rows.length === 0
+          ? 'No invoices yet — start one with New invoice.'
+          : 'No invoices with this status.'}
       ></wc-invoice-table>
     `;
   }
+
+  private handleListAction = (event: Event): void => {
+    const { key } = (event as CustomEvent<NcActionDetail>).detail;
+    if (key === 'sync') void this.handleSync();
+    if (key === 'new') this.go({ new: '1' });
+  };
+
+  private handleDetailAction = (event: Event): void => {
+    const { key } = (event as CustomEvent<NcActionDetail>).detail;
+    switch (key) {
+      case 'send':
+        this.openSend();
+        break;
+      case 'pay':
+        this.openPayment();
+        break;
+      case 'edit':
+        this.go({ edit: '1' });
+        break;
+      case 'duplicate':
+        void this.handleDuplicate();
+        break;
+      case 'delete':
+        void this.handleDelete();
+        break;
+      case 'void':
+        void this.handleVoid();
+        break;
+    }
+  };
 
   private renderDetail() {
     const detail = this.detail;
@@ -857,8 +870,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     const sendBlock = this.sendBlockReason(detail);
 
     return html`
-      <a class="back" href=${this.href({ number: null, edit: null })}>← All invoices</a>
-
       ${this.actionError
         ? html`<wc-notice-bar
             variant="danger"
@@ -883,72 +894,22 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .number=${detail.number}
         status=${detail.status}
         .clientName=${detail.client?.name ?? null}
+        .clientEmail=${detail.client?.email ?? null}
         .total=${detail.total}
         .balance=${detailBalance(detail)}
         .currency=${detail.currency}
         .issueDate=${detail.issueDate}
         .dueDate=${detail.dueDate}
-      ></wc-invoice-summary>
-
-      <div class="actions">
-        <wa-button
-          data-send
-          variant="brand"
-          ?disabled=${!detail.canSend || sendBlock !== '' || this.busy}
-          title=${sendBlock}
-          @click=${this.openSend}
-        >
-          Send…
-        </wa-button>
-        <wa-button
-          data-pay
-          appearance="outlined"
-          ?disabled=${!detail.canPay || this.busy}
-          @click=${this.openPayment}
-        >
-          Record payment…
-        </wa-button>
-        <wa-button
-          data-edit
-          appearance="outlined"
-          ?disabled=${!detail.canEdit || this.busy}
-          @click=${() => this.go({ edit: '1' })}
-        >
-          Edit
-        </wa-button>
-        <wa-button
-          data-duplicate
-          appearance="outlined"
-          ?disabled=${this.busy}
-          @click=${this.handleDuplicate}
-        >
-          Duplicate
-        </wa-button>
-        <wa-button
-          data-void
-          appearance="outlined"
-          variant="danger"
-          ?disabled=${!detail.canVoid || this.busy}
-          @click=${this.handleVoid}
-        >
-          Void…
-        </wa-button>
-        <wa-button
-          data-delete
-          appearance="outlined"
-          variant="danger"
-          ?disabled=${!detail.canDelete || this.busy}
-          @click=${this.handleDelete}
-        >
-          Delete…
-        </wa-button>
-      </div>
-
-      ${detail.canSend
-        ? nothing
-        : html`<p class="note" data-send-note>
-            ${this.sendUnavailableNote(detail)}
-          </p>`}
+        .dueNote=${dueNote(detail, today())}
+      >
+        <wc-action-pills
+          slot="actions"
+          data-detail-actions
+          align="end"
+          .actions=${detailActions(detail, { sendBlock, busy: this.busy })}
+          @nc-action=${this.handleDetailAction}
+        ></wc-action-pills>
+      </wc-invoice-summary>
 
       <wc-panel heading="Line items">
         <wc-line-items
@@ -1012,7 +973,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     `;
   }
 
-  /** Why Send is unavailable, in one sentence, or empty when it is available. */
   /**
    * Cautions worth reading before confirming, never refusals. The `/i`-prefix
    * warning is the server's sentence verbatim, off `/api/status`.
@@ -1022,6 +982,10 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     return warning ? [warning] : [];
   }
 
+  /**
+   * Why this installation cannot send, in one sentence, or empty when it can.
+   * What the invoice itself rules out is `detailActions`' to say.
+   */
   private sendBlockReason(detail: InvoiceDetail): string {
     if (detail.client && detail.client.email === null) {
       return `${detail.client.name} has no email address. Add one on the client before sending.`;
@@ -1041,14 +1005,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         : 'Sending is not configured yet.';
     }
     return '';
-  }
-
-  private sendUnavailableNote(detail: InvoiceDetail): string {
-    const blocked = this.sendBlockReason(detail);
-    if (blocked) return blocked;
-    if (detail.status === 'void') return 'A void invoice cannot be sent.';
-    if (detail.balance <= 0) return 'This invoice has nothing left to bill for.';
-    return 'This invoice cannot be sent.';
   }
 
   private renderPaymentDialog(detail: InvoiceDetail) {
@@ -1126,7 +1082,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       >
 
       <header>
-        <h2>${heading}</h2>
+        <h1>${heading}</h1>
         <div class="actions">
           <wa-button
             data-cancel

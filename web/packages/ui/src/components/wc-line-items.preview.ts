@@ -1,6 +1,6 @@
 import { html } from 'lit';
 import './wc-line-items.js';
-import type { LineItemValue } from './wc-line-items.js';
+import { lineItemsSubtotal, type LineItemValue } from './wc-line-items.js';
 import type { Preview } from '../../preview/types.js';
 
 const one: LineItemValue[] = [
@@ -36,6 +36,12 @@ const preview: Preview = {
       name: 'readonly',
       render: () => html`
         <wc-line-items readonly .items=${many} .total=${2400}></wc-line-items>
+      `,
+    },
+    {
+      name: 'readonly-with-tax',
+      render: () => html`
+        <wc-line-items readonly .items=${many} .total=${lineItemsSubtotal(many) + 198}></wc-line-items>
       `,
     },
     {

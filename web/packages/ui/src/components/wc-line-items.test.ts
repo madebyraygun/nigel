@@ -167,6 +167,20 @@ describe('wc-line-items', () => {
     expect(el.shadowRoot?.querySelector('[data-remove]')).toBeNull();
   });
 
+  it('drops a read-only Subtotal that only repeats the Total, and keeps one that does not', async () => {
+    const same = await mount({ readonly: true, total: 1850 });
+    expect(same.shadowRoot?.querySelector('tr[data-emphasis="subtotal"]')).toBeNull();
+    expect(same.shadowRoot?.querySelector('tr[data-emphasis="total"]')).toBeTruthy();
+    expect(same.shadowRoot?.querySelectorAll('th')[2]?.textContent?.trim()).toBe('Rate');
+
+    const taxed = await mount({ readonly: true, total: 2000 });
+    expect(taxed.shadowRoot?.querySelector('tr[data-emphasis="subtotal"]')).toBeTruthy();
+
+    const editing = await mount({ total: 1850 });
+    expect(editing.shadowRoot?.querySelector('tr[data-emphasis="subtotal"]')).toBeTruthy();
+    expect(editing.shadowRoot?.querySelectorAll('th')[2]?.textContent?.trim()).toBe('Unit');
+  });
+
   it('disables every control while a save is in flight', async () => {
     const el = await mount({ disabled: true });
     const inputs = [...(el.shadowRoot?.querySelectorAll('input') ?? [])];

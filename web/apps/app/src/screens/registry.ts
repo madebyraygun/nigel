@@ -53,6 +53,12 @@ export interface ScreenDef {
   /** Pinned to the sidebar's footer rather than listed in a group. */
   pinned?: boolean;
   /**
+   * The screen draws its own page heading, so the shell draws none. For a
+   * title row that carries the screen's actions, or a title that changes with
+   * the route — `Invoice #1254` beside its status.
+   */
+  ownTitle?: boolean;
+  /**
    * Render the screen. The context carries the api client, the route's query
    * parameters, and navigation — everything a screen needs from the shell,
    * handed over rather than imported, so a screen can be driven by a fake.
@@ -145,6 +151,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-invoice',
     inNav: true,
     navGroup: 'Billing',
+    ownTitle: true,
     render: renderInvoices,
   },
   documents: {
