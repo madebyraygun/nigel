@@ -94,13 +94,12 @@ describe('dashboard screen', () => {
     resetAppStore();
   });
 
-  it('fetches all four figures when it mounts', async () => {
+  it('fetches the reports when it mounts', async () => {
     const { client } = await mount();
 
     expect(client.calls.filter((c) => c.startsWith('getPnl')).length).toBe(1);
     expect(client.calls.filter((c) => c === 'getBalance').length).toBe(1);
     expect(client.calls.filter((c) => c.startsWith('getCashflow')).length).toBe(1);
-    expect(client.calls.filter((c) => c === 'getFlagged').length).toBe(1);
   });
 
   it('shows year-to-date income, expenses and net', async () => {

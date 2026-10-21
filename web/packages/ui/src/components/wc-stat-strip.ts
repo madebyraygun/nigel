@@ -34,6 +34,7 @@ export class WcStatStrip extends LitElement {
       border-radius: var(--wa-radius-lg);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
+      container-type: inline-size;
     }
 
     .cells {
@@ -51,13 +52,30 @@ export class WcStatStrip extends LitElement {
       border-left: 1px solid var(--wa-color-border-soft);
     }
 
-    @media (max-width: 40rem) {
+    /* The strip answers to its own width, not the viewport's: an open
+       sidebar takes a fixed column from a wide window, and a 28px figure needs
+       about 15rem a cell. Three cells fit from 46rem; a fourth needs 62rem. */
+    @container (max-width: 46rem) {
       .cells {
         grid-auto-flow: row;
         grid-auto-columns: auto;
       }
 
       .cell + .cell {
+        border-left: none;
+        border-top: 1px solid var(--wa-color-border-soft);
+      }
+    }
+
+    @container (max-width: 62rem) {
+      .cells[data-count='4'],
+      .cells[data-count='5'] {
+        grid-auto-flow: row;
+        grid-auto-columns: auto;
+      }
+
+      .cells[data-count='4'] .cell + .cell,
+      .cells[data-count='5'] .cell + .cell {
         border-left: none;
         border-top: 1px solid var(--wa-color-border-soft);
       }
@@ -126,7 +144,12 @@ export class WcStatStrip extends LitElement {
     if (cell.error) {
       return html`
         <p class="error">${cell.error}</p>
-        <button class="retry" type="button" @click=${() => this.retry(cell)}>
+        <button
+          class="retry"
+          type="button"
+          aria-label="Retry ${cell.label}"
+          @click=${() => this.retry(cell)}
+        >
           Retry
         </button>
       `;
@@ -139,7 +162,7 @@ export class WcStatStrip extends LitElement {
   }
 
   render() {
-    return html`<div class="cells">
+    return html`<div class="cells" data-count=${this.cells.length}>
       ${this.cells.map(
         (cell) => html`
           <div class="cell">

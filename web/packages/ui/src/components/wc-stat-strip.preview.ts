@@ -43,6 +43,25 @@ const preview: Preview = {
         ></wc-stat-strip>`,
     },
     {
+      name: 'about 50rem wide, three cells',
+      render: () =>
+        html`<div style="width:50rem;max-width:100%;">
+          <wc-stat-strip .cells=${three}></wc-stat-strip>
+        </div>`,
+    },
+    {
+      name: 'about 50rem wide, four cells',
+      render: () =>
+        html`<div style="width:50rem;max-width:100%;">
+          <wc-stat-strip
+            .cells=${[
+              ...three,
+              { id: 'ar', label: 'Outstanding', amount: 6200, hint: '3 invoices' },
+            ]}
+          ></wc-stat-strip>
+        </div>`,
+    },
+    {
       name: 'zero',
       render: () =>
         html`<wc-stat-strip

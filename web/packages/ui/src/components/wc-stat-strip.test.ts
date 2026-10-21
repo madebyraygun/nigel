@@ -76,10 +76,31 @@ describe('wc-stat-strip', () => {
     expect(el.shadowRoot?.querySelector('wc-money')).toBeNull();
   });
 
-  it('divides cells with a left hairline that becomes a top one on a phone', () => {
+  it('names each retry button for its cell', async () => {
+    const el = await mount({ cells: [{ ...cells[1]!, error: 'boom' }] });
+    expect(
+      el.shadowRoot?.querySelector('.retry')?.getAttribute('aria-label'),
+    ).toBe('Retry Expenses, year to date');
+  });
+
+  it('divides cells with a left hairline that becomes a top one when the strip is narrow', () => {
     const text = styleText(Ctor);
     expect(text).toMatch(/\.cell \+ \.cell\s*{[^}]*border-left:\s*1px solid/);
-    expect(text).toMatch(/@media \(max-width: 40rem\)[\s\S]*border-top:\s*1px solid/);
+    expect(text).toMatch(/@container \(max-width: 46rem\)[\s\S]*border-top:\s*1px solid/);
+  });
+
+  it('wraps on its own width rather than the viewport', () => {
+    const text = styleText(Ctor);
+    expect(text).toMatch(/:host\s*{[^}]*container-type:\s*inline-size/);
+    expect(text).not.toMatch(/@media/);
+  });
+
+  it('wraps four cells earlier than three', async () => {
+    const el = await mount({
+      cells: [...cells, { id: 'ar', label: 'Outstanding', amount: 5 }],
+    });
+    expect(el.shadowRoot?.querySelector('.cells')?.getAttribute('data-count')).toBe('4');
+    expect(styleText(Ctor)).toMatch(/@container \(max-width: 62rem\)/);
   });
 });
 

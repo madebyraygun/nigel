@@ -17,7 +17,7 @@ import type { ScreenContext } from './context.js';
  * The web counterpart of the TUI's home screen: year-to-date profit and loss,
  * account balances, twelve months of cash flow, and what needs review.
  *
- * The title row and its review pill belong to the app shell. The four figures
+ * The title row and its review pill belong to the app shell. The three reports
  * are fetched in parallel and rendered independently, so a failure shows up on
  * the card it belongs to rather than emptying the screen.
  */
@@ -181,7 +181,6 @@ export class NigelDashboardScreen extends SignalWatcher(LitElement) {
     this.announce(store.pnl.error.get());
     this.announce(store.balance.error.get());
     this.announce(store.cashflow.error.get());
-    this.announce(store.flagged.error.get());
 
     if (store.isEmpty.get()) {
       return html`

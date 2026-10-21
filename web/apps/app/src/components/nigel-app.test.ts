@@ -215,6 +215,31 @@ describe('nigel-app', () => {
       expect(pill(el)).toBeNull();
     });
 
+    it('has no pill when the review count cannot be fetched', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(2);
+      client.queueError = new Error('queue is down');
+      const el = await mount(client);
+      await vi.waitFor(() =>
+        expect(client.calls).toContain('getReviewQueue'),
+      );
+      await el.updateComplete;
+      expect(pill(el)).toBeNull();
+    });
+
+    it('drops the pill when a refresh finds the queue empty', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(1);
+      const el = await mount(client);
+      await vi.waitFor(() => expect(pill(el)).not.toBeNull());
+
+      client.reviewQueue = [];
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-refresh', { bubbles: true, composed: true }),
+      );
+      await vi.waitFor(() => expect(pill(el)).toBeNull());
+    });
+
     it('has no pill on other screens', async () => {
       window.location.hash = '#/register';
       const client = new FakeApiClient();
