@@ -31,7 +31,7 @@ export class WcCountGrid extends LitElement {
     dl {
       display: flex;
       flex-wrap: wrap;
-      gap: var(--wa-space-l, 16px);
+      gap: var(--wa-space-l);
       margin: 0;
     }
 
@@ -43,19 +43,19 @@ export class WcCountGrid extends LitElement {
 
     dt {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     dd {
       margin: 0;
-      font-size: var(--wa-font-size-xl, 20px);
-      font-weight: var(--wa-font-weight-semibold, 600);
+      font-size: var(--wa-font-size-xl);
+      font-weight: var(--wa-font-weight-semibold);
       font-variant-numeric: tabular-nums;
       user-select: text;
     }
 
     :host([dense]) dd {
-      font-size: var(--wa-font-size-lg, 16px);
+      font-size: var(--wa-font-size-lg);
     }
 
     dd.good {
@@ -68,8 +68,8 @@ export class WcCountGrid extends LitElement {
 
     .hint {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-normal, 400);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-normal);
     }
   `;
 

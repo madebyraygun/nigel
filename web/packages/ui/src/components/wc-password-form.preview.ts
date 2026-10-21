@@ -27,7 +27,7 @@ const preview: Preview = {
       // The same gap the settings screen's .operations grid uses, so the
       // preview demonstrates the spacing that actually ships.
       render: () => html`
-        <div style="display: grid; gap: var(--wa-space-l, 16px);">
+        <div style="display: grid; gap: var(--wa-space-l);">
           <wc-password-form mode="change"></wc-password-form>
           <wc-password-form mode="remove"></wc-password-form>
         </div>

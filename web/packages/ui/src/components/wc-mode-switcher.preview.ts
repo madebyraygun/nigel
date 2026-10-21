@@ -35,7 +35,7 @@ const preview: Preview = {
       // other preferences rather than in the shell header.
       render: () => html`
         <div
-          style="max-width: 34rem; padding: 1rem; border: 1px solid var(--wa-color-border); border-radius: var(--wa-radius-m, 8px); background: var(--wa-color-surface);"
+          style="max-width: 34rem; padding: 1rem; border: 1px solid var(--wa-color-border); border-radius: var(--wa-radius-m); background: var(--wa-color-surface);"
         >
           <wc-mode-switcher mode="system" resolved="dark"></wc-mode-switcher>
         </div>

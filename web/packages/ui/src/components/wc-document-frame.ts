@@ -38,7 +38,7 @@ export class WcDocumentFrame extends LitElement {
     .frame {
       position: relative;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       overflow: hidden;
       background: var(--wa-color-surface);
     }

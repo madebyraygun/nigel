@@ -80,10 +80,10 @@ export class WcWordmark extends LitElement {
     .art {
       margin: 0;
       font-family: var(--wa-font-family-mono);
-      font-size: var(--nc-wordmark-size, var(--wa-font-size-s, 13px));
+      font-size: var(--nc-wordmark-size, var(--wa-font-size-s));
       line-height: 1.05;
       white-space: pre;
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .char {

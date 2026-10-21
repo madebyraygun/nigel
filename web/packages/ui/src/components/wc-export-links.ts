@@ -45,7 +45,7 @@ export class WcExportLinks extends LitElement {
     :host {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
       flex-wrap: wrap;
@@ -54,13 +54,13 @@ export class WcExportLinks extends LitElement {
     a,
     button {
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs, 4px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      gap: var(--wa-space-2xs);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       background: var(--wa-color-surface);
       color: inherit;
       text-decoration: none;
@@ -86,7 +86,7 @@ export class WcExportLinks extends LitElement {
 
     .reason {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
       max-width: 28rem;
     }

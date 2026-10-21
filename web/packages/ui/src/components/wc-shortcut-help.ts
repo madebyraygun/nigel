@@ -43,7 +43,7 @@ export class WcShortcutHelp extends LitElement {
       display: inline-block;
       position: relative;
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
@@ -52,8 +52,8 @@ export class WcShortcutHelp extends LitElement {
       color: inherit;
       background: none;
       border: 1px solid transparent;
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-xs);
       cursor: default;
     }
 
@@ -75,34 +75,34 @@ export class WcShortcutHelp extends LitElement {
     .panel {
       position: absolute;
       z-index: 20;
-      top: calc(100% + var(--wa-space-2xs, 4px));
+      top: calc(100% + var(--wa-space-2xs));
       inset-inline-end: 0;
       min-width: 16rem;
       max-width: min(24rem, calc(100vw - 2rem));
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+      padding: var(--wa-space-s) var(--wa-space-m);
       background: var(--wa-color-surface);
       color: var(--wa-color-text);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-md, 8px);
+      border-radius: var(--wa-radius-md);
       box-shadow: var(--wa-shadow-m);
     }
 
     .panel h2 {
-      margin: 0 0 var(--wa-space-xs, 6px);
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      margin: 0 0 var(--wa-space-xs);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
     }
 
     dl {
       display: grid;
       grid-template-columns: max-content 1fr;
-      gap: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      gap: var(--wa-space-2xs) var(--wa-space-s);
       margin: 0;
     }
 
     dt {
-      font-family: var(--wa-font-family-mono, monospace);
+      font-family: var(--wa-font-family-mono);
       color: var(--wa-color-text);
       white-space: nowrap;
     }

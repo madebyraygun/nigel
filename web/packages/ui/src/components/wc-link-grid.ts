@@ -32,23 +32,23 @@ export class WcLinkGrid extends LitElement {
       margin: 0;
       padding: 0;
       display: grid;
-      gap: var(--wa-space-m, 12px);
+      gap: var(--wa-space-m);
       grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
     }
 
     :host([compact]) ul {
       grid-template-columns: 1fr;
-      gap: var(--wa-space-xs, 6px);
+      gap: var(--wa-space-xs);
     }
 
     a {
       display: grid;
-      gap: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-2xs);
       height: 100%;
       box-sizing: border-box;
-      padding: var(--wa-space-m, 12px);
+      padding: var(--wa-space-m);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-lg, 12px);
+      border-radius: var(--wa-radius-lg);
       background: var(--wa-color-surface);
       color: inherit;
       text-decoration: none;
@@ -66,13 +66,13 @@ export class WcLinkGrid extends LitElement {
     .label {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-xs, 6px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      gap: var(--wa-space-xs);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     .description {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
   `;

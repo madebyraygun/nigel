@@ -44,8 +44,8 @@ export class WcAgingBars extends LitElement {
 
     .frame {
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      padding: var(--wa-space-m, 12px);
+      border-radius: var(--wa-radius-m);
+      padding: var(--wa-space-m);
     }
 
     header {
@@ -53,14 +53,14 @@ export class WcAgingBars extends LitElement {
       flex-wrap: wrap;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--wa-space-s, 8px);
-      margin-bottom: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
+      margin-bottom: var(--wa-space-s);
     }
 
     h3 {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       text-transform: uppercase;
       letter-spacing: 0.04em;
       color: var(--wa-color-muted);
@@ -68,12 +68,12 @@ export class WcAgingBars extends LitElement {
 
     .as-of {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     a {
       color: var(--wa-color-brand);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .scroll {
@@ -83,7 +83,7 @@ export class WcAgingBars extends LitElement {
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     caption {
@@ -97,14 +97,14 @@ export class WcAgingBars extends LitElement {
 
     th,
     td {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       text-align: start;
       border: 0;
     }
 
     th {
       color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
       white-space: nowrap;
     }
 
@@ -115,11 +115,11 @@ export class WcAgingBars extends LitElement {
     tr.total td,
     tr.total th {
       border-top: 2px solid var(--wa-color-border);
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     td.bar-cell {
-      padding-top: var(--wa-space-s, 8px);
+      padding-top: var(--wa-space-s);
     }
 
     .bar-track {
@@ -131,7 +131,7 @@ export class WcAgingBars extends LitElement {
     .bar {
       width: 100%;
       background: var(--wa-color-brand);
-      border-radius: var(--wa-radius-sm, 4px) var(--wa-radius-sm, 4px) 0 0;
+      border-radius: var(--wa-radius-sm) var(--wa-radius-sm) 0 0;
       min-height: 2px;
       opacity: 0.75;
     }
@@ -144,7 +144,7 @@ export class WcAgingBars extends LitElement {
     .empty {
       margin: 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
   `;
 

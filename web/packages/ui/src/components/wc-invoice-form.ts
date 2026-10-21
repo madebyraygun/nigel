@@ -351,18 +351,18 @@ export class WcInvoiceForm extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .due {
         display: grid;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
         align-content: start;
       }
 
@@ -372,34 +372,34 @@ export class WcInvoiceForm extends LitElement {
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .hint {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .stacked {
         display: grid;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
       }
 
       .label {
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
       }
 
       textarea {
         font: inherit;
         width: 100%;
         box-sizing: border-box;
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-xs) var(--wa-space-s);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
         background: var(--wa-color-surface);
         color: inherit;
         resize: vertical;
@@ -411,9 +411,9 @@ export class WcInvoiceForm extends LitElement {
       }
 
       h3 {
-        margin: var(--wa-space-s, 8px) 0 0;
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
+        margin: var(--wa-space-s) 0 0;
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: var(--wa-color-muted);

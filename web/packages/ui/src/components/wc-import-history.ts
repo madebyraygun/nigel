@@ -57,7 +57,7 @@ export class WcImportHistory extends LitElement {
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-text);
         font-family: var(--wa-font-family-sans);
       }
@@ -74,7 +74,7 @@ export class WcImportHistory extends LitElement {
       th,
       td {
         text-align: start;
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-xs) var(--wa-space-s);
         border-bottom: 1px solid var(--wa-color-border);
         vertical-align: top;
       }
@@ -84,13 +84,13 @@ export class WcImportHistory extends LitElement {
       }
 
       th {
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
         color: var(--wa-color-muted);
         white-space: nowrap;
       }
 
       td.file {
-        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        font-family: var(--wa-font-family-mono);
         overflow-wrap: anywhere;
       }
 
@@ -127,7 +127,7 @@ export class WcImportHistory extends LitElement {
       .loading {
         display: grid;
         place-items: center;
-        padding: var(--wa-space-l, 16px);
+        padding: var(--wa-space-l);
       }
     `,
   ];

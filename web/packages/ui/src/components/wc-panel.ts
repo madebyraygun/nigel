@@ -16,38 +16,38 @@ export class WcPanel extends LitElement {
       display: block;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-      padding: var(--wa-space-l, 16px);
+      border-radius: var(--wa-radius-l);
+      padding: var(--wa-space-l);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
 
     :host([dense]) {
-      padding: var(--wa-space-m, 12px);
+      padding: var(--wa-space-m);
     }
 
     .heading {
       margin: 0;
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-semibold, 600);
+      font-size: var(--wa-font-size-lg);
+      font-weight: var(--wa-font-weight-semibold);
     }
 
     .description {
-      margin: var(--wa-space-2xs, 4px) 0 0;
+      margin: var(--wa-space-2xs) 0 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       max-width: 68ch;
     }
 
     .body {
-      margin-top: var(--wa-space-m, 12px);
+      margin-top: var(--wa-space-m);
     }
 
     .actions {
       display: flex;
       justify-content: flex-end;
-      gap: var(--wa-space-s, 8px);
-      margin-top: var(--wa-space-m, 12px);
+      gap: var(--wa-space-s);
+      margin-top: var(--wa-space-m);
     }
 
     /* An empty actions slot should not leave a gap behind it. */

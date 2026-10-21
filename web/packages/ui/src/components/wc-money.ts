@@ -22,7 +22,7 @@ export class WcMoney extends LitElement {
   static styles = css`
     :host {
       display: inline-block;
-      font-family: var(--nc-font-money, monospace);
+      font-family: var(--nc-font-money);
       /* Digits share a width so columns of amounts line up. */
       font-variant-numeric: tabular-nums;
       white-space: nowrap;

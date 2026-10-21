@@ -41,18 +41,18 @@ export class WcBalanceList extends LitElement {
 
     caption {
       text-align: left;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
-      padding-bottom: var(--wa-space-xs, 6px);
+      padding-bottom: var(--wa-space-xs);
     }
 
     th {
       text-align: left;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
-      padding: var(--wa-space-2xs, 4px) 0;
+      padding: var(--wa-space-2xs) 0;
       border-bottom: 1px solid var(--wa-color-border);
     }
 
@@ -67,8 +67,8 @@ export class WcBalanceList extends LitElement {
     }
 
     td {
-      padding: var(--wa-space-xs, 6px) 0;
-      border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
+      padding: var(--wa-space-xs) 0;
+      border-bottom: 1px solid var(--wa-color-border-soft);
     }
 
     td.amount {
@@ -78,20 +78,20 @@ export class WcBalanceList extends LitElement {
 
     .type {
       display: block;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     tfoot td {
       border-bottom: none;
       border-top: 2px solid var(--wa-color-border);
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .empty,
     .error {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
@@ -100,14 +100,14 @@ export class WcBalanceList extends LitElement {
     }
 
     .retry {
-      margin-top: var(--wa-space-xs, 6px);
+      margin-top: var(--wa-space-xs);
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-brand);
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
     }
 

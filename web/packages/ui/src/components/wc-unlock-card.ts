@@ -27,10 +27,10 @@ export class WcUnlockCard extends LitElement {
         display: block;
         max-width: 26rem;
         width: 100%;
-        padding: var(--wa-space-xl, 24px);
+        padding: var(--wa-space-xl);
         background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-l, 12px);
+        border-radius: var(--wa-radius-l);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
@@ -38,8 +38,8 @@ export class WcUnlockCard extends LitElement {
       .brand {
         display: flex;
         align-items: center;
-        gap: var(--wa-space-s, 8px);
-        margin-bottom: var(--wa-space-l, 16px);
+        gap: var(--wa-space-s);
+        margin-bottom: var(--wa-space-l);
       }
 
       .lock {
@@ -49,24 +49,24 @@ export class WcUnlockCard extends LitElement {
 
       .heading {
         margin: 0;
-        font-size: var(--wa-font-size-lg, 16px);
-        font-weight: var(--wa-font-weight-semibold, 600);
+        font-size: var(--wa-font-size-lg);
+        font-weight: var(--wa-font-weight-semibold);
       }
 
       .hint {
-        margin: 0 0 var(--wa-space-m, 12px);
+        margin: 0 0 var(--wa-space-m);
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       form {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .status {
         min-height: 1.25rem;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .error {
@@ -77,7 +77,7 @@ export class WcUnlockCard extends LitElement {
       .attempts,
       .countdown {
         color: var(--wa-color-muted);
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
       }
     `,
   ];

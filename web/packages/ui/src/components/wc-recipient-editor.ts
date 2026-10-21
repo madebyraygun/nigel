@@ -101,28 +101,28 @@ export class WcRecipientEditor extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       fieldset {
         display: grid;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
         margin: 0;
-        padding: var(--wa-space-s, 8px);
+        padding: var(--wa-space-s);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
         justify-items: start;
       }
 
       legend {
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
       }
 
       .row {
         display: grid;
         grid-template-columns: 1fr 1fr auto;
-        gap: var(--wa-space-xs, 6px);
+        gap: var(--wa-space-xs);
         align-items: end;
         width: 100%;
       }
@@ -135,19 +135,19 @@ export class WcRecipientEditor extends LitElement {
       .hint {
         margin: 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .actions {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--wa-space-xs, 6px);
+        gap: var(--wa-space-xs);
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
     `,
   ];

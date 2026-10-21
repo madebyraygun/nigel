@@ -49,22 +49,22 @@ export class WcReviewForm extends LitElement {
       display: block;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-      padding: var(--wa-space-l, 16px);
+      border-radius: var(--wa-radius-l);
+      padding: var(--wa-space-l);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
 
     .fields {
       display: grid;
-      gap: var(--wa-space-m, 12px);
+      gap: var(--wa-space-m);
     }
 
     label {
       display: block;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      margin-bottom: var(--wa-space-2xs, 4px);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
+      margin-bottom: var(--wa-space-2xs);
     }
 
     input[type='text'] {
@@ -74,8 +74,8 @@ export class WcReviewForm extends LitElement {
       color: inherit;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-m);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       user-select: text;
     }
 
@@ -87,53 +87,53 @@ export class WcReviewForm extends LitElement {
     .checkbox {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-xs, 6px);
+      gap: var(--wa-space-xs);
     }
 
     .checkbox label {
       margin: 0;
-      font-weight: var(--wa-font-weight-normal, 400);
+      font-weight: var(--wa-font-weight-normal);
     }
 
     .rule {
       display: grid;
-      gap: var(--wa-space-s, 8px);
-      padding-left: var(--wa-space-m, 12px);
+      gap: var(--wa-space-s);
+      padding-left: var(--wa-space-m);
       border-left: 2px solid var(--wa-color-border);
     }
 
     .hint {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     .field-error {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      margin: var(--wa-space-2xs) 0 0;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-danger);
     }
 
     .form-error {
-      margin: 0 0 var(--wa-space-m, 12px);
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-      border-radius: var(--wa-radius-m, 8px);
+      margin: 0 0 var(--wa-space-m);
+      padding: var(--wa-space-s) var(--wa-space-m);
+      border-radius: var(--wa-radius-m);
       background: var(--wa-color-danger-fill-quiet);
       color: var(--wa-color-danger);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .actions {
       display: flex;
-      gap: var(--wa-space-s, 8px);
-      margin-top: var(--wa-space-l, 16px);
+      gap: var(--wa-space-s);
+      margin-top: var(--wa-space-l);
       flex-wrap: wrap;
     }
 
     button {
       font: inherit;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-m, 12px);
-      border-radius: var(--wa-radius-m, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-m);
+      border-radius: var(--wa-radius-m);
       border: 1px solid var(--wa-color-border);
       background: var(--wa-color-surface);
       color: inherit;
@@ -144,7 +144,7 @@ export class WcReviewForm extends LitElement {
       background: var(--wa-color-brand);
       border-color: var(--wa-color-brand);
       color: var(--wa-color-on-brand);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     button:disabled {
@@ -153,13 +153,13 @@ export class WcReviewForm extends LitElement {
     }
 
     .keys {
-      margin: var(--wa-space-s, 8px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      margin: var(--wa-space-s) 0 0;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     kbd {
-      font-family: var(--wa-font-family-mono, monospace);
+      font-family: var(--wa-font-family-mono);
     }
   `;
 

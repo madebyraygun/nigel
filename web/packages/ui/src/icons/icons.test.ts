@@ -81,8 +81,8 @@ describe('icons', () => {
 describe('inline sizing', () => {
   it('is a mode of its own, leaving the token to size everything else', () => {
     const css = sheet(WcIconBase);
-    expect(css).toContain('width: var(--nc-icon-size, 20px)');
-    expect(css).toContain('height: var(--nc-icon-size, 20px)');
+    expect(css).toContain('width: var(--nc-icon-size)');
+    expect(css).toContain('height: var(--nc-icon-size)');
     // A separate rule behind the attribute, so nothing gets 1em by default.
     expect(css).toMatch(/:host\(\[inline\]\)\s*{\s*width:\s*1em;\s*height:\s*1em;\s*}/);
   });

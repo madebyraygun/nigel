@@ -43,7 +43,7 @@ export class WcRegisterToolbar extends LitElement {
         display: flex;
         flex-wrap: wrap;
         align-items: end;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
@@ -58,9 +58,9 @@ export class WcRegisterToolbar extends LitElement {
       }
 
       .status {
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-muted);
-        padding-bottom: var(--wa-space-2xs, 4px);
+        padding-bottom: var(--wa-space-2xs);
         white-space: nowrap;
       }
 

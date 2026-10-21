@@ -105,20 +105,20 @@ export class WcClientForm extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         min-width: 20rem;
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .hint {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       /*
@@ -128,21 +128,21 @@ export class WcClientForm extends LitElement {
        */
       .stacked {
         display: grid;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
       }
 
       .label {
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
       }
 
       textarea {
         font: inherit;
         width: 100%;
         box-sizing: border-box;
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-xs) var(--wa-space-s);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
         background: var(--wa-color-surface);
         color: inherit;
         resize: vertical;
@@ -155,18 +155,18 @@ export class WcClientForm extends LitElement {
 
       fieldset.contacts {
         display: grid;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
         margin: 0;
-        padding: var(--wa-space-s, 8px);
+        padding: var(--wa-space-s);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
         justify-items: start;
       }
 
       .contact {
         display: grid;
         grid-template-columns: auto 1fr 1fr 1fr auto;
-        gap: var(--wa-space-xs, 6px);
+        gap: var(--wa-space-xs);
         align-items: end;
         width: 100%;
       }
@@ -174,13 +174,13 @@ export class WcClientForm extends LitElement {
       .contact .billing {
         display: grid;
         justify-items: center;
-        gap: var(--wa-space-2xs, 4px);
-        font-size: var(--wa-font-size-s, 13px);
+        gap: var(--wa-space-2xs);
+        font-size: var(--wa-font-size-s);
       }
 
       .contact .row-actions {
         display: flex;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
       }
     `,
   ];

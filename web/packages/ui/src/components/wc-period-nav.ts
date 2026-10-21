@@ -99,7 +99,7 @@ export class WcPeriodNav extends LitElement {
     :host {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
@@ -107,7 +107,7 @@ export class WcPeriodNav extends LitElement {
     .pager {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-2xs);
     }
 
     button {
@@ -115,8 +115,8 @@ export class WcPeriodNav extends LitElement {
       color: inherit;
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
       display: inline-flex;
       align-items: center;
@@ -139,20 +139,20 @@ export class WcPeriodNav extends LitElement {
     .label {
       min-width: 12ch;
       text-align: center;
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     .kinds {
       display: inline-flex;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       overflow: hidden;
     }
 
     .kinds button {
       border: none;
       border-radius: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .kinds button[aria-checked='true'] {

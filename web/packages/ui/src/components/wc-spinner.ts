@@ -14,10 +14,10 @@ export class WcSpinner extends LitElement {
     :host {
       display: grid;
       place-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       color: var(--wa-color-muted);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s, 12px);
+      font-size: var(--wa-font-size-s);
       --size: 28px;
     }
 

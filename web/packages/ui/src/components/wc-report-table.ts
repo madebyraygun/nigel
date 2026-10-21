@@ -79,13 +79,13 @@ export class WcReportTable extends LitElement {
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-m, 15px);
+      font-size: var(--wa-font-size-m);
     }
 
     caption {
       text-align: start;
-      font-weight: var(--wa-font-weight-medium, 500);
-      padding-bottom: var(--wa-space-xs, 6px);
+      font-weight: var(--wa-font-weight-medium);
+      padding-bottom: var(--wa-space-xs);
     }
 
     caption.visually-hidden {
@@ -102,7 +102,7 @@ export class WcReportTable extends LitElement {
 
     th,
     td {
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       border-bottom: 1px solid var(--wa-color-border);
       text-align: start;
       vertical-align: baseline;
@@ -116,8 +116,8 @@ export class WcReportTable extends LitElement {
     }
 
     th {
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -131,25 +131,25 @@ export class WcReportTable extends LitElement {
 
     :host([dense]) th,
     :host([dense]) td {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+      padding: var(--wa-space-2xs) var(--wa-space-xs);
     }
 
     tr[data-emphasis='section'] td {
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      font-size: var(--wa-font-size-s, 13px);
-      padding-top: var(--wa-space-m, 12px);
+      font-size: var(--wa-font-size-s);
+      padding-top: var(--wa-space-m);
       border-bottom-color: transparent;
     }
 
     tr[data-emphasis='subtotal'] td,
     tr[data-emphasis='total'] td {
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     tr[data-emphasis='total'] td {
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
       border-top: 2px solid var(--wa-color-border);
     }
 
@@ -162,7 +162,7 @@ export class WcReportTable extends LitElement {
     }
 
     td.indent-1 {
-      padding-inline-start: var(--wa-space-l, 16px);
+      padding-inline-start: var(--wa-space-l);
     }
 
     tr[data-link] {
@@ -189,13 +189,13 @@ export class WcReportTable extends LitElement {
 
     .note {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .state {
-      padding: var(--wa-space-l, 16px) 0;
+      padding: var(--wa-space-l) 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .error {
@@ -203,14 +203,14 @@ export class WcReportTable extends LitElement {
     }
 
     .retry {
-      margin-top: var(--wa-space-xs, 6px);
+      margin-top: var(--wa-space-xs);
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-brand);
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
     }
 

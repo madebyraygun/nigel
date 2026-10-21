@@ -34,7 +34,7 @@ export class WcDocumentTable extends LitElement {
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     caption {
@@ -48,7 +48,7 @@ export class WcDocumentTable extends LitElement {
 
     th,
     td {
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       border-bottom: 1px solid var(--wa-color-border);
       text-align: start;
       vertical-align: baseline;
@@ -61,7 +61,7 @@ export class WcDocumentTable extends LitElement {
 
     th {
       color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     td.title,
@@ -92,9 +92,9 @@ export class WcDocumentTable extends LitElement {
     }
 
     .state {
-      padding: var(--wa-space-l, 16px) 0;
+      padding: var(--wa-space-l) 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
   `;
 

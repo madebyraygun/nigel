@@ -95,27 +95,27 @@ export class WcCategoryForm extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         min-width: 22rem;
       }
 
       label.field {
         display: block;
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
-        margin-bottom: var(--wa-space-2xs, 4px);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
+        margin-bottom: var(--wa-space-2xs);
       }
 
       input.native {
         width: 100%;
         box-sizing: border-box;
         font: inherit;
-        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        font-family: var(--wa-font-family-mono);
         color: inherit;
         background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        border-radius: var(--wa-radius-m);
+        padding: var(--wa-space-xs) var(--wa-space-s);
       }
 
       input.native:focus-visible {
@@ -124,25 +124,25 @@ export class WcCategoryForm extends LitElement {
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .warning {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-warning);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .hint {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .hint code {
-        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        font-family: var(--wa-font-family-mono);
       }
     `,
   ];

@@ -62,24 +62,24 @@ export class WcAppShell extends LitElement {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: var(--wa-space-m, 12px);
-      min-height: var(--nc-header-height, 48px);
-      padding: 0 var(--wa-space-l, 16px);
+      gap: var(--wa-space-m);
+      min-height: var(--nc-header-height);
+      padding: 0 var(--wa-space-l);
       background: var(--wa-color-surface);
       border-bottom: 1px solid var(--wa-color-border);
       box-sizing: border-box;
     }
 
     .title {
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-lg);
+      font-weight: var(--wa-font-weight-medium);
       margin: 0;
     }
 
     .heading {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       min-width: 0;
     }
 
@@ -92,11 +92,11 @@ export class WcAppShell extends LitElement {
       height: 32px;
       padding: 0;
       border: 0;
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       background: transparent;
       color: var(--wa-color-text);
       cursor: default;
-      transition: background var(--nc-transition-fast, 120ms ease);
+      transition: background var(--nc-transition-fast);
     }
 
     .nav-toggle:hover {
@@ -118,7 +118,7 @@ export class WcAppShell extends LitElement {
     .actions {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
     }
 
     /* A column flex container, so a screen that wants the window can ask for
@@ -129,7 +129,7 @@ export class WcAppShell extends LitElement {
       display: flex;
       flex-direction: column;
       overflow: auto;
-      padding: var(--wa-space-l, 16px);
+      padding: var(--wa-space-l);
       display: flex;
       flex-direction: column;
       min-height: 0;
@@ -145,7 +145,7 @@ export class WcAppShell extends LitElement {
         position: fixed;
         inset: 0 auto 0 0;
         z-index: 2;
-        transition: transform var(--nc-transition-base, 200ms ease);
+        transition: transform var(--nc-transition-base);
       }
 
       :host([sidebar-collapsed]) ::slotted([slot='sidebar']) {
@@ -174,7 +174,7 @@ export class WcAppShell extends LitElement {
     }
 
     .banner:not(:empty) {
-      padding: var(--wa-space-s, 8px) var(--wa-space-l, 16px);
+      padding: var(--wa-space-s) var(--wa-space-l);
       background: var(--wa-color-surface-alt);
       border-bottom: 1px solid var(--wa-color-border);
     }

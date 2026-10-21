@@ -80,28 +80,28 @@ export class WcAccountForm extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         min-width: 20rem;
       }
 
       .row {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .fixed {
         margin: 0;
         display: grid;
         grid-template-columns: max-content 1fr;
-        gap: var(--wa-space-2xs, 4px) var(--wa-space-m, 12px);
-        font-size: var(--wa-font-size-s, 13px);
+        gap: var(--wa-space-2xs) var(--wa-space-m);
+        font-size: var(--wa-font-size-s);
       }
 
       .fixed dt {
@@ -115,7 +115,7 @@ export class WcAccountForm extends LitElement {
       .hint {
         margin: 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
     `,
   ];

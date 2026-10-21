@@ -86,7 +86,7 @@ export class WcToast extends LitElement {
     :host {
       /* The region is fixed-position; the host itself takes no space. */
       display: contents;
-      --nc-toast-gutter: var(--wa-space-l, 16px);
+      --nc-toast-gutter: var(--wa-space-l);
       --nc-toast-max-width: 360px;
     }
 
@@ -107,7 +107,7 @@ export class WcToast extends LitElement {
       display: flex;
       flex-direction: column;
       align-items: flex-end;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       pointer-events: none;
       /* Reset the UA popover styles so the region flows the same way whether
        * or not it is currently in the top layer. */
@@ -131,14 +131,14 @@ export class WcToast extends LitElement {
       pointer-events: auto;
       display: flex;
       align-items: center;
-      gap: var(--wa-space-l, 16px);
+      gap: var(--wa-space-l);
       padding: 10px 16px;
-      border-radius: var(--wa-radius-md, 10px);
+      border-radius: var(--wa-radius-md);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-base, 14px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-base);
+      font-weight: var(--wa-font-weight-medium);
       box-shadow: var(--wa-shadow-lg);
-      animation: toast-in var(--nc-duration-fast, 120ms) ease;
+      animation: toast-in var(--nc-duration-fast) ease;
       /* A consistently dark chip in both themes; see --nc-color-inverse-bg. */
       background: var(--nc-color-inverse-bg);
       color: var(--nc-color-inverse-text);
@@ -171,12 +171,12 @@ export class WcToast extends LitElement {
       border: 0;
       color: inherit;
       font: inherit;
-      font-weight: var(--wa-font-weight-bold, 600);
+      font-weight: var(--wa-font-weight-bold);
       text-decoration: underline;
       text-underline-offset: 3px;
       cursor: default;
       padding: 4px 8px;
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       white-space: nowrap;
       flex-shrink: 0;
     }
@@ -194,8 +194,8 @@ export class WcToast extends LitElement {
       line-height: 1;
       cursor: default;
       padding: 2px 4px;
-      margin-inline-start: calc(-1 * var(--wa-space-s, 8px));
-      border-radius: var(--wa-radius-sm, 6px);
+      margin-inline-start: calc(-1 * var(--wa-space-s));
+      border-radius: var(--wa-radius-sm);
       flex-shrink: 0;
     }
 

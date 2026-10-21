@@ -72,7 +72,7 @@ export class WcManagerTable extends LitElement {
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-text);
       }
 
@@ -88,7 +88,7 @@ export class WcManagerTable extends LitElement {
       th,
       td {
         text-align: start;
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-xs) var(--wa-space-s);
         border-bottom: 1px solid var(--wa-color-border);
         vertical-align: top;
       }
@@ -98,7 +98,7 @@ export class WcManagerTable extends LitElement {
       }
 
       th {
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
         color: var(--wa-color-muted);
         white-space: nowrap;
       }
@@ -110,7 +110,7 @@ export class WcManagerTable extends LitElement {
       }
 
       td.mono {
-        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
+        font-family: var(--wa-font-family-mono);
         overflow-wrap: anywhere;
       }
 
@@ -125,7 +125,7 @@ export class WcManagerTable extends LitElement {
       .actions {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
         white-space: nowrap;
         user-select: none;
       }

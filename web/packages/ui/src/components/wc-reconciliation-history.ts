@@ -40,7 +40,7 @@ export class WcReconciliationHistory extends LitElement {
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-text);
       font-family: var(--wa-font-family-sans);
     }
@@ -57,7 +57,7 @@ export class WcReconciliationHistory extends LitElement {
     th,
     td {
       text-align: start;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       border-bottom: 1px solid var(--wa-color-border);
       vertical-align: top;
     }
@@ -67,7 +67,7 @@ export class WcReconciliationHistory extends LitElement {
     }
 
     th {
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
       white-space: nowrap;
     }
@@ -89,7 +89,7 @@ export class WcReconciliationHistory extends LitElement {
     .status {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-2xs);
       white-space: nowrap;
     }
 
@@ -104,7 +104,7 @@ export class WcReconciliationHistory extends LitElement {
     .loading {
       display: grid;
       place-items: center;
-      padding: var(--wa-space-l, 16px);
+      padding: var(--wa-space-l);
     }
   `;
 

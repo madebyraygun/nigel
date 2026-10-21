@@ -60,8 +60,8 @@ export class WcBarChart extends LitElement {
     }
 
     .caption {
-      margin: 0 0 var(--wa-space-xs, 6px);
-      font-size: var(--wa-font-size-s, 13px);
+      margin: 0 0 var(--wa-space-xs);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
@@ -78,9 +78,9 @@ export class WcBarChart extends LitElement {
     .plot {
       display: flex;
       align-items: flex-end;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       height: var(--nc-bar-chart-height);
-      padding-bottom: var(--wa-space-xs, 6px);
+      padding-bottom: var(--wa-space-xs);
       border-bottom: 1px solid var(--wa-color-border);
     }
 
@@ -100,22 +100,22 @@ export class WcBarChart extends LitElement {
     .bar {
       width: 44%;
       min-height: 1px;
-      border-radius: var(--wa-radius-sm, 4px) var(--wa-radius-sm, 4px) 0 0;
-      transition: height var(--nc-transition-fast, 120ms ease);
+      border-radius: var(--wa-radius-sm) var(--wa-radius-sm) 0 0;
+      transition: height var(--nc-transition-fast);
     }
 
     .bar.income {
-      background: var(--nc-color-income-fill, var(--nc-color-income));
+      background: var(--nc-color-income-fill);
     }
 
     .bar.expense {
-      background: var(--nc-color-expense-fill, var(--nc-color-expense));
+      background: var(--nc-color-expense-fill);
     }
 
     .labels {
       display: flex;
-      gap: var(--wa-space-s, 8px);
-      margin-top: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-s);
+      margin-top: var(--wa-space-2xs);
     }
 
     .tick {
@@ -123,22 +123,22 @@ export class WcBarChart extends LitElement {
       min-width: var(--nc-bar-bucket-min-width, 24px);
       max-width: 72px;
       text-align: center;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     .legend {
       display: flex;
-      gap: var(--wa-space-m, 12px);
-      margin-top: var(--wa-space-s, 8px);
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-m);
+      margin-top: var(--wa-space-s);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     .key {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-2xs);
     }
 
     .swatch {
@@ -148,28 +148,28 @@ export class WcBarChart extends LitElement {
     }
 
     .swatch.income {
-      background: var(--nc-color-income-fill, var(--nc-color-income));
+      background: var(--nc-color-income-fill);
     }
 
     .swatch.expense {
-      background: var(--nc-color-expense-fill, var(--nc-color-expense));
+      background: var(--nc-color-expense-fill);
     }
 
     .error {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-danger);
     }
 
     .retry {
-      margin-top: var(--wa-space-xs, 6px);
+      margin-top: var(--wa-space-xs);
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-brand);
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
     }
 

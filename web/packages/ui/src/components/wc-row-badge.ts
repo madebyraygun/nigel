@@ -18,9 +18,9 @@ export class WcRowBadge extends LitElement {
 
     .badge {
       display: inline-block;
-      padding: 0 var(--wa-space-xs, 6px);
+      padding: 0 var(--wa-space-xs);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-pill, 999px);
+      border-radius: var(--wa-radius-pill);
       font-family: var(--wa-font-family-sans);
       font-size: var(--wa-font-size-xs, 11px);
       line-height: 1.7;
