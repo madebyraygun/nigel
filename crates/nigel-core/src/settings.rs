@@ -228,12 +228,18 @@ fn write_settings_file(path: &std::path::Path, contents: &str) -> Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    // A symlinked settings.json (a dotfiles checkout, say) is written through:
+    // the temporary file goes beside the link's target and replaces that, so
+    // the link survives.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = path.as_path();
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "settings.json".to_string());
+    let tmp_prefix = format!(".{file_name}.");
     let tmp = path.with_file_name(format!(
-        ".{file_name}.{}.{}.tmp",
+        "{tmp_prefix}{}.{}.tmp",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -251,12 +257,67 @@ fn write_settings_file(path: &std::path::Path, contents: &str) -> Result<()> {
         file.sync_all()?;
         drop(file);
         std::fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        if let Some(dir) = path.parent() {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
         Ok(())
     })();
     if written.is_err() {
         let _ = std::fs::remove_file(&tmp);
+        return written;
     }
-    written
+    sweep_stale_temp_files(path, &tmp_prefix);
+    Ok(())
+}
+
+/// How old a leftover temporary settings file has to be before a save removes
+/// it — far longer than any save takes, so a concurrent writer's file is safe.
+const STALE_TEMP_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Remove temporary settings files a killed process left beside `path`. They
+/// can hold API keys, so they are not left to accumulate. Only files older than
+/// [`STALE_TEMP_AGE`] and, on Unix, owned by the user who owns the file just
+/// written are touched. Best-effort: a failure here never fails the save.
+fn sweep_stale_temp_files(path: &std::path::Path, tmp_prefix: &str) {
+    let Some(dir) = path.parent() else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    #[cfg(unix)]
+    let owner = {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(path) {
+            Ok(meta) => meta.uid(),
+            Err(_) => return,
+        }
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(tmp_prefix) || !name.ends_with(".tmp") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if meta.uid() != owner {
+                continue;
+            }
+        }
+        let stale = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|age| age >= STALE_TEMP_AGE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 pub fn settings_file_exists() -> bool {
@@ -333,18 +394,22 @@ fn invoicing_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
         r2_access_key: env_or("NIGEL_R2_ACCESS_KEY", &s.r2_access_key),
         r2_secret_key: env_or("NIGEL_R2_SECRET_KEY", &s.r2_secret_key),
         r2_bucket: env_or("NIGEL_R2_BUCKET", &s.r2_bucket),
-        public_base_url: url_setting(env_or("NIGEL_PUBLIC_BASE_URL", &s.public_base_url)),
+        public_base_url: url_setting(&env, "NIGEL_PUBLIC_BASE_URL", &s.public_base_url),
     }
 }
 
-/// A URL-valued setting as it is composed into links: leading and trailing
-/// whitespace trimmed, and a value that was nothing but whitespace unset.
-/// Control characters are not whitespace and survive this, which is what lets
-/// `r2::validate_url_setting` refuse them by name.
-fn url_setting(value: Option<String>) -> Option<String> {
-    value
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
+/// A URL-valued setting as it is composed into links: the environment first,
+/// then the file, each with leading and trailing whitespace trimmed and a value
+/// that is nothing but whitespace treated as unset — so a blank variable does
+/// not hide the file's value. Control characters are not whitespace and survive
+/// this, which is what lets `r2::validate_url_setting` refuse them by name.
+fn url_setting(
+    env: impl Fn(&str) -> Option<String>,
+    name: &str,
+    file_val: &Option<String>,
+) -> Option<String> {
+    let trimmed = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    trimmed(env(name)).or_else(|| trimmed(file_val.clone()))
 }
 
 pub fn invoicing_config() -> InvoicingConfig {
@@ -370,11 +435,12 @@ fn documents_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
     DocumentsConfig {
         invoicing: invoicing_config_with(s, &env),
         r2_private_bucket: env_or("NIGEL_R2_PRIVATE_BUCKET", &s.r2_private_bucket),
-        documents_base_url: url_setting(env_or("NIGEL_DOCUMENTS_BASE_URL", &s.documents_base_url)),
-        document_response_url: url_setting(env_or(
+        documents_base_url: url_setting(&env, "NIGEL_DOCUMENTS_BASE_URL", &s.documents_base_url),
+        document_response_url: url_setting(
+            &env,
             "NIGEL_DOCUMENT_RESPONSE_URL",
             &s.document_response_url,
-        )),
+        ),
     }
 }
 
@@ -810,6 +876,27 @@ mod tests {
             from_env.public_base_url.as_deref(),
             Some("https://env.example.com/i")
         );
+
+        let file_settings = Settings {
+            public_base_url: Some("https://billing.example.com/i".into()),
+            documents_base_url: Some("https://docs.example.com/d".into()),
+            document_response_url: Some("https://docs.example.com/d/respond".into()),
+            ..Settings::default()
+        };
+        let blank_env = documents_config_with(&file_settings, |_| Some("  \t".into()));
+        assert_eq!(
+            blank_env.invoicing.public_base_url.as_deref(),
+            Some("https://billing.example.com/i"),
+            "a blank variable is unset, not a value hiding the file's"
+        );
+        assert_eq!(
+            blank_env.documents_base_url.as_deref(),
+            Some("https://docs.example.com/d")
+        );
+        assert_eq!(
+            blank_env.document_response_url.as_deref(),
+            Some("https://docs.example.com/d/respond")
+        );
     }
 
     /// Trimming stops at whitespace: a trailing run of NULs reaches the
@@ -900,6 +987,72 @@ mod tests {
         save_settings(&load_settings()).unwrap();
         assert_eq!(std::fs::read(settings_path()).unwrap(), first);
         assert_eq!(load_settings().public_base_url, stored.public_base_url);
+    }
+
+    /// A settings.json that is a symlink stays one: the save replaces the
+    /// link's target, and the temporary file is written beside the target.
+    #[cfg(unix)]
+    #[test]
+    fn a_save_writes_through_a_symlinked_settings_file() {
+        let _config = TempConfigDir::new();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let target = elsewhere.path().join("nigel-settings.json");
+        std::fs::write(&target, "{\"data_dir\": \"/books/old\"}\n").unwrap();
+        std::fs::create_dir_all(config_dir()).unwrap();
+        std::os::unix::fs::symlink(&target, settings_path()).unwrap();
+
+        let saved = Settings {
+            data_dir: "/books/acme".into(),
+            ..Settings::default()
+        };
+        save_settings(&saved).unwrap();
+
+        let link = std::fs::symlink_metadata(settings_path()).unwrap();
+        assert!(link.file_type().is_symlink(), "the link was replaced");
+        let expected = format!("{}\n", serde_json::to_string_pretty(&saved).unwrap());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+        assert_eq!(load_settings().data_dir, "/books/acme");
+
+        let beside_target: Vec<_> = std::fs::read_dir(elsewhere.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(beside_target, ["nigel-settings.json"]);
+    }
+
+    /// A temporary file a killed save left behind can hold API keys. The next
+    /// save removes it once it is old enough that no save can still own it, and
+    /// leaves a fresh one alone.
+    #[test]
+    fn a_save_sweeps_stale_temporary_files_and_spares_fresh_ones() {
+        let _config = TempConfigDir::new();
+        save_settings(&Settings::default()).unwrap();
+        let dir = config_dir();
+
+        let stale = dir.join(".settings.json.99999.0.tmp");
+        let fresh = dir.join(".settings.json.99999.1.tmp");
+        let unrelated = dir.join(".other.json.99999.0.tmp");
+        for path in [&stale, &fresh, &unrelated] {
+            std::fs::write(path, "{\"stripe_secret_key\": \"sk_test_left_behind\"}").unwrap();
+        }
+        let old = std::time::SystemTime::now() - STALE_TEMP_AGE * 2;
+        for path in [&stale, &unrelated] {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+
+        save_settings(&Settings::default()).unwrap();
+
+        assert!(!stale.exists(), "the stale temporary file was swept");
+        assert!(fresh.exists(), "a fresh one may belong to a save in flight");
+        assert!(
+            unrelated.exists(),
+            "only settings.json's own files are swept"
+        );
     }
 
     #[test]

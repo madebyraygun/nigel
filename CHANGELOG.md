@@ -8,7 +8,7 @@
 
 ### Fixed
 - **URL settings refuse control characters and ignore surrounding whitespace** — `public_base_url`, `documents_base_url` and `document_response_url` are trimmed before they are composed into a link, and a value still carrying a control character (a trailing run of NUL bytes, for one) is refused by name — `public_base_url may not contain control characters` — before anything is published or emailed, in the terminal and over HTTP alike, without quoting the value
-- **settings.json is written atomically** — every save writes a new owner-only file beside it and renames it over the old one, so the file is never left truncated or half written
+- **settings.json is written atomically** — every save writes a new owner-only file beside it and renames it over the old one, so the file is never left truncated or half written. A symlinked settings.json stays a symlink, and leftover temporary files from an interrupted save are removed. A blank `NIGEL_*` URL variable no longer hides the value in settings.json
 
 ### Changed
 - **Document sends and syncs say more, and say it safely** — `nigel document send` names a missing setting before it asks you to confirm, and warns when `documents_base_url` does not end in `/d`. The launch sync prints a notice for each response it refused and why. `nigel document show` and every sync notice strip control characters, carriage returns and bidirectional formatting characters from text a recipient typed. One signer per version is now enforced by the database as well as by the send

@@ -83,7 +83,8 @@ front of it.
 
 Leading and trailing whitespace is trimmed before the address is used, so a
 stray space or newline never reaches a published link; a value that is nothing
-but whitespace counts as unset. A control character anywhere in the value —
+but whitespace counts as unset, so a blank `NIGEL_*` variable falls back to
+`settings.json` rather than hiding it. A control character anywhere in the value —
 a NUL, an escape, a C1 control, a line or paragraph separator — is refused by
 name (`public_base_url may not contain control characters`), and that refusal
 never quotes the value, in a terminal or over HTTP. The same trim and the same
@@ -101,7 +102,8 @@ as `invoicing.publicBaseUrlWarning` on `GET /api/status`.
 Environment variables keep credentials out of the settings file. If you do store
 them in `settings.json`, note that Nigel writes that file with owner-only
 permissions on Unix, and always whole: a new file is written beside it and
-renamed over it, so the file is never left truncated or half written. Use Stripe test keys (`sk_test_…`) while trying things out.
+renamed over it, so the file is never left truncated or half written. A
+symlinked `settings.json` stays a symlink; the save replaces its target. Use Stripe test keys (`sk_test_…`) while trying things out.
 
 ```json
 {

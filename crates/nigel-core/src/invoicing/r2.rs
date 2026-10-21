@@ -745,8 +745,6 @@ mod tests {
         assert!(err.contains("in front"), "the fix has to be stated: {err}");
     }
 
-    /// The wire-safe half of the sentence carries no value at all: it is what an
-    /// API response says, and no response carries a configured setting.
     #[test]
     fn a_base_url_carrying_control_characters_is_refused_by_name_without_quoting_it() {
         for bad in [
@@ -797,6 +795,8 @@ mod tests {
         );
     }
 
+    /// The wire-safe half of the sentence carries no value at all: it is what an
+    /// API response says, and no response carries a configured setting.
     #[test]
     fn the_defect_sentence_quotes_nothing() {
         assert!(!PUBLIC_BASE_URL_DEFECT.contains('"'));
