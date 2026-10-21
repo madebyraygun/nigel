@@ -638,7 +638,7 @@ pub enum DocumentCommands {
         #[arg(long)]
         yes: bool,
     },
-    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent.
+    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent, then "superseded".
     Revise {
         id: i64,
         #[arg(long)]

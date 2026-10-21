@@ -166,12 +166,79 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
     )
 }
 
+/// Rewrite every page of each sent version before `latest` as superseded by
+/// it, with no form, for the recipients that version was sent to. The response
+/// manifest is the document's one manifest and now describes `latest`, so it
+/// is left alone.
+pub(crate) fn supersede_earlier_versions<P: DocumentPublisher>(
+    conn: &Connection,
+    document: &Document,
+    latest: i64,
+    company: &str,
+    publisher: &P,
+) -> Vec<String> {
+    let earlier = match versions(conn, document.id) {
+        Ok(all) => all
+            .into_iter()
+            .filter(|v| v.number < latest && v.sent_at.is_some()),
+        Err(e) => {
+            return vec![format!(
+                "Warning: could not load the earlier versions to mark them superseded ({e})."
+            )]
+        }
+    };
+    let state = PageState::Superseded { latest };
+    let mut warnings = Vec::new();
+    for version in earlier {
+        warnings.extend(republish_version(
+            conn,
+            document,
+            &version,
+            company,
+            &state,
+            false,
+            Some(publisher),
+            None::<&NoSource>,
+        ));
+    }
+    warnings
+}
+
+/// The `ResponseSource` a republish that leaves the manifest alone names.
+enum NoSource {}
+
+impl ResponseSource for NoSource {
+    fn fetch(&self, _: &str, _: i64, _: &str) -> Result<Option<Vec<u8>>> {
+        match *self {}
+    }
+
+    fn put_manifest(&self, _: &str, _: &super::wire::Manifest) -> Result<()> {
+        match *self {}
+    }
+}
+
 pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     document: &Document,
     version: &DocumentVersion,
     company: &str,
     state: &PageState<'_>,
+    publisher: Option<&P>,
+    source: Option<&R>,
+) -> Vec<String> {
+    republish_version(
+        conn, document, version, company, state, true, publisher, source,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn republish_version<P: DocumentPublisher, R: ResponseSource>(
+    conn: &Connection,
+    document: &Document,
+    version: &DocumentVersion,
+    company: &str,
+    state: &PageState<'_>,
+    close_manifest: bool,
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
@@ -196,7 +263,7 @@ pub(crate) fn close_and_republish<P: DocumentPublisher, R: ResponseSource>(
         conn,
         document,
         version,
-        true,
+        close_manifest,
         &|recipient| render_recipient_page(&ctx, recipient, state),
         publisher,
         source,
@@ -353,6 +420,65 @@ mod tests {
         assert!(new.iter().all(|t| !old.contains(t)));
         assert_eq!(get_document(&conn, id).unwrap().token, token);
         assert_eq!(s.last_manifest(&token).unwrap().version, 2);
+    }
+
+    #[test]
+    fn sending_a_later_version_marks_every_page_of_the_earlier_one_superseded() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_change_request(&conn, id, "Sam Example", "Fix the dates", "2026-10-06")
+            .unwrap();
+        revise_with_republish(
+            &conn,
+            dir.path(),
+            id,
+            &fixture_pdf("v2"),
+            "2026-10-07",
+            "Initech",
+            Some(&p),
+            Some(&s),
+        )
+        .unwrap();
+        let ctx = SendContext {
+            data_dir: dir.path(),
+            company: "Initech",
+            response_url: Some("https://docs.example.test/d/respond"),
+            today: "2026-10-08",
+        };
+        // Version 2 goes to the signer alone; Sam's version 1 page is still live.
+        let outcome =
+            send_document(&conn, id, &[pat()], &ctx, &p, &FakeMailer::default(), &s).unwrap();
+        assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
+
+        let token = get_document(&conn, id).unwrap().token;
+        let all = versions(&conn, id).unwrap();
+        let old = recipients(&conn, all[0].id).unwrap();
+        assert_eq!(old.len(), 2);
+        for r in &old {
+            let page = p.page(&token, &r.token).unwrap();
+            assert!(
+                page.contains("superseded by version 2") && !page.contains("<form"),
+                "{}: {page}",
+                r.name
+            );
+        }
+        for r in recipients(&conn, all[1].id).unwrap() {
+            let page = p.page(&token, &r.token).unwrap();
+            assert!(page.contains("<form") && !page.contains("superseded"));
+        }
+        let manifest = s.last_manifest(&token).unwrap();
+        assert_eq!((manifest.version, manifest.state), (2, ManifestState::Open));
+    }
+
+    #[test]
+    fn a_first_send_supersedes_nothing() {
+        let (dir, conn) = test_conn();
+        let (id, p, _) = sent_document_with_fakes(&conn, dir.path());
+        let token = get_document(&conn, id).unwrap().token;
+        let v1 = &versions(&conn, id).unwrap()[0];
+        for r in recipients(&conn, v1.id).unwrap() {
+            assert!(!p.page(&token, &r.token).unwrap().contains("superseded"));
+        }
     }
 
     #[test]

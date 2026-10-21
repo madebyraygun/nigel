@@ -1829,7 +1829,11 @@ nigel document withdraw 3
 `revise` adds the new PDF as the next version, a draft. Until it is sent, the
 live pages show that the document is being revised, the manifest is `closed`,
 and the earlier version cannot be answered. Sending it again issues links for
-the new version. It works from `sent` and `changes_requested`.
+the new version and rewrites every page of each earlier version to say it has
+been superseded by the new one, with no form — including the pages of anyone
+the new version was not sent to. A page that could not be rewritten is a
+warning on the send, never a failure. It works from `sent` and
+`changes_requested`.
 
 `accept`, `request-changes` and `decline` record a response that arrived outside
 the response page. Each takes `--date` (default: today; `YYYY-MM-DD` or an RFC 3339

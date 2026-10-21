@@ -124,7 +124,7 @@ nigel document preview 3 --output-dir /tmp        # Write it to /tmp/document-3/
 nigel document send 3                             # Confirm, then publish and email the signer a link of their own
 nigel document send 3 --signer "Pat Example <pat@cedar.example.test>" --collaborator "Sam Example <sam@cedar.example.test>"  # Name the recipients
 nigel document send 3 --yes                       # Skip the confirmation (required when stdin is not a terminal)
-nigel document revise 3 --file ~/proposal-v2.pdf  # New draft version; live pages read "being revised" until it is sent
+nigel document revise 3 --file ~/proposal-v2.pdf  # New draft version; live pages read "being revised" until it is sent, then "superseded"
 nigel document withdraw 3                         # Replace its pages with a withdrawn notice (--yes skips the prompt); terminal
 nigel document accept 3 --name "Pat Example"      # Record an acceptance received outside the response page (--date)
 nigel document request-changes 3 --name "Pat Example" --note "Move the start date"  # Record a change request (--date)

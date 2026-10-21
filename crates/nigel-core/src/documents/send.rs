@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use serde::{Serialize, Serializer};
 
 use super::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
+use super::lifecycle::supersede_earlier_versions;
 use super::model::{gen_document_token, DocumentStatus, NewRecipient, RecipientRole};
 use super::record::{freeze_recipients, mark_sent, unfreeze};
 use super::render::{
@@ -483,11 +484,13 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     mark_sent(conn, version.id, ctx.today).map_err(|e| (Step::Record, e))?;
     trace.done(Step::Record);
 
+    let warnings =
+        supersede_earlier_versions(conn, &document, version.number, ctx.company, publisher);
     Ok(DocumentSendOutcome {
         version: version.number,
         links,
         steps: std::mem::take(&mut trace.steps),
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
