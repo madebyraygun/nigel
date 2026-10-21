@@ -441,6 +441,12 @@ export class NigelApp extends SignalWatcher(LitElement) {
               active=${screen.id}
             ></wc-nav-sidebar>`}
         ${this.renderBanner(error?.message ?? null)}
+        ${screen.id === 'dashboard' && this.reviewCount
+          ? html`<wc-review-pill
+              slot="page-actions"
+              .count=${this.reviewCount}
+            ></wc-review-pill>`
+          : nothing}
         ${keyed(this.refreshes, screen.render(ctx))}
       </wc-app-shell>
       ${this.hosted
