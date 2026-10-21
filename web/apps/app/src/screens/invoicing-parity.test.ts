@@ -86,9 +86,9 @@ function money(amount: number): string {
 }
 
 /**
- * Money rendered on screen, skipping the aging strip.
+ * Money rendered on screen, skipping the Outstanding card.
  *
- * The strip is a second view of the aging report sitting above the invoice
+ * The card is a second view of the aging report sitting above the invoice
  * list — the same figures the aging report itself shows, not a second set of
  * the list's numbers. Counting it here would compare the list against the
  * aging fixture. `reports-parity.test.ts` skips `wc-bar-chart` for exactly
@@ -221,28 +221,35 @@ describe('invoicing figure parity with the CLI', () => {
     const card = el.shadowRoot?.querySelector('wc-aging-bars');
     expect(card, 'the list rendered no Outstanding card').toBeTruthy();
 
-    const collect = (node: ParentNode | null | undefined): string => {
-      if (!node) return '';
-      let out = '';
-      for (const child of node.childNodes) {
-        const element = child as Element & { shadowRoot?: ShadowRoot | null };
-        if (child.nodeType === Node.TEXT_NODE) out += ` ${child.textContent ?? ''}`;
-        if (element.shadowRoot) out += collect(element.shadowRoot);
-        if (element.childNodes?.length) out += collect(element as unknown as ParentNode);
-      }
-      return out;
-    };
-
-    // The CLI's Summary section: everything before "Open Invoices".
+    // The CLI's Summary table, one row per bucket plus Total Outstanding:
+    // `| current | 2 | $3,050.00 |`.
     const summary = viewText('aging').split('Open Invoices')[0];
-    const fromText = moneyTokens(summary);
-    expect(fromText.length, 'the summary has no figures to compare').toBe(6);
-    expect(moneyTokens(collect(card?.shadowRoot))).toEqual(fromText);
+    const cliRows = new Map(
+      [...summary.matchAll(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*(\$[\d,]+\.\d{2})\s*\|$/gm)].map(
+        (match) => [match[1], { count: Number(match[2]), amount: match[3] }],
+      ),
+    );
+    expect(cliRows.size, 'the summary has no rows to compare').toBe(6);
 
-    // "across N open invoices" is the summary's own count.
-    const open = /Total Outstanding\s*\|\s*(\d+)/.exec(summary)?.[1];
-    expect(card?.shadowRoot?.querySelector('[data-meta]')?.textContent).toContain(
-      `across ${open} open invoices`,
+    const root = card?.shadowRoot;
+    // Each bucket's legend entry against the CLI's row of the same name. The
+    // card's legend prints amounts only, so a bucket's count is the one the
+    // card was rendered from — the payload `nigel invoice aging` also printed.
+    for (const bucket of report.buckets) {
+      const row = cliRows.get(bucket.label);
+      expect(row, `the CLI has no ${bucket.label} row`).toBeDefined();
+      const legend = root?.querySelector(`[data-legend="${bucket.label}"] wc-money`) as
+        | (HTMLElement & { formatted: string })
+        | null;
+      expect(legend?.formatted, `${bucket.label} amount`).toBe(row?.amount);
+      expect(bucket.count, `${bucket.label} count`).toBe(row?.count);
+    }
+
+    const total = cliRows.get('Total Outstanding');
+    const shownTotal = root?.querySelector('[data-total]') as (HTMLElement & { formatted: string }) | null;
+    expect(shownTotal?.formatted).toBe(total?.amount);
+    expect(root?.querySelector('[data-meta]')?.textContent).toContain(
+      `across ${total?.count} open invoices`,
     );
   });
 

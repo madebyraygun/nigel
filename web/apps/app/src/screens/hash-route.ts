@@ -36,7 +36,13 @@ export function parseHash(hash: string): Route {
   const param = SEGMENT_PARAM[head];
   if (segment !== undefined && segment !== '') {
     if (!param || rest.length > 0) return { screen: DEFAULT_SCREEN, params };
-    params.set(param, decodeURIComponent(segment));
+    let value: string;
+    try {
+      value = decodeURIComponent(segment);
+    } catch {
+      return { screen: DEFAULT_SCREEN, params };
+    }
+    params.set(param, value);
   }
   return { screen: head, params };
 }

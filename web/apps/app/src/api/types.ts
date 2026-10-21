@@ -1116,6 +1116,8 @@ export interface InvoiceDetail {
    * a recurring schedule generated, which only void can cancel.
    */
   deleteBlocked: DeleteBlocked | null;
+  /** The day `status` was derived on (`YYYY-MM-DD`): the request's `asOf`, or the server's today. */
+  asOf: string;
 }
 
 /** A delete the detail already knows the server would refuse. */

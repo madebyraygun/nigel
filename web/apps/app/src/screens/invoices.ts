@@ -114,8 +114,8 @@ function isFilteredList(params: URLSearchParams): boolean {
  * Invoices: the list, one invoice, the editor and the new-invoice form.
  *
  * One screen with four views keyed off `ctx.params`, which is the reports
- * screen's arrangement and for the same reason — the router has no path
- * segments. Filters navigate rather than set state, so they are links and a
+ * screen's arrangement; the router maps `#/invoices/{n}` onto `number`, so
+ * every view is still a set of params. Filters navigate rather than set state, so they are links and a
  * filtered list is a URL somebody can keep.
  *
  * The **editor is a full view, not a dialog**: `wc-manager-dialog` fits a
@@ -126,7 +126,7 @@ function isFilteredList(params: URLSearchParams): boolean {
  *
  * Every mutation refetches rather than splicing: a send moves a status, a
  * payment moves a status and a balance, and a void changes what the aging
- * strip reports for every other row on the screen.
+ * card reports for every other row on the screen.
  */
 @customElement('nigel-invoices-screen')
 export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
@@ -404,9 +404,9 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   }
 
   /**
-   * The aging strip is secondary to the list it sits above.
+   * The Outstanding card is secondary to the list it sits above.
    *
-   * A failure there renders as no strip rather than as no invoices — the
+   * A failure there renders as no card rather than as no invoices — the
    * dashboard's per-card reasoning, one card down.
    */
   private async agingOrNull(): Promise<AgingReport | null> {
@@ -680,7 +680,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
   private closeSend = (): void => {
     this.sendOpen = false;
-    // The status, the balance and the aging strip all moved if it went out.
+    // The status, the balance and the Outstanding card all moved if it went out.
     void this.refresh();
   };
 
@@ -741,7 +741,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
   render() {
     if (this.error) {
-      // The filters, the New-invoice button and the aging strip all live inside
+      // The filters, the New-invoice button and the Outstanding card all live inside
       // `renderList`, so a failed load leaves no control on screen. The way back
       // to the unfiltered list has to be here, or the only exit is the sidebar.
       return html`
@@ -900,7 +900,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .currency=${detail.currency}
         .issueDate=${detail.issueDate}
         .dueDate=${detail.dueDate}
-        .dueNote=${dueNote(detail, today())}
+        .dueNote=${dueNote(detail, detail.asOf)}
       >
         <wc-action-pills
           slot="actions"

@@ -502,7 +502,8 @@ The invoice's own fields flattened, plus everything a detail screen prints:
   "deleteBlocked": {
     "reason": "not_deletable",
     "message": "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted"
-  }
+  },
+  "asOf": "2026-03-15"
 }
 ```
 
@@ -531,6 +532,10 @@ sent, paid or voided, and `from_schedule` for a draft a recurring schedule
 generated — a draft by every other test, which only void can cancel. A screen
 uses it to say why Delete is off, and to point at Void when `canVoid` is true,
 without making the request first.
+
+`asOf` echoes the day the answer is about (below), so a client counting days to
+the due date counts from the same day `status` was derived on rather than from
+its own clock.
 
 `asOf` is the day the answer is about, `YYYY-MM-DD`, defaulting to the server's
 today. An invoice past its due date with money owing reads `overdue` on that day

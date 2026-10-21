@@ -167,6 +167,7 @@ function detail(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
     canVoid: false,
     canPay: true,
     canDelete: false,
+    asOf: '2026-03-15',
     ...overrides,
   };
 }
@@ -282,15 +283,15 @@ describe('nigel-invoices-screen', () => {
     vi.restoreAllMocks();
   });
 
-  it('lists invoices newest first with the aging strip above them', async () => {
+  it('lists invoices newest first with the Outstanding card above them', async () => {
     const { el } = await mount();
     expect(table(el).rows.map((row) => row.number)).toEqual([1251, 1250, 1247]);
 
-    const strip = el.shadowRoot?.querySelector('wc-aging-bars') as HTMLElement & {
+    const card = el.shadowRoot?.querySelector('wc-aging-bars') as HTMLElement & {
       total: number;
     };
-    expect(strip.total).toBe(4010);
-    expect(strip.getAttribute('href')).toBe('#/reports?report=aging');
+    expect(card.total).toBe(4010);
+    expect(card.getAttribute('href')).toBe('#/reports?report=aging');
   });
 
   it('shows an em dash for a void invoice’s balance', async () => {
@@ -356,7 +357,7 @@ describe('nigel-invoices-screen', () => {
     expect(actionNote(el, 'sync')).toContain('stripe_secret_key');
   });
 
-  it('syncs and refetches both the list and the strip', async () => {
+  it('syncs and refetches both the list and the Outstanding card', async () => {
     const fake = client();
     fake.syncResult = { recorded: 2, invoicesChecked: 5, failures: [] };
     const { el } = await mount('', fake);
@@ -369,9 +370,9 @@ describe('nigel-invoices-screen', () => {
     expect(fake.calls.filter((call) => call.startsWith('getAging'))).toHaveLength(2);
   });
 
-  it('shows the aging strip anyway when only the aging request fails', async () => {
-    // The strip is secondary to the list it sits above: a failure there renders
-    // as no strip, never as no invoices.
+  it('still shows the list when only the aging request fails', async () => {
+    // The card is secondary to the list it sits above: a failure there renders
+    // as no card, never as no invoices.
     const fake = client();
     fake.agingError = new ApiError({
       code: 'internal',
@@ -396,6 +397,16 @@ describe('nigel-invoices-screen', () => {
     expect(summary.number).toBe(1250);
     expect(summary.balance).toBe(1200);
     expect(el.shadowRoot?.querySelector('wc-payment-list')).toBeTruthy();
+  });
+
+  it('counts days to the due date from the day the server derived the status on', async () => {
+    // 1250 is due 2026-03-20 and the fixture's asOf is 2026-03-15, whatever
+    // the browser's own clock says.
+    const { el } = await mount('number=1250');
+    const summary = el.shadowRoot?.querySelector('wc-invoice-summary') as HTMLElement & {
+      dueNote: string;
+    };
+    expect(summary.dueNote).toBe('Due in 5 days');
   });
 
   it('disables Send when canSend is false and names why', async () => {
@@ -556,7 +567,7 @@ describe('nigel-invoices-screen', () => {
     expect(el.shadowRoot?.textContent).toContain('not an invoice number');
   });
 
-  it('hides the account-wide aging strip above one client’s list', async () => {
+  it('hides the account-wide Outstanding card above one client’s list', async () => {
     const unfiltered = await mount('');
     expect(unfiltered.el.shadowRoot?.querySelector('wc-aging-bars')).toBeTruthy();
 

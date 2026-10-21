@@ -1397,6 +1397,7 @@ export class FakeApiClient implements ApiClient {
       canVoid: true,
       canPay: true,
       canDelete: true,
+      asOf: '2026-03-15',
       deleteBlocked: null,
     };
     this.invoiceDetails[number] = created;

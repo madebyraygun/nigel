@@ -87,6 +87,7 @@ const DETAIL: InvoiceDetail = {
   canVoid: true,
   canPay: true,
   canDelete: false,
+  asOf: '2026-03-15',
   deleteBlocked: null,
 };
 

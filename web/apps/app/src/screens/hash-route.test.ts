@@ -61,6 +61,12 @@ describe('parseHash', () => {
     expect(parseHash('#/invoices/1254/extra').screen).toBe('dashboard');
   });
 
+  it('falls back to the dashboard for a segment that is not valid percent-encoding', () => {
+    expect(() => parseHash('#/invoices/%')).not.toThrow();
+    expect(parseHash('#/invoices/%').screen).toBe('dashboard');
+    expect(parseHash('#/invoices/%E0').screen).toBe('dashboard');
+  });
+
   it('does not treat a param-only hash as a screen', () => {
     expect(parseHash('#/?year=2025').screen).toBe('dashboard');
   });

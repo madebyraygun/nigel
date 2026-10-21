@@ -98,6 +98,10 @@ struct InvoiceDetail {
     /// and sentence the `409` on `DELETE` would answer with, so a screen can
     /// say why the control is off without asking the write first.
     delete_blocked: Option<DeleteBlocked>,
+    /// The day `status` was derived on — the request's `asOf`, or the server's
+    /// today. A screen that counts days to the due date counts from this, so
+    /// "3 days overdue" and the `overdue` beside it agree.
+    as_of: String,
 }
 
 /// A delete the detail already knows would be refused.
@@ -164,6 +168,7 @@ fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<Inv
         can_pay,
         can_delete,
         delete_blocked,
+        as_of: today.to_string(),
     })
 }
 
@@ -1286,6 +1291,7 @@ mod tests {
         assert_eq!(body["canPay"], true);
         assert_eq!(body["canSend"], true);
         assert_eq!(body["canDelete"], false);
+        assert_eq!(body["asOf"], "2026-03-15", "{body}");
     }
 
     #[tokio::test]
