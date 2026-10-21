@@ -117,8 +117,25 @@ const preview = {
           .categories=${categories}
           .selectedId=${102}
           .total=${8281.51}
+          footer-label="All accounts"
           footer-note="4 of 480 rows"
         ></wc-register-table>
+      `,
+    },
+    {
+      // A phone's card: the columns keep their widths and scroll sideways
+      // inside it, and the footer's total stays pinned in view.
+      name: 'narrow-card',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-register-table
+            .rows=${rows}
+            .categories=${categories}
+            .selectedId=${101}
+            .total=${8281.51}
+            footer-label="All accounts"
+          ></wc-register-table>
+        </div>
       `,
     },
     {
@@ -143,6 +160,7 @@ const preview = {
             .categories=${categories}
             .selectedId=${1000}
             .total=${8281.51}
+            footer-label="BofA Checking"
             footer-note="32 of 1,872 rows"
           ></wc-register-table>
         </div>

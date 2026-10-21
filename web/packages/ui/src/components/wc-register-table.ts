@@ -129,8 +129,11 @@ export class WcRegisterTable extends LitElement {
       .scroller {
         overflow: auto;
         max-height: var(--nc-register-height, 60vh);
+        background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-md);
+        border-radius: var(--wa-radius-lg);
+        font-size: var(--nc-font-size-control);
+        font-variant-numeric: tabular-nums;
       }
 
       /* The fill attribute is the register screen's mode: the table takes what
@@ -138,14 +141,14 @@ export class WcRegisterTable extends LitElement {
 
          The *host* is what grows, and it carries the floor. The scroller only
          ever shrinks into it (flex: 0 1 auto), so three search matches draw a
-         three-row box rather than a full-height bordered one with the Net row
+         three-row box rather than a full-height bordered one with the total row
          pulled up under them — a sticky footer is pulled up by its scroller
          and never pushed down.
 
          --nc-register-min-height is where shrinking stops. Below it the page
          scrolls instead, which is what a viewport shortened by a docked
          devtools panel needs: the alternative is a table collapsed to a sliver
-         under its own sticky Net row. It sits on the host rather than on the
+         under its own sticky total row. It sits on the host rather than on the
          scroller because the scroller has a border and must stay free to hug
          short content.
 
@@ -175,31 +178,45 @@ export class WcRegisterTable extends LitElement {
         table-layout: fixed;
       }
 
+      /* Below this width the fixed columns (714px) would leave Description
+         next to nothing, so a narrow card — a phone's — holds the table at it
+         and scrolls sideways inside itself. Pixels, like the columns, because
+         the app's root font size is not 16px. */
+      .scroller {
+        container-type: inline-size;
+      }
+
+      @container (max-width: 860px) {
+        table {
+          width: 860px;
+        }
+      }
+
       .col-flag {
-        width: 2.5rem;
+        width: 40px;
       }
 
       .col-date {
-        width: 6.5rem;
+        width: 104px;
       }
 
       .col-category {
-        width: 11rem;
+        width: 186px;
       }
 
       .col-vendor {
-        width: 9rem;
+        width: 118px;
       }
 
-      /* Room for a seven-figure amount with its sign and separators; the
-         clipping below is the backstop, because a figure that overflowed
-         would land in the Account column beside it. */
+      /* A six-figure amount with its sign and separators; the clipping below
+         is the backstop, because a figure that overflowed would land in the
+         Account column beside it. */
       .col-amount {
-        width: 9rem;
+        width: 116px;
       }
 
       .col-account {
-        width: 9rem;
+        width: 150px;
       }
 
       /* Description is the only auto column, so it takes what is left — the
@@ -218,20 +235,24 @@ export class WcRegisterTable extends LitElement {
         position: sticky;
         top: 0;
         z-index: 1;
+        height: 34px;
+        box-sizing: border-box;
         text-align: left;
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-meta);
         font-weight: var(--wa-font-weight-medium);
         color: var(--wa-color-muted);
-        background: var(--wa-color-surface);
-        padding: var(--wa-space-xs) var(--wa-space-s);
+        background: var(--wa-color-surface-alt);
+        padding: 0 var(--wa-space-s);
         border-bottom: 1px solid var(--wa-color-border);
         white-space: nowrap;
       }
 
       td {
-        padding: var(--wa-space-xs) var(--wa-space-s);
+        height: 36px;
+        box-sizing: border-box;
+        padding: 0 var(--wa-space-s);
         border-bottom: 1px solid var(--wa-color-border-soft);
-        vertical-align: top;
+        vertical-align: middle;
       }
 
       /* The transaction data itself — date, description, category, vendor,
@@ -261,12 +282,13 @@ export class WcRegisterTable extends LitElement {
       }
 
       :host([dense]) td {
-        padding: var(--wa-space-2xs) var(--wa-space-s);
+        height: 30px;
       }
 
       th.amount,
       td.amount {
         text-align: right;
+        padding-right: 18px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -274,20 +296,35 @@ export class WcRegisterTable extends LitElement {
 
       td.date {
         white-space: nowrap;
-        font-variant-numeric: tabular-nums;
+        color: var(--wa-color-muted);
       }
 
       th.flag,
       td.flag {
         text-align: center;
+        padding: 0;
       }
 
-      tbody tr[aria-selected='true'] {
+      tbody tr[data-id]:hover {
+        background: var(--wa-color-surface-alt);
+      }
+
+      tbody tr[aria-selected='true'],
+      tbody tr[aria-selected='true']:hover {
         background: var(--nc-color-highlight);
       }
 
-      tbody tr[data-flagged='true'] td.date {
-        box-shadow: inset 3px 0 0 var(--nc-color-flagged);
+      /* The left-edge stripe: brand on the selected row, the flag colour on a
+         row that wants attention — flagged, or not yet categorised. The flag
+         button and the "Uncategorized" text carry the same news, so colour is
+         never the only channel. */
+      tbody tr[data-flagged='true'] td.flag,
+      tbody tr[data-uncategorized='true'] td.flag {
+        box-shadow: inset 2px 0 0 var(--nc-color-flagged);
+      }
+
+      tbody tr[aria-selected='true'] td.flag {
+        box-shadow: inset 2px 0 0 var(--wa-color-brand);
       }
 
       tbody tr:focus-visible {
@@ -304,38 +341,86 @@ export class WcRegisterTable extends LitElement {
       }
 
       .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
         font: inherit;
         color: var(--wa-color-muted);
         background: none;
         border: none;
-        border-radius: var(--wa-radius-sm);
-        padding: 2px;
+        border-radius: var(--wa-radius-md);
+        padding: 0;
         cursor: default;
         line-height: 0;
+        --nc-icon-size: 16px;
+      }
+
+      .icon-button:hover:not(:disabled) {
+        background: var(--nc-color-hover);
       }
 
       .icon-button[aria-pressed='true'] {
         color: var(--nc-color-flagged);
+        --nc-icon-fill: currentColor;
       }
 
       .icon-button:focus-visible {
         outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
+        outline-offset: 2px;
+      }
+
+      td.flag > wc-icon-flag {
+        --nc-icon-size: 16px;
+        --nc-icon-fill: currentColor;
+        color: var(--nc-color-flagged);
       }
 
       tfoot td {
+        height: 38px;
         border-bottom: none;
-        border-top: 2px solid var(--wa-color-border);
-        font-weight: var(--wa-font-weight-bold);
+        border-top: 1px solid var(--wa-color-border);
+        font-size: var(--nc-font-size-meta);
         position: sticky;
         bottom: 0;
-        background: var(--wa-color-surface);
+        background: var(--wa-color-surface-alt);
+      }
+
+      /* The width of the card rather than of the table, and pinned to its
+         left edge, so the total stays in view while a narrow card scrolls the
+         columns sideways. */
+      .foot {
+        position: sticky;
+        left: 0;
+        box-sizing: border-box;
+        width: calc(100cqi - 2 * var(--wa-space-s));
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--wa-space-m);
+        padding: 0 6px 0 var(--wa-space-xs);
+        white-space: nowrap;
+      }
+
+      .foot-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--wa-color-text);
       }
 
       .note {
-        font-weight: var(--wa-font-weight-normal);
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s);
+      }
+
+      .foot-total {
+        display: inline-flex;
+        align-items: baseline;
+        gap: var(--wa-space-s);
+        color: var(--wa-color-muted);
+      }
+
+      .foot-total wc-money {
+        font-weight: var(--wa-font-weight-bold);
       }
 
       /* -- the inline editors -- */
@@ -348,10 +433,11 @@ export class WcRegisterTable extends LitElement {
         font: inherit;
         width: 100%;
         min-width: 12ch;
+        box-sizing: border-box;
         color: var(--wa-color-text);
-        background: var(--wa-color-bg);
+        background: var(--nc-color-field);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
+        border-radius: var(--wa-radius-md);
         padding: var(--wa-space-2xs) var(--wa-space-xs);
       }
 
@@ -483,6 +569,10 @@ export class WcRegisterTable extends LitElement {
   /** Rendered as the footer's running total. Omit and no total is shown. */
   @property({ type: Number })
   total?: number;
+
+  /** What the footer's total covers, on its left — the register's account filter. */
+  @property({ type: String, attribute: 'footer-label' })
+  footerLabel = '';
 
   /** Free text beside the total, e.g. a match count. */
   @property({ type: String, attribute: 'footer-note' })
@@ -655,7 +745,7 @@ export class WcRegisterTable extends LitElement {
    * so `scrollIntoView` cannot reach it. Every row is one line tall, so where
    * row *n* sits is `n * rowHeight` and nothing has to be measured.
    */
-  private scrollToRowIndex(index: number, block: 'center' | 'nearest'): void {
+  private scrollToRowIndex(index: number, block: 'center' | 'end' | 'nearest'): void {
     // Whatever was pending is about to be decided one way or the other. A
     // pending scroll left over from a call that needed none is a view yanked
     // sideways by the next unrelated render.
@@ -667,7 +757,7 @@ export class WcRegisterTable extends LitElement {
     const viewport = scroller.clientHeight;
     if (viewport <= 0) return;
 
-    // The header and the Net row are painted over the scroller, so the band a
+    // The header and the total row are painted over the scroller, so the band a
     // row is actually visible in starts below one and ends above the other.
     const head = this.stickyHeadHeight();
     const band = this.visibleRowsHeight();
@@ -675,6 +765,11 @@ export class WcRegisterTable extends LitElement {
 
     if (block === 'center') {
       this.pendingScrollTop = Math.max(0, top + this.rowHeight / 2 - (head + band / 2));
+    } else if (block === 'end') {
+      // The header is in flow above the rows as well as painted over them, so
+      // a row's bottom edge sits `head` below where `top` puts it — the same
+      // amount the band starts below the scroller's edge.
+      this.pendingScrollTop = Math.max(0, top + this.rowHeight - band);
     } else {
       const current = scroller.scrollTop;
       if (top - head < current) this.pendingScrollTop = Math.max(0, top - head);
@@ -729,16 +824,32 @@ export class WcRegisterTable extends LitElement {
 
   // -- public API -----------------------------------------------------------
 
-  /** Select a row by index and bring it into view. Used for scroll-to-today. */
-  scrollToIndex(index: number): boolean {
+  /**
+   * Select a row by index and bring it into view. Used for scroll-to-today.
+   *
+   * `end` sets the row on the bottom of the visible band, so the rows before
+   * it fill the view — how the register opens on the newest transactions.
+   */
+  scrollToIndex(index: number, block: 'center' | 'end' = 'center'): boolean {
     const row = this.rows[index];
     if (!row) return false;
 
     this.setActive(row.id);
     this.coverIndex(index);
-    this.scrollToRowIndex(index, 'center');
-    void this.updateComplete.then(() => this.bringIntoView(row.id));
+    this.scrollToRowIndex(index, block);
+    void this.updateComplete.then(() =>
+      block === 'center' ? this.bringIntoView(row.id) : this.settleAtEnd(row.id),
+    );
     return true;
+  }
+
+  /** Scroll to the last rows without selecting any. */
+  scrollToEnd(): void {
+    const last = this.rows[this.rows.length - 1];
+    if (!last) return;
+    this.coverIndex(this.rows.length - 1);
+    this.scrollToRowIndex(this.rows.length - 1, 'end');
+    void this.updateComplete.then(() => this.settleAtEnd(last.id));
   }
 
   /** Select a row by transaction id and bring it into view. */
@@ -753,14 +864,16 @@ export class WcRegisterTable extends LitElement {
    *
    * It selects nothing: on a register that opened with no cursor the stop is
    * the first row as a fallback, and landing the keyboard there is not a
-   * decision about which transaction is current.
+   * decision about which transaction is current. Nor does it scroll: the
+   * caller has already put the view where it wants it, and the fallback stop
+   * can sit just above the rows on screen.
    */
   focusSelectedRow(): boolean {
     const id = this.tabStopId;
     if (id === null) return false;
     const row = this.rowElement(id);
     if (!row) return false;
-    row.focus();
+    row.focus({ preventScroll: true });
     return true;
   }
 
@@ -807,6 +920,23 @@ export class WcRegisterTable extends LitElement {
 
   private rowElement(id: number): HTMLElement | null {
     return this.shadowRoot?.querySelector<HTMLElement>(`tr[data-id="${id}"]`) ?? null;
+  }
+
+  /**
+   * Correct an end-aligned scroll against the row's drawn box. The arithmetic
+   * is only as good as the row height it had, and on a first load that can
+   * still be the estimate.
+   */
+  private settleAtEnd(id: number): void {
+    const scroller = this.scroller;
+    const row = this.rowElement(id);
+    if (!scroller || !row) return;
+
+    const frame = scroller.getBoundingClientRect();
+    if (frame.height <= 0) return;
+    const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
+    const delta = row.getBoundingClientRect().bottom - (frame.top + scroller.clientHeight - foot);
+    if (Number.isFinite(delta) && delta !== 0) scroller.scrollTop += delta;
   }
 
   /**
@@ -861,7 +991,7 @@ export class WcRegisterTable extends LitElement {
 
   /**
    * The height rows are actually visible in: the scroller less the header and
-   * the Net row, which are sticky and painted *over* it. Paging by the whole
+   * the total row, which are sticky and painted *over* it. Paging by the whole
    * scroller skips the rows those two cover, every press.
    */
   private visibleRowsHeight(): number {
@@ -1140,18 +1270,23 @@ export class WcRegisterTable extends LitElement {
             : html`
                 <tfoot>
                   <tr role="row" aria-rowindex=${this.rows.length + 2}>
-                    <td role="gridcell" colspan=${columns - 1}>
-                      Net
-                      ${this.footerNote
-                        ? html`<span class="note">· ${this.footerNote}</span>`
-                        : nothing}
+                    <td role="gridcell" colspan=${columns}>
+                      <div class="foot">
+                        <span class="foot-label">
+                          ${this.footerLabel}
+                          ${this.footerNote
+                            ? html`<span class="note"
+                                >${this.footerLabel ? '· ' : ''}${this.footerNote}</span
+                              >`
+                            : nothing}
+                        </span>
+                        ${this.total === undefined
+                          ? nothing
+                          : html`<span class="foot-total">
+                              Total <wc-money .amount=${this.total}></wc-money>
+                            </span>`}
+                      </div>
                     </td>
-                    <td role="gridcell" class="amount">
-                      ${this.total === undefined
-                        ? nothing
-                        : html`<wc-money .amount=${this.total} align="end"></wc-money>`}
-                    </td>
-                    ${this.showAccount ? html`<td role="gridcell"></td>` : nothing}
                   </tr>
                 </tfoot>
               `}
@@ -1268,6 +1403,7 @@ export class WcRegisterTable extends LitElement {
         role="row"
         data-id=${row.id}
         data-flagged=${row.isFlagged ? 'true' : 'false'}
+        data-uncategorized=${row.categoryId === null ? 'true' : 'false'}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
         aria-rowindex=${index + 2}
@@ -1285,7 +1421,7 @@ export class WcRegisterTable extends LitElement {
           ? this.renderEditCells(row)
           : html`
               <td role="gridcell" class="text" title=${row.category ?? ''}>
-                ${row.category ?? html`<span class="muted">—</span>`}
+                ${row.category ?? html`<span class="muted">Uncategorized</span>`}
               </td>
               <td role="gridcell" class="text" title=${row.vendor ?? ''}>
                 ${row.vendor ?? ''}

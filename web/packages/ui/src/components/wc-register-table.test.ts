@@ -84,10 +84,25 @@ describe('wc-register-table', () => {
     expect(rowEls(el).map((tr) => Number(tr.dataset.id))).toEqual([100, 101, 102, 103]);
   });
 
-  it('shows an em dash for an uncategorized row and nothing for a missing vendor', async () => {
+  it('labels the footer with what it covers and its total', async () => {
+    const el = await mount({
+      total: -12.5,
+      footerLabel: 'BofA Checking',
+      footerNote: '2 of 4 rows shown',
+    });
+    const foot = el.shadowRoot?.querySelector('tfoot');
+    const label = foot?.querySelector('.foot-label')?.textContent?.replace(/\s+/g, ' ');
+    expect(label?.trim()).toBe('BofA Checking · 2 of 4 rows shown');
+    expect(foot?.querySelector('.foot-total')?.textContent?.trim()).toMatch(/^Total/);
+    expect(foot?.querySelector('wc-money')?.amount).toBe(-12.5);
+  });
+
+  it('names an uncategorized row and shows nothing for a missing vendor', async () => {
     const el = await mount();
     const cells = [...(rowEls(el)[0]?.querySelectorAll('td') ?? [])];
-    expect(cells[3]?.textContent?.trim()).toBe('—');
+    expect(cells[3]?.textContent?.trim()).toBe('Uncategorized');
+    expect(rowEls(el)[0]?.dataset.uncategorized).toBe('true');
+    expect(rowEls(el)[1]?.dataset.uncategorized).toBe('false');
     expect(cells[4]?.textContent?.trim()).toBe('');
   });
 
@@ -1049,6 +1064,31 @@ describe('a register too big to put in the DOM', () => {
     const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
     const band = 660 - 40 - 20;
     expect(scroller.scrollTop).toBe(1000 * 33 + 33 / 2 - (40 + band / 2));
+  });
+
+  it('sets an end-aligned row on the bottom of the band, above the footer', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+
+    el.scrollToIndex(1000, 'end');
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(1001 * 33 - (660 - 40 - 20));
+    expect(selectedId(el)).toBe(1100);
+  });
+
+  it('scrolls to the last rows without selecting one', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+
+    el.scrollToEnd();
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(BIG * 33 - (660 - 40 - 20));
+    expect(renderedIds(el)).toContain(100 + BIG - 1);
+    expect(selectedId(el)).toBeNull();
   });
 
   it('never leaves a scroll pending across an unrelated update', async () => {

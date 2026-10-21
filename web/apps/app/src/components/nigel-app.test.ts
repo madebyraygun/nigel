@@ -75,9 +75,16 @@ describe('nigel-app', () => {
   });
 
   it('renders the screen named by the hash', async () => {
+    window.location.hash = '#/reports';
+    const el = await mount();
+    expect(shell(el)?.getAttribute('screen-title')).toBe('Reports');
+  });
+
+  it('draws no page heading over the register, whose toolbar is its first line', async () => {
     window.location.hash = '#/register';
     const el = await mount();
-    expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
+    expect(el.shadowRoot?.querySelector('nigel-register-screen')).not.toBeNull();
+    expect(shell(el)?.getAttribute('screen-title')).toBe('');
   });
 
   it('swaps screens on hashchange', async () => {

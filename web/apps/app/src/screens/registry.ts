@@ -42,6 +42,11 @@ export interface ScreenDef {
   id: ScreenId;
   /** Header and document title. */
   title: string;
+  /**
+   * Draw no page heading over the screen. The breadcrumb already names it,
+   * and a screen whose toolbar is its first line gives the rows that height.
+   */
+  untitled?: boolean;
   /** Sidebar label — usually shorter than the title. */
   navLabel: string;
   /** Tag name of a `wc-icon-*` element. */
@@ -81,6 +86,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
   register: {
     id: 'register',
     title: 'Register',
+    untitled: true,
     navLabel: 'Register',
     icon: 'wc-icon-register',
     inNav: true,
