@@ -36,6 +36,15 @@ describe('wc-app-shell', () => {
     expect(heading?.closest('main')).toBeTruthy();
   });
 
+  it('keeps a hidden title as a heading for assistive technology, outside the page head', async () => {
+    const el = await mount({ screenTitle: 'Register', titleHidden: true });
+    const heading = el.shadowRoot?.querySelector('h1');
+    expect(heading?.textContent).toBe('Register');
+    expect(heading?.classList.contains('title-hidden')).toBe(true);
+    expect(heading?.closest('main')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('[part="page-head"]')).toBeNull();
+  });
+
   it('draws no page heading for a screen that brings its own', async () => {
     const el = await mount({ screenTitle: '' });
     expect(el.shadowRoot?.querySelector('h1')).toBeNull();

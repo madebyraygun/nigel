@@ -106,6 +106,42 @@ describe('wc-register-table', () => {
     expect(cells[4]?.textContent?.trim()).toBe('');
   });
 
+  it('toggles a flag from its button without selecting the row', async () => {
+    const el = await mount({ selectedId: 101 });
+    const flags = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    const selects = listen<NcRowEventDetail>(el, 'nc-row-select');
+    const button = rowEls(el)[3]?.querySelector<HTMLButtonElement>('button.icon-button');
+    if (!button) throw new Error('no flag button');
+
+    button.focus();
+    button.click();
+    await el.updateComplete;
+
+    expect(flags).toEqual([{ id: 103, flag: true }]);
+    expect(selects).toEqual([]);
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it('flags and edits only a selected row', async () => {
+    const el = await mount();
+    const flags = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    const edits = listen<NcRowEventDetail>(el, 'nc-row-activate');
+
+    await press(el, 'f');
+    await press(el, 'Enter');
+
+    expect(flags).toEqual([]);
+    expect(edits).toEqual([]);
+  });
+
+  it('titles an amount cell with the full figure, which the column may clip', async () => {
+    const rows = fixture(1).map((row) => ({ ...row, amount: -1234567.89 }));
+    const el = await mount({ rows });
+    expect(rowEls(el)[0]?.querySelector('td.amount')?.getAttribute('title')).toBe(
+      '-$1,234,567.89',
+    );
+  });
+
   it('marks a flagged row for more than color alone', async () => {
     const el = await mount();
     const flagged = rowEls(el)[2];
@@ -1089,6 +1125,20 @@ describe('a register too big to put in the DOM', () => {
     expect(scroller.scrollTop).toBe(BIG * 33 - (660 - 40 - 20));
     expect(renderedIds(el)).toContain(100 + BIG - 1);
     expect(selectedId(el)).toBeNull();
+  });
+
+  it('lands the tab stop and the arrow keys on the last row after scrolling to the end', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+    el.scrollToEnd();
+    await el.updateComplete;
+
+    const lastId = 100 + BIG - 1;
+    const stops = dataRows(el).filter((tr) => tr.tabIndex === 0);
+    expect(stops.map((tr) => Number(tr.dataset.id))).toEqual([lastId]);
+
+    await press(el, 'ArrowUp');
+    expect(selectedId(el)).toBe(lastId);
   });
 
   it('never leaves a scroll pending across an unrelated update', async () => {

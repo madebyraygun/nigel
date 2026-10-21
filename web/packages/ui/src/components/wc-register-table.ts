@@ -3,7 +3,7 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
-import './wc-money.js';
+import { formatMoney } from './wc-money.js';
 import './wc-empty-state.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
 import type { ShortcutHint } from './wc-shortcut-help.js';
@@ -611,6 +611,12 @@ export class WcRegisterTable extends LitElement {
 
   private pendingFocusId: number | null = null;
 
+  /**
+   * The table was opened at its end with nothing selected: the fallback tab
+   * stop is the last row rather than the first one drawn. A new list drops it.
+   */
+  private stopAtEnd = false;
+
   /** A scroll position to apply once the rows it refers to have rendered. */
   private pendingScrollTop: number | null = null;
 
@@ -640,6 +646,7 @@ export class WcRegisterTable extends LitElement {
     if (changed.has('selectedId')) this.activeId = this.selectedId;
 
     if (changed.has('rows')) {
+      if (changed.get('rows') !== undefined) this.stopAtEnd = false;
       if (this.activeId !== null && !this.rows.some((row) => row.id === this.activeId)) {
         // A row that filtering removed cannot stay selected.
         this.activeId = this.rows[0]?.id ?? null;
@@ -843,10 +850,14 @@ export class WcRegisterTable extends LitElement {
     return true;
   }
 
-  /** Scroll to the last rows without selecting any. */
+  /**
+   * Scroll to the last rows without selecting any. The last row becomes the
+   * tab stop, so the keyboard lands where the view is.
+   */
   scrollToEnd(): void {
     const last = this.rows[this.rows.length - 1];
     if (!last) return;
+    this.stopAtEnd = true;
     this.coverIndex(this.rows.length - 1);
     this.scrollToRowIndex(this.rows.length - 1, 'end');
     void this.updateComplete.then(() => this.settleAtEnd(last.id));
@@ -889,7 +900,10 @@ export class WcRegisterTable extends LitElement {
    */
   private get tabStopId(): number | null {
     if (this.selectionIsRendered) return this.activeId;
-    return this.rows[this.windowRange.start]?.id ?? null;
+    const { start, end } = this.windowRange;
+    const last = this.rows.length - 1;
+    if (this.stopAtEnd && last >= start && last < end) return this.rows[last]?.id ?? null;
+    return this.rows[start]?.id ?? null;
   }
 
   /**
@@ -912,8 +926,12 @@ export class WcRegisterTable extends LitElement {
    * any other way — clicked, or tabbed to while the selection sits on it —
    * becomes the selection as it always did.
    */
-  private handleRowFocusIn(row: RegisterTableRow): void {
+  private handleRowFocusIn(row: RegisterTableRow, event: FocusEvent): void {
     if (this.activeId === row.id) return;
+    // Focus landing on the flag button is a flag click or a Tab to it, not
+    // a choice of row.
+    const target = event.composedPath()[0];
+    if (target instanceof HTMLElement && target.classList.contains('icon-button')) return;
     if (!this.selectionIsRendered && row.id === this.tabStopId) return;
     this.setActive(row.id);
   }
@@ -1035,15 +1053,18 @@ export class WcRegisterTable extends LitElement {
     if (this.editingId !== null) return;
     if (this.rows.length === 0) return;
 
+    // With nothing selected the keys start from the tab stop — the row focus
+    // is on, which after scrollToEnd is the last one, not the first.
     const current = this.activeIndex;
-    const from = current === -1 ? 0 : current;
+    const stop = this.rows.findIndex((row) => row.id === this.tabStopId);
+    const from = current === -1 ? Math.max(stop, 0) : current;
 
     switch (event.key) {
       case 'ArrowDown':
-        this.focusIndex(current === -1 ? 0 : from + 1);
+        this.focusIndex(current === -1 ? from : from + 1);
         break;
       case 'ArrowUp':
-        this.focusIndex(current === -1 ? 0 : from - 1);
+        this.focusIndex(current === -1 ? from : from - 1);
         break;
       case 'PageDown':
         this.focusIndex(from + this.pageRows());
@@ -1058,6 +1079,9 @@ export class WcRegisterTable extends LitElement {
         this.focusIndex(this.rows.length - 1);
         break;
       case 'Enter':
+        // Editing and flagging act on the selection, never on a row the user
+        // has not chosen.
+        if (current === -1) return;
         this.activateRow(this.rows[from]);
         break;
       case 'Escape':
@@ -1069,6 +1093,7 @@ export class WcRegisterTable extends LitElement {
         break;
       case 'f':
       case 'F':
+        if (current === -1) return;
         this.requestFlag(this.rows[from]);
         break;
       case '/':
@@ -1378,7 +1403,12 @@ export class WcRegisterTable extends LitElement {
         aria-pressed=${row.isFlagged ? 'true' : 'false'}
         aria-label=${`Flag transaction ${row.id}`}
         ?disabled=${row.id === this.busyId}
-        @click=${() => this.requestFlag(row)}
+        @click=${(event: Event) => {
+          // A flag click is about that row's flag, not about which row is
+          // current: the row's own click must not hear it.
+          event.stopPropagation();
+          this.requestFlag(row);
+        }}
       >
         <wc-icon-flag></wc-icon-flag>
       </button>
@@ -1408,7 +1438,7 @@ export class WcRegisterTable extends LitElement {
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
         aria-rowindex=${index + 2}
         tabindex=${row.id === tabStopId ? '0' : '-1'}
-        @focusin=${() => this.handleRowFocusIn(row)}
+        @focusin=${(event: FocusEvent) => this.handleRowFocusIn(row, event)}
         @click=${() => this.setActive(row.id)}
         @dblclick=${() => this.activateRow(row)}
       >
@@ -1427,7 +1457,7 @@ export class WcRegisterTable extends LitElement {
                 ${row.vendor ?? ''}
               </td>
             `}
-        <td role="gridcell" class="amount">
+        <td role="gridcell" class="amount" title=${formatMoney(row.amount)}>
           <wc-money .amount=${row.amount} align="end"></wc-money>
         </td>
         ${this.showAccount

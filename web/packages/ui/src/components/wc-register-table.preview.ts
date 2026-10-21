@@ -94,6 +94,19 @@ const wholeYear: RegisterTableRow[] = Array.from({ length: 1872 }, (_, index) =>
   return { ...base, id: 2000 + index };
 });
 
+/** Wider than the Amount column, so the cell clips it and its title has it. */
+const sevenFigures: RegisterTableRow = {
+  id: 105,
+  date: '2025-03-14',
+  description: 'WIRE IN — CEDAR SYSTEMS ACQUISITION',
+  amount: 1234567.89,
+  category: 'Consulting income',
+  categoryId: 3,
+  vendor: 'Cedar Systems',
+  accountName: 'BofA Checking',
+  isFlagged: false,
+};
+
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
   { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
@@ -124,12 +137,13 @@ const preview = {
     },
     {
       // A phone's card: the columns keep their widths and scroll sideways
-      // inside it, and the footer's total stays pinned in view.
+      // inside it, and the footer's total stays pinned in view. The
+      // seven-figure amount clips in its column; the cell's title carries it.
       name: 'narrow-card',
       render: () => html`
         <div style="inline-size: 22rem">
           <wc-register-table
-            .rows=${rows}
+            .rows=${[...rows, sevenFigures]}
             .categories=${categories}
             .selectedId=${101}
             .total=${8281.51}

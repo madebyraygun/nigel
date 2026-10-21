@@ -415,7 +415,8 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
     return html`
       <wc-app-shell
-        screen-title=${screen.untitled ? '' : screen.title}
+        screen-title=${screen.title}
+        ?title-hidden=${screen.untitled ?? false}
         book-name=${book}
         book-key=${store.status.get()?.dataDir ?? book}
         .trail=${trail}

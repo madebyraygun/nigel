@@ -43,8 +43,9 @@ export interface ScreenDef {
   /** Header and document title. */
   title: string;
   /**
-   * Draw no page heading over the screen. The breadcrumb already names it,
-   * and a screen whose toolbar is its first line gives the rows that height.
+   * Keep the page heading for assistive technology only. The breadcrumb
+   * already names the screen, and a screen whose toolbar is its first line
+   * gives the rows that height.
    */
   untitled?: boolean;
   /** Sidebar label — usually shorter than the title. */

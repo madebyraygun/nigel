@@ -203,6 +203,18 @@ describe('register screen', () => {
     expect(table(el).selectedId).toBeNull();
   });
 
+  it('flags nothing when f is pressed on a dated register before a row is chosen', async () => {
+    const { el, fake } = await mount(client(), 'month=2025-03');
+    const grid = table(el);
+    grid.shadowRoot
+      ?.querySelector('.scroller')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true, composed: true }));
+    await settle(el);
+
+    expect(fake.calls.filter((call) => call.startsWith('patchTransaction'))).toEqual([]);
+    expect(grid.rows.every((r) => !r.isFlagged)).toBe(true);
+  });
+
   it('opens a dated register on its last rows', async () => {
     const scrolled = vi.spyOn(
       customElements.get('wc-register-table')!.prototype as WcRegisterTable,
