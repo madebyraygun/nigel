@@ -1935,8 +1935,11 @@ moves on; the run fails only if every document it reached failed.
 
 Like invoice sync, it also runs **at launch** before any command that reads or
 writes the books, within a 10-second budget, printing
-`notice: recorded 2 new document response(s)` when it finds something and a
+`notice: recorded 2 new document response(s)` when it finds something, a
+`notice: document #4: ...` line for each response it refused and why, and a
 `notice:` line instead of failing the command when it cannot reach the bucket.
+A refused response stays in the bucket, so its notice repeats at each launch
+while that version is still the one awaiting a response.
 It is silent when the private store is not configured. `document preview` and
 `document sync` skip the launch hook, and so does `nigel serve`; the web UI has
 a **Sync** button.

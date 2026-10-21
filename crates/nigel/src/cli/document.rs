@@ -464,6 +464,32 @@ pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
         .collect()
 }
 
+/// The notices the launch sync prints before the command the operator asked
+/// for: each failed document, each refused response, each republish warning,
+/// and the count of responses recorded.
+pub fn format_launch_sync_notices(report: &DocumentSyncReport) -> Vec<String> {
+    let mut notices = format_sync_failures(report);
+    for line in &report.lines {
+        for refused in &line.refused {
+            notices.push(format!(
+                "notice: document #{}: {}",
+                line.document_id,
+                printable(refused)
+            ));
+        }
+        for warning in &line.warnings {
+            notices.push(format!("notice: {}", printable(warning)));
+        }
+    }
+    if report.recorded > 0 {
+        notices.push(format!(
+            "notice: recorded {} new document response(s)",
+            report.recorded
+        ));
+    }
+    notices
+}
+
 pub fn format_sync_report(report: &DocumentSyncReport) -> String {
     let mut out = String::new();
     for line in &report.lines {
@@ -785,6 +811,35 @@ mod tests {
         assert_eq!(
             format_sync_failures(&report),
             vec!["notice: document sync failed for #4: r2 403: denied".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_launch_sync_surfaces_refused_responses_as_notices() {
+        let report = DocumentSyncReport {
+            documents_checked: 2,
+            recorded: 1,
+            lines: vec![DocumentSyncLine {
+                document_id: 3,
+                title: "Website rebuild".into(),
+                recorded: vec!["Pat Example accepted version 2".into()],
+                refused: vec!["Sam\x1b[2J Example's response was not recorded: it names a different recipient.".into()],
+                warnings: vec!["republish failed".into()],
+                status: DocumentStatus::Accepted,
+            }],
+            failures: vec![DocumentSyncFailure {
+                document_id: 4,
+                message: "r2 403: denied".into(),
+            }],
+        };
+        assert_eq!(
+            format_launch_sync_notices(&report),
+            vec![
+                "notice: document sync failed for #4: r2 403: denied".to_string(),
+                "notice: document #3: Sam [2J Example's response was not recorded: it names a different recipient.".to_string(),
+                "notice: republish failed".to_string(),
+                "notice: recorded 1 new document response(s)".to_string(),
+            ]
         );
     }
 
