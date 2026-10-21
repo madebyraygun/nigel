@@ -509,8 +509,10 @@ export interface ApiClient {
   /** Every document, newest change first. Filters are omitted when absent. */
   getDocuments(params?: DocumentListParams): Promise<DocumentListRow[]>;
   getDocument(id: number): Promise<DocumentDetail>;
-  /** The active kinds, in their configured order. */
-  getDocumentKinds(): Promise<DocumentKind[]>;
+  /** The active kinds, in their configured order; every kind with `includeInactive`. */
+  getDocumentKinds(includeInactive?: boolean): Promise<DocumentKind[]>;
+  /** Offer a deactivated kind for new documents again. Refused for an active kind. */
+  reactivateDocumentKind(id: number): Promise<DocumentKind>;
   /** File a PDF for a client as a new draft. Sent as multipart. */
   createDocument(input: NewDocumentRequest): Promise<DocumentDetail>;
   /** Retitle or rekind a draft. */
@@ -959,8 +961,13 @@ export class FetchApiClient implements ApiClient {
     return this.request<DocumentDetail>('GET', `/documents/${id}`);
   }
 
-  getDocumentKinds(): Promise<DocumentKind[]> {
-    return this.request<DocumentKind[]>('GET', '/document-kinds');
+  getDocumentKinds(includeInactive = false): Promise<DocumentKind[]> {
+    const params = includeInactive ? { includeInactive: true } : {};
+    return this.request<DocumentKind[]>('GET', `/document-kinds${query(params)}`);
+  }
+
+  reactivateDocumentKind(id: number): Promise<DocumentKind> {
+    return this.request<DocumentKind>('POST', `/document-kinds/${id}/reactivate`);
   }
 
   createDocument(input: NewDocumentRequest): Promise<DocumentDetail> {

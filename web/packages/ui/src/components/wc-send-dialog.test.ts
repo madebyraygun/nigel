@@ -537,6 +537,13 @@ describe('wc-send-dialog document mode', () => {
     expect(consequences).toContain('open it for online responses');
   });
 
+  it('speaks of one recipient in the singular', async () => {
+    const el = await mount({ ...DOC, recipientCount: 1 });
+    const consequences = el.shadowRoot?.querySelector('[data-consequences]')?.textContent ?? '';
+    expect(consequences).toContain('email the recipient their own link with the PDF attached');
+    expect(consequences).not.toContain('recipients');
+  });
+
   it('says responses are recorded by hand when there is no response form', async () => {
     const el = await mount({ ...DOC, responseForm: false });
     expect(el.shadowRoot?.querySelector('[data-consequences]')?.textContent).toContain(

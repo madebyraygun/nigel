@@ -595,9 +595,10 @@ A document is a PDF filed for a client, sent to one signer and any
 collaborators, answered online or recorded by hand, revised and countersigned.
 Its **status** is derived from the rows on every read and is never stored:
 `draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
-`withdrawn`. Document kinds are managed from the CLI (`nigel document kinds`);
-the API serves documents only, and `GET /api/document-kinds` is the read a
-filing form needs.
+`withdrawn`. Document kinds are added, renamed and deactivated from the CLI
+(`nigel document kinds`). `GET /api/document-kinds` is the read a filing form
+needs, and with `includeInactive=true` also lists the deactivated kinds, which
+`POST /api/document-kinds/{id}/reactivate` offers for new documents again.
 
 | Route | Response |
 |---|---|
@@ -606,7 +607,7 @@ filing form needs.
 | `GET /api/documents/{id}/preview` | `text/html; charset=utf-8` |
 | `GET /api/documents/{id}/preview.pdf` | `application/pdf` |
 | `GET /api/documents/{id}/signing-record.pdf` | `application/pdf` |
-| `GET /api/document-kinds` | `DocumentKind[]`, active kinds only |
+| `GET /api/document-kinds` | `DocumentKind[]`, active kinds only; every kind with `includeInactive=true` (`true` or `false`, anything else is `400`) |
 
 `GET /api/documents` takes `clientId`, `status` and `kind`, all optional and
 combinable. A `clientId` that is not an integer, or a `status` that is not one
@@ -773,6 +774,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/documents/:id/countersign` | `POST` | `name`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/withdraw` | `POST` | `{}` | `DocumentActionResult` |
 | `/api/documents/:id/signing-record` | `POST` | `{}` | `DocumentActionResult` with `published` |
+| `/api/document-kinds/:id/reactivate` | `POST` | — | `DocumentKind`; `409 already_active` for an active kind, `404 kind_not_found` for none |
 | `/api/documents/sync` | `POST` | — | `DocumentSyncReport` |
 
 ### Write conventions
@@ -1413,7 +1415,7 @@ A completed send answers:
 
 `links` is each recipient's page **as it was emailed**. `configWarnings` carries
 configuration the send went ahead with, such as a From address off the Mailgun
-domain. Both arrays are always present. A send that committed is never an
+domain or a `documents_base_url` that does not end in `/d`. Both arrays are always present. A send that committed is never an
 error: if reloading the document afterwards fails, `document` is `null` and
 `warnings` says to refresh, so the links are not lost and nothing invites a
 second send.
@@ -1720,6 +1722,7 @@ its own words instead of parsing ours:
 | `file_changed` | `step` (on send) | A stored PDF whose bytes no longer match its recorded checksum |
 | `document_not_executed` | — | Asking for, or republishing, the signing record of a document that is not executed |
 | `kind_inactive` | — | Filing or changing a draft to a kind that is no longer in use |
+| `already_active` | — | Reactivating a document kind that is already active |
 | `unchanged_revision` | — | Revising with a PDF identical to an earlier version |
 | `signer_count` | `step` | Sending to anything but exactly one signer |
 | `signer_name_required` | `step` | Sending to a signer with no name to type when accepting |

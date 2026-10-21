@@ -21,7 +21,9 @@ use crate::invoicing::mailgun::{
     MailgunClient,
 };
 use crate::invoicing::r2::R2PrivateStore;
-use crate::invoicing::r2::{public_base_url_warning, validate_public_base_url, R2Publisher};
+use crate::invoicing::r2::{
+    documents_base_url_warning, public_base_url_warning, validate_public_base_url, R2Publisher,
+};
 use crate::invoicing::render_html::{load_template, Branding};
 use crate::invoicing::republish::republish_invoice;
 use crate::invoicing::stripe::StripeClient;
@@ -347,7 +349,7 @@ pub fn build_document_clients(cfg: DocumentsConfig, company: &str) -> Result<Doc
     )?;
     validate_public_base_url(&documents_base)?;
 
-    let (mail, warnings) = build_mailer(
+    let (mail, mut warnings) = build_mailer(
         Some(api_key),
         Some(domain),
         Some(from_email),
@@ -355,6 +357,9 @@ pub fn build_document_clients(cfg: DocumentsConfig, company: &str) -> Result<Doc
         inv.reply_to_email,
         company,
     )?;
+    if let Some(warning) = documents_base_url_warning(&documents_base) {
+        warnings.push(warning.to_string());
+    }
     Ok(DocumentClients {
         source: R2PrivateStore {
             account_id: account_id.clone(),
@@ -831,6 +836,38 @@ mod tests {
         );
         assert_eq!(clients.publisher().bucket, "billing");
         assert_eq!(clients.source().bucket, "private");
+    }
+
+    #[test]
+    fn the_document_builder_warns_when_the_documents_base_misses_the_d_prefix() {
+        let build = |base: &str| {
+            build_document_clients(
+                DocumentsConfig {
+                    invoicing: configured_for_documents(),
+                    r2_private_bucket: Some("private".into()),
+                    documents_base_url: Some(base.into()),
+                    ..Default::default()
+                },
+                "Cedar Systems",
+            )
+            .unwrap()
+            .warnings()
+            .to_vec()
+        };
+        let warned = build("https://docs.example.com");
+        assert!(
+            warned
+                .iter()
+                .any(|w| w.starts_with("documents_base_url does not end in /d")),
+            "{warned:?}"
+        );
+        for base in ["https://docs.example.com/d", "https://docs.example.com/d/"] {
+            let quiet = build(base);
+            assert!(
+                !quiet.iter().any(|w| w.contains("documents_base_url")),
+                "{base}: {quiet:?}"
+            );
+        }
     }
 
     #[test]

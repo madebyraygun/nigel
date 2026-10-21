@@ -80,30 +80,47 @@ pub fn rename_kind(conn: &Connection, id: i64, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn deactivate_kind(conn: &Connection, id: i64) -> Result<()> {
-    let active: Option<i64> = match conn.query_row(
+/// Sets a kind's `active` flag, refusing a kind already in that state as
+/// `already_active` or `already_inactive`.
+fn set_active(conn: &Connection, id: i64, active: bool) -> Result<()> {
+    let current: Option<bool> = match conn.query_row(
         "SELECT active FROM document_kinds WHERE id = ?1",
         params![id],
-        |row| row.get(0),
+        |row| row.get::<_, i64>(0),
     ) {
-        Ok(active) => Some(active),
+        Ok(flag) => Some(flag != 0),
         Err(rusqlite::Error::QueryReturnedNoRows) => None,
         Err(other) => return Err(other.into()),
     };
-    match active {
+    match current {
         None => Err(not_found(id)),
-        Some(0) => Err(NigelError::Conflict {
-            code: "already_inactive",
-            message: "That document kind is already inactive.".into(),
+        Some(current) if current == active => Err(NigelError::Conflict {
+            code: if active {
+                "already_active"
+            } else {
+                "already_inactive"
+            },
+            message: format!(
+                "That document kind is already {}.",
+                if active { "active" } else { "inactive" }
+            ),
         }),
         Some(_) => {
             conn.execute(
-                "UPDATE document_kinds SET active = 0 WHERE id = ?1",
-                params![id],
+                "UPDATE document_kinds SET active = ?2 WHERE id = ?1",
+                params![id, active],
             )?;
             Ok(())
         }
     }
+}
+
+pub fn deactivate_kind(conn: &Connection, id: i64) -> Result<()> {
+    set_active(conn, id, false)
+}
+
+pub fn reactivate_kind(conn: &Connection, id: i64) -> Result<()> {
+    set_active(conn, id, true)
 }
 
 pub fn active_kind_by_name(conn: &Connection, name: &str) -> Result<DocumentKind> {
@@ -186,6 +203,26 @@ mod tests {
             Err(NigelError::NotFound(_))
         ));
         assert!(matches!(add_kind(&conn, "  "), Err(NigelError::Invalid(_))));
+    }
+
+    #[test]
+    fn a_deactivated_kind_can_be_reactivated_and_an_active_one_cannot() {
+        let (_d, conn) = crate::documents::testing::test_conn();
+        let id = add_kind(&conn, "Memo").unwrap();
+        assert!(matches!(
+            reactivate_kind(&conn, id),
+            Err(NigelError::Conflict {
+                code: "already_active",
+                ..
+            })
+        ));
+        deactivate_kind(&conn, id).unwrap();
+        reactivate_kind(&conn, id).unwrap();
+        assert_eq!(active_kind_by_name(&conn, "memo").unwrap().id, id);
+        assert!(matches!(
+            reactivate_kind(&conn, 9999),
+            Err(NigelError::NotFound(_))
+        ));
     }
 
     #[test]

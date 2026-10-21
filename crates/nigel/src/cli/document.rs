@@ -5,7 +5,9 @@ use comfy_table::{Cell, Table};
 use nigel_core::db::get_connection;
 use nigel_core::documents::execute::RegeneratedRecord;
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
-use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
+use nigel_core::documents::kinds::{
+    add_kind, deactivate_kind, list_kinds, reactivate_kind, rename_kind,
+};
 use nigel_core::documents::lifecycle::{
     republish_after_change, revise_with_republish, withdraw_with_teardown,
 };
@@ -75,6 +77,10 @@ pub fn kinds(command: Option<DocumentKindsCommands>) -> Result<()> {
         DocumentKindsCommands::Deactivate { id } => {
             deactivate_kind(&conn, id)?;
             println!("Deactivated document kind #{id}");
+        }
+        DocumentKindsCommands::Reactivate { id } => {
+            reactivate_kind(&conn, id)?;
+            println!("Reactivated document kind #{id}");
         }
     }
     Ok(())
@@ -271,9 +277,22 @@ pub fn send(
     let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
 
     let config = documents_config();
+    let status = documents_status(&config);
+    if !status.missing.is_empty() {
+        return Err(NigelError::Invalid(format!(
+            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
+            status.missing.join(", ")
+        )));
+    }
+    let host = send_publish_host(&config);
+    let company = company_name(&conn);
+    let clients = build_document_clients(config, &company)?;
+    for warning in clients.warnings() {
+        eprintln!("notice: {warning}");
+    }
+
     if !yes {
         confirm_unless_piped(id)?;
-        let host = send_publish_host(&config);
         println!(
             "{}",
             format_send_summary(
@@ -282,7 +301,7 @@ pub fn send(
                 version.number,
                 &recipients,
                 host.as_deref(),
-                config.document_response_url.is_some(),
+                clients.response_url().is_some(),
             )
         );
         if !confirm_or_refuse("Send it? [y/N]", "", false)? {
@@ -291,18 +310,6 @@ pub fn send(
         }
     }
 
-    let status = documents_status(&config);
-    if !status.missing.is_empty() {
-        return Err(NigelError::Invalid(format!(
-            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
-            status.missing.join(", ")
-        )));
-    }
-    let company = company_name(&conn);
-    let clients = build_document_clients(config, &company)?;
-    for warning in clients.warnings() {
-        eprintln!("notice: {warning}");
-    }
     let ctx = SendContext {
         data_dir: &data_dir,
         company: &company,
@@ -442,12 +449,29 @@ fn record_then_republish(
     Ok(())
 }
 
-/// Replaces every control character but newline, so text a recipient typed
-/// cannot move the cursor or rewrite the terminal.
+/// Replaces every control character but newline — a carriage return
+/// included — and every bidirectional formatting character with a space, so
+/// text a recipient typed cannot move the cursor, overwrite a line, rewrite
+/// the terminal or reorder what is printed around it.
 pub fn printable(text: &str) -> String {
     text.chars()
-        .map(|c| if c != '\n' && c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if (c != '\n' && c.is_control()) || is_bidi_control(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
+}
+
+/// The Unicode bidirectional formatting characters: the marks, the embeddings
+/// and overrides, and the isolates.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
@@ -462,6 +486,32 @@ pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// The notices the launch sync prints before the command the operator asked
+/// for: each failed document, each refused response, each republish warning,
+/// and the count of responses recorded.
+pub fn format_launch_sync_notices(report: &DocumentSyncReport) -> Vec<String> {
+    let mut notices = format_sync_failures(report);
+    for line in &report.lines {
+        for refused in &line.refused {
+            notices.push(format!(
+                "notice: document #{}: {}",
+                line.document_id,
+                printable(refused)
+            ));
+        }
+        for warning in &line.warnings {
+            notices.push(format!("notice: {}", printable(warning)));
+        }
+    }
+    if report.recorded > 0 {
+        notices.push(format!(
+            "notice: recorded {} new document response(s)",
+            report.recorded
+        ));
+    }
+    notices
 }
 
 pub fn format_sync_report(report: &DocumentSyncReport) -> String {
@@ -660,7 +710,7 @@ fn date_part(moment: &str) -> &str {
 fn push_note(out: &mut String, note: &str) {
     for line in note.lines() {
         out.push_str("    | ");
-        out.push_str(line);
+        out.push_str(&printable(line));
         out.push('\n');
     }
 }
@@ -681,9 +731,9 @@ pub fn format_document_show(
         "Document #{}  [{}]  {}\nTitle:    {}\nClient:   {}\nFiled:    {}\n",
         document.id,
         document.status.as_str(),
-        document.kind,
-        document.title,
-        record.client_name,
+        printable(&document.kind),
+        printable(&document.title),
+        printable(&record.client_name),
         date_part(&document.created_at),
     );
     if let Some(declined_at) = &document.declined_at {
@@ -711,8 +761,8 @@ pub fn format_document_show(
             out.push_str(&format!(
                 "  {:<12}  {} <{}>\n",
                 recipient.role.as_str(),
-                recipient.name,
-                recipient.email
+                printable(&recipient.name),
+                printable(&recipient.email)
             ));
         }
         for signature in &record.signatures {
@@ -722,12 +772,12 @@ pub fn format_document_show(
             };
             out.push_str(&format!(
                 "  {verb} by {} ({}) at {}",
-                signature.name,
+                printable(&signature.name),
                 signature.method.as_str(),
                 signature.signed_at
             ));
             if let Some(typed) = &signature.typed_name {
-                out.push_str(&format!(", typed \"{typed}\""));
+                out.push_str(&format!(", typed \"{}\"", printable(typed)));
             }
             out.push_str(&evidence(signature.method, signature.ip.as_deref()));
             out.push('\n');
@@ -735,7 +785,7 @@ pub fn format_document_show(
         for request in &record.change_requests {
             out.push_str(&format!(
                 "  changes requested by {} ({}) at {}{}\n",
-                request.name,
+                printable(&request.name),
                 request.method.as_str(),
                 request.requested_at,
                 evidence(request.method, request.ip.as_deref())
@@ -785,6 +835,35 @@ mod tests {
         assert_eq!(
             format_sync_failures(&report),
             vec!["notice: document sync failed for #4: r2 403: denied".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_launch_sync_surfaces_refused_responses_as_notices() {
+        let report = DocumentSyncReport {
+            documents_checked: 2,
+            recorded: 1,
+            lines: vec![DocumentSyncLine {
+                document_id: 3,
+                title: "Website rebuild".into(),
+                recorded: vec!["Pat Example accepted version 2".into()],
+                refused: vec!["Sam\x1b[2J Example's response was not recorded: it names a different recipient.".into()],
+                warnings: vec!["republish failed".into()],
+                status: DocumentStatus::Accepted,
+            }],
+            failures: vec![DocumentSyncFailure {
+                document_id: 4,
+                message: "r2 403: denied".into(),
+            }],
+        };
+        assert_eq!(
+            format_launch_sync_notices(&report),
+            vec![
+                "notice: document sync failed for #4: r2 403: denied".to_string(),
+                "notice: document #3: Sam [2J Example's response was not recorded: it names a different recipient.".to_string(),
+                "notice: republish failed".to_string(),
+                "notice: recorded 1 new document response(s)".to_string(),
+            ]
         );
     }
 
@@ -1186,6 +1265,33 @@ mod tests {
             "accepted by Pat Example (online) at 2026-10-06T10:00:00Z, typed \"Pat E.\", ip 203.0.113.9"
         ));
         assert!(out.contains("countersigned by Pat Example (manual) at 2026-10-06T10:00:00Z\n"));
+    }
+
+    #[test]
+    fn show_passes_recipient_supplied_text_through_printable() {
+        let mut record = fixture_record();
+        record.versions[0].change_requests[0].note =
+            "Fix\x1b[2J the dates\roverwritten\nsee \u{202E}txt.exe".into();
+        let mut accepted = signature(SignatureRole::Client, Method::Online);
+        accepted.typed_name = Some("Pat\u{2066} E.\x07".into());
+        record.versions[0].signatures = vec![accepted];
+        let out = format_document_show(&record, |_| false);
+        assert!(
+            !out.contains(['\x1b', '\r', '\x07', '\u{202E}', '\u{2066}']),
+            "{out:?}"
+        );
+        assert!(out.contains("    | Fix [2J the dates overwritten\n    | see  txt.exe\n"));
+        assert!(out.contains("typed \"Pat  E. \""));
+    }
+
+    #[test]
+    fn printable_maps_carriage_returns_and_bidi_controls() {
+        assert_eq!(printable("a\r\nb"), "a \nb");
+        assert_eq!(
+            printable("\u{061C}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}x"),
+            "            x"
+        );
+        assert_eq!(printable("Café — naïve"), "Café — naïve");
     }
 
     #[test]

@@ -42,6 +42,11 @@ pub enum PageState<'a> {
         response_url: Option<&'a str>,
     },
     Revising,
+    /// An earlier version's page once `latest` has been sent. The newer
+    /// version's recipients can differ, so the page names it and links nothing.
+    Superseded {
+        latest: i64,
+    },
     ChangesRequested {
         requests: &'a [RequestedChange],
     },
@@ -278,6 +283,9 @@ fn state_section(
         PageState::Revising => {
             "<p class=\"notice\">This document is being revised. A new version will be sent to you.</p>\n".into()
         }
+        PageState::Superseded { latest } => format!(
+            "<p class=\"notice\">This version has been superseded by version {latest} and no longer takes responses.</p>\n"
+        ),
         PageState::ChangesRequested { requests } => changes_requested(requests),
         PageState::Accepted { name, date } => {
             format!("<p class=\"notice success\">Accepted by {} on {}.</p>\n", esc(name), esc(date))
@@ -575,6 +583,7 @@ mod tests {
     fn closed_states_carry_no_form() {
         for state in [
             PageState::Revising,
+            PageState::Superseded { latest: 3 },
             PageState::ChangesRequested { requests: &[] },
             PageState::Declined,
             PageState::Accepted {
@@ -700,6 +709,9 @@ mod tests {
         let notice = |state| render_recipient_page(&ctx(), &SIGNER, &state);
         assert!(notice(PageState::Revising)
             .contains("This document is being revised. A new version will be sent to you."));
+        assert!(notice(PageState::Superseded { latest: 3 }).contains(
+            "This version has been superseded by version 3 and no longer takes responses."
+        ));
         let requests = [
             RequestedChange {
                 name: "Pat Example".into(),

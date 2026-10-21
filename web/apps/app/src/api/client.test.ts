@@ -822,6 +822,8 @@ describe('FetchApiClient', () => {
 
       await client.getDocument(7);
       await client.getDocumentKinds();
+      await client.getDocumentKinds(true);
+      await client.reactivateDocumentKind(4);
       await client.updateDocument(7, { title: 'Website rebuild, phase two' });
       await client.acceptDocument(7, { name: 'Pat Example', date: '2026-10-01' });
       await client.requestDocumentChanges(7, { name: 'Pat Example', note: 'Split phase two.' });
@@ -835,6 +837,8 @@ describe('FetchApiClient', () => {
       ).toEqual([
         'GET /api/documents/7',
         'GET /api/document-kinds',
+        'GET /api/document-kinds?includeInactive=true',
+        'POST /api/document-kinds/4/reactivate',
         'PATCH /api/documents/7',
         'POST /api/documents/7/accept',
         'POST /api/documents/7/request-changes',
@@ -843,7 +847,7 @@ describe('FetchApiClient', () => {
         'POST /api/documents/7/withdraw',
         'POST /api/documents/sync',
       ]);
-      expect(JSON.parse(fetchImpl.mock.calls[7][1].body)).toEqual({});
+      expect(JSON.parse(fetchImpl.mock.calls[9][1].body)).toEqual({});
     });
 
     it('builds both document preview addresses and fetches the page as text', async () => {
