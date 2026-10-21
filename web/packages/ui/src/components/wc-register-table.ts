@@ -130,7 +130,7 @@ export class WcRegisterTable extends LitElement {
         overflow: auto;
         max-height: var(--nc-register-height, 60vh);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-md, 8px);
+        border-radius: var(--wa-radius-md);
       }
 
       /* The fill attribute is the register screen's mode: the table takes what
@@ -219,18 +219,18 @@ export class WcRegisterTable extends LitElement {
         top: 0;
         z-index: 1;
         text-align: left;
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-medium);
         color: var(--wa-color-muted);
         background: var(--wa-color-surface);
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-xs) var(--wa-space-s);
         border-bottom: 1px solid var(--wa-color-border);
         white-space: nowrap;
       }
 
       td {
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-        border-bottom: 1px solid var(--wa-color-border-soft, var(--wa-color-border));
+        padding: var(--wa-space-xs) var(--wa-space-s);
+        border-bottom: 1px solid var(--wa-color-border-soft);
         vertical-align: top;
       }
 
@@ -261,7 +261,7 @@ export class WcRegisterTable extends LitElement {
       }
 
       :host([dense]) td {
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+        padding: var(--wa-space-2xs) var(--wa-space-s);
       }
 
       th.amount,
@@ -283,11 +283,11 @@ export class WcRegisterTable extends LitElement {
       }
 
       tbody tr[aria-selected='true'] {
-        background: var(--wa-color-surface-alt, rgba(120, 120, 160, 0.18));
+        background: var(--nc-color-highlight);
       }
 
       tbody tr[data-flagged='true'] td.date {
-        box-shadow: inset 3px 0 0 var(--nc-color-flagged, #e0a13a);
+        box-shadow: inset 3px 0 0 var(--nc-color-flagged);
       }
 
       tbody tr:focus-visible {
@@ -308,14 +308,14 @@ export class WcRegisterTable extends LitElement {
         color: var(--wa-color-muted);
         background: none;
         border: none;
-        border-radius: var(--wa-radius-sm, 6px);
+        border-radius: var(--wa-radius-sm);
         padding: 2px;
         cursor: default;
         line-height: 0;
       }
 
       .icon-button[aria-pressed='true'] {
-        color: var(--nc-color-flagged, #e0a13a);
+        color: var(--nc-color-flagged);
       }
 
       .icon-button:focus-visible {
@@ -326,16 +326,16 @@ export class WcRegisterTable extends LitElement {
       tfoot td {
         border-bottom: none;
         border-top: 2px solid var(--wa-color-border);
-        font-weight: var(--wa-font-weight-bold, 700);
+        font-weight: var(--wa-font-weight-bold);
         position: sticky;
         bottom: 0;
         background: var(--wa-color-surface);
       }
 
       .note {
-        font-weight: var(--wa-font-weight-normal, 400);
+        font-weight: var(--wa-font-weight-normal);
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       /* -- the inline editors -- */
@@ -351,8 +351,8 @@ export class WcRegisterTable extends LitElement {
         color: var(--wa-color-text);
         background: var(--wa-color-bg);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm, 6px);
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        border-radius: var(--wa-radius-sm);
+        padding: var(--wa-space-2xs) var(--wa-space-xs);
       }
 
       .combobox input:focus-visible {
@@ -371,19 +371,19 @@ export class WcRegisterTable extends LitElement {
         min-width: 100%;
         background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm, 6px);
-        box-shadow: var(--wa-shadow-m, 0 4px 12px rgba(0, 0, 0, 0.25));
+        border-radius: var(--wa-radius-sm);
+        box-shadow: var(--wa-shadow-m);
       }
 
       .options li {
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        padding: var(--wa-space-2xs) var(--wa-space-xs);
         cursor: default;
         white-space: nowrap;
       }
 
       .options li[aria-selected='true'] {
-        background: var(--wa-color-brand, #4a6cf7);
-        color: var(--wa-color-on-brand, #fff);
+        background: var(--wa-color-brand);
+        color: var(--wa-color-on-brand);
       }
 
       /* The label names the field for a screen reader; the column header shows
@@ -408,18 +408,18 @@ export class WcRegisterTable extends LitElement {
 
       .edit-actions {
         display: flex;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
         justify-content: flex-end;
       }
 
       .edit-actions button {
         font: inherit;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: inherit;
         background: none;
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm, 6px);
-        padding: 2px var(--wa-space-xs, 6px);
+        border-radius: var(--wa-radius-sm);
+        padding: 2px var(--wa-space-xs);
         cursor: default;
       }
 

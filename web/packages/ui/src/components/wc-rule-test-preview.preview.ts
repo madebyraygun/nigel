@@ -48,6 +48,17 @@ const preview: Preview = {
         ></wc-rule-test-preview>`,
     },
     {
+      // The panel paints a wash rather than a plane, so it still stands off
+      // a container that is already on the subtle fill.
+      name: 'on-subtle-fill',
+      render: () =>
+        html`<div style="background:var(--wa-color-surface-alt);padding:var(--wa-space-m);">
+          <wc-rule-test-preview
+            .result=${{ total: 2, matches: [{ description: 'GLOBEX HOSTING', count: 2 }] }}
+          ></wc-rule-test-preview>
+        </div>`,
+    },
+    {
       name: 'error',
       render: () =>
         html`<wc-rule-test-preview

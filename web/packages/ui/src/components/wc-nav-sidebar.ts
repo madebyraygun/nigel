@@ -20,32 +20,32 @@ export class WcNavSidebar extends LitElement {
   static styles = css`
     :host {
       display: block;
-      width: var(--nc-sidebar-width, 232px);
+      width: var(--nc-sidebar-width);
       flex-shrink: 0;
-      background: var(--nc-color-sidebar-bg, var(--wa-color-surface));
+      background: var(--nc-color-sidebar-bg);
       border-right: 1px solid var(--wa-color-border);
       font-family: var(--wa-font-family-sans);
       overflow-y: auto;
     }
 
     :host([collapsed]) {
-      width: var(--nc-sidebar-collapsed-width, 56px);
+      width: var(--nc-sidebar-collapsed-width);
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
-      height: var(--nc-header-height, 48px);
-      padding: 0 var(--wa-space-m, 12px);
+      gap: var(--wa-space-s);
+      height: var(--nc-header-height);
+      padding: 0 var(--wa-space-m);
       border-bottom: 1px solid var(--wa-color-border);
       box-sizing: border-box;
     }
 
     .brand-name {
-      font-weight: var(--wa-font-weight-bold, 600);
-      font-size: var(--wa-font-size-lg, 16px);
-      background: var(--nc-grad-brand-text, var(--nc-grad-brand));
+      font-weight: var(--wa-font-weight-bold);
+      font-size: var(--wa-font-size-lg);
+      background: var(--nc-grad-brand-text);
       -webkit-background-clip: text;
       background-clip: text;
       color: transparent;
@@ -58,7 +58,7 @@ export class WcNavSidebar extends LitElement {
     ul {
       list-style: none;
       margin: 0;
-      padding: var(--wa-space-s, 8px);
+      padding: var(--wa-space-s);
       display: grid;
       gap: 2px;
     }
@@ -66,18 +66,18 @@ export class WcNavSidebar extends LitElement {
     button {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       width: 100%;
       padding: 8px 10px;
       border: 0;
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       background: transparent;
       color: var(--wa-color-text);
       font: inherit;
-      font-size: var(--wa-font-size-base, 14px);
+      font-size: var(--wa-font-size-base);
       text-align: left;
       cursor: default;
-      transition: background var(--nc-transition-fast, 120ms ease);
+      transition: background var(--nc-transition-fast);
     }
 
     button:hover:not(.disabled) {
@@ -86,7 +86,7 @@ export class WcNavSidebar extends LitElement {
 
     button.active {
       background: var(--nc-color-selected-bg);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     button.disabled {
@@ -109,7 +109,7 @@ export class WcNavSidebar extends LitElement {
        with its words. */
     @media (max-width: 48rem) {
       :host([collapsed]) {
-        width: var(--nc-sidebar-width, 232px);
+        width: var(--nc-sidebar-width);
       }
 
       :host([collapsed]) .brand-name,

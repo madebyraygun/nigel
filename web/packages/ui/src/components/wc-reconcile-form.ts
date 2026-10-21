@@ -120,13 +120,13 @@ export class WcReconcileForm extends LitElement {
 
       form {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .row {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .row > * {
@@ -136,31 +136,31 @@ export class WcReconcileForm extends LitElement {
 
       /* Money reads as money: same face and same digit widths as wc-money. */
       wa-input.balance::part(input) {
-        font-family: var(--nc-font-money, ui-monospace, monospace);
+        font-family: var(--nc-font-money);
         font-variant-numeric: tabular-nums;
         text-align: end;
       }
 
       .prefix {
         color: var(--wa-color-muted);
-        padding-inline-start: var(--wa-space-s, 8px);
+        padding-inline-start: var(--wa-space-s);
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-2xs) 0 0;
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-danger);
       }
 
       .hint {
-        margin: var(--wa-space-2xs, 4px) 0 0;
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-2xs) 0 0;
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-muted);
       }
 
       .actions {
         display: flex;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
     `,
   ];

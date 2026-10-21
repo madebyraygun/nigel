@@ -182,6 +182,10 @@ export const gradientCss = css`
     );
     --nc-grad-brand-hover: ${cycle};
 
+    /* The plain pastel ramp in both modes, drawn once across what it fills:
+       the status line's nigel block, which carries --nc-color-on-gradient. */
+    --nc-grad-pastel: ${brandRamp};
+
     /* Gradient text on a light surface — the wordmark. Overridden back to the
        pastel ramp in dark mode, where the pastels are the legible choice. */
     --nc-grad-brand-text: linear-gradient(90deg, ${inkRamp});

@@ -27,13 +27,13 @@ export class WcReviewProgress extends LitElement {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--wa-space-m, 12px);
-      margin-bottom: var(--wa-space-2xs, 4px);
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-m);
+      margin-bottom: var(--wa-space-2xs);
+      font-size: var(--wa-font-size-s);
     }
 
     .position {
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     .tally {
@@ -42,8 +42,10 @@ export class WcReviewProgress extends LitElement {
 
     .track {
       height: 6px;
-      border-radius: 999px;
-      background: var(--wa-color-neutral-fill, rgb(0 0 0 / 12%));
+      border-radius: var(--wa-radius-pill);
+      /* Muted ink at a third strength over whatever plane the bar sits on, so
+         the empty track reads in both modes without competing with the fill. */
+      background: color-mix(in srgb, var(--wa-color-muted) 35%, transparent);
       overflow: hidden;
     }
 

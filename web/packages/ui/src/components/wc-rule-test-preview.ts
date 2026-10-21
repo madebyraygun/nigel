@@ -24,28 +24,31 @@ export class WcRuleTestPreview extends LitElement {
   static styles = css`
     :host {
       display: block;
-      background: var(--wa-color-neutral-fill, rgb(0 0 0 / 4%));
-      border-radius: var(--wa-radius-m, 8px);
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+      /* A wash of the text colour rather than a plane token, so the panel
+         stands off whatever it is placed on: a card, the subtle fill, a
+         dialog. */
+      background: color-mix(in srgb, var(--wa-color-text) 5%, transparent);
+      border-radius: var(--wa-radius-m);
+      padding: var(--wa-space-s) var(--wa-space-m);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-text);
     }
 
     .headline {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-xs, 6px);
+      gap: var(--wa-space-xs);
       color: var(--wa-color-muted);
     }
 
     .error {
-      color: var(--wa-color-danger, #b3261e);
+      color: var(--wa-color-danger);
     }
 
     ul {
-      margin: var(--wa-space-xs, 6px) 0 0;
-      padding-left: var(--wa-space-l, 16px);
+      margin: var(--wa-space-xs) 0 0;
+      padding-left: var(--wa-space-l);
       max-height: 10rem;
       overflow-y: auto;
     }

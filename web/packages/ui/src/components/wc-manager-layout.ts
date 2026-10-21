@@ -30,7 +30,7 @@ export class WcManagerLayout extends LitElement {
         display: flex;
         flex-direction: column;
         flex: 1 1 auto;
-        padding: var(--wa-space-l, 16px);
+        padding: var(--wa-space-l);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
@@ -39,38 +39,38 @@ export class WcManagerLayout extends LitElement {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: var(--wa-space-m, 12px);
-        margin-bottom: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
+        margin-bottom: var(--wa-space-m);
       }
 
       .heading {
         margin: 0;
-        font-size: var(--wa-font-size-lg, 16px);
-        font-weight: var(--wa-font-weight-semibold, 600);
+        font-size: var(--wa-font-size-lg);
+        font-weight: var(--wa-font-weight-semibold);
       }
 
       .count {
         color: var(--wa-color-muted);
-        font-weight: var(--wa-font-weight-normal, 400);
+        font-weight: var(--wa-font-weight-normal);
       }
 
       .description {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         max-width: 68ch;
       }
 
       .error {
         display: flex;
         align-items: flex-start;
-        gap: var(--wa-space-s, 8px);
-        margin-bottom: var(--wa-space-m, 12px);
-        padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-        border: 1px solid var(--wa-color-danger, #b3261e);
-        border-radius: var(--wa-radius-m, 8px);
-        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
-        font-size: var(--wa-font-size-s, 13px);
+        gap: var(--wa-space-s);
+        margin-bottom: var(--wa-space-m);
+        padding: var(--wa-space-s) var(--wa-space-m);
+        border: 1px solid var(--wa-color-danger);
+        border-radius: var(--wa-radius-m);
+        background: var(--wa-color-danger-fill-quiet);
+        font-size: var(--wa-font-size-s);
       }
 
       .error p {
@@ -80,12 +80,12 @@ export class WcManagerLayout extends LitElement {
 
       .error-actions {
         display: flex;
-        gap: var(--wa-space-xs, 6px);
+        gap: var(--wa-space-xs);
         flex: 0 0 auto;
       }
 
       .toolbar {
-        margin-bottom: var(--wa-space-s, 8px);
+        margin-bottom: var(--wa-space-s);
       }
 
       /* Nothing slotted should not leave a gap where a filter chip would be. */
@@ -96,7 +96,7 @@ export class WcManagerLayout extends LitElement {
       .busy {
         display: flex;
         justify-content: center;
-        padding: var(--wa-space-xl, 24px);
+        padding: var(--wa-space-xl);
       }
 
       /* Block flow for the sheets: a flex container is not required to

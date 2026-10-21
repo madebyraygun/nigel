@@ -14,7 +14,7 @@ import {
 const BG_MAP: Record<PreviewBackground, string> = {
   default: 'var(--wa-color-bg)',
   surface: 'var(--wa-color-surface)',
-  inverse: '#17171d',
+  inverse: 'var(--nc-color-inverse-bg)',
   transparent: 'transparent',
 };
 
@@ -106,7 +106,7 @@ export class PreviewApp extends LitElement {
       padding: var(--wa-space-l);
     }
     .state-card[data-bg='inverse'] {
-      color: #ece9f5;
+      color: var(--nc-color-inverse-text);
     }
     .state-name {
       font-family: var(--wa-font-family-mono);

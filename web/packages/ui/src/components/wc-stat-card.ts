@@ -18,48 +18,48 @@ export class WcStatCard extends LitElement {
       display: block;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-lg, 12px);
-      padding: var(--wa-space-l, 16px);
+      border-radius: var(--wa-radius-lg);
+      padding: var(--wa-space-l);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
 
     .label {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-muted);
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
 
     .value {
-      margin-top: var(--wa-space-xs, 6px);
-      font-size: var(--wa-font-size-2xl, 28px);
-      font-weight: var(--wa-font-weight-bold, 700);
+      margin-top: var(--wa-space-xs);
+      font-size: var(--wa-font-size-2xl);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .hint {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      margin: var(--wa-space-2xs) 0 0;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     .error {
-      margin: var(--wa-space-xs, 6px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      margin: var(--wa-space-xs) 0 0;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-danger);
     }
 
     .retry {
-      margin-top: var(--wa-space-xs, 6px);
+      margin-top: var(--wa-space-xs);
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-brand);
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
     }
 

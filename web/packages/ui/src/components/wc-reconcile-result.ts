@@ -25,15 +25,15 @@ export class WcReconcileResult extends LitElement {
     }
 
     wc-notice-bar {
-      margin-bottom: var(--wa-space-m, 12px);
+      margin-bottom: var(--wa-space-m);
     }
 
     dl {
       display: grid;
       grid-template-columns: auto 1fr;
-      gap: var(--wa-space-2xs, 4px) var(--wa-space-m, 12px);
+      gap: var(--wa-space-2xs) var(--wa-space-m);
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     dt {
@@ -49,9 +49,9 @@ export class WcReconcileResult extends LitElement {
 
     dt.difference,
     dd.difference {
-      font-weight: var(--wa-font-weight-semibold, 600);
+      font-weight: var(--wa-font-weight-semibold);
       color: var(--wa-color-danger);
-      padding-top: var(--wa-space-2xs, 4px);
+      padding-top: var(--wa-space-2xs);
       border-top: 1px solid var(--wa-color-border);
     }
 

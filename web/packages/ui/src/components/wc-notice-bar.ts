@@ -36,14 +36,14 @@ export class WcNoticeBar extends LitElement {
     .bar {
       display: flex;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+      gap: var(--wa-space-s);
+      padding: var(--wa-space-s) var(--wa-space-m);
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
       border-left: 4px solid var(--nc-notice-accent);
-      border-radius: var(--wa-radius-md, 8px);
+      border-radius: var(--wa-radius-md);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-base, 14px);
+      font-size: var(--wa-font-size-base);
       color: var(--wa-color-text);
     }
 
@@ -59,11 +59,11 @@ export class WcNoticeBar extends LitElement {
 
     button {
       font: inherit;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       background: none;
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm, 6px);
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-sm);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       color: var(--wa-color-text);
       cursor: default;
       flex: 0 0 auto;
@@ -81,7 +81,7 @@ export class WcNoticeBar extends LitElement {
     .dismiss {
       display: inline-flex;
       align-items: center;
-      padding: var(--wa-space-2xs, 4px);
+      padding: var(--wa-space-2xs);
       border-color: transparent;
       color: var(--wa-color-muted);
     }

@@ -34,7 +34,7 @@ export class WcParticleField extends LitElement {
       height: 100%;
       line-height: 1;
       font-family: var(--wa-font-family-mono);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--tint);
       opacity: var(--brightness);
       transform: translateY(var(--rest));

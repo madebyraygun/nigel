@@ -39,7 +39,7 @@ export class WcConfirm extends LitElement {
       .footer {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
     `,
   ];

@@ -22,15 +22,15 @@ export class WcEmptyState extends LitElement {
       place-items: center;
       align-content: center;
       flex: 1 1 auto;
-      gap: var(--wa-space-s, 8px);
-      padding: var(--wa-space-2xl, 32px);
+      gap: var(--wa-space-s);
+      padding: var(--wa-space-2xl);
       text-align: center;
       color: var(--wa-color-muted);
       font-family: var(--wa-font-family-sans);
     }
 
     :host([compact]) {
-      padding: var(--wa-space-l, 16px);
+      padding: var(--wa-space-l);
     }
 
     .icon {
@@ -39,8 +39,8 @@ export class WcEmptyState extends LitElement {
     }
 
     .heading {
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-size: var(--wa-font-size-lg);
+      font-weight: var(--wa-font-weight-medium);
       color: var(--wa-color-text);
       margin: 0;
     }
@@ -51,9 +51,9 @@ export class WcEmptyState extends LitElement {
     }
 
     .actions {
-      margin-top: var(--wa-space-s, 8px);
+      margin-top: var(--wa-space-s);
       display: flex;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
     }
   `;
 

@@ -44,13 +44,13 @@ export class WcInvoicePreview extends LitElement {
 
     details {
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
+      border-radius: var(--wa-radius-m);
     }
 
     summary {
-      padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
+      padding: var(--wa-space-s) var(--wa-space-m);
       cursor: default;
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     summary:focus-visible {
@@ -60,8 +60,8 @@ export class WcInvoicePreview extends LitElement {
 
     .body {
       display: grid;
-      gap: var(--wa-space-s, 8px);
-      padding: 0 var(--wa-space-m, 12px) var(--wa-space-m, 12px);
+      gap: var(--wa-space-s);
+      padding: 0 var(--wa-space-m) var(--wa-space-m);
     }
 
     wc-document-frame {
@@ -71,8 +71,8 @@ export class WcInvoicePreview extends LitElement {
     .links {
       display: flex;
       flex-wrap: wrap;
-      gap: var(--wa-space-m, 12px);
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-m);
+      font-size: var(--wa-font-size-s);
     }
 
     a,
@@ -95,7 +95,7 @@ export class WcInvoicePreview extends LitElement {
 
     .unavailable {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
   `;
 

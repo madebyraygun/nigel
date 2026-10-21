@@ -62,12 +62,12 @@ export class WcInvoiceStatus extends LitElement {
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs, 4px);
-      padding: 0 var(--wa-space-xs, 6px);
+      gap: var(--wa-space-2xs);
+      padding: 0 var(--wa-space-xs);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-pill, 999px);
+      border-radius: var(--wa-radius-pill);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       line-height: 1.7;
       white-space: nowrap;
       color: var(--wa-color-text);

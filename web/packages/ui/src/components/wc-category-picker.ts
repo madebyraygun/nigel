@@ -42,9 +42,9 @@ export class WcCategoryPicker extends LitElement {
 
     label {
       display: block;
-      font-size: var(--wa-font-size-s, 13px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      margin-bottom: var(--wa-space-2xs, 4px);
+      font-size: var(--wa-font-size-s);
+      font-weight: var(--wa-font-weight-medium);
+      margin-bottom: var(--wa-space-2xs);
     }
 
     input {
@@ -54,8 +54,8 @@ export class WcCategoryPicker extends LitElement {
       color: inherit;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      border-radius: var(--wa-radius-m);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       user-select: text;
     }
 
@@ -65,7 +65,7 @@ export class WcCategoryPicker extends LitElement {
     }
 
     input[aria-invalid='true'] {
-      border-color: var(--wa-color-danger, #b3261e);
+      border-color: var(--wa-color-danger);
     }
 
     .options {
@@ -73,14 +73,14 @@ export class WcCategoryPicker extends LitElement {
       z-index: 2;
       left: 0;
       right: 0;
-      margin: var(--wa-space-2xs, 4px) 0 0;
+      margin: var(--wa-space-2xs) 0 0;
       padding: 0;
       max-height: 16rem;
       overflow-y: auto;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m, 8px);
-      box-shadow: var(--wa-shadow-m, 0 4px 12px rgb(0 0 0 / 18%));
+      border-radius: var(--wa-radius-m);
+      box-shadow: var(--wa-shadow-m);
     }
 
     .group {
@@ -89,7 +89,7 @@ export class WcCategoryPicker extends LitElement {
 
     .group-label {
       display: block;
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       font-size: var(--wa-font-size-xs, 11px);
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -97,19 +97,19 @@ export class WcCategoryPicker extends LitElement {
     }
 
     [role='option'] {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
       cursor: default;
     }
 
     [role='option'][aria-selected='true'] {
       background: var(--wa-color-brand);
-      color: var(--wa-color-on-brand, #fff);
+      color: var(--wa-color-on-brand);
     }
 
     .no-matches {
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
   `;
 

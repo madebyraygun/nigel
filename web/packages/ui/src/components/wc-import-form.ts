@@ -85,7 +85,7 @@ export class WcImportForm extends LitElement {
     css`
       :host {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
@@ -93,7 +93,7 @@ export class WcImportForm extends LitElement {
       .row {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
       }
 
       .row > * {
@@ -103,29 +103,29 @@ export class WcImportForm extends LitElement {
 
       .mapping {
         display: grid;
-        gap: var(--wa-space-s, 8px);
-        padding: var(--wa-space-m, 12px);
+        gap: var(--wa-space-s);
+        padding: var(--wa-space-m);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
         background: var(--wa-color-surface);
       }
 
       .mapping-heading {
         margin: 0;
-        font-size: var(--wa-font-size-s, 13px);
-        font-weight: var(--wa-font-weight-semibold, 600);
+        font-size: var(--wa-font-size-s);
+        font-weight: var(--wa-font-weight-semibold);
       }
 
       .mapping-hint {
         margin: 0;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-muted);
       }
 
       .columns {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
 
       .columns > * {
@@ -135,13 +135,13 @@ export class WcImportForm extends LitElement {
 
       .hint {
         margin: 0;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-muted);
       }
 
       .error {
         margin: 0;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-danger);
       }
     `,

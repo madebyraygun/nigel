@@ -241,6 +241,74 @@ The one `matchMedia` listener in the app exists solely to keep the
 "currently dark" hint honest while System is selected. If it broke, the
 colours would still be right.
 
+## Tokens
+
+`@nigel/theme` carries the app-refresh handoff's token table
+(`docs/design/app-refresh/README.md`, "Design tokens") on the `--wa-*` and
+`--nc-*` roles below. The handoff's shorthand names exist only in the
+prototypes; components read the roles. `__tests__/handoff-tokens.test.ts` pins
+every value in both modes, so the table and the theme cannot drift apart.
+
+| Handoff | Role | Use |
+|---|---|---|
+| `--bg` | `--wa-color-bg` | window ground |
+| `--sf` | `--wa-color-surface` | cards, palette |
+| `--sa` | `--wa-color-surface-alt` | table headers, footers, subtle fills |
+| `--sb` | `--nc-color-sidebar-bg` | sidebar and status panels |
+| `--hl` | `--nc-color-highlight` | highlighted or selected row, active chip |
+| `--hv` | `--nc-color-hover` | hover |
+| `--sel` | `--nc-color-selected-bg` | active nav fill |
+| `--bd` | `--wa-color-border` | borders |
+| `--bs` | `--wa-color-border-soft` | row and inner dividers |
+| `--tx` | `--wa-color-text` | text |
+| `--mu` | `--wa-color-muted` | muted text |
+| `--br` | `--wa-color-brand` (and `--wa-color-focus`) | primary buttons, links, focus |
+| `--onbr` | `--wa-color-on-brand` | text on brand |
+| `--ring` | `--nc-color-ring` | focus halo around a field |
+| `--field` | `--nc-color-field` (`--wa-form-control-background-color`) | input ground |
+| `--inc` | `--nc-color-income` | income text |
+| `--exp` | `--nc-color-expense`, `--wa-color-danger` | expense and danger text |
+| `--flag` | `--nc-color-flagged` | review and flag |
+| `--blue` | `--wa-color-info` | Sent status |
+| `--incf` / `--expf` | `--nc-color-income-fill` / `--nc-color-expense-fill` | chart bars |
+| `--grad` | `--nc-grad-brand-text` | wordmark, active hairlines (ink ramp light, pastel dark) |
+| `--pastel` | `--nc-grad-pastel` | status-line `nigel` block, both modes |
+| `--fsh` | `--nc-shadow-floating` | floating panels |
+| `--sh` | `--wa-shadow-lg` | palette, dialogs, save bar |
+| `--bk` | `--wa-color-overlay-modal` | modal backdrop |
+| monogram text | `--nc-color-on-gradient` | `#2b2b33` on any pastel |
+
+Radii: `--wa-radius-xs` 4px (badges), `-sm` 6px (chips), `-md` 8px (nav items,
+inputs, icon buttons), `--nc-radius-tile` 10px (dropzone, icon tiles), `-lg`
+12px (cards, palette), `-xl` 14px (sidebar, setup cards), `-2xl` 18px (mobile
+drawer), `-pill` 999px.
+
+Type: `--nc-font-size-display` 28px (page h1), `-heading` 26px and
+`-heading-sm` 24px (Setup), `-figure` 22px, `-section` 16px, `-card-title`
+15px, `-body` 13.5px, `-control` 13px, `-meta` 12px, `-caption` 11.5px (status
+line, keycaps), `-label` 10.5px (group labels), with
+`--nc-letter-spacing-tight` (−0.02em) and `--nc-letter-spacing-label`
+(0.08em). `:root` sets `font-variant-numeric: tabular-nums`, which inherits
+into every shadow root.
+
+The toast is the one surface that stays dark in both modes; it reads
+`--nc-color-inverse-bg`, `-text`, `-border` and `-hover`.
+
+Only `@nigel/theme` names a colour. `packages/ui/src/__tests__/no-inline-colours.test.ts`
+fails the build on a hex value, a colour function or a named colour anywhere
+in `@nigel/ui` (the preview harness included) or in `@nigel/app`'s source and
+`index.html`, `var()` fallbacks included. `no-theme-fallbacks.test.ts` goes
+further for `@nigel/ui`: a token the theme defines takes no fallback at all,
+since one never renders and can only go stale. Fallbacks remain for a
+component's own knobs, such as `--nc-register-height`.
+
+`handoff-tokens.test.ts` holds text and muted text to 4.5:1 on every plane,
+and brand, income, expense, flag and info to 4.5:1 on the subtle fill, hover,
+highlight, field and sidebar, in both modes; on-brand to 4.5:1 on the
+success, danger and info fills; and checks the ring and backdrop alphas
+numerically (the ring is translucent brand, the backdrop dims every plane).
+`contrast.test.ts` carries the remaining pairings.
+
 ## The api seam
 
 `apps/app/src/api/` is the only module that talks to the server. This is the

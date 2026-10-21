@@ -2,8 +2,8 @@ import { customElement } from 'lit/decorators.js';
 import { WcIconBase, svg } from './icon-base.js';
 
 /**
- * Starter icon set: one per screen in the app's registry, plus the handful of
- * action glyphs the shell needs.
+ * One icon per screen in the app's registry, plus the action and chrome
+ * glyphs the shell needs. `wc-icon-close` is the handoff's `x`.
  *
  * The paths are plain geometry authored here rather than lifted from an icon
  * library, so there is no third-party license riding along in the binary.
@@ -95,6 +95,13 @@ export class WcIconLock extends WcIconBase {
   }
 }
 
+@customElement('wc-icon-lock-open')
+export class WcIconLockOpen extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M6 11h12v9H6zM9 11V7a3 3 0 0 1 5.8-1.1"/>`;
+  }
+}
+
 @customElement('wc-icon-search')
 export class WcIconSearch extends WcIconBase {
   protected renderIcon() {
@@ -151,6 +158,20 @@ export class WcIconChevronRight extends WcIconBase {
   }
 }
 
+@customElement('wc-icon-chevron-down')
+export class WcIconChevronDown extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M6 9l6 6 6-6"/>`;
+  }
+}
+
+@customElement('wc-icon-chevron-up-down')
+export class WcIconChevronUpDown extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M8 9l4-4 4 4M8 15l4 4 4-4"/>`;
+  }
+}
+
 @customElement('wc-icon-plus')
 export class WcIconPlus extends WcIconBase {
   protected renderIcon() {
@@ -183,6 +204,27 @@ export class WcIconInvoice extends WcIconBase {
 export class WcIconClients extends WcIconBase {
   protected renderIcon() {
     return svg`<path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 5.5a3 3 0 0 1 0 6"/><path d="M17.5 14.2a5.5 5.5 0 0 1 4 5.3"/>`;
+  }
+}
+
+@customElement('wc-icon-folder')
+export class WcIconFolder extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M3 5h6l2 3h10v11H3z"/>`;
+  }
+}
+
+@customElement('wc-icon-monitor')
+export class WcIconMonitor extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M3 4h18v12H3zM8 20h8M12 16v4"/>`;
+  }
+}
+
+@customElement('wc-icon-keyboard')
+export class WcIconKeyboard extends WcIconBase {
+  protected renderIcon() {
+    return svg`<path d="M3 6h18v12H3zM7 10h.01M10.5 10h.01M14 10h.01M17 10h.01M8 14h8"/>`;
   }
 }
 
@@ -271,6 +313,7 @@ export const ICON_TAGS = [
   'wc-icon-undo',
   'wc-icon-settings',
   'wc-icon-lock',
+  'wc-icon-lock-open',
   'wc-icon-search',
   'wc-icon-close',
   'wc-icon-check',
@@ -279,11 +322,16 @@ export const ICON_TAGS = [
   'wc-icon-download',
   'wc-icon-chevron-left',
   'wc-icon-chevron-right',
+  'wc-icon-chevron-down',
+  'wc-icon-chevron-up-down',
   'wc-icon-plus',
   'wc-icon-edit',
   'wc-icon-trash',
   'wc-icon-invoice',
   'wc-icon-clients',
+  'wc-icon-folder',
+  'wc-icon-monitor',
+  'wc-icon-keyboard',
   'wc-icon-menu',
   'wc-icon-dot',
   'wc-icon-status-draft',
@@ -310,6 +358,7 @@ declare global {
     'wc-icon-undo': WcIconUndo;
     'wc-icon-settings': WcIconSettings;
     'wc-icon-lock': WcIconLock;
+    'wc-icon-lock-open': WcIconLockOpen;
     'wc-icon-search': WcIconSearch;
     'wc-icon-close': WcIconClose;
     'wc-icon-check': WcIconCheck;
@@ -318,11 +367,16 @@ declare global {
     'wc-icon-download': WcIconDownload;
     'wc-icon-chevron-left': WcIconChevronLeft;
     'wc-icon-chevron-right': WcIconChevronRight;
+    'wc-icon-chevron-down': WcIconChevronDown;
+    'wc-icon-chevron-up-down': WcIconChevronUpDown;
     'wc-icon-plus': WcIconPlus;
     'wc-icon-edit': WcIconEdit;
     'wc-icon-trash': WcIconTrash;
     'wc-icon-invoice': WcIconInvoice;
     'wc-icon-clients': WcIconClients;
+    'wc-icon-folder': WcIconFolder;
+    'wc-icon-monitor': WcIconMonitor;
+    'wc-icon-keyboard': WcIconKeyboard;
     'wc-icon-menu': WcIconMenu;
     'wc-icon-dot': WcIconDot;
     'wc-icon-status-draft': WcIconStatusDraft;

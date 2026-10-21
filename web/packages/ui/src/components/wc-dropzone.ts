@@ -62,15 +62,15 @@ export class WcDropzone extends LitElement {
       .well {
         display: grid;
         justify-items: center;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
         width: 100%;
-        padding: var(--wa-space-2xl, 32px) var(--wa-space-l, 16px);
+        padding: var(--wa-space-2xl) var(--wa-space-l);
         font: inherit;
         color: inherit;
         text-align: center;
         background: var(--wa-color-surface);
         border: 2px dashed var(--wa-color-border);
-        border-radius: var(--wa-radius-l, 12px);
+        border-radius: var(--wa-radius-l);
         cursor: default;
       }
 
@@ -91,7 +91,7 @@ export class WcDropzone extends LitElement {
       .zone.dragover .well {
         border-color: var(--wa-color-brand);
         border-style: solid;
-        background: var(--wa-color-surface-raised, var(--wa-color-surface));
+        background: var(--wa-color-surface-raised);
       }
 
       .icon {
@@ -100,11 +100,11 @@ export class WcDropzone extends LitElement {
       }
 
       .prompt {
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
       }
 
       .hint {
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         color: var(--wa-color-muted);
       }
 
@@ -112,22 +112,22 @@ export class WcDropzone extends LitElement {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: var(--wa-space-s, 8px);
-        padding: var(--wa-space-m, 12px);
+        gap: var(--wa-space-s);
+        padding: var(--wa-space-m);
         background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-l, 12px);
+        border-radius: var(--wa-radius-l);
       }
 
       .filename {
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
         overflow-wrap: anywhere;
         user-select: text;
       }
 
       .size {
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       .spacer {
@@ -136,10 +136,10 @@ export class WcDropzone extends LitElement {
 
       .replace {
         font: inherit;
-        font-size: var(--wa-font-size-s, 13px);
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+        font-size: var(--wa-font-size-s);
+        padding: var(--wa-space-2xs) var(--wa-space-s);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm, 6px);
+        border-radius: var(--wa-radius-sm);
         background: none;
         color: inherit;
         cursor: default;
@@ -160,9 +160,9 @@ export class WcDropzone extends LitElement {
       }
 
       .error {
-        margin: var(--wa-space-xs, 6px) 0 0;
+        margin: var(--wa-space-xs) 0 0;
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       input[type='file'] {

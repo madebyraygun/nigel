@@ -1,5 +1,6 @@
 import { css } from 'lit';
 import { brandCycle, brandRamp } from './gradient.js';
+import { shadowDarkTokens } from './shadow.js';
 
 /**
  * The brand, danger, success, warning and info entries are darkened
@@ -9,9 +10,13 @@ import { brandCycle, brandRamp } from './gradient.js';
  * Light mode is deliberately **not** paper-white with near-black text. The
  * canvas carries a slight lavender-grey tint and the text is a soft charcoal,
  * which puts text-on-surface at about 11.6:1 — still well above AAA, and a
- * good deal less stark than the 14:1 it used to be. Three planes are meant to
- * be distinguishable at a glance: the sidebar sits lowest, the app canvas
- * above it, and cards are the only true white.
+ * good deal less stark than pure black on white. Three planes are meant to be
+ * distinguishable at a glance: the app canvas sits lowest, the floating
+ * sidebar and status panels just above it, and cards are the only true white.
+ *
+ * The values are the app-refresh handoff's table
+ * (`docs/design/app-refresh/README.md`, "Design tokens"); `web/README.md`
+ * maps each of its shorthand names onto the role here.
  */
 export const colorCss = css`
   :root {
@@ -31,7 +36,7 @@ export const colorCss = css`
     --wa-color-danger: #b3283f;
     --wa-color-success: #17683a;
     --wa-color-warning: #855508;
-    --wa-color-info: #1a5c8c;
+    --wa-color-info: #266ba1;
 
     /* Signed money, mirroring crates/nigel/src/tui.rs money_span: income reads green,
      * expense reads red. The TUI can lean on color alone; wc-money also
@@ -39,12 +44,41 @@ export const colorCss = css`
     --nc-color-income: #17683a;
     --nc-color-expense: #b3283f;
     --nc-color-flagged: #855508;
+    /* The active nav item's fill. */
     --nc-color-selected-bg: #f1edff;
 
-    /* The sidebar is its own plane. It used to be --wa-color-surface, which is
-       the same white the cards use, so the navigation and the content it
-       navigates read as one continuous sheet. */
-    --nc-color-sidebar-bg: #e8e6f0;
+    /* The keyboard or pointer row in a list, the selected table row, the
+       active chip. The same value as the active nav fill, kept as its own
+       role because the two are chosen for different reasons. */
+    --nc-color-highlight: #f1edff;
+
+    /* What a row, a nav item or an icon button sits on under the pointer. */
+    --nc-color-hover: #efedf5;
+
+    /* The floating sidebar and status panels: a plane just off-white, so
+       they read as panels over the canvas rather than as more card. */
+    --nc-color-sidebar-bg: #fbfafe;
+
+    /* An input's own ground. White in light mode like a card; a shade below
+       the card in dark mode, so a field reads as recessed into it. */
+    --nc-color-field: #ffffff;
+
+    /* The halo around a focused field, drawn outside its brand-coloured
+       border. Translucent brand, so it tints whatever it lands on. */
+    --nc-color-ring: rgb(90 63 214 / 22%);
+
+    /* What dims the app behind a dialog, the palette or the open drawer. A
+       tinted, light veil on the light canvas; a heavy black on the dark one,
+       where a light veil would read as a white wash. */
+    --wa-color-overlay-modal: rgb(40 36 60 / 18%);
+
+    /* A chip that stays dark in both modes — the toast, which paints over
+       cards and dialogs that already use --wa-color-surface and would vanish
+       into them in dark mode if it reused it. Not mode-dependent. */
+    --nc-color-inverse-bg: #1f1f28;
+    --nc-color-inverse-text: #ece9f5;
+    --nc-color-inverse-border: rgb(255 255 255 / 10%);
+    --nc-color-inverse-hover: rgb(255 255 255 / 15%);
 
     /* The ground a client-facing document is printed on. Deliberately not
        mode-dependent, for --nc-color-on-gradient's reason inverted: a stored
@@ -85,7 +119,7 @@ const darkTokens = css`
   --wa-color-brand-hover: #d5cbff;
   --wa-color-on-brand: #17171d;
   --wa-color-focus: #c4b7ff;
-  --wa-color-danger: #ffb3ba;
+  --wa-color-danger: #ff9fa8;
   --wa-color-success: #8ee6a0;
   --wa-color-warning: #ffe0a3;
   --wa-color-info: #bae1ff;
@@ -94,13 +128,17 @@ const darkTokens = css`
   --nc-color-expense: #ff9fa8;
   --nc-color-flagged: #ffe0a3;
   --nc-color-selected-bg: #2a2740;
+  --nc-color-highlight: #2a2740;
+  --nc-color-hover: #2a2a35;
+  --nc-color-sidebar-bg: #22222b;
+  --nc-color-field: #1b1b22;
+  --nc-color-ring: rgb(196 183 255 / 25%);
+  --wa-color-overlay-modal: rgb(0 0 0 / 45%);
 
-  /* Dark mode keeps exactly what it rendered before these three tokens
-     existed: the sidebar was --wa-color-surface, and the bars were drawn in
-     the same colours as the figures. Dark was not the problem being solved. */
-  --nc-color-sidebar-bg: #1f1f28;
-  --nc-color-income-fill: #7fe0a0;
-  --nc-color-expense-fill: #ff9fa8;
+  --nc-color-income-fill: #6fcf92;
+  --nc-color-expense-fill: #f0919c;
+
+  ${shadowDarkTokens}
 
   /* The pastel ramp is legible on a dark surface, so the wordmark keeps it.
      It names the plain ramp rather than --nc-grad-brand, which is periodic and

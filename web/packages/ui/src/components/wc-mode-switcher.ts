@@ -50,9 +50,9 @@ export class WcModeSwitcher extends LitElement {
       }
 
       .hint {
-        margin: var(--wa-space-xs, 6px) 0 0;
+        margin: var(--wa-space-xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       /* Screen chrome, not part of the report — see wc-app-shell. */

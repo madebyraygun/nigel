@@ -24,12 +24,12 @@ export class WcInvoiceSummary extends LitElement {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
     }
 
     h2 {
       margin: 0;
-      font-size: var(--wa-font-size-l, 18px);
+      font-size: var(--wa-font-size-l);
       user-select: text;
     }
 
@@ -42,15 +42,15 @@ export class WcInvoiceSummary extends LitElement {
       display: flex;
       flex-wrap: wrap;
       align-items: baseline;
-      gap: var(--wa-space-xs, 6px) var(--wa-space-m, 12px);
-      margin: var(--wa-space-xs, 6px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-xs) var(--wa-space-m);
+      margin: var(--wa-space-xs) 0 0;
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
 
     .facts .figure {
       color: var(--wa-color-text);
-      font-size: var(--wa-font-size-m, 15px);
+      font-size: var(--wa-font-size-m);
     }
 
     dl {
@@ -70,7 +70,7 @@ export class WcInvoiceSummary extends LitElement {
     .pair {
       display: flex;
       align-items: baseline;
-      gap: var(--wa-space-2xs, 4px);
+      gap: var(--wa-space-2xs);
     }
   `;
 

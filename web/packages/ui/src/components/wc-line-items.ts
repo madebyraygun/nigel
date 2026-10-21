@@ -104,13 +104,13 @@ export class WcLineItems extends LitElement {
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       caption {
         text-align: start;
-        font-weight: var(--wa-font-weight-medium, 500);
-        padding-bottom: var(--wa-space-xs, 6px);
+        font-weight: var(--wa-font-weight-medium);
+        padding-bottom: var(--wa-space-xs);
       }
 
       caption.visually-hidden {
@@ -124,7 +124,7 @@ export class WcLineItems extends LitElement {
 
       th,
       td {
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        padding: var(--wa-space-2xs) var(--wa-space-xs);
         border-bottom: 1px solid var(--wa-color-border);
         text-align: start;
         vertical-align: top;
@@ -132,7 +132,7 @@ export class WcLineItems extends LitElement {
 
       th {
         color: var(--wa-color-muted);
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
         white-space: nowrap;
       }
 
@@ -145,9 +145,9 @@ export class WcLineItems extends LitElement {
         font: inherit;
         width: 100%;
         min-width: 5rem;
-        padding: var(--wa-space-2xs, 4px) var(--wa-space-xs, 6px);
+        padding: var(--wa-space-2xs) var(--wa-space-xs);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm, 6px);
+        border-radius: var(--wa-radius-sm);
         background: var(--wa-color-surface);
         color: inherit;
       }
@@ -169,7 +169,7 @@ export class WcLineItems extends LitElement {
       .money-input {
         display: flex;
         align-items: center;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
       }
 
       .prefix {
@@ -177,36 +177,36 @@ export class WcLineItems extends LitElement {
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
-        color: var(--wa-color-danger, #b3261e);
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-2xs) 0 0;
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s);
       }
 
       .row-actions {
         display: flex;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
         justify-content: flex-end;
         white-space: nowrap;
       }
 
       tr[data-emphasis] td {
-        font-weight: var(--wa-font-weight-medium, 500);
+        font-weight: var(--wa-font-weight-medium);
         border-bottom: 0;
       }
 
       tr[data-emphasis='total'] td {
-        font-weight: var(--wa-font-weight-bold, 700);
+        font-weight: var(--wa-font-weight-bold);
         border-top: 2px solid var(--wa-color-border);
       }
 
       footer {
-        margin-top: var(--wa-space-s, 8px);
+        margin-top: var(--wa-space-s);
       }
 
       .list-error {
-        margin: var(--wa-space-xs, 6px) 0 0;
-        color: var(--wa-color-danger, #b3261e);
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs) 0 0;
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s);
       }
 
       /*

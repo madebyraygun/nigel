@@ -114,19 +114,19 @@ export class WcPaymentForm extends LitElement {
 
       .fields {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         min-width: 18rem;
       }
 
       .money {
         display: flex;
         align-items: center;
-        gap: var(--wa-space-2xs, 4px);
+        gap: var(--wa-space-2xs);
       }
 
       .prefix {
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-m, 15px);
+        font-size: var(--wa-font-size-m);
       }
 
       .money wa-input {
@@ -134,15 +134,15 @@ export class WcPaymentForm extends LitElement {
       }
 
       .error {
-        margin: var(--wa-space-2xs, 4px) 0 0;
-        color: var(--wa-color-danger, #b3261e);
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-2xs) 0 0;
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s);
       }
 
       .hint {
-        margin: var(--wa-space-2xs, 4px) 0 0;
+        margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
     `,
   ];

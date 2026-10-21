@@ -81,8 +81,8 @@ describe('icons', () => {
 describe('inline sizing', () => {
   it('is a mode of its own, leaving the token to size everything else', () => {
     const css = sheet(WcIconBase);
-    expect(css).toContain('width: var(--nc-icon-size, 20px)');
-    expect(css).toContain('height: var(--nc-icon-size, 20px)');
+    expect(css).toContain('width: var(--nc-icon-size)');
+    expect(css).toContain('height: var(--nc-icon-size)');
     // A separate rule behind the attribute, so nothing gets 1em by default.
     expect(css).toMatch(/:host\(\[inline\]\)\s*{\s*width:\s*1em;\s*height:\s*1em;\s*}/);
   });
@@ -132,6 +132,34 @@ describe('inline sizing', () => {
         `${name} stands in for text characters and must be inline`,
       ).toEqual([]);
     }
+  });
+});
+
+/**
+ * The glyphs the app-refresh handoff asks for (`docs/design/app-refresh`,
+ * "Assets"). Its `x` is `wc-icon-close`.
+ */
+describe('the handoff icons', () => {
+  const HANDOFF = [
+    'wc-icon-lock',
+    'wc-icon-lock-open',
+    'wc-icon-search',
+    'wc-icon-chevron-down',
+    'wc-icon-chevron-up-down',
+    'wc-icon-flag',
+    'wc-icon-plus',
+    'wc-icon-folder',
+    'wc-icon-monitor',
+    'wc-icon-keyboard',
+    'wc-icon-close',
+  ] as const;
+
+  it.each(HANDOFF)('%s is in the set', (tag) => {
+    expect(ICON_TAGS).toContain(tag);
+  });
+
+  it.each(HANDOFF)('%s is drawn in the preview gallery', (tag) => {
+    expect(marksIn('default').map(tagOf)).toContain(tag);
   });
 });
 

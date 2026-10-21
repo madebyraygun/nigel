@@ -21,8 +21,8 @@ export class WcReviewCard extends LitElement {
       display: block;
       background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-l, 12px);
-      padding: var(--wa-space-l, 16px);
+      border-radius: var(--wa-radius-l);
+      padding: var(--wa-space-l);
       font-family: var(--wa-font-family-sans);
       color: var(--wa-color-text);
     }
@@ -31,30 +31,30 @@ export class WcReviewCard extends LitElement {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--wa-space-m, 12px);
+      gap: var(--wa-space-m);
       flex-wrap: wrap;
     }
 
     .description {
       margin: 0;
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-semibold, 600);
+      font-size: var(--wa-font-size-lg);
+      font-weight: var(--wa-font-weight-semibold);
       overflow-wrap: anywhere;
       user-select: text;
     }
 
     .amount {
-      font-size: var(--wa-font-size-lg, 16px);
-      font-weight: var(--wa-font-weight-semibold, 600);
+      font-size: var(--wa-font-size-lg);
+      font-weight: var(--wa-font-weight-semibold);
       white-space: nowrap;
     }
 
     dl {
       display: grid;
       grid-template-columns: max-content 1fr;
-      gap: var(--wa-space-2xs, 4px) var(--wa-space-m, 12px);
-      margin: var(--wa-space-m, 12px) 0 0;
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-2xs) var(--wa-space-m);
+      margin: var(--wa-space-m) 0 0;
+      font-size: var(--wa-font-size-s);
     }
 
     dt {
@@ -68,10 +68,10 @@ export class WcReviewCard extends LitElement {
     }
 
     .current {
-      margin: var(--wa-space-m, 12px) 0 0;
-      padding-top: var(--wa-space-s, 8px);
+      margin: var(--wa-space-m) 0 0;
+      padding-top: var(--wa-space-s);
       border-top: 1px dashed var(--wa-color-border);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--wa-color-muted);
     }
   `;

@@ -64,15 +64,21 @@ export const printCss = css`
 
       --nc-color-sidebar-bg: #ffffff;
       --nc-color-selected-bg: transparent;
+      --nc-color-highlight: transparent;
+      --nc-color-hover: transparent;
+      --nc-color-field: #ffffff;
 
       --nc-grad-brand: none;
       --nc-grad-brand-hover: none;
       --nc-grad-brand-text: none;
       --nc-grad-brand-text-cycle: none;
+      --nc-grad-pastel: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;
       --wa-shadow-l: none;
+      --wa-shadow-lg: none;
+      --nc-shadow-floating: none;
     }
 
     html,

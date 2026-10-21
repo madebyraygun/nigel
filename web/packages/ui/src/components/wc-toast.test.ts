@@ -12,6 +12,7 @@ import {
   resolvedDeclarations,
   type Viewport,
 } from '../../preview/css-geometry.js';
+import { nigelTheme } from '@nigel/theme';
 import preview from './wc-toast.preview.js';
 
 async function mount(): Promise<WcToast> {
@@ -450,7 +451,12 @@ describe('wc-toast stacking', () => {
  */
 describe('wc-toast placement', () => {
   const css = styleText(WcToast);
-  const vars = customProperties(css, ':host');
+  // The theme's tokens are in scope wherever the component renders; the
+  // component's own :host knobs sit on top of them.
+  const vars = {
+    ...customProperties(nigelTheme.cssText, ':root'),
+    ...customProperties(css, ':host'),
+  };
   const regionRules = resolvedDeclarations(css, '.region');
   const toastRules = resolvedDeclarations(css, '.toast');
 

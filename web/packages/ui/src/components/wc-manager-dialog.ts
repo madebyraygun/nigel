@@ -30,18 +30,18 @@ export class WcManagerDialog extends LitElement {
       }
 
       .error {
-        margin: 0 0 var(--wa-space-m, 12px);
-        padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
-        border-radius: var(--wa-radius-m, 8px);
-        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
-        color: var(--wa-color-danger, #b3261e);
-        font-size: var(--wa-font-size-s, 13px);
+        margin: 0 0 var(--wa-space-m);
+        padding: var(--wa-space-xs) var(--wa-space-s);
+        border-radius: var(--wa-radius-m);
+        background: var(--wa-color-danger-fill-quiet);
+        color: var(--wa-color-danger);
+        font-size: var(--wa-font-size-s);
       }
 
       .footer {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
     `,
   ];

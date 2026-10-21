@@ -86,7 +86,7 @@ export class WcToast extends LitElement {
     :host {
       /* The region is fixed-position; the host itself takes no space. */
       display: contents;
-      --nc-toast-gutter: var(--wa-space-l, 16px);
+      --nc-toast-gutter: var(--wa-space-l);
       --nc-toast-max-width: 360px;
     }
 
@@ -107,7 +107,7 @@ export class WcToast extends LitElement {
       display: flex;
       flex-direction: column;
       align-items: flex-end;
-      gap: var(--wa-space-s, 8px);
+      gap: var(--wa-space-s);
       pointer-events: none;
       /* Reset the UA popover styles so the region flows the same way whether
        * or not it is currently in the top layer. */
@@ -131,20 +131,18 @@ export class WcToast extends LitElement {
       pointer-events: auto;
       display: flex;
       align-items: center;
-      gap: var(--wa-space-l, 16px);
+      gap: var(--wa-space-l);
       padding: 10px 16px;
-      border-radius: var(--wa-radius-md, 10px);
+      border-radius: var(--wa-radius-md);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-base, 14px);
-      font-weight: var(--wa-font-weight-medium, 500);
-      box-shadow: var(--wa-shadow-lg, 0 12px 32px rgb(0 0 0 / 25%));
-      animation: toast-in var(--nc-duration-fast, 120ms) ease;
-      /* A consistently dark chip in both themes: the toast paints over cards
-       * and dialogs that already use --wa-color-surface, so reusing surface
-       * here would make it disappear into them. */
-      background: #1f1f28;
-      color: #ece9f5;
-      border: 1px solid rgb(255 255 255 / 10%);
+      font-size: var(--wa-font-size-base);
+      font-weight: var(--wa-font-weight-medium);
+      box-shadow: var(--wa-shadow-lg);
+      animation: toast-in var(--nc-duration-fast) ease;
+      /* A consistently dark chip in both themes; see --nc-color-inverse-bg. */
+      background: var(--nc-color-inverse-bg);
+      color: var(--nc-color-inverse-text);
+      border: 1px solid var(--nc-color-inverse-border);
       /* 100% is the region, which is the viewport minus its gutters, so a long
        * message wraps inside the chip instead of widening it off-screen. */
       max-width: min(var(--nc-toast-max-width), 100%);
@@ -159,13 +157,13 @@ export class WcToast extends LitElement {
     .toast[data-variant='success'] {
       background: var(--wa-color-success);
       border-color: var(--wa-color-success);
-      color: #ffffff;
+      color: var(--wa-color-on-brand);
     }
 
     .toast[data-variant='danger'] {
       background: var(--wa-color-danger);
       border-color: var(--wa-color-danger);
-      color: #ffffff;
+      color: var(--wa-color-on-brand);
     }
 
     .action {
@@ -173,19 +171,19 @@ export class WcToast extends LitElement {
       border: 0;
       color: inherit;
       font: inherit;
-      font-weight: var(--wa-font-weight-bold, 600);
+      font-weight: var(--wa-font-weight-bold);
       text-decoration: underline;
       text-underline-offset: 3px;
       cursor: default;
       padding: 4px 8px;
-      border-radius: var(--wa-radius-sm, 6px);
+      border-radius: var(--wa-radius-sm);
       white-space: nowrap;
       flex-shrink: 0;
     }
 
     .action:hover,
     .action:focus-visible {
-      background: rgb(255 255 255 / 15%);
+      background: var(--nc-color-inverse-hover);
     }
 
     .close {
@@ -196,14 +194,14 @@ export class WcToast extends LitElement {
       line-height: 1;
       cursor: default;
       padding: 2px 4px;
-      margin-inline-start: calc(-1 * var(--wa-space-s, 8px));
-      border-radius: var(--wa-radius-sm, 6px);
+      margin-inline-start: calc(-1 * var(--wa-space-s));
+      border-radius: var(--wa-radius-sm);
       flex-shrink: 0;
     }
 
     .close:hover,
     .close:focus-visible {
-      background: rgb(255 255 255 / 15%);
+      background: var(--nc-color-inverse-hover);
     }
 
     @keyframes toast-in {

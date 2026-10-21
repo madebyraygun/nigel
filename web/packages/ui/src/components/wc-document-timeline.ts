@@ -44,7 +44,7 @@ export class WcDocumentTimeline extends LitElement {
     }
 
     section {
-      padding: var(--wa-space-m, 12px) 0;
+      padding: var(--wa-space-m) 0;
       border-top: 1px solid var(--wa-color-border);
     }
 
@@ -53,13 +53,13 @@ export class WcDocumentTimeline extends LitElement {
     }
 
     h3 {
-      margin: 0 0 var(--wa-space-2xs, 4px);
-      font-size: var(--wa-font-size-m, 15px);
+      margin: 0 0 var(--wa-space-2xs);
+      font-size: var(--wa-font-size-m);
     }
 
     code {
-      font-family: var(--wa-font-family-mono, monospace);
-      font-size: var(--wa-font-size-s, 13px);
+      font-family: var(--wa-font-family-mono);
+      font-size: var(--wa-font-size-s);
       overflow-wrap: anywhere;
     }
 
@@ -67,23 +67,23 @@ export class WcDocumentTimeline extends LitElement {
     .evidence {
       margin: 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       overflow-wrap: anywhere;
     }
 
     ul {
-      margin: var(--wa-space-xs, 6px) 0;
+      margin: var(--wa-space-xs) 0;
       padding: 0;
       list-style: none;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     ul.events {
-      font-size: var(--wa-font-size-m, 15px);
+      font-size: var(--wa-font-size-m);
     }
 
     li.event {
-      margin: var(--wa-space-xs, 6px) 0;
+      margin: var(--wa-space-xs) 0;
     }
 
     .role {
@@ -92,8 +92,8 @@ export class WcDocumentTimeline extends LitElement {
     }
 
     .note {
-      margin: var(--wa-space-2xs, 4px) 0 0;
-      padding-left: var(--wa-space-s, 8px);
+      margin: var(--wa-space-2xs) 0 0;
+      padding-left: var(--wa-space-s);
       border-left: 2px solid var(--wa-color-border);
       white-space: pre-wrap;
       overflow-wrap: anywhere;

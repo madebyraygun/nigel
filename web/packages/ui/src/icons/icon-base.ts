@@ -20,8 +20,8 @@ export abstract class WcIconBase extends LitElement {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: var(--nc-icon-size, 20px);
-      height: var(--nc-icon-size, 20px);
+      width: var(--nc-icon-size);
+      height: var(--nc-icon-size);
       color: inherit;
       flex-shrink: 0;
     }

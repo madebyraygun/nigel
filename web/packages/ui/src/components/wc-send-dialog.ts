@@ -110,14 +110,14 @@ export class WcSendDialog extends LitElement {
     }
 
     .recipient {
-      margin: 0 0 var(--wa-space-s, 8px);
-      font-weight: var(--wa-font-weight-medium, 500);
+      margin: 0 0 var(--wa-space-s);
+      font-weight: var(--wa-font-weight-medium);
     }
 
     .preview-loading {
       display: flex;
       justify-content: center;
-      padding: var(--wa-space-l, 16px);
+      padding: var(--wa-space-l);
     }
 
     @media (max-width: 48rem) {
@@ -135,12 +135,12 @@ export class WcSendDialog extends LitElement {
     }
 
       ul {
-        margin: 0 0 var(--wa-space-m, 12px);
-        padding-inline-start: var(--wa-space-l, 16px);
+        margin: 0 0 var(--wa-space-m);
+        padding-inline-start: var(--wa-space-l);
       }
 
       li {
-        margin-bottom: var(--wa-space-2xs, 4px);
+        margin-bottom: var(--wa-space-2xs);
       }
 
       .steps {
@@ -150,13 +150,13 @@ export class WcSendDialog extends LitElement {
 
         list-style: none;
         padding: 0;
-        margin: 0 0 var(--wa-space-m, 12px);
+        margin: 0 0 var(--wa-space-m);
       }
 
       .steps li {
         display: flex;
         align-items: flex-start;
-        gap: var(--wa-space-xs, 6px);
+        gap: var(--wa-space-xs);
         line-height: var(--nc-step-line-height);
       }
 
@@ -179,51 +179,61 @@ export class WcSendDialog extends LitElement {
 
       .steps li[data-state='ok'] .mark,
       .steps li[data-state='reused'] .mark {
-        color: var(--nc-color-income, #1a7f5a);
+        color: var(--nc-color-income);
       }
 
       .steps li[data-state='failed'] {
-        color: var(--wa-color-danger, #b3261e);
+        color: var(--wa-color-danger);
       }
 
       .outcome {
-        margin: 0 0 var(--wa-space-s, 8px);
+        margin: 0 0 var(--wa-space-s);
       }
 
       .failure {
-        margin: 0 0 var(--wa-space-m, 12px);
-        padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-        border-radius: var(--wa-radius-m, 8px);
-        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+        margin: 0 0 var(--wa-space-m);
+        padding: var(--wa-space-s) var(--wa-space-m);
+        border-radius: var(--wa-radius-m);
+        background: var(--wa-color-danger-fill-quiet);
       }
 
       .failure h3 {
-        margin: 0 0 var(--wa-space-2xs, 4px);
-        font-size: var(--wa-font-size-m, 15px);
-        color: var(--wa-color-danger, #b3261e);
+        margin: 0 0 var(--wa-space-2xs);
+        font-size: var(--wa-font-size-m);
+        color: var(--wa-color-danger);
       }
 
       .upstream {
         margin: 0;
-        font-family: var(--wa-font-family-mono, ui-monospace, monospace);
-        font-size: var(--wa-font-size-s, 13px);
+        font-family: var(--wa-font-family-mono);
+        font-size: var(--wa-font-size-s);
         overflow-wrap: anywhere;
       }
 
       .note {
-        margin: var(--wa-space-xs, 6px) 0 0;
-        font-size: var(--wa-font-size-s, 13px);
+        margin: var(--wa-space-xs) 0 0;
+        font-size: var(--wa-font-size-s);
       }
 
       .blocked {
-        margin: 0 0 var(--wa-space-m, 12px);
-        color: var(--wa-color-danger, #b3261e);
+        margin: 0 0 var(--wa-space-m);
+        color: var(--wa-color-danger);
       }
 
       .caveat {
-        margin: 0 0 var(--wa-space-m, 12px);
+        margin: 0 0 var(--wa-space-m);
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
+      }
+
+      button.caveat {
+        display: block;
+        padding: 0;
+        border: 0;
+        background: none;
+        font-family: inherit;
+        text-decoration: underline;
+        cursor: default;
       }
 
       .public-url {
@@ -233,7 +243,7 @@ export class WcSendDialog extends LitElement {
       .footer {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
 
       /* The mark beside a step is decoration; this is what says what it means. */

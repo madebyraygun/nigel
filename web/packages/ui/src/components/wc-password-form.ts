@@ -66,27 +66,27 @@ export class WcPasswordForm extends LitElement {
 
       fieldset {
         display: grid;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--wa-space-m);
         margin: 0;
-        padding: var(--wa-space-m, 12px);
+        padding: var(--wa-space-m);
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m, 8px);
+        border-radius: var(--wa-radius-m);
       }
 
       legend {
-        padding: 0 var(--wa-space-2xs, 4px);
+        padding: 0 var(--wa-space-2xs);
       }
 
       legend h3 {
         margin: 0;
-        font-size: var(--wa-font-size-m, 14px);
-        font-weight: var(--wa-font-weight-semibold, 600);
+        font-size: var(--wa-font-size-m);
+        font-weight: var(--wa-font-weight-semibold);
       }
 
       .description {
         margin: 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
       }
 
       :host([mode='remove']) fieldset {
@@ -100,7 +100,7 @@ export class WcPasswordForm extends LitElement {
 
       .message {
         margin: 0;
-        font-size: var(--wa-font-size-s, 13px);
+        font-size: var(--wa-font-size-s);
         min-height: 1.25rem;
       }
 
@@ -110,7 +110,7 @@ export class WcPasswordForm extends LitElement {
 
       .actions {
         display: flex;
-        gap: var(--wa-space-s, 8px);
+        gap: var(--wa-space-s);
       }
     `,
   ];

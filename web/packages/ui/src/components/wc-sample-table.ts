@@ -30,19 +30,19 @@ export class WcSampleTable extends LitElement {
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     caption {
       text-align: start;
       color: var(--wa-color-muted);
-      padding-bottom: var(--wa-space-xs, 6px);
+      padding-bottom: var(--wa-space-xs);
     }
 
     th,
     td {
       text-align: start;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-xs) var(--wa-space-s);
       border-bottom: 1px solid var(--wa-color-border);
     }
 
@@ -52,12 +52,12 @@ export class WcSampleTable extends LitElement {
 
     :host([dense]) th,
     :host([dense]) td {
-      padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
+      padding: var(--wa-space-2xs) var(--wa-space-s);
     }
 
     thead th {
       color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium, 500);
+      font-weight: var(--wa-font-weight-medium);
       white-space: nowrap;
     }
 

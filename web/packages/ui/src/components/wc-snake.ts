@@ -55,7 +55,7 @@ export class WcSnake extends LitElement {
   static styles = css`
     :host {
       display: block;
-      font-family: var(--wa-font-family-mono, monospace);
+      font-family: var(--wa-font-family-mono);
       color: var(--nc-color-arcade-ink);
       --cols: 40;
       --rows: 20;
@@ -69,7 +69,7 @@ export class WcSnake extends LitElement {
       z-index: 900;
       display: grid;
       place-items: center;
-      padding: var(--wa-space-l, 16px);
+      padding: var(--wa-space-l);
       background: var(--nc-color-arcade-bg);
     }
 
@@ -79,12 +79,12 @@ export class WcSnake extends LitElement {
 
     .frame {
       display: grid;
-      gap: var(--wa-space-xs, 6px);
+      gap: var(--wa-space-xs);
       width: 100%;
       max-width: 56rem;
-      padding: var(--wa-space-m, 12px);
+      padding: var(--wa-space-m);
       border: 1px solid var(--nc-color-arcade-ink);
-      border-radius: var(--wa-radius-m, 6px);
+      border-radius: var(--wa-radius-m);
       background: var(--nc-color-arcade-bg);
     }
 
@@ -92,12 +92,12 @@ export class WcSnake extends LitElement {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--wa-space-s, 8px);
-      font-size: var(--wa-font-size-s, 13px);
+      gap: var(--wa-space-s);
+      font-size: var(--wa-font-size-s);
     }
 
     .title {
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
       background: var(--nc-grad-brand);
       background-clip: text;
       -webkit-background-clip: text;
@@ -105,7 +105,7 @@ export class WcSnake extends LitElement {
     }
 
     .score {
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .board {
@@ -113,7 +113,7 @@ export class WcSnake extends LitElement {
       aspect-ratio: var(--cols) / var(--rows);
       overflow: hidden;
       border: 1px solid var(--nc-color-arcade-ink);
-      border-radius: var(--wa-radius-s, 4px);
+      border-radius: var(--wa-radius-s);
       background: var(--nc-color-arcade-bg);
     }
 
@@ -139,7 +139,7 @@ export class WcSnake extends LitElement {
       top: 0;
       height: 100%;
       line-height: 1;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
       color: var(--tint);
       opacity: var(--brightness);
       transform: translateY(var(--rest));
@@ -177,23 +177,23 @@ export class WcSnake extends LitElement {
       transform: translate(-50%, -50%);
       display: grid;
       justify-items: center;
-      gap: var(--wa-space-xs, 6px);
+      gap: var(--wa-space-xs);
       text-align: center;
-      padding: var(--wa-space-m, 12px);
+      padding: var(--wa-space-m);
       background: var(--nc-color-arcade-bg);
       border: 1px solid var(--nc-color-arcade-ink);
-      border-radius: var(--wa-radius-s, 4px);
+      border-radius: var(--wa-radius-s);
     }
 
     .over h2 {
       margin: 0;
-      font-size: var(--wa-font-size-m, 15px);
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-size: var(--wa-font-size-m);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .over p {
       margin: 0;
-      font-size: var(--wa-font-size-s, 13px);
+      font-size: var(--wa-font-size-s);
     }
 
     .hint {
@@ -204,7 +204,7 @@ export class WcSnake extends LitElement {
 
     kbd {
       font: inherit;
-      font-weight: var(--wa-font-weight-bold, 700);
+      font-weight: var(--wa-font-weight-bold);
     }
 
     .visually-hidden {
