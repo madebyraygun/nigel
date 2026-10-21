@@ -89,7 +89,7 @@ pub fn from_address_domain_warning(from: &str, domain: &str) -> Option<String> {
 /// parser may treat as a line ending — `NEL`, `LINE SEPARATOR` and `PARAGRAPH
 /// SEPARATOR`. Nigel sends UTF-8 straight through to Mailgun, so "is it a
 /// newline" is not a question ASCII alone answers.
-fn is_forbidden_header_char(c: char) -> bool {
+pub(crate) fn is_forbidden_header_char(c: char) -> bool {
     c.is_ascii_control()
         || ('\u{0080}'..='\u{009f}').contains(&c)
         || matches!(c, '\u{2028}' | '\u{2029}')

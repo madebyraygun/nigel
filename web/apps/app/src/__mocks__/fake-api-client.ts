@@ -197,6 +197,7 @@ export const UNLOCKED_STATUS: StatusResponse = {
   profile: 'business',
   version: '0.0.0-test',
   dataDir: '/tmp/nigel',
+  dataDirDisplay: '/tmp/nigel',
   pdfExport: true,
   updateAvailable: null,
 };
@@ -963,7 +964,7 @@ export class FakeApiClient implements ApiClient {
   async setDataDir(path: string): Promise<StatusResponse> {
     this.calls.push('setDataDir');
     if (this.settingsError) throw this.settingsError;
-    this.status = { ...this.status, dataDir: path };
+    this.status = { ...this.status, dataDir: path, dataDirDisplay: path };
     return this.status;
   }
 

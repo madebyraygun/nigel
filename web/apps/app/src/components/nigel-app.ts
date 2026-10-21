@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 import '@nigel/ui';
 import {
   dispatchNcToast,
@@ -26,6 +27,7 @@ import {
   isApplePlatform,
   paletteShortcut,
   readSidebarCollapsed,
+  statusLineOf,
   writeSidebarCollapsed,
 } from '../shell-preferences.js';
 import type { ScreenContext } from '../screens/context.js';
@@ -421,6 +423,8 @@ export class NigelApp extends SignalWatcher(LitElement) {
         search-shortcut=${this.shortcut.keycap}
         search-key-shortcuts=${this.shortcut.aria}
         ?hide-sidebar=${this.hosted}
+        .statusLine=${this.hosted ? undefined : statusLineOf(store.status.get())}
+        review-count=${ifDefined(this.reviewCount)}
         ?inert=${this.snakeOpen || this.paletteOpen}
         ?sidebar-collapsed=${this.sidebarCollapsed}
         @nc-sidebar-toggle=${this.handleSidebarToggle}

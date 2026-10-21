@@ -64,6 +64,9 @@ pub(crate) struct StatusResponse {
     profile: &'static str,
     version: &'static str,
     data_dir: String,
+    /// `data_dir` with the home directory written as `~`, for display. The full
+    /// path stays in `data_dir` for anything that has to use it.
+    data_dir_display: String,
     pdf_export: bool,
     update_available: Option<String>,
     /// Absent while the database is locked. `/api/status` is ungated by design,
@@ -74,6 +77,18 @@ pub(crate) struct StatusResponse {
     /// Absent while locked, for the reason `invoicing` is.
     #[serde(skip_serializing_if = "Option::is_none")]
     documents: Option<crate::settings::DocumentsStatus>,
+}
+
+/// `path` with a leading `home` written as `~`; any other path is unchanged.
+fn abbreviate_home(path: &Path, home: Option<&Path>) -> String {
+    let Some(rest) = home.and_then(|home| path.strip_prefix(home).ok()) else {
+        return path.display().to_string();
+    };
+    if rest.as_os_str().is_empty() {
+        "~".to_string()
+    } else {
+        format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+    }
 }
 
 /// Whether there are books here: the file exists **and** has been written to.
@@ -128,6 +143,10 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
         data_dir: db_path
             .parent()
             .map(|dir| dir.display().to_string())
+            .unwrap_or_default(),
+        data_dir_display: db_path
+            .parent()
+            .map(|dir| abbreviate_home(dir, dirs::home_dir().as_deref()))
             .unwrap_or_default(),
         // The export links are plain anchors, so the SPA has to know before it
         // clicks: a build without the feature would otherwise save the `501`
@@ -384,5 +403,47 @@ mod tests {
         let body = ok_json(&app, "/api/status", &token).await;
 
         assert_eq!(body["initialized"], true);
+    }
+
+    #[test]
+    fn the_home_directory_is_written_as_a_tilde() {
+        let home = Path::new("/home/someone");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            abbreviate_home(&home.join("Documents").join("nigel"), Some(home)),
+            format!("~{sep}Documents{sep}nigel")
+        );
+        assert_eq!(abbreviate_home(home, Some(home)), "~");
+    }
+
+    #[test]
+    fn a_path_outside_home_is_left_whole() {
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            abbreviate_home(Path::new("/srv/books"), Some(home)),
+            "/srv/books"
+        );
+        // A sibling that merely shares the prefix is not inside home.
+        assert_eq!(
+            abbreviate_home(Path::new("/home/someone-else/books"), Some(home)),
+            "/home/someone-else/books"
+        );
+        assert_eq!(abbreviate_home(Path::new("/srv/books"), None), "/srv/books");
+    }
+
+    #[tokio::test]
+    async fn status_reports_a_display_form_beside_the_full_data_dir() {
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let body = ok_json(&app, "/api/status", &token).await;
+
+        let full = body["dataDir"].as_str().expect("dataDir");
+        let display = body["dataDirDisplay"].as_str().expect("dataDirDisplay");
+        assert!(!full.is_empty());
+        assert_eq!(
+            display,
+            abbreviate_home(Path::new(full), dirs::home_dir().as_deref())
+        );
     }
 }

@@ -189,7 +189,7 @@ fn documents_base() -> Option<String> {
         cfg.documents_base_url.as_deref(),
         cfg.invoicing.public_base_url.as_deref(),
     )?;
-    crate::invoicing::r2::validate_public_base_url(&base).ok()?;
+    crate::invoicing::r2::validate_documents_base(&base, cfg.documents_base_url.is_some()).ok()?;
     Some(base)
 }
 
@@ -619,14 +619,8 @@ fn invalid_documents_base(config: &DocumentsConfig) -> Option<ApiError> {
         config.documents_base_url.as_deref(),
         config.invoicing.public_base_url.as_deref(),
     )?;
-    crate::invoicing::r2::validate_public_base_url(&base).err()?;
-    let message = match config.documents_base_url {
-        Some(_) => "documents_base_url is not an absolute http(s) address. Set it to the address \
-             your bucket serves documents at, including the scheme — for example \
-             https://billing.example.com/d."
-            .to_string(),
-        None => crate::invoicing::r2::PUBLIC_BASE_URL_DEFECT.to_string(),
-    };
+    let message =
+        crate::invoicing::r2::documents_base_defect(&base, config.documents_base_url.is_some())?;
     Some(ApiError::conflict(
         message,
         serde_json::json!({

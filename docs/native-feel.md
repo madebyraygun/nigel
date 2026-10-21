@@ -114,9 +114,10 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   Ctrl+K elsewhere, the one chord the keycap advertises, so Ctrl+K in a Mac
   text field keeps its system meaning. A held key and an IME composition do
   not count, and the chord does nothing while another dialog is open. The
-  search pill opens it unscoped and the breadcrumb book opens it scoped to
-  Books. Esc and the backdrop close it. Matching is a case-insensitive substring over a book's
-  name, kind and path and a screen's title; ↑/↓ move through books then
+  search pill and the status line's `⌘K palette` hint open it unscoped;
+  the breadcrumb book and the status line's book open it scoped to Books.
+  Esc and the backdrop close it. Matching is a case-insensitive substring
+  over a book's name, kind and path and a screen's title; ↑/↓ move through books then
   screens as one list, wrapping at the ends, and ↵ opens the row — a screen
   navigates, the open book just closes the palette. It is a modal dialog
   around a combobox and its listbox: focus stays in the input — the rows are
@@ -125,12 +126,28 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   the control that opened it, taken from the `nc-palette-open` event's
   origin rather than from what had focus, since a click in WebKit does not
   focus a button; when that control has gone with the screen it sat in, the
-  shell takes focus instead, as it does after Snake. `nigel-app` makes the shell
-  `inert` while it is up, feeds it the book from `/api/status` and the
+  shell takes focus instead, as it does after Snake. `nigel-app` makes the
+  shell `inert` while it is up, feeds it the book from `/api/status` and the
   screens from the registry (`apps/app/src/palette.ts`), and closes it on a
   route change or when the books lock. The Books section lists only the open
   book, marked OPEN with its kind, folder and lock, until books can be
   switched.
+- **Status line.** A second inset panel under the content (`wc-status-line`,
+  34px, the sidebar's material, 12px radius, its bottom edge level with the
+  sidebar's): the open book first (monogram and name;
+  `nc-palette-open` scoped to books; absent until the book has a name), the
+  data directory as selectable text (`dataDirDisplay`, home written as `~`,
+  with the full `dataDir` in the tooltip), `encrypted` / `not encrypted`, then
+  `▲ n to review` (`nc-navigate` to Review; absent at zero), `⌘K palette`
+  (`Ctrl K` off Apple platforms; `nc-palette-open` for all) and the version.
+  `nigel-app` hands the shell what it shows from `/api/status` (`dataDirDisplay`,
+  `dataDir`, `encrypted`, `version`) and the Review count the sidebar already
+  loads. The component omits the version when `distribution` is `"store"`, but
+  `/api/status` does not report `distribution` yet: TASK-150.4 adds it, and
+  until then the version always shows. As the line narrows the version goes
+  first, then the palette hint (container queries), and the book name and lock
+  label truncate with an ellipsis. Hosted mode draws no status line, and below
+  48rem the component hides itself.
 - **Window title.** `{Screen} · {Book}`, innermost level first on an open
   invoice (`#1254 · Invoices · Acme Consulting LLC`). `nigel-app` sets
   `document.title`; the Tauri window follows it (`docs/desktop.md`).

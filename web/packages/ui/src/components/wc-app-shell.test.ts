@@ -491,3 +491,38 @@ describe('wc-app-shell without a sidebar', () => {
     expect(el.shadowRoot?.querySelector('.backdrop')).toBeNull();
   });
 });
+
+describe('wc-app-shell status line', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  const info = { path: '~/Documents/Nigel/acme-consulting', encrypted: true, version: '1.0' };
+
+  it('draws the status line below the content from what it is handed', async () => {
+    const el = await mount({
+      bookName: 'Acme Consulting LLC',
+      statusLine: info,
+      reviewCount: 7,
+      searchShortcut: 'Ctrl K',
+    });
+    const line = el.shadowRoot?.querySelector('main + wc-status-line');
+    expect(line?.getAttribute('path')).toBe(info.path);
+    expect(line?.hasAttribute('encrypted')).toBe(true);
+    expect(line?.getAttribute('book-name')).toBe('Acme Consulting LLC');
+    expect(line?.getAttribute('shortcut')).toBe('Ctrl K');
+    expect((line as unknown as { reviewCount: number }).reviewCount).toBe(7);
+  });
+
+  it('draws none when it is handed nothing, as in a hosted window', async () => {
+    const el = await mount({ hideSidebar: true });
+    expect(el.shadowRoot?.querySelector('wc-status-line')).toBeNull();
+  });
+
+  it('passes a store build through so the line can drop the version', async () => {
+    const el = await mount({ statusLine: { ...info, distribution: 'store' } });
+    expect(el.shadowRoot?.querySelector('wc-status-line')?.getAttribute('distribution')).toBe(
+      'store',
+    );
+  });
+});

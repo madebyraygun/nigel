@@ -125,6 +125,7 @@ uninitialized, so the SPA can decide which screen to show before it has data.
   "profile": "business",
   "version": "1.0.1",
   "dataDir": "/home/you/Documents/nigel",
+  "dataDirDisplay": "~/Documents/nigel",
   "pdfExport": true,
   "updateAvailable": "1.0.2",
   "invoicing": {
@@ -147,7 +148,9 @@ behind, reads as uninitialized, and a client that sees `false` shows the setup
 gate rather than a dashboard over nothing. `encrypted` is whether it needs
 a key, and `locked` whether this process still lacks that key. `companyName` is
 `null` while locked or uninitialized — reading it requires the key — and
-`dataDir` names the directory of the database the server actually opened.
+`dataDir` names the directory of the database the server actually opened;
+`dataDirDisplay` is the same path with the home directory written as `~`, for
+showing to a person, and is the full path when the directory is outside home.
 `profile` is `business` or `personal` — which chart of accounts the database
 was created with (`nigel init --profile`). The SPA hides the K-1 worksheet
 from the report directory and relabels the name field for personal books;
@@ -1207,7 +1210,7 @@ calls for:
 
 | Step | What it does | A failure is |
 |---|---|---|
-| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys; `409 invalid_public_base_url` when the key is set to something that cannot produce a working link. Both name keys only — no response carries a configured value, so the 409 states the defect and the fix and never quotes the address |
+| `config` | Resolve the invoicing settings and build the three clients | `409 send_not_configured`, `details.missing` naming the unset keys; `409 invalid_public_base_url` when the key is set to something that cannot produce a working link — not an absolute http(s) address, or carrying a control character. Both name keys only — no response carries a configured value, so the 409 states the defect and the fix and never quotes the address |
 | `load` | The invoice, its client and its line items | `404 invoice_not_found` / `client_not_found` |
 | `precheck` | Not void; the client has an address; there is something to charge | `409 void` / `client_missing_email` / `invoice_not_payable` |
 | `payment_link` | Create the Stripe link, unless one exists | `502 upstream_failed`, `service: "stripe"` |
