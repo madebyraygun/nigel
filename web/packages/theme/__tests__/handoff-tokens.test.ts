@@ -139,6 +139,98 @@ const PLANES = [
   '--nc-color-selected-bg',
 ];
 
+/**
+ * The coloured foregrounds — links and the brand, signed money, the flag, the
+ * Sent status — land on the same planes as text does: a highlighted row, a
+ * hovered one, a field, the sidebar's review count.
+ */
+const ACCENTS = [
+  '--wa-color-brand',
+  '--nc-color-income',
+  '--nc-color-expense',
+  '--nc-color-flagged',
+  '--wa-color-info',
+];
+const ACCENT_PLANES = [
+  '--wa-color-surface-alt',
+  '--nc-color-hover',
+  '--nc-color-highlight',
+  '--nc-color-field',
+  '--nc-color-sidebar-bg',
+];
+
+describe.each<Mode>(['light', 'dark'])('%s mode: accents are AA on every plane', (mode) => {
+  it.each(ACCENTS.flatMap((fg) => ACCENT_PLANES.map((bg) => [fg, bg])))('%s on %s', (fg, bg) => {
+    expect(contrast(resolveToken(fg, mode), resolveToken(bg, mode))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /** wc-toast labels its success and danger chips, and an info fill, in on-brand. */
+  it.each(['--wa-color-success', '--wa-color-danger', '--wa-color-info'])(
+    'on-brand is AA on a %s fill',
+    (fill) => {
+      expect(
+        contrast(resolveToken('--wa-color-on-brand', mode), resolveToken(fill, mode)),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
+type Rgba = { r: number; g: number; b: number; a: number };
+
+function parseRgba(value: string): Rgba {
+  const m = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)%\s*\)$/.exec(value);
+  expect(m, `${value} is not rgb(r g b / a%)`).not.toBeNull();
+  const [, r, g, b, a] = m!;
+  return { r: Number(r), g: Number(g), b: Number(b), a: Number(a) / 100 };
+}
+
+function hexChannels(hex: string): [number, number, number] {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
+}
+
+/** A translucent colour laid over an opaque one, as `#rrggbb`. */
+function over(top: Rgba, ground: string): string {
+  const [r, g, b] = hexChannels(ground);
+  const mix = (t: number, u: number) =>
+    Math.round(t * top.a + u * (1 - top.a))
+      .toString(16)
+      .padStart(2, '0');
+  return `#${mix(top.r, r)}${mix(top.g, g)}${mix(top.b, b)}`;
+}
+
+describe.each<Mode>(['light', 'dark'])('%s mode: the translucent tokens', (mode) => {
+  const ring = () => parseRgba(declared('--nc-color-ring', mode));
+  const backdrop = () => parseRgba(declared('--wa-color-overlay-modal', mode));
+
+  it('draws the focus ring in the brand colour', () => {
+    const { r, g, b } = ring();
+    expect([r, g, b]).toEqual(hexChannels(resolveToken('--wa-color-brand', mode)));
+  });
+
+  it('keeps the focus ring a halo: translucent, and at the handoff alpha', () => {
+    expect(ring().a).toBeCloseTo(mode === 'light' ? 0.22 : 0.25, 5);
+  });
+
+  it('tints the field it surrounds, so the ring is seen', () => {
+    const field = resolveToken('--nc-color-field', mode);
+    expect(over(ring(), field)).not.toBe(field);
+  });
+
+  it('sets the backdrop at the handoff alpha', () => {
+    expect(backdrop().a).toBeCloseTo(mode === 'light' ? 0.18 : 0.45, 5);
+  });
+
+  it.each(['--wa-color-bg', '--wa-color-surface', '--nc-color-sidebar-bg'])(
+    'dims %s rather than washing it out',
+    (plane) => {
+      const ground = resolveToken(plane, mode);
+      const dimmed = over(backdrop(), ground);
+      const lum = (hex: string) => contrast(hex, '#000000');
+      expect(lum(dimmed)).toBeLessThan(lum(ground));
+    },
+  );
+});
+
 describe.each<Mode>(['light', 'dark'])('%s mode: text is AA on every plane', (mode) => {
   it.each(
     ['--wa-color-text', '--wa-color-muted'].flatMap((fg) => PLANES.map((bg) => [fg, bg])),
