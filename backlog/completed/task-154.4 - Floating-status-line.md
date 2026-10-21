@@ -1,9 +1,10 @@
 ---
 id: TASK-154.4
 title: Floating status line
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-21 17:31'
 labels:
   - web
   - design
@@ -23,7 +24,13 @@ Spec section 3. A second inset panel under the content: the pastel nigel block, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The status line shows book, path, lock state, review count, palette hint and version, each segment acting as the spec says
-- [ ] #2 The version segment is omitted in a store build (TASK-150.4 distribution flag), and hosted mode hides the whole line
-- [ ] #3 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 The status line shows book, path, lock state, review count, palette hint and version, each segment acting as the spec says
+- [x] #2 The version segment is omitted in a store build (TASK-150.4 distribution flag), and hosted mode hides the whole line
+- [x] #3 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #61 (without the pastel nigel block, per the user).
+<!-- SECTION:FINAL_SUMMARY:END -->
