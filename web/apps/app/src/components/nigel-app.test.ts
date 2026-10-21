@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import './nigel-app.js';
 import type { NigelApp } from './nigel-app.js';
 import { appLocked, appUnauthorized, ApiError } from '../api/index.js';
@@ -189,6 +189,27 @@ describe('nigel-app', () => {
     });
   });
 
+  describe('the status line', () => {
+    it('shows the folder, lock state and version from the status', async () => {
+      const el = await mount();
+      expect(shell(el)?.statusLine).toEqual({
+        path: '/tmp/nigel',
+        encrypted: false,
+        version: '0.0.0-test',
+        distribution: undefined,
+      });
+    });
+
+    it('is handed the review count the sidebar shows', async () => {
+      const el = await mount();
+      await vi.waitFor(() => {
+        const count = sidebar(el)?.items.find((item) => item.id === 'review')?.count;
+        expect(count).toBeTypeOf('number');
+        expect(shell(el)?.reviewCount).toBe(count);
+      });
+    });
+  });
+
   describe('hosted by the native shell', () => {
     beforeEach(() => {
       history.replaceState(null, '', '/?shell=native');
@@ -196,6 +217,11 @@ describe('nigel-app', () => {
 
     afterEach(() => {
       history.replaceState(null, '', '/');
+    });
+
+    it('renders no status line', async () => {
+      const el = await mount();
+      expect(shell(el)?.shadowRoot?.querySelector('wc-status-line')).toBeNull();
     });
 
     it('renders no sidebar and tells the shell there is none', async () => {

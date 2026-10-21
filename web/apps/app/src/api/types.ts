@@ -34,6 +34,11 @@ export interface StatusResponse {
   profile: BooksProfile;
   version: string;
   dataDir: string;
+  /**
+   * How this build was distributed; `store` for an app-store build. Optional:
+   * a server that does not report it is treated as a direct download.
+   */
+  distribution?: string;
   /** Whether this build can render PDFs. False means offer text export only. */
   pdfExport: boolean;
   /**

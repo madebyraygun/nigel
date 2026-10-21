@@ -4,8 +4,34 @@ import {
   isHostedShell,
   paletteShortcut,
   readSidebarCollapsed,
+  statusLineOf,
   writeSidebarCollapsed,
 } from './shell-preferences.js';
+
+describe('the status line', () => {
+  const status = {
+    dataDir: '~/Documents/Nigel/acme-consulting',
+    encrypted: true,
+    version: '1.0',
+  };
+
+  it('reads the path, lock state and version off the status', () => {
+    expect(statusLineOf(status)).toEqual({
+      path: '~/Documents/Nigel/acme-consulting',
+      encrypted: true,
+      version: '1.0',
+      distribution: undefined,
+    });
+  });
+
+  it('carries the distribution so a store build can drop the version', () => {
+    expect(statusLineOf({ ...status, distribution: 'store' })?.distribution).toBe('store');
+  });
+
+  it('is absent without a status', () => {
+    expect(statusLineOf(null)).toBeUndefined();
+  });
+});
 
 function memoryStorage(): Pick<Storage, 'getItem' | 'setItem'> & { data: Map<string, string> } {
   const data = new Map<string, string>();

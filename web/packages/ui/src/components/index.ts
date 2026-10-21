@@ -7,6 +7,7 @@ export {
   type NcPaletteOpenDetail,
   type PaletteScope,
 } from './wc-breadcrumb.js';
+export { WcStatusLine, type StatusLineInfo } from './wc-status-line.js';
 export { WcSearchPill } from './wc-search-pill.js';
 export { WcMonogram, monogramInitials, monogramTone } from './wc-monogram.js';
 export {

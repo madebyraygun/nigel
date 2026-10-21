@@ -4,6 +4,8 @@ import { controlsCss } from '@nigel/theme';
 import './wc-toast.js';
 import './wc-breadcrumb.js';
 import './wc-search-pill.js';
+import './wc-status-line.js';
+import type { StatusLineInfo } from './wc-status-line.js';
 import type { BreadcrumbItem } from './wc-breadcrumb.js';
 import '../icons/icons.js';
 
@@ -301,6 +303,17 @@ export class WcAppShell extends LitElement {
   @property({ type: String, attribute: 'search-key-shortcuts' })
   searchKeyShortcuts = 'Meta+K';
 
+  /**
+   * What the status line says. Absent draws no status line, which is what a
+   * host window that draws its own chrome asks for.
+   */
+  @property({ attribute: false })
+  statusLine: StatusLineInfo | undefined = undefined;
+
+  /** Review's queue, for the status line's count. */
+  @property({ type: Number, attribute: 'review-count' })
+  reviewCount: number | undefined = undefined;
+
   @property({ type: Boolean, reflect: true, attribute: 'sidebar-collapsed' })
   sidebarCollapsed = false;
 
@@ -454,6 +467,20 @@ export class WcAppShell extends LitElement {
             : nothing}
           <slot></slot>
         </main>
+        ${this.statusLine
+          ? html`<wc-status-line
+              part="status-line"
+              book-name=${this.bookName}
+              book-key=${this.bookKey}
+              path=${this.statusLine.path}
+              ?encrypted=${this.statusLine.encrypted}
+              version=${this.statusLine.version}
+              distribution=${this.statusLine.distribution ?? ''}
+              .reviewCount=${this.reviewCount}
+              shortcut=${this.searchShortcut}
+              key-shortcuts=${this.searchKeyShortcuts}
+            ></wc-status-line>`
+          : nothing}
       </div>
       <wc-toast></wc-toast>
     `;
