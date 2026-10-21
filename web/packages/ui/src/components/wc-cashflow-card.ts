@@ -105,7 +105,7 @@ export class WcCashflowCard extends LitElement {
     .bar {
       width: 38%;
       min-height: 1px;
-      border-radius: 999px 999px 0 0;
+      border-radius: 7px 7px 0 0;
       transition: height var(--nc-transition-fast);
     }
 

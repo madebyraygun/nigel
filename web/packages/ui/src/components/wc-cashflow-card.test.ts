@@ -81,7 +81,7 @@ describe('wc-cashflow-card', () => {
   it('draws bars with fully rounded tops, 38% wide, 3px apart', () => {
     const text = styleText(Ctor);
     expect(text).toMatch(/\.bar\s*{[^}]*width:\s*38%/);
-    expect(text).toMatch(/\.bar\s*{[^}]*border-radius:\s*999px 999px 0 0/);
+    expect(text).toMatch(/\.bar\s*{[^}]*border-radius:\s*7px 7px 0 0/);
     expect(text).toMatch(/\.bucket\s*{[^}]*gap:\s*3px/);
     expect(text).toMatch(/\.plot\s*{[^}]*height:\s*220px/);
   });
