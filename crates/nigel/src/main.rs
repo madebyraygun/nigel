@@ -72,23 +72,8 @@ fn sync_document_responses() {
             });
     match result {
         Ok(report) => {
-            for failure in &report.failures {
-                eprintln!(
-                    "notice: document sync failed for #{}: {}",
-                    failure.document_id,
-                    cli::document::printable(&failure.message)
-                );
-            }
-            for line in &report.lines {
-                for warning in &line.warnings {
-                    eprintln!("notice: {}", cli::document::printable(warning));
-                }
-            }
-            if report.recorded > 0 {
-                eprintln!(
-                    "notice: recorded {} new document response(s)",
-                    report.recorded
-                );
+            for notice in cli::document::format_launch_sync_notices(&report) {
+                eprintln!("{notice}");
             }
         }
         Err(e) => eprintln!(

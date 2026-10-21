@@ -246,6 +246,17 @@ pub fn public_base_url_warning(value: &str) -> Option<&'static str> {
     Some(I_PREFIX_WARNING)
 }
 
+const D_PREFIX_WARNING: &str = "documents_base_url does not end in /d — Nigel writes document pages under the d/ prefix, so published links will 404 unless that prefix is what this address serves.";
+
+/// `public_base_url_warning` for the documents base: every document object is
+/// written under `d/`.
+pub fn documents_base_url_warning(value: &str) -> Option<&'static str> {
+    if value.trim_end_matches('/').ends_with("/d") {
+        return None;
+    }
+    Some(D_PREFIX_WARNING)
+}
+
 fn ensure_success(status: reqwest::StatusCode, body: &str) -> Result<()> {
     if status.is_success() {
         return Ok(());

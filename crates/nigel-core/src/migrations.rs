@@ -488,9 +488,39 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 16,
+        description: "documents: one signer per version",
+        up: |conn| {
+            if let Some(notice) = demote_extra_signers(conn)? {
+                eprintln!("{notice}");
+            }
+            conn.execute_batch(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_document_recipients_one_signer
+                     ON document_recipients(version_id) WHERE role = 'signer';",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// A version holding more than one signer keeps the first in the frozen order
+/// and records the rest as collaborators, so v16's index can be built. The
+/// sentence saying how many changed, for the operator, or `None` when none did.
+fn demote_extra_signers(conn: &Connection) -> Result<Option<String>> {
+    let demoted = conn.execute(
+        "UPDATE document_recipients SET role = 'collaborator'
+          WHERE role = 'signer'
+            AND id <> (SELECT s.id FROM document_recipients s
+                        WHERE s.version_id = document_recipients.version_id
+                          AND s.role = 'signer'
+                        ORDER BY s.position, s.id LIMIT 1)",
+        [],
+    )?;
+    Ok((demoted > 0).then(|| format!("v16: {demoted} extra signer(s) recorded as collaborators")))
+}
 
 /// The sentence the stock invoice page hardcoded before payment instructions
 /// became the operator's own text, with the address `{{CONTACT}}` used to
@@ -1636,6 +1666,91 @@ mod tests {
                  VALUES (1, 'countersign', 'Sam Example', 'manual', '2026-10-04', 'sha256:00');",
         )
         .unwrap();
+    }
+
+    const ONE_SENT_VERSION: &str =
+        "INSERT INTO clients (name) VALUES ('Juniper Labs');
+         INSERT INTO documents (client_id, kind_id, title, token, created_at, updated_at)
+             VALUES (1, 1, 'Statement of work', 'a', '2026-10-01', '2026-10-01');
+         INSERT INTO document_versions (document_id, number, file_path, checksum, sent_at, created_at)
+             VALUES (1, 1, 'documents/1/v1.pdf', 'sha256:00', '2026-10-01', '2026-10-01');";
+
+    #[test]
+    fn v16_refuses_a_second_signer_on_one_version() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(ONE_SENT_VERSION).unwrap();
+        conn.execute_batch(
+            "INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r1', 0);
+             INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'collaborator', 'Sam Example', 'sam@juniper.test', 'r2', 1);",
+        )
+        .unwrap();
+        assert!(conn
+            .execute_batch(
+                "INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                     VALUES (1, 'signer', 'Lee Example', 'lee@juniper.test', 'r3', 2);",
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn v16_keeps_the_first_signer_of_a_version_that_already_had_two() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch("DROP INDEX idx_document_recipients_one_signer;")
+            .unwrap();
+        conn.execute_batch(ONE_SENT_VERSION).unwrap();
+        conn.execute_batch(
+            "INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Lee Example', 'lee@juniper.test', 'r2', 1);
+             INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r1', 0);",
+        )
+        .unwrap();
+        assert_eq!(
+            demote_extra_signers(&conn).unwrap().as_deref(),
+            Some("v16: 1 extra signer(s) recorded as collaborators")
+        );
+        assert_eq!(demote_extra_signers(&conn).unwrap(), None);
+        set_metadata(&conn, "schema_version", "15").unwrap();
+        run_migrations(&conn).unwrap();
+        let roles: Vec<(String, String)> = conn
+            .prepare("SELECT name, role FROM document_recipients ORDER BY position")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            roles,
+            [
+                ("Pat Example".to_string(), "signer".to_string()),
+                ("Lee Example".to_string(), "collaborator".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn v16_says_nothing_about_a_database_with_one_signer_per_version() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch(ONE_SENT_VERSION).unwrap();
+        conn.execute_batch(
+            "INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'signer', 'Pat Example', 'pat@juniper.test', 'r1', 0);
+             INSERT INTO document_recipients (version_id, role, name, email, token, position)
+                 VALUES (1, 'collaborator', 'Sam Example', 'sam@juniper.test', 'r2', 1);",
+        )
+        .unwrap();
+        assert_eq!(demote_extra_signers(&conn).unwrap(), None);
+    }
+
+    #[test]
+    fn v16_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "15").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
     }
 
     #[test]

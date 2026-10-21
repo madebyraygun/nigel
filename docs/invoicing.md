@@ -1640,7 +1640,7 @@ To bill from a different domain, point that hostname at your bucket and set
 
 ## Documents
 
-A document is a PDF filed for a client — a proposal, a statement of work, an
+A document is a PDF filed for a client — a proposal, an estimate, an
 agreement — and sent to one **signer** and any number of **collaborators**, each
 with a link of their own. The signer can accept it or ask for changes on their
 page; a collaborator can only ask for changes. You can revise it, record a
@@ -1684,6 +1684,10 @@ and add three:
   is published or emailed.
 - **Sync** needs only the private store: `r2_account_id`, `r2_access_key`,
   `r2_secret_key` and `r2_private_bucket`.
+- **`documents_base_url`** is the address the bucket's `d/` prefix is served
+  at. A send that runs on a base not ending in `/d` prints a warning (and the
+  API returns it in `configWarnings`) but goes ahead, since a rewrite can map the
+  prefix onto another path.
 - **`document_response_url`** is optional. Without it a published page can be
   read and its PDF downloaded, but has no form. Send says so in its
   confirmation.
@@ -1779,9 +1783,13 @@ nigel document preview 3                   # Writes the pages and PDF locally; n
 nigel document send 3                      # Confirm, then publish and email
 ```
 
-`add` files the PDF as a draft and prints its checksum. `kinds` lists the
-document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`
-and `kinds deactivate <id>` manage them. `list` takes `--client`, `--status` and
+`add` files the PDF as a draft and prints its checksum. A new database starts
+with three kinds — Proposal, Estimate and Agreement. `kinds` lists the
+document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`,
+`kinds deactivate <id>` and `kinds reactivate <id>` manage them; deactivating an
+inactive kind or reactivating an active one is refused. The web UI's Documents
+screen lists the inactive kinds under the filing form, each with a
+**Reactivate** button. `list` takes `--client`, `--status` and
 `--kind`, and `show` prints every version, its recipients and every response.
 
 `preview` writes `<data_dir>/previews/document-<id>/` (or `<output-dir>/document-<id>/`): one
@@ -1791,7 +1799,8 @@ receive, rendered by the code `send` publishes with.
 
 `send` defaults the signer to the client's billing contact; `--signer
 "Name <email>"` names someone else, and `--collaborator "Name <email>"` (repeat
-it) adds collaborators. It prints who gets what and asks, and `--yes` skips the
+it) adds collaborators. It checks the configuration first, so a missing key is
+named before anything is asked, then prints who gets what and asks; `--yes` skips the
 question and is required when stdin is not a terminal. A document can be sent
 once, from `draft`, and not for an archived client.
 
@@ -1825,7 +1834,15 @@ nigel document withdraw 3
 `revise` adds the new PDF as the next version, a draft. Until it is sent, the
 live pages show that the document is being revised, the manifest is `closed`,
 and the earlier version cannot be answered. Sending it again issues links for
-the new version. It works from `sent` and `changes_requested`.
+the new version and rewrites every page of each earlier version to say it has
+been superseded by the new one, with no form — including the pages of anyone
+the new version was not sent to. A page that could not be rewritten is a
+warning on the send naming its version (`Warning: version 1: could not
+republish Pat Example's page (…)`), never a failure. Every later republish
+of the document's pages — a response recorded by hand or by sync, a
+countersignature, `nigel document signing-record` — rewrites the earlier
+versions as superseded again, which repairs it. It works from `sent` and
+`changes_requested`.
 
 `accept`, `request-changes` and `decline` record a response that arrived outside
 the response page. Each takes `--date` (default: today; `YYYY-MM-DD` or an RFC 3339
@@ -1935,8 +1952,11 @@ moves on; the run fails only if every document it reached failed.
 
 Like invoice sync, it also runs **at launch** before any command that reads or
 writes the books, within a 10-second budget, printing
-`notice: recorded 2 new document response(s)` when it finds something and a
+`notice: recorded 2 new document response(s)` when it finds something, a
+`notice: document #4: ...` line for each response it refused and why, and a
 `notice:` line instead of failing the command when it cannot reach the bucket.
+A refused response stays in the bucket, so its notice repeats at each launch
+while that version is still the one awaiting a response.
 It is silent when the private store is not configured. `document preview` and
 `document sync` skip the launch hook, and so does `nigel serve`; the web UI has
 a **Sync** button.

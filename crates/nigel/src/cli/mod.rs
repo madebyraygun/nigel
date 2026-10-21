@@ -638,7 +638,7 @@ pub enum DocumentCommands {
         #[arg(long)]
         yes: bool,
     },
-    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent.
+    /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent, then "superseded".
     Revise {
         id: i64,
         #[arg(long)]
@@ -702,6 +702,8 @@ pub enum DocumentKindsCommands {
     Rename { id: i64, name: String },
     /// Stop offering a kind for new documents.
     Deactivate { id: i64 },
+    /// Offer a deactivated kind for new documents again.
+    Reactivate { id: i64 },
 }
 
 #[derive(Subcommand)]

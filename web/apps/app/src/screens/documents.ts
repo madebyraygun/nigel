@@ -11,7 +11,10 @@ import {
   defaultRecipients,
   validateRecipients,
   type ConfirmOptions,
+  type ManagerColumn,
+  type ManagerRow,
   type NcFileErrorDetail,
+  type NcManagerActionDetail,
   type NcFileSelectDetail,
   type NcRecipientsChangeDetail,
   type RecipientContactOption,
@@ -62,6 +65,10 @@ const BLANK_RECIPIENTS: RecipientEditorValue = {
   signer: { name: '', email: '' },
   collaborators: [],
 };
+
+const KIND_COLUMNS: ManagerColumn[] = [{ key: 'name', label: 'Kind' }];
+
+const REACTIVATE = [{ name: 'reactivate', label: 'Reactivate' }];
 
 function hasRecipientErrors(errors: RecipientErrors): boolean {
   return Object.keys(errors).length > 0;
@@ -244,6 +251,9 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   @state() private rows: DocumentListRow[] = [];
   @state() private clients: Client[] = [];
   @state() private kinds: DocumentKind[] = [];
+  /** Kinds no longer offered for filing, each with a Reactivate button. */
+  @state() private inactiveKinds: DocumentKind[] = [];
+  @state() private kindBusyId: number | null = null;
   @state() private detail: DocumentDetail | null = null;
 
   @state() private loading = false;
@@ -368,14 +378,15 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         const [rows, clients, kinds] = await Promise.all([
           this.client.getDocuments(documentListParams(this.params)),
           this.client.getClients(true),
-          this.client.getDocumentKinds(),
+          this.client.getDocumentKinds(true),
         ]);
         if (seq !== this.loadSeq) return;
         this.rows = rows;
         this.clients = clients;
-        this.kinds = kinds;
-        if (!kinds.some((kind) => kind.name === this.fileKind)) {
-          this.fileKind = kinds[0]?.name ?? '';
+        this.kinds = kinds.filter((kind) => kind.active);
+        this.inactiveKinds = kinds.filter((kind) => !kind.active);
+        if (!this.kinds.some((kind) => kind.name === this.fileKind)) {
+          this.fileKind = this.kinds[0]?.name ?? '';
         }
       } else {
         const detail = await this.client.getDocument(id);
@@ -443,6 +454,50 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   private handleFileClient = (event: Event): void => {
     this.fileClientId = String((event.target as HTMLInputElement).value ?? '');
   };
+
+  private handleKindAction = (event: Event): void => {
+    const { action, id } = (event as CustomEvent<NcManagerActionDetail>).detail;
+    if (action === 'reactivate') void this.reactivateKind(id);
+  };
+
+  /** Not confirmed: deactivating it again is one command away. */
+  private async reactivateKind(id: number): Promise<void> {
+    this.kindBusyId = id;
+    try {
+      await this.client.reactivateDocumentKind(id);
+      await this.refresh();
+    } catch (cause) {
+      this.actionError =
+        cause instanceof ApiError ? cause.message : 'Could not reactivate the document kind.';
+    } finally {
+      this.kindBusyId = null;
+    }
+  }
+
+  private get inactiveKindRows(): ManagerRow[] {
+    return this.inactiveKinds.map((kind) => ({
+      id: kind.id,
+      cells: [kind.name],
+      label: kind.name,
+    }));
+  }
+
+  private renderInactiveKinds() {
+    if (this.inactiveKinds.length === 0) return nothing;
+    return html`<wc-panel heading="Inactive kinds" data-inactive-kinds>
+      <p class="meta">
+        These kinds are not offered for new documents. Reactivate one to offer it again.
+      </p>
+      <wc-manager-table
+        caption="Inactive document kinds"
+        .columns=${KIND_COLUMNS}
+        .rows=${this.inactiveKindRows}
+        .actions=${REACTIVATE}
+        .busyId=${this.kindBusyId}
+        @nc-manager-action=${this.handleKindAction}
+      ></wc-manager-table>
+    </wc-panel>`;
+  }
 
   private handleFileKind = (event: Event): void => {
     this.fileKind = String((event.target as HTMLInputElement).value ?? '');
@@ -1041,6 +1096,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           </div>
         </div>
       </wc-panel>
+
+      ${this.renderInactiveKinds()}
     `;
   }
 
