@@ -245,6 +245,233 @@ describe('nigel-app', () => {
       expect(shell(el)?.bookName).toBe('Test Consultancy');
       expect(shell(el)?.shadowRoot?.querySelector('header wc-breadcrumb')).toBeTruthy();
     });
+
+    it('leaves the palette and its chord to the native shell', async () => {
+      const el = await mount();
+      const chord = new KeyboardEvent('keydown', {
+        key: 'k',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(chord);
+      await el.updateComplete;
+      expect(chord.defaultPrevented).toBe(false);
+      expect(el.shadowRoot?.querySelector('wc-command-palette')).toBeNull();
+    });
+  });
+
+  describe('the palette', () => {
+    const palette = (el: NigelApp) => el.shadowRoot!.querySelector('wc-command-palette')!;
+
+    // jsdom reports no platform, which is not an Apple one: the chord is Ctrl+K.
+    const chord = (init: KeyboardEventInit = { ctrlKey: true }) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'k',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        ...init,
+      });
+      window.dispatchEvent(event);
+      return event;
+    };
+
+    it('is shut until it is asked for', async () => {
+      const el = await mount();
+      expect(palette(el).open).toBe(false);
+    });
+
+    const onPlatform = (platform: string) =>
+      Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+
+    afterEach(() => {
+      onPlatform('');
+    });
+
+    it.each([
+      ['Ctrl+K off Apple platforms', 'Linux x86_64', { ctrlKey: true }, { metaKey: true }],
+      ['Cmd+K on Apple platforms', 'MacIntel', { metaKey: true }, { ctrlKey: true }],
+    ])('toggles on %s, and only that chord', async (_name, platform, init, other) => {
+      onPlatform(platform);
+      const el = await mount();
+      const wrong = chord(other);
+      await el.updateComplete;
+      expect(wrong.defaultPrevented).toBe(false);
+      expect(palette(el).open).toBe(false);
+
+      const event = chord(init);
+      await el.updateComplete;
+      expect(event.defaultPrevented).toBe(true);
+      expect(palette(el).open).toBe(true);
+      expect(palette(el).scope).toBe('all');
+      expect(shell(el)?.hasAttribute('inert')).toBe(true);
+
+      chord(init);
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+      expect(shell(el)?.hasAttribute('inert')).toBe(false);
+    });
+
+    it('ignores a K with another modifier, or none, a held key and an IME composition', async () => {
+      const el = await mount();
+      chord({});
+      chord({ ctrlKey: true, shiftKey: true });
+      chord({ ctrlKey: true, repeat: true });
+      chord({ ctrlKey: true, isComposing: true });
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('stays shut over another dialog, but still closes itself', async () => {
+      const el = await mount();
+      const dialog = document.createElement('dialog');
+      dialog.setAttribute('open', '');
+      document.body.appendChild(dialog);
+      const blocked = chord();
+      await el.updateComplete;
+      expect(blocked.defaultPrevented).toBe(false);
+      expect(palette(el).open).toBe(false);
+      dialog.remove();
+
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+      // Its own panel is a modal too; the chord still toggles it shut.
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('hands focus back to the control that asked, even one a click did not focus', async () => {
+      const el = await mount();
+      const pill = shell(el)?.shadowRoot?.querySelector('wc-search-pill');
+      const button = pill?.shadowRoot?.querySelector<HTMLButtonElement>('button');
+      // As WebKit does: the click opens the palette without focusing the button.
+      button?.click();
+      await el.updateComplete;
+      expect(palette(el).opener).toBe(button);
+
+      palette(el).dispatchEvent(new CustomEvent('nc-palette-close', { bubbles: true }));
+      await el.updateComplete;
+      await palette(el).updateComplete;
+      expect(pill?.shadowRoot?.activeElement).toBe(button);
+    });
+
+    it.each([
+      ['book', 'books'],
+      ['hint', 'all'],
+    ])('opens from the status line %s and hands focus back to it', async (part, scope) => {
+      const el = await mount();
+      const line = shell(el)?.shadowRoot?.querySelector('wc-status-line');
+      await line?.updateComplete;
+      const button = line?.shadowRoot?.querySelector<HTMLButtonElement>(`button.${part}`);
+      expect(button).toBeTruthy();
+      button?.click();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+      expect(palette(el).scope).toBe(scope);
+      expect(palette(el).opener).toBe(button);
+
+      palette(el).dispatchEvent(new CustomEvent('nc-palette-close', { bubbles: true }));
+      await el.updateComplete;
+      await palette(el).updateComplete;
+      expect(line?.shadowRoot?.activeElement).toBe(button);
+    });
+
+    it('gives focus to the shell when the screen holding the opener is swapped out', async () => {
+      const el = await mount();
+      const field = document.createElement('input');
+      shell(el)?.appendChild(field);
+      field.focus();
+      chord();
+      await el.updateComplete;
+      expect(palette(el).opener).toBe(field);
+
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'screen', id: 'reports' } }),
+      );
+      await el.updateComplete;
+      field.remove();
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await el.updateComplete;
+      await new Promise((r) => setTimeout(r, 0));
+      expect(el.shadowRoot?.activeElement).toBe(shell(el));
+    });
+
+    it('opens from every screen', async () => {
+      window.location.hash = '#/undo';
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+    });
+
+    it('opens scoped to books from the breadcrumb and unscoped from the pill', async () => {
+      const el = await mount();
+      const crumb = shell(el)?.shadowRoot?.querySelector('wc-breadcrumb');
+      crumb?.shadowRoot?.querySelector<HTMLButtonElement>('.book')?.click();
+      await el.updateComplete;
+      expect(palette(el).open).toBe(true);
+      expect(palette(el).scope).toBe('books');
+
+      palette(el).dispatchEvent(new CustomEvent('nc-palette-close', { bubbles: true }));
+      await el.updateComplete;
+      const pill = shell(el)?.shadowRoot?.querySelector('wc-search-pill');
+      pill?.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+      await el.updateComplete;
+      expect(palette(el).scope).toBe('all');
+    });
+
+    it('lists the open book from status and every screen in the sidebar', async () => {
+      const el = await mount();
+      expect(palette(el).books).toEqual([
+        {
+          id: '/tmp/nigel',
+          name: 'Test Consultancy',
+          kind: 'Business',
+          path: '/tmp/nigel',
+          encrypted: false,
+          open: true,
+        },
+      ]);
+      const labels = palette(el).screens.map((s) => s.label);
+      expect(labels).toHaveLength(14);
+      expect(labels).toContain('Undo last import');
+    });
+
+    it('navigates to a chosen screen and closes', async () => {
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'screen', id: 'reports' } }),
+      );
+      await el.updateComplete;
+      expect(window.location.hash).toBe('#/reports');
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('just closes when the open book is chosen', async () => {
+      const el = await mount();
+      chord();
+      await el.updateComplete;
+      palette(el).dispatchEvent(
+        new CustomEvent('nc-palette-select', { detail: { kind: 'book', id: '/tmp/nigel' } }),
+      );
+      await el.updateComplete;
+      expect(window.location.hash).toBe('#/dashboard');
+      expect(palette(el).open).toBe(false);
+    });
+
+    it('stays shut while the database is locked', async () => {
+      const client = new FakeApiClient();
+      client.status = LOCKED_STATUS;
+      const el = await mount(client);
+      chord();
+      await el.updateComplete;
+      expect(el.shadowRoot?.querySelector('wc-command-palette')).toBeNull();
+    });
   });
 
   describe('needs setup', () => {

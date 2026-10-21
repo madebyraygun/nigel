@@ -106,8 +106,32 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   screen, and `Invoices / #n` on an open invoice with Invoices a way back to
   the list — then the search pill and refresh. The book and the pill dispatch
   `nc-palette-open` (`{ scope: 'books' | 'all' }`), which bubbles out of
-  `nigel-app` to the document for the palette to answer; refresh remounts the
-  screen and reloads the status and the Review count.
+  the shell to the document; refresh remounts the screen and reloads the
+  status and the Review count.
+- **Palette.** `wc-command-palette` (section 2 of the handoff) searches the
+  open book and every sidebar screen in one list. ⌘K or Ctrl+K toggles it
+  unscoped from anywhere, a field included — ⌘K on Apple platforms and
+  Ctrl+K elsewhere, the one chord the keycap advertises, so Ctrl+K in a Mac
+  text field keeps its system meaning. A held key and an IME composition do
+  not count, and the chord does nothing while another dialog is open. The
+  search pill and the status line's `⌘K palette` hint open it unscoped;
+  the breadcrumb book and the status line's book open it scoped to Books.
+  Esc and the backdrop close it. Matching is a case-insensitive substring
+  over a book's name, kind and path and a screen's title; ↑/↓ move through books then
+  screens as one list, wrapping at the ends, and ↵ opens the row — a screen
+  navigates, the open book just closes the palette. It is a modal dialog
+  around a combobox and its listbox: focus stays in the input — the rows are
+  reached through `aria-activedescendant`, and a press elsewhere in the panel
+  does not take focus — so Tab is held there. On close focus goes back to
+  the control that opened it, taken from the `nc-palette-open` event's
+  origin rather than from what had focus, since a click in WebKit does not
+  focus a button; when that control has gone with the screen it sat in, the
+  shell takes focus instead, as it does after Snake. `nigel-app` makes the
+  shell `inert` while it is up, feeds it the book from `/api/status` and the
+  screens from the registry (`apps/app/src/palette.ts`), and closes it on a
+  route change or when the books lock. The Books section lists only the open
+  book, marked OPEN with its kind, folder and lock, until books can be
+  switched.
 - **Status line.** A second inset panel under the content (`wc-status-line`,
   34px, the sidebar's material, 12px radius, its bottom edge level with the
   sidebar's): the open book first (monogram and name;
@@ -140,6 +164,9 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   `parseHash` strips the parameter so no screen sees it. `nigel-app` then
   renders no `wc-nav-sidebar` and sets `hide-sidebar` on the shell, which
   drops the sidebar slot and its toggle and keeps the breadcrumb top bar. The
+  native shell draws its own palette, so a hosted page renders no
+  `wc-command-palette` and binds no ⌘K; `nc-palette-open` from the
+  breadcrumb and the pill still reaches the document for the host. The
   flag is read in the app; no `wc-*` component knows which host it is in.
 
 ## Focus

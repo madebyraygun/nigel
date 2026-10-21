@@ -88,6 +88,11 @@ export function isHostedShell(
   );
 }
 
+/** Whether this is an Apple platform, where Command rather than Control leads a shortcut. */
+export function isApplePlatform(platform: string = navigator.platform): boolean {
+  return /Mac|iPhone|iPad|iPod/.test(platform);
+}
+
 /**
  * The palette shortcut as the keycap shows it and as `aria-keyshortcuts`
  * spells it: Command on Apple platforms, Control everywhere else.
@@ -96,7 +101,7 @@ export function paletteShortcut(platform: string = navigator.platform): {
   keycap: string;
   aria: string;
 } {
-  return /Mac|iPhone|iPad|iPod/.test(platform)
+  return isApplePlatform(platform)
     ? { keycap: '⌘K', aria: 'Meta+K' }
     : { keycap: 'Ctrl K', aria: 'Control+K' };
 }

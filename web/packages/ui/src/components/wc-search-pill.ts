@@ -1,15 +1,15 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-import { controlsCss } from '@nigel/theme';
-import { dispatchPaletteOpen } from './wc-breadcrumb.js';
-import '../icons/icons.js';
+import { LitElement, html, css } from "lit";
+import { customElement, property } from "lit/decorators.js";
+import { controlsCss } from "@nigel/theme";
+import { dispatchPaletteOpen } from "./wc-breadcrumb.js";
+import "../icons/icons.js";
 
 /**
  * The top bar's search control: a pill that asks for the whole palette
  * (`nc-palette-open` with scope `all`). The keycap shows the shortcut that
  * does the same; which key that is on this platform is the app's to say.
  */
-@customElement('wc-search-pill')
+@customElement("wc-search-pill")
 export class WcSearchPill extends LitElement {
   static styles = [
     controlsCss,
@@ -85,11 +85,11 @@ export class WcSearchPill extends LitElement {
 
   /** The keycap's text. */
   @property({ type: String })
-  shortcut = '⌘K';
+  shortcut = "⌘K";
 
   /** The same chord in `aria-keyshortcuts` form, e.g. `Meta+K`. */
-  @property({ type: String, attribute: 'key-shortcuts' })
-  keyShortcuts = 'Meta+K';
+  @property({ type: String, attribute: "key-shortcuts" })
+  keyShortcuts = "Meta+K";
 
   render() {
     return html`
@@ -98,7 +98,7 @@ export class WcSearchPill extends LitElement {
         aria-label="Search"
         aria-haspopup="dialog"
         aria-keyshortcuts=${this.keyShortcuts}
-        @click=${() => dispatchPaletteOpen(this, 'all')}
+        @click=${(event: Event) => dispatchPaletteOpen(event.currentTarget as HTMLElement, "all")}
       >
         <wc-icon-search></wc-icon-search>
         <span class="word">Search</span>
@@ -110,6 +110,6 @@ export class WcSearchPill extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'wc-search-pill': WcSearchPill;
+    "wc-search-pill": WcSearchPill;
   }
 }
