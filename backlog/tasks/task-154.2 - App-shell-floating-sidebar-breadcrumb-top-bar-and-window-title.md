@@ -4,6 +4,7 @@ title: 'App shell: floating sidebar, breadcrumb top bar and window title'
 status: To Do
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-21 00:02'
 labels:
   - web
   - design
@@ -29,4 +30,5 @@ Spec sections 1 (App shell) and the interactions summary. The sidebar becomes an
 - [ ] #3 The window title follows '{Screen} · {Book name}' in the browser and in Tauri
 - [ ] #4 Hosted mode hides the sidebar and keeps the breadcrumb and top bar
 - [ ] #5 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [ ] #6 Inputs, selects and textareas draw the spec's focus ring (border --br plus a 3px --nc-color-ring halo) through controlsCss, and buttons use :focus-visible with a 2px brand outline
 <!-- AC:END -->
