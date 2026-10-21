@@ -1141,6 +1141,59 @@ describe('a register too big to put in the DOM', () => {
     expect(selectedId(el)).toBe(lastId);
   });
 
+  /** The private resize handler, which a ResizeObserver calls and jsdom has none of. */
+  function resize(el: WcRegisterTable): void {
+    (el as unknown as { handleViewportResize(): void }).handleViewportResize();
+  }
+
+  it('re-anchors on the first row shown when a resize changes the row height', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    await el.updateComplete;
+    await scrollTo(el, 33 * 400);
+
+    // The card narrowed into the stacked layout: rows are now 60px.
+    stubLayout(el, 60, 660);
+    (el.shadowRoot?.querySelector('.scroller') as HTMLElement).scrollTop = 33 * 400;
+    resize(el);
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(400 * 60);
+    // The spacers stand for the new height, so the scrollbar is still the
+    // whole register.
+    const shown = dataRows(el).length;
+    const total = spacerHeights(el).reduce((sum, height) => sum + height, 0);
+    expect(total / 60 + shown).toBe(BIG);
+  });
+
+  it('keeps a selection in view across a change of row height', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    el.scrollToIndex(500, 'end');
+    await el.updateComplete;
+
+    stubLayout(el, 60, 660);
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    scroller.scrollTop = 501 * 33 - 660;
+    resize(el);
+    await el.updateComplete;
+
+    // Row 500 now ends at 501 * 60; the view has to reach it.
+    expect(scroller.scrollTop).toBe(501 * 60 - 660);
+    expect(selectedId(el)).toBe(600);
+  });
+
+  it('asks for nothing when a resize leaves the row height alone', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    await el.updateComplete;
+    await scrollTo(el, 33 * 100);
+    resize(el);
+    await el.updateComplete;
+    expect((el.shadowRoot?.querySelector('.scroller') as HTMLElement).scrollTop).toBe(33 * 100);
+  });
+
   it('never leaves a scroll pending across an unrelated update', async () => {
     const el = await mount({ rows: fixture(BIG), selectedId: 100 });
     stubLayout(el);
@@ -1172,6 +1225,48 @@ describe('a register too big to put in the DOM', () => {
   it('can be told to render everything anyway', async () => {
     const el = await mount({ rows: fixture(200), virtualizeAbove: Infinity });
     expect(dataRows(el).length).toBe(200);
+  });
+});
+
+describe('wc-register-table stacked layout', () => {
+  /** The rules inside the stacked container query, as one string. */
+  function stackedRules(): string {
+    const start = text.indexOf('@container (max-width: 860px)');
+    expect(start).toBeGreaterThan(-1);
+    return text.slice(start);
+  }
+
+  it('switches on the card\'s own width, not the viewport\'s', () => {
+    expect(text).toMatch(/\.scroller\s*{[^}]*container-type:\s*inline-size/);
+    expect(text).toContain('@container (max-width: 860px)');
+  });
+
+  it('gives every stacked row the same height, so the window can place rows by arithmetic', () => {
+    expect(stackedRules()).toMatch(/tbody tr\[data-id\]\s*{[^}]*height:\s*60px/);
+    // Two lines: 32px and 27px, plus the 1px divider.
+    expect(stackedRules()).toMatch(/td\.amount\s*{[^}]*height:\s*32px/);
+    expect(stackedRules()).toMatch(/td\.account\s*{[^}]*height:\s*27px/);
+  });
+
+  it('keeps the header for assistive technology without drawing it', () => {
+    expect(stackedRules()).toMatch(/thead\s*{[^}]*position:\s*absolute[^}]*clip-path:\s*inset\(50%\)/);
+  });
+
+  it('labels every header cell as a column header, which a stacked row keeps by role', async () => {
+    const el = document.createElement('wc-register-table');
+    Object.assign(el, { rows: fixture(), categories });
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const roles = [...(el.shadowRoot?.querySelectorAll('thead th') ?? [])].map((th) =>
+      th.getAttribute('role'),
+    );
+    expect(roles.every((role) => role === 'columnheader')).toBe(true);
+    el.remove();
+  });
+
+  it('pins the footer as a whole and draws no sideways scroll', () => {
+    expect(stackedRules()).toMatch(/tfoot\s*{[^}]*position:\s*sticky[^}]*bottom:\s*0/);
+    expect(text).not.toMatch(/table\s*{\s*width:\s*860px/);
   });
 });
 

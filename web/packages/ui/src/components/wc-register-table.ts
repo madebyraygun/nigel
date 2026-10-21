@@ -178,18 +178,9 @@ export class WcRegisterTable extends LitElement {
         table-layout: fixed;
       }
 
-      /* Below this width the fixed columns (714px) would leave Description
-         next to nothing, so a narrow card — a phone's — holds the table at it
-         and scrolls sideways inside itself. Pixels, like the columns, because
-         the app's root font size is not 16px. */
+      /* The card's own width picks the layout (the stacked rules below). */
       .scroller {
         container-type: inline-size;
-      }
-
-      @container (max-width: 860px) {
-        table {
-          width: 860px;
-        }
       }
 
       .col-flag {
@@ -386,14 +377,8 @@ export class WcRegisterTable extends LitElement {
         background: var(--wa-color-surface-alt);
       }
 
-      /* The width of the card rather than of the table, and pinned to its
-         left edge, so the total stays in view while a narrow card scrolls the
-         columns sideways. */
       .foot {
-        position: sticky;
-        left: 0;
-        box-sizing: border-box;
-        width: calc(100cqi - 2 * var(--wa-space-s));
+        flex: 1;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -421,6 +406,208 @@ export class WcRegisterTable extends LitElement {
 
       .foot-total wc-money {
         font-weight: var(--wa-font-weight-bold);
+      }
+
+      /* -- the stacked layout --
+
+         Below 860px the fixed columns (714px) would leave Description next to
+         nothing, so each row becomes two lines in the card's own width: flag,
+         date, description and amount, then category · vendor · account. Every
+         row is the same 60px, so the window still places rows by
+         arithmetic; the resize observer measures the height again when the
+         card crosses the line.
+
+         The table keeps its grid roles, so the cells stay announced as cells
+         of their columns; the header row is there for assistive technology
+         and takes no room. */
+      @container (max-width: 860px) {
+        table,
+        tbody,
+        tfoot {
+          display: block;
+        }
+
+        thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
+        }
+
+        tbody tr[data-id] {
+          display: flex;
+          flex-wrap: wrap;
+          align-content: flex-start;
+          height: 60px;
+          box-sizing: border-box;
+          border-bottom: 1px solid var(--wa-color-border-soft);
+        }
+
+        /* Ends the first line, whatever is left on it. */
+        tbody tr[data-id]::after {
+          content: '';
+          order: 1;
+          flex-basis: 100%;
+          height: 0;
+        }
+
+        tbody tr[data-editing] {
+          height: auto;
+          min-height: 60px;
+          padding-bottom: var(--wa-space-xs);
+        }
+
+        tbody td {
+          display: block;
+          border-bottom: none;
+          box-sizing: border-box;
+        }
+
+        tr.spacer,
+        tr.spacer td {
+          display: block;
+        }
+
+        td.flag,
+        td.date,
+        td.description,
+        td.amount {
+          height: 32px;
+          line-height: 32px;
+        }
+
+        td.flag {
+          flex: none;
+          width: 40px;
+          display: grid;
+          place-items: center;
+        }
+
+        td.date {
+          flex: none;
+          padding: 0 var(--wa-space-xs) 0 0;
+        }
+
+        td.description {
+          flex: 1 1 0;
+          min-width: 0;
+        }
+
+        td.amount {
+          flex: none;
+          padding-right: var(--wa-space-m);
+        }
+
+        td.category,
+        td.vendor,
+        td.account {
+          order: 2;
+          height: 27px;
+          line-height: 27px;
+          padding: 0;
+          font-size: var(--nc-font-size-meta);
+          color: var(--wa-color-muted);
+          flex: 0 1 auto;
+          min-width: 0;
+        }
+
+        /* Capped shares of the line rather than wrapping: a flex line breaks
+           on an item's capped size, so all three stay on the second line and
+           the one that runs out of room ellipsises. */
+        td.category {
+          margin-left: 40px;
+          max-width: calc((100% - 40px) * 0.4);
+        }
+
+        td.vendor {
+          max-width: calc((100% - 40px) * 0.3);
+        }
+
+        /* Whatever the first two leave: a zero basis never pushes it onto a
+           third line. */
+        td.account {
+          flex: 1 1 0;
+        }
+
+        td.vendor::before,
+        td.account::before {
+          content: '·';
+          padding: 0 6px;
+        }
+
+        td.blank {
+          display: none;
+        }
+
+        .uncategorized {
+          color: var(--nc-color-flagged);
+        }
+
+        /* The editors take the second line between them, Save and Cancel at
+           its end. */
+        tr[data-editing] td.category,
+        tr[data-editing] td.vendor {
+          max-width: none;
+          flex: 1 1 0;
+          height: auto;
+          line-height: normal;
+        }
+
+        tr[data-editing] td.vendor {
+          margin-left: var(--wa-space-xs);
+        }
+
+        tr[data-editing] td.account {
+          max-width: none;
+          flex: none;
+          height: auto;
+          margin-left: var(--wa-space-xs);
+          padding-right: var(--wa-space-s);
+        }
+
+        tr[data-editing] td.vendor::before,
+        tr[data-editing] td.account::before {
+          content: none;
+        }
+
+        /* One stripe down the whole row rather than down the flag cell, which
+           is only the first line here. */
+        tbody tr[data-flagged='true'] td.flag,
+        tbody tr[data-uncategorized='true'] td.flag,
+        tbody tr[aria-selected='true'] td.flag {
+          box-shadow: none;
+        }
+
+        tbody tr[data-flagged='true'],
+        tbody tr[data-uncategorized='true'] {
+          box-shadow: inset 2px 0 0 var(--nc-color-flagged);
+        }
+
+        tbody tr[aria-selected='true'] {
+          box-shadow: inset 2px 0 0 var(--wa-color-brand);
+        }
+
+        /* A block footer is pinned as a whole: a sticky cell would only
+           stick inside its own row. */
+        tfoot {
+          position: sticky;
+          bottom: 0;
+          z-index: 1;
+        }
+
+        tfoot tr {
+          display: block;
+        }
+
+        tfoot td {
+          position: static;
+          display: flex;
+          align-items: center;
+          box-sizing: border-box;
+          padding: 0 var(--wa-space-s);
+        }
       }
 
       /* -- the inline editors -- */
@@ -677,8 +864,14 @@ export class WcRegisterTable extends LitElement {
     this.pendingScrollTop = 0;
   }
 
-  updated(): void {
+  updated(changed: PropertyValues<this>): void {
     this.applyPendingScroll();
+
+    // An open editor is taller than a row (in the stacked layout it adds a
+    // line of fields), so its bottom may now sit under the total row.
+    if (changed.has('editingId') && this.editingId !== null) {
+      this.keepBottomInView(this.editingId);
+    }
 
     if (this.remeasureRowHeight() && this.windowing) {
       // Spacer heights are computed from the row height, so the first real
@@ -706,12 +899,36 @@ export class WcRegisterTable extends LitElement {
    */
   private watchViewport(): void {
     if (this.viewportObserver || typeof ResizeObserver === 'undefined') return;
-    this.viewportObserver = new ResizeObserver(() => {
-      if (this.windowing && this.windowLength !== this.lastWindowLength) {
-        this.requestUpdate();
-      }
-    });
+    this.viewportObserver = new ResizeObserver(() => this.handleViewportResize());
     this.viewportObserver.observe(this);
+  }
+
+  /**
+   * The card was resized. Crossing the stacked-layout width changes how tall
+   * a row is, and every row position is `index * rowHeight`, so the height is
+   * measured again and the view re-anchored: on the selection when it is in
+   * view, otherwise on the first row that was showing.
+   */
+  private handleViewportResize(): void {
+    const scroller = this.scroller;
+    const before = this.rowHeight;
+    const firstShown = scroller ? Math.floor(scroller.scrollTop / before) : 0;
+
+    if (this.remeasureRowHeight()) {
+      const selected = this.activeIndex;
+      if (selected !== -1 && this.selectionIsRendered) {
+        this.coverIndex(selected);
+        this.scrollToRowIndex(selected, 'nearest');
+      } else {
+        this.pendingScrollTop = firstShown * this.rowHeight;
+      }
+      this.requestUpdate();
+      return;
+    }
+
+    if (this.windowing && this.windowLength !== this.lastWindowLength) {
+      this.requestUpdate();
+    }
   }
 
   /** Whether this register is big enough to be worth windowing. */
@@ -946,15 +1163,30 @@ export class WcRegisterTable extends LitElement {
    * still be the estimate.
    */
   private settleAtEnd(id: number): void {
+    const delta = this.overhang(id);
+    if (delta !== null && delta !== 0 && this.scroller) this.scroller.scrollTop += delta;
+  }
+
+  private keepBottomInView(id: number): void {
+    const delta = this.overhang(id);
+    if (delta !== null && delta > 0 && this.scroller) this.scroller.scrollTop += delta;
+  }
+
+  /**
+   * How far a row's bottom edge sits below the band rows show in, negative
+   * when it is above. Null when nothing can be measured (jsdom, a first
+   * paint).
+   */
+  private overhang(id: number): number | null {
     const scroller = this.scroller;
     const row = this.rowElement(id);
-    if (!scroller || !row) return;
+    if (!scroller || !row) return null;
 
     const frame = scroller.getBoundingClientRect();
-    if (frame.height <= 0) return;
+    if (frame.height <= 0) return null;
     const foot = this.shadowRoot?.querySelector('tfoot')?.getBoundingClientRect().height ?? 0;
     const delta = row.getBoundingClientRect().bottom - (frame.top + scroller.clientHeight - foot);
-    if (Number.isFinite(delta) && delta !== 0) scroller.scrollTop += delta;
+    return Number.isFinite(delta) ? delta : null;
   }
 
   /**
@@ -1018,8 +1250,12 @@ export class WcRegisterTable extends LitElement {
     return Math.max(0, scroller - this.stickyHeadHeight() - foot);
   }
 
+  /** Zero in the stacked layout, where the header is kept for assistive technology only. */
   private stickyHeadHeight(): number {
-    return this.shadowRoot?.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+    const head = this.shadowRoot?.querySelector('thead');
+    if (!head) return 0;
+    if (getComputedStyle(head).position === 'absolute') return 0;
+    return head.getBoundingClientRect().height;
   }
 
   // -- keyboard -------------------------------------------------------------
@@ -1278,13 +1514,17 @@ export class WcRegisterTable extends LitElement {
           </colgroup>
           <thead>
             <tr role="row" aria-rowindex="1">
-              <th scope="col" class="flag"><span class="sr-only">Flag</span></th>
-              <th scope="col">Date</th>
-              <th scope="col">Description</th>
-              <th scope="col">Category</th>
-              <th scope="col">Vendor</th>
-              <th scope="col" class="amount">Amount</th>
-              ${this.showAccount ? html`<th scope="col">Account</th>` : nothing}
+              <th scope="col" role="columnheader" class="flag">
+                <span class="sr-only">Flag</span>
+              </th>
+              <th scope="col" role="columnheader">Date</th>
+              <th scope="col" role="columnheader">Description</th>
+              <th scope="col" role="columnheader">Category</th>
+              <th scope="col" role="columnheader">Vendor</th>
+              <th scope="col" role="columnheader" class="amount">Amount</th>
+              ${this.showAccount
+                ? html`<th scope="col" role="columnheader">Account</th>`
+                : nothing}
             </tr>
           </thead>
           <tbody>
@@ -1434,6 +1674,7 @@ export class WcRegisterTable extends LitElement {
         data-id=${row.id}
         data-flagged=${row.isFlagged ? 'true' : 'false'}
         data-uncategorized=${row.categoryId === null ? 'true' : 'false'}
+        ?data-editing=${editing}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
         aria-rowindex=${index + 2}
@@ -1446,14 +1687,20 @@ export class WcRegisterTable extends LitElement {
           ${this.readonly ? this.renderFlagMark(row) : this.renderFlagButton(row)}
         </td>
         <td role="gridcell" class="date">${row.date}</td>
-        <td role="gridcell" class="text" title=${row.description}>${row.description}</td>
+        <td role="gridcell" class="text description" title=${row.description}>
+          ${row.description}
+        </td>
         ${editing
           ? this.renderEditCells(row)
           : html`
-              <td role="gridcell" class="text" title=${row.category ?? ''}>
-                ${row.category ?? html`<span class="muted">Uncategorized</span>`}
+              <td role="gridcell" class="text category" title=${row.category ?? ''}>
+                ${row.category ?? html`<span class="muted uncategorized">Uncategorized</span>`}
               </td>
-              <td role="gridcell" class="text" title=${row.vendor ?? ''}>
+              <td
+                role="gridcell"
+                class=${row.vendor ? 'text vendor' : 'text vendor blank'}
+                title=${row.vendor ?? ''}
+              >
                 ${row.vendor ?? ''}
               </td>
             `}
@@ -1461,7 +1708,11 @@ export class WcRegisterTable extends LitElement {
           <wc-money .amount=${row.amount} align="end"></wc-money>
         </td>
         ${this.showAccount
-          ? html`<td role="gridcell" class=${editing ? '' : 'text'} title=${row.accountName}>
+          ? html`<td
+              role="gridcell"
+              class=${editing ? 'account' : 'text account'}
+              title=${row.accountName}
+            >
               ${editing ? this.renderEditActions() : row.accountName}
             </td>`
           : nothing}
@@ -1474,7 +1725,7 @@ export class WcRegisterTable extends LitElement {
     const active = options[this.editOptionIndex];
 
     return html`
-      <td role="gridcell">
+      <td role="gridcell" class="category">
         <div class="combobox">
           <input
             class="category-input"
@@ -1511,7 +1762,7 @@ export class WcRegisterTable extends LitElement {
             : nothing}
         </div>
       </td>
-      <td role="gridcell">
+      <td role="gridcell" class="vendor">
         <wa-input
           class="vendor-input"
           label="Vendor"
