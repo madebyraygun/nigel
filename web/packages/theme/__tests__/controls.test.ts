@@ -67,9 +67,25 @@ describe('focus', () => {
       const ring = block(selector);
       expect(ring).toMatch(/border-color:\s*var\(--wa-color-brand\)/);
       expect(ring).toMatch(/box-shadow:\s*0 0 0 3px var\(--nc-color-ring\)/);
-      expect(ring).toMatch(/outline:\s*none/);
+      // Forced colors drops the halo and repaints a transparent outline in
+      // the system colour; `none` would leave a focused field unmarked.
+      expect(ring).toMatch(/outline:\s*2px solid transparent/);
+      expect(ring).not.toMatch(/outline:\s*none/);
     },
   );
+
+  it('marks a focused field in forced-colors mode', () => {
+    const forced = rules.slice(rules.indexOf('@media (forced-colors: active)'));
+    expect(rules).toContain('@media (forced-colors: active)');
+    for (const selector of ['textarea:focus', 'select:focus', 'wa-input:focus-within::part(base)']) {
+      expect(forced).toContain(selector);
+    }
+    expect(forced).toMatch(/outline:\s*2px solid Highlight/);
+  });
+
+  it('never takes the outline off a field', () => {
+    expect(rules).not.toMatch(/outline:\s*none/);
+  });
 
   it('leaves checkboxes, radios and file pickers to the outline', () => {
     expect(rules).toMatch(

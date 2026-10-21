@@ -48,13 +48,20 @@ describe('the sidebar preference', () => {
 
 describe('hosted mode', () => {
   it('is on when the native shell opens the page with ?shell=native', () => {
-    expect(isHostedShell('?shell=native')).toBe(true);
-    expect(isHostedShell('?token=abc&shell=native')).toBe(true);
+    expect(isHostedShell('?shell=native', '#/dashboard')).toBe(true);
+    expect(isHostedShell('?token=abc&shell=native', '')).toBe(true);
+  });
+
+  it('is on when the flag rides in the hash route, as when Settings is opened directly', () => {
+    expect(isHostedShell('', '#/settings?shell=native')).toBe(true);
+    expect(isHostedShell('', '#/invoices?number=1254&shell=native')).toBe(true);
   });
 
   it('is off in a browser and in Tauri', () => {
-    expect(isHostedShell('')).toBe(false);
-    expect(isHostedShell('?shell=tauri')).toBe(false);
+    expect(isHostedShell('', '')).toBe(false);
+    expect(isHostedShell('?shell=tauri', '#/dashboard')).toBe(false);
+    expect(isHostedShell('', '#/settings?shell=tauri')).toBe(false);
+    expect(isHostedShell('', '#/settings')).toBe(false);
   });
 });
 

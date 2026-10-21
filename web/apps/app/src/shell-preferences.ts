@@ -43,13 +43,27 @@ export function writeSidebarCollapsed(
   }
 }
 
+/** The query parameter a native host opens the page with. */
+export const HOSTED_PARAM = 'shell';
+
 /**
- * Whether a native window is hosting the SPA and drawing its own sidebar —
- * the Swift shell opens the page with `?shell=native`. Read from the initial
- * URL, which navigation never changes: routing is the hash alone.
+ * Whether a native window is hosting the SPA and drawing its own sidebar.
+ *
+ * The Swift shell says so with `shell=native`, either in the query
+ * (`/?shell=native#/dashboard`) or in the hash route's own parameters
+ * (`#/settings?shell=native`, how it opens a screen directly). Read once from
+ * the URL the page was opened with: the hash form disappears on the first
+ * navigation, and the host does not change for the life of the page.
+ * `parseHash` strips the parameter, so no screen ever sees it.
  */
-export function isHostedShell(search: string = window.location.search): boolean {
-  return new URLSearchParams(search).get('shell') === 'native';
+export function isHostedShell(
+  search: string = window.location.search,
+  hash: string = window.location.hash,
+): boolean {
+  const query = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  return [search, query].some(
+    (params) => new URLSearchParams(params).get(HOSTED_PARAM) === 'native',
+  );
 }
 
 /**

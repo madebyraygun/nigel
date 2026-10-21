@@ -1,4 +1,5 @@
 import { DEFAULT_SCREEN, isScreenId, type ScreenId } from './registry.js';
+import { HOSTED_PARAM } from '../shell-preferences.js';
 
 export interface Route {
   screen: ScreenId;
@@ -18,7 +19,11 @@ export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, '');
   const [path, query = ''] = raw.split('?');
   const screen = isScreenId(path) ? path : DEFAULT_SCREEN;
-  return { screen, params: new URLSearchParams(query) };
+  const params = new URLSearchParams(query);
+  // `shell=native` says which host opened the page (`isHostedShell`), not
+  // what the screen should show.
+  params.delete(HOSTED_PARAM);
+  return { screen, params };
 }
 
 export function routeToHash(route: Route): string {

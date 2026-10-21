@@ -158,17 +158,23 @@ export const controlsCss = css`
      border turns brand and a translucent brand halo sits outside it. That is
      on any focus, pointer included, because a caret in a field is the thing
      being worked on. Checkboxes, radios and file pickers are controls, not
-     fields, and keep the outline above.
+     fields — as are range and colour inputs — and keep the outline above.
+
+     The outline is transparent rather than none: forced-colors mode drops
+     the halo and repaints the outline in the system colour, so it is the
+     focus indicator a high-contrast user still sees.
 
      Web Awesome draws the field's chrome inside its own shadow root, so the
      same ring reaches it through the part that carries the border; the
-     outline WA puts on that part is turned off, or a field would wear both. */
+     outline WA puts on that part is made transparent the same way, or a
+     field would wear both. */
   input:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color']):focus,
   select:focus,
   textarea:focus {
     border-color: var(--wa-color-brand);
     box-shadow: 0 0 0 3px var(--nc-color-ring);
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: 0;
   }
 
   wa-input:focus-within::part(base),
@@ -178,6 +184,18 @@ export const controlsCss = css`
     border-color: var(--wa-color-brand);
     box-shadow: 0 0 0 3px var(--nc-color-ring);
     outline-color: transparent;
+  }
+
+  @media (forced-colors: active) {
+    input:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color']):focus,
+    select:focus,
+    textarea:focus,
+    wa-input:focus-within::part(base),
+    wa-textarea:focus-within::part(base),
+    wa-select:focus-within::part(combobox),
+    wa-select[open]::part(combobox) {
+      outline: 2px solid Highlight;
+    }
   }
 
   /* The document turns off user-select so dragging the desktop shell's chrome

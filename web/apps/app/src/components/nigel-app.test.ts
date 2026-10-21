@@ -204,6 +204,15 @@ describe('nigel-app', () => {
       expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
     });
 
+    it('takes the flag from the hash route too, and keeps it from the screen', async () => {
+      history.replaceState(null, '', '/');
+      window.location.hash = '#/settings?shell=native';
+      const el = await mount();
+      expect(sidebar(el)).toBeNull();
+      expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
+      expect(shell(el)?.getAttribute('screen-title')).toBe('Settings');
+    });
+
     it('keeps the breadcrumb top bar', async () => {
       const el = await mount();
       expect(shell(el)?.bookName).toBe('Test Consultancy');

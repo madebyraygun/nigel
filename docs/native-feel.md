@@ -115,11 +115,16 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   native window's new pane would be. The shell resets on a change of
   `scrollKey`, which the app derives from the breadcrumb, so a filter or a
   period change within a screen keeps the reader's place.
-- **Hosted mode.** Opened with `?shell=native`, the page is inside the Swift
-  shell, which draws its own sidebar: `nigel-app` renders no
-  `wc-nav-sidebar` and sets `hide-sidebar` on the shell, which drops the
-  sidebar slot and its toggle and keeps the breadcrumb top bar. The flag is
-  read in the app; no `wc-*` component knows which host it is in.
+- **Hosted mode.** `shell=native` on the URL the page is opened with means
+  it is inside the Swift shell, which draws its own sidebar. The host may put
+  the flag in the query (`nigel://localhost/?shell=native#/dashboard`) or in
+  the hash route's parameters (`nigel://localhost/#/settings?shell=native`,
+  how it opens a screen directly); `isHostedShell` in
+  `apps/app/src/shell-preferences.ts` accepts either, read once at boot, and
+  `parseHash` strips the parameter so no screen sees it. `nigel-app` then
+  renders no `wc-nav-sidebar` and sets `hide-sidebar` on the shell, which
+  drops the sidebar slot and its toggle and keeps the breadcrumb top bar. The
+  flag is read in the app; no `wc-*` component knows which host it is in.
 
 ## Focus
 
@@ -130,8 +135,12 @@ draws them the same way:
   `wa-select` and `wa-textarea` through the part that carries their border —
   turns its border `--wa-color-brand` and wears a 3px `--nc-color-ring` halo
   on any focus, pointer included, because a caret in a field is the thing
-  being worked on. Checkboxes, radios and file pickers are controls, not
-  fields.
+  being worked on. Checkboxes, radios, file pickers, range sliders and colour
+  inputs are controls, not fields, and take the outline below. The field
+  keeps a transparent 2px outline rather than none: forced-colors mode drops
+  the halo and repaints that outline, and a `forced-colors: active` rule
+  draws it in `Highlight`, so a high-contrast user still sees which field has
+  the caret.
 - Everything else uses `:focus-visible`: a 2px `--wa-color-focus` outline
   offset 2px, on keyboard focus only, so a click does not leave a ring
   behind.

@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { parseHash, routeToHash, screenToHash } from './hash-route.js';
 
 describe('parseHash', () => {
+  it('keeps the hosting flag out of the screen params', () => {
+    const route = parseHash('#/settings?shell=native');
+    expect(route.screen).toBe('settings');
+    expect(route.params.has('shell')).toBe(false);
+
+    const invoice = parseHash('#/invoices?number=1254&shell=native');
+    expect(invoice.params.toString()).toBe('number=1254');
+  });
+
   it('reads a screen id', () => {
     expect(parseHash('#/register').screen).toBe('register');
   });
