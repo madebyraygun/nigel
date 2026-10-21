@@ -172,6 +172,13 @@ export class WcAppShell extends LitElement {
         flex: none;
       }
 
+      /* A page action sits at the right of the title row, however many
+         there are, and wraps under the title on a phone. */
+      .page-head ::slotted([slot='page-actions']) {
+        flex: none;
+        margin-left: auto;
+      }
+
       .title {
         margin: 0;
         font-size: var(--nc-font-size-display);

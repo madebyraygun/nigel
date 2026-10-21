@@ -189,6 +189,66 @@ describe('nigel-app', () => {
     });
   });
 
+  describe('the dashboard title row', () => {
+    const queued = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: i + 1,
+        date: '2026-01-04',
+        description: 'Acme',
+        amount: -12,
+        accountName: 'Harbor Checking',
+      }));
+    const pill = (el: NigelApp) =>
+      el.shadowRoot?.querySelector<HTMLElement>('wc-review-pill');
+
+    it('carries the review pill with the count, in the shell title row', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(2);
+      const el = await mount(client);
+      await vi.waitFor(() => expect(pill(el)).not.toBeNull());
+      expect(pill(el)?.getAttribute('slot')).toBe('page-actions');
+      expect((pill(el) as unknown as { count: number }).count).toBe(2);
+    });
+
+    it('has no pill when nothing needs review', async () => {
+      const el = await mount();
+      expect(pill(el)).toBeNull();
+    });
+
+    it('has no pill when the review count cannot be fetched', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(2);
+      client.queueError = new Error('queue is down');
+      const el = await mount(client);
+      await vi.waitFor(() =>
+        expect(client.calls).toContain('getReviewQueue'),
+      );
+      await el.updateComplete;
+      expect(pill(el)).toBeNull();
+    });
+
+    it('drops the pill when a refresh finds the queue empty', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(1);
+      const el = await mount(client);
+      await vi.waitFor(() => expect(pill(el)).not.toBeNull());
+
+      client.reviewQueue = [];
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-refresh', { bubbles: true, composed: true }),
+      );
+      await vi.waitFor(() => expect(pill(el)).toBeNull());
+    });
+
+    it('has no pill on other screens', async () => {
+      window.location.hash = '#/register';
+      const client = new FakeApiClient();
+      client.reviewQueue = queued(2);
+      const el = await mount(client);
+      expect(pill(el)).toBeNull();
+    });
+  });
+
   describe('the status line', () => {
     it('shows the folder, lock state and version from the status', async () => {
       const el = await mount();

@@ -6,7 +6,7 @@ import { appLocked } from '../api/index.js';
 import { initializeAppStore, resetAppStore } from '../state/app-store.js';
 import { resetDashboardStore } from '../state/dashboard-store.js';
 import { FakeApiClient, UNLOCKED_STATUS } from '../__mocks__/fake-api-client.js';
-import type { WcBalanceList, WcBarChart, WcStatCard } from '@nigel/ui';
+import type { WcBalancesCard, WcCashflowCard, WcStatStrip } from '@nigel/ui';
 import type { BalanceReport, CashflowReport, PnlReport } from '../api/types.js';
 
 const PNL: PnlReport = {
@@ -77,8 +77,8 @@ async function mount(client = populated()): Promise<{
 
 const shadow = (el: NigelDashboardScreen) => el.shadowRoot!;
 
-function cards(el: NigelDashboardScreen): WcStatCard[] {
-  return [...shadow(el).querySelectorAll<WcStatCard>('wc-stat-card')];
+function strip(el: NigelDashboardScreen): WcStatStrip | null {
+  return shadow(el).querySelector<WcStatStrip>('wc-stat-strip');
 }
 
 describe('dashboard screen', () => {
@@ -94,76 +94,38 @@ describe('dashboard screen', () => {
     resetAppStore();
   });
 
-  it('fetches all four figures when it mounts', async () => {
+  it('fetches the reports when it mounts', async () => {
     const { client } = await mount();
 
     expect(client.calls.filter((c) => c.startsWith('getPnl')).length).toBe(1);
     expect(client.calls.filter((c) => c === 'getBalance').length).toBe(1);
     expect(client.calls.filter((c) => c.startsWith('getCashflow')).length).toBe(1);
-    expect(client.calls.filter((c) => c === 'getFlagged').length).toBe(1);
   });
 
   it('shows year-to-date income, expenses and net', async () => {
     const { el } = await mount();
-    const amounts = cards(el).map((c) => c.amount);
-    expect(amounts).toEqual([184320.5, -96540.18, 87780.32]);
+    const cells = strip(el)?.cells ?? [];
+    expect(cells.map((c) => c.amount)).toEqual([184320.5, -96540.18, 87780.32]);
+    expect(cells.map((c) => c.label)).toEqual([
+      'Income, year to date',
+      'Expenses, year to date',
+      'Net',
+    ]);
+    expect(cells[2]?.hint).toBe('Cash basis');
   });
 
   it('lists the account balances with their total', async () => {
     const { el } = await mount();
-    const list = shadow(el).querySelector<WcBalanceList>('wc-balance-list');
+    const list = shadow(el).querySelector<WcBalancesCard>('wc-balances-card');
     expect(list?.items.length).toBe(2);
     expect(list?.total).toBe(4609.52);
   });
 
   it('charts twelve months of cash flow', async () => {
     const { el } = await mount();
-    const chart = shadow(el).querySelector<WcBarChart>('wc-bar-chart');
+    const chart = shadow(el).querySelector<WcCashflowCard>('wc-cashflow-card');
     expect(chart?.buckets.length).toBe(12);
     expect(chart?.buckets[0]).toEqual({ label: 'Jan', income: 5000, expense: 3200 });
-  });
-
-  it('has no flagged chip when nothing needs review', async () => {
-    const { el } = await mount();
-    expect(shadow(el).querySelector('.flagged')).toBeNull();
-  });
-
-  it('links the flagged count into the review screen', async () => {
-    const client = populated();
-    client.flagged = [
-      { id: 1, date: '2026-01-04', description: 'A', amount: -12, accountName: 'BofA Checking' },
-      { id: 2, date: '2026-01-05', description: 'B', amount: -30, accountName: 'BofA Checking' },
-    ];
-    const { el } = await mount(client);
-
-    const chip = shadow(el).querySelector<HTMLAnchorElement>('.flagged');
-    expect(chip?.getAttribute('href')).toBe('#/review');
-    expect(chip?.textContent).toContain('2');
-    expect(chip?.textContent).toContain('transactions need');
-  });
-
-  it('says "transaction needs" for a single flagged row', async () => {
-    const client = populated();
-    client.flagged = [
-      { id: 1, date: '2026-01-04', description: 'A', amount: -12, accountName: 'BofA Checking' },
-    ];
-    const { el } = await mount(client);
-    expect(shadow(el).querySelector('.flagged')?.textContent).toContain(
-      'transaction needs',
-    );
-  });
-
-  it('re-fetches everything when refresh is pressed', async () => {
-    const { el, client } = await mount();
-    client.calls.length = 0;
-
-    shadow(el).querySelector<HTMLElement>('wa-button')?.click();
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(client.calls.filter((c) => c.startsWith('getPnl')).length).toBe(1);
-    expect(client.calls.filter((c) => c === 'getBalance').length).toBe(1);
-    expect(client.calls.filter((c) => c.startsWith('getCashflow')).length).toBe(1);
-    expect(client.calls.filter((c) => c === 'getFlagged').length).toBe(1);
   });
 
   it('shows the update notice when the server reports a newer release', async () => {
@@ -200,7 +162,7 @@ describe('dashboard screen', () => {
 
     const empty = shadow(el).querySelector('wc-empty-state');
     expect(empty).not.toBeNull();
-    expect(shadow(el).querySelector('wc-stat-card')).toBeNull();
+    expect(strip(el)).toBeNull();
     expect(empty?.querySelector('a')?.getAttribute('href')).toBe('#/import');
   });
 
@@ -210,12 +172,12 @@ describe('dashboard screen', () => {
     const { el } = await mount(client);
 
     expect(
-      shadow(el).querySelector('wc-balance-list')?.getAttribute('error'),
+      shadow(el).querySelector('wc-balances-card')?.getAttribute('error'),
     ).toContain('balance is down');
     // The other three still rendered.
-    expect(cards(el).length).toBe(3);
+    expect(strip(el)?.cells.length).toBe(3);
     expect(
-      shadow(el).querySelector<WcBarChart>('wc-bar-chart')?.buckets.length,
+      shadow(el).querySelector<WcCashflowCard>('wc-cashflow-card')?.buckets.length,
     ).toBe(12);
   });
 
@@ -226,7 +188,7 @@ describe('dashboard screen', () => {
     client.calls.length = 0;
 
     shadow(el)
-      .querySelector('wc-balance-list')
+      .querySelector('wc-balances-card')
       ?.dispatchEvent(new CustomEvent('nc-retry', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 0));
 
