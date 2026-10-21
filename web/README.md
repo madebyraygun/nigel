@@ -294,10 +294,20 @@ into every shadow root.
 The toast is the one surface that stays dark in both modes; it reads
 `--nc-color-inverse-bg`, `-text`, `-border` and `-hover`.
 
-Nothing in `@nigel/ui` names a colour literal, not even as a `var()`
-fallback: `src/__tests__/no-inline-colours.test.ts` fails the build on one.
-Text and muted text are held to 4.5:1 on every plane in both modes by
-`handoff-tokens.test.ts`, alongside the pairings in `contrast.test.ts`.
+Only `@nigel/theme` names a colour. `packages/ui/src/__tests__/no-inline-colours.test.ts`
+fails the build on a hex value, a colour function or a named colour anywhere
+in `@nigel/ui` (the preview harness included) or in `@nigel/app`'s source and
+`index.html`, `var()` fallbacks included. `no-theme-fallbacks.test.ts` goes
+further for `@nigel/ui`: a token the theme defines takes no fallback at all,
+since one never renders and can only go stale. Fallbacks remain for a
+component's own knobs, such as `--nc-register-height`.
+
+`handoff-tokens.test.ts` holds text and muted text to 4.5:1 on every plane,
+and brand, income, expense, flag and info to 4.5:1 on the subtle fill, hover,
+highlight, field and sidebar, in both modes; on-brand to 4.5:1 on the
+success, danger and info fills; and checks the ring and backdrop alphas
+numerically (the ring is translucent brand, the backdrop dims every plane).
+`contrast.test.ts` carries the remaining pairings.
 
 ## The api seam
 
