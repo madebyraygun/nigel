@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::documents::guards::{self, ensure_allowed, Action};
 use crate::documents::model::{
@@ -327,8 +327,22 @@ fn ensure_open_online(document_id: i64, status: DocumentStatus, action: Action) 
     Ok(())
 }
 
+/// Whether an insert was refused by one of the `(version_id, recipient_id)`
+/// unique indexes: another writer recorded this recipient's response first.
+fn is_unique_violation(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+    )
+}
+
+/// Records one online response, once. The transaction is `IMMEDIATE`, so the
+/// write lock is held from the first read: a second writer waits rather than
+/// reading the same "not yet answered" and racing to the insert. A unique-index
+/// violation on the insert is the same answer as the check, `AlreadyRecorded`.
 pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Result<RecordOutcome> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
     let (document_id, role, name, email): (i64, String, String, String) = tx
         .query_row(
             "SELECT v.document_id, rc.role, rc.name, rc.email
@@ -386,20 +400,28 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
                 });
             }
             ensure_open_online(document_id, status, Action::Accept)?;
-            tx.execute(
+            let inserted = tx.execute(
                 "INSERT INTO document_signatures (version_id, recipient_id, role, name, email, method, signed_at, typed_name, ip, user_agent, checksum)
                  VALUES (?1, ?2, 'client', ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)",
                 params![r.version_id, r.recipient_id, name, email, at, typed_name, r.ip, r.user_agent, r.checksum],
-            )?;
+            );
+            if inserted.as_ref().is_err_and(is_unique_violation) {
+                return Ok(RecordOutcome::AlreadyRecorded);
+            }
+            inserted?;
         }
         ResponseKind::RequestChanges { note } => {
             ensure_open_online(document_id, status, Action::RequestChanges)?;
             let note = validate_note(note)?;
-            tx.execute(
+            let inserted = tx.execute(
                 "INSERT INTO document_change_requests (version_id, recipient_id, name, email, method, requested_at, note, ip, user_agent, checksum)
                  VALUES (?1, ?2, ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)",
                 params![r.version_id, r.recipient_id, name, email, at, note, r.ip, r.user_agent, r.checksum],
-            )?;
+            );
+            if inserted.as_ref().is_err_and(is_unique_violation) {
+                return Ok(RecordOutcome::AlreadyRecorded);
+            }
+            inserted?;
         }
     }
     touch(&tx, document_id, &at)?;
@@ -703,6 +725,41 @@ mod tests {
             RecordOutcome::AlreadyRecorded
         );
         assert!(signatures(&conn, v).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_response_written_between_the_check_and_the_insert_reads_as_already_recorded() {
+        let (dir, conn) = test_conn();
+        let (id, v, signer, _) = sent_document(&conn, dir.path());
+        let checksum = latest_version(&conn, id).unwrap().checksum;
+        // A writer that lands its row after the existence check has passed: the
+        // trigger inserts the same recipient's acceptance just ahead of ours.
+        conn.execute_batch(
+            "CREATE TEMP TRIGGER concurrent_writer BEFORE INSERT ON document_signatures
+             WHEN NEW.method = 'online' AND NEW.name <> 'first'
+             BEGIN
+                 INSERT INTO document_signatures
+                     (version_id, recipient_id, role, name, method, signed_at, checksum)
+                 VALUES (NEW.version_id, NEW.recipient_id, 'client', 'first', 'online',
+                         NEW.signed_at, NEW.checksum);
+             END;",
+        )
+        .unwrap();
+        let accept = OnlineResponse {
+            version_id: v,
+            recipient_id: signer,
+            kind: ResponseKind::Accept {
+                typed_name: "Pat Example",
+            },
+            received_at: "2026-10-05T17:04:11Z",
+            ip: None,
+            user_agent: None,
+            checksum: &checksum,
+        };
+        assert_eq!(
+            record_online_response(&conn, &accept).unwrap(),
+            RecordOutcome::AlreadyRecorded
+        );
     }
 
     #[test]
