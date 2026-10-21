@@ -111,14 +111,19 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
 - **Status line.** A second inset panel under the content (`wc-status-line`,
   34px, the sidebar's material, 12px radius, its bottom edge level with the
   sidebar's): a pastel `nigel` block, the open book (monogram and name;
-  `nc-palette-open` scoped to books), the data directory as selectable text,
-  `encrypted` / `not encrypted`, then `▲ n to review` (`nc-navigate` to Review;
-  absent at zero), `⌘K palette` (`Ctrl K` off Apple platforms; `nc-palette-open`
-  for all) and the version. `nigel-app` hands the shell what it shows from
-  `/api/status` (`dataDir`, `encrypted`, `version`, optional `distribution`) and
-  the Review count the sidebar already loads. `distribution: "store"` omits the
-  version. Hosted mode draws no status line, and below 48rem the component
-  hides itself.
+  `nc-palette-open` scoped to books; absent until the book has a name), the
+  data directory as selectable text (`dataDirDisplay`, home written as `~`,
+  with the full `dataDir` in the tooltip), `encrypted` / `not encrypted`, then
+  `▲ n to review` (`nc-navigate` to Review; absent at zero), `⌘K palette`
+  (`Ctrl K` off Apple platforms; `nc-palette-open` for all) and the version.
+  `nigel-app` hands the shell what it shows from `/api/status` (`dataDirDisplay`,
+  `dataDir`, `encrypted`, `version`) and the Review count the sidebar already
+  loads. The component omits the version when `distribution` is `"store"`, but
+  `/api/status` does not report `distribution` yet: TASK-150.4 adds it, and
+  until then the version always shows. As the line narrows the version goes
+  first, then the palette hint (container queries), and the book name and lock
+  label truncate with an ellipsis. Hosted mode draws no status line, and below
+  48rem the component hides itself.
 - **Window title.** `{Screen} · {Book}`, innermost level first on an open
   invoice (`#1254 · Invoices · Acme Consulting LLC`). `nigel-app` sets
   `document.title`; the Tauri window follows it (`docs/desktop.md`).

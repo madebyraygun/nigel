@@ -10,7 +10,8 @@ import {
 
 describe('the status line', () => {
   const status = {
-    dataDir: '~/Documents/Nigel/acme-consulting',
+    dataDir: '/home/you/Documents/Nigel/acme-consulting',
+    dataDirDisplay: '~/Documents/Nigel/acme-consulting',
     encrypted: true,
     version: '1.0',
   };
@@ -18,6 +19,7 @@ describe('the status line', () => {
   it('reads the path, lock state and version off the status', () => {
     expect(statusLineOf(status)).toEqual({
       path: '~/Documents/Nigel/acme-consulting',
+      fullPath: '/home/you/Documents/Nigel/acme-consulting',
       encrypted: true,
       version: '1.0',
       distribution: undefined,

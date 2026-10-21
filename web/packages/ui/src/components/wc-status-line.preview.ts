@@ -69,6 +69,33 @@ const preview: Preview = {
         </div>`,
     },
     {
+      name: 'narrow container',
+      render: () =>
+        html`<div style="width:520px;">
+          <wc-status-line
+            book-name="Acme Consulting LLC"
+            book-key="acme"
+            path="~/Documents/Nigel/acme-consulting"
+            full-path="/home/you/Documents/Nigel/acme-consulting"
+            encrypted
+            review-count="84"
+            version="1.0"
+          ></wc-status-line>
+        </div>`,
+    },
+    {
+      name: 'book not loaded',
+      render: () =>
+        wide(
+          html`<wc-status-line
+            path="~/Documents/Nigel/acme-consulting"
+            encrypted
+            review-count="84"
+            version="1.0"
+          ></wc-status-line>`,
+        ),
+    },
+    {
       name: 'store build',
       render: () =>
         wide(

@@ -34,6 +34,8 @@ export interface StatusResponse {
   profile: BooksProfile;
   version: string;
   dataDir: string;
+  /** `dataDir` with the home directory written as `~`, for showing to a person. */
+  dataDirDisplay: string;
   /**
    * How this build was distributed; `store` for an app-store build. Optional:
    * a server that does not report it is treated as a direct download.

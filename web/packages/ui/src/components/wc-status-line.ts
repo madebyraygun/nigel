@@ -7,7 +7,10 @@ import '../icons/icons.js';
 
 /** What the status line says about the open book beyond its name. */
 export interface StatusLineInfo {
+  /** The folder as shown, home written as `~`. */
   path: string;
+  /** The full folder, for the tooltip. */
+  fullPath?: string;
   encrypted: boolean;
   version: string;
   /** `store` omits the version. Absent on a server that does not report it. */
@@ -47,6 +50,7 @@ export class WcStatusLine extends LitElement {
         font-family: var(--wa-font-family-sans);
         font-size: var(--nc-font-size-caption);
         white-space: nowrap;
+        container-type: inline-size;
       }
 
       .segment {
@@ -61,6 +65,11 @@ export class WcStatusLine extends LitElement {
         color: inherit;
         font: inherit;
         cursor: default;
+      }
+
+      button.segment:focus-visible {
+        outline-offset: -2px;
+        border-radius: var(--wa-radius-sm);
       }
 
       .spacer {
@@ -128,6 +137,17 @@ export class WcStatusLine extends LitElement {
         cursor: text;
       }
 
+      /* The lock's label gives way after the book's name and before the path. */
+      .lock {
+        flex: 0 4 auto;
+        min-width: 0;
+      }
+
+      .lock .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       .lock wc-icon-lock,
       .lock wc-icon-lock-open {
         --nc-icon-size: 12px;
@@ -143,6 +163,20 @@ export class WcStatusLine extends LitElement {
 
       kbd {
         font-family: inherit;
+      }
+
+      /* The version goes first when the line runs out of room, then the palette
+         hint, so nothing else is clipped. */
+      @container (max-width: 760px) {
+        .version {
+          display: none;
+        }
+      }
+
+      @container (max-width: 620px) {
+        .hint {
+          display: none;
+        }
       }
 
       @media (max-width: 48rem) {
@@ -167,9 +201,13 @@ export class WcStatusLine extends LitElement {
   @property({ type: String, attribute: 'book-key' })
   bookKey = '';
 
-  /** The folder the book lives in. */
+  /** The folder the book lives in, as shown: the home directory written as `~`. */
   @property({ type: String })
   path = '';
+
+  /** The unabbreviated folder, for the path's tooltip. Falls back to `path`. */
+  @property({ type: String, attribute: 'full-path' })
+  fullPath = '';
 
   @property({ type: Boolean })
   encrypted = false;
@@ -205,30 +243,31 @@ export class WcStatusLine extends LitElement {
   render() {
     const review = this.reviewCount && this.reviewCount > 0 ? this.reviewCount : 0;
     const showVersion = this.version !== '' && this.distribution !== 'store';
+    const lock = this.encrypted
+      ? html`<wc-icon-lock></wc-icon-lock><span class="label">encrypted</span>`
+      : html`<wc-icon-lock-open></wc-icon-lock-open><span class="label">not encrypted</span>`;
     return html`
       <span class="brand" aria-hidden="true">nigel</span>
-      <button
-        type="button"
-        class="segment book"
-        aria-haspopup="dialog"
-        title="Switch books"
-        @click=${() => dispatchPaletteOpen(this, 'books')}
-      >
-        <wc-monogram name=${this.bookName} seed=${this.bookKey}></wc-monogram>
-        <span class="book-name">${this.bookName}</span>
-      </button>
       ${
-        this.path
-          ? html`<span class="segment path" title=${this.path}>${this.path}</span>`
+        this.bookName
+          ? html`<button
+              type="button"
+              class="segment book"
+              aria-haspopup="dialog"
+              title="Switch books"
+              @click=${() => dispatchPaletteOpen(this, 'books')}
+            >
+              <wc-monogram name=${this.bookName} seed=${this.bookKey}></wc-monogram>
+              <span class="book-name">${this.bookName}</span>
+            </button>`
           : nothing
       }
-      <span class="segment lock">
-        ${
-          this.encrypted
-            ? html`<wc-icon-lock></wc-icon-lock>encrypted`
-            : html`<wc-icon-lock-open></wc-icon-lock-open>not encrypted`
-        }
-      </span>
+      ${
+        this.path
+          ? html`<span class="segment path" title=${this.fullPath || this.path}>${this.path}</span>`
+          : nothing
+      }
+      <span class="segment lock">${lock}</span>
       <span class="spacer"></span>
       ${
         review
@@ -239,7 +278,7 @@ export class WcStatusLine extends LitElement {
       }
       <button
         type="button"
-        class="segment"
+        class="segment hint"
         aria-haspopup="dialog"
         aria-keyshortcuts=${this.keyShortcuts}
         @click=${() => dispatchPaletteOpen(this, 'all')}
@@ -248,7 +287,7 @@ export class WcStatusLine extends LitElement {
       </button>
       ${
         showVersion
-          ? html`<span class="segment">v${this.version.replace(/^v/, '')}</span>`
+          ? html`<span class="segment version">v${this.version.replace(/^v/, '')}</span>`
           : nothing
       }
     `;

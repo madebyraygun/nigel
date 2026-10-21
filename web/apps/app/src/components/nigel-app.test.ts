@@ -194,6 +194,7 @@ describe('nigel-app', () => {
       const el = await mount();
       expect(shell(el)?.statusLine).toEqual({
         path: '/tmp/nigel',
+        fullPath: '/tmp/nigel',
         encrypted: false,
         version: '0.0.0-test',
         distribution: undefined,

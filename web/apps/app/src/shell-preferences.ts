@@ -14,11 +14,15 @@ import type { StatusResponse } from './api/types.js';
  * Absent while there is no status to show.
  */
 export function statusLineOf(
-  status: Pick<StatusResponse, 'dataDir' | 'encrypted' | 'version' | 'distribution'> | null,
+  status: Pick<
+    StatusResponse,
+    'dataDir' | 'dataDirDisplay' | 'encrypted' | 'version' | 'distribution'
+  > | null,
 ): StatusLineInfo | undefined {
   if (!status) return undefined;
   return {
-    path: status.dataDir,
+    path: status.dataDirDisplay,
+    fullPath: status.dataDir,
     encrypted: status.encrypted,
     version: status.version,
     distribution: status.distribution,

@@ -473,6 +473,7 @@ export class WcAppShell extends LitElement {
               book-name=${this.bookName}
               book-key=${this.bookKey}
               path=${this.statusLine.path}
+              full-path=${this.statusLine.fullPath ?? ''}
               ?encrypted=${this.statusLine.encrypted}
               version=${this.statusLine.version}
               distribution=${this.statusLine.distribution ?? ''}

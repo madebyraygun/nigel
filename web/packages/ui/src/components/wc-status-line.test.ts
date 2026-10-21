@@ -120,6 +120,44 @@ describe('wc-status-line', () => {
     expect(text(el)).toContain('v1.0');
   });
 
+  it('keeps the full folder in the path tooltip while showing the abbreviated one', async () => {
+    const el = await mount({
+      path: '~/Documents/Nigel/acme-consulting',
+      fullPath: '/home/you/Documents/Nigel/acme-consulting',
+    });
+    const path = el.shadowRoot?.querySelector('.path');
+    expect(path?.textContent).toBe('~/Documents/Nigel/acme-consulting');
+    expect(path?.getAttribute('title')).toBe('/home/you/Documents/Nigel/acme-consulting');
+  });
+
+  it('draws no book segment before the book has a name', async () => {
+    const el = await mount({ bookName: '' });
+    expect(el.shadowRoot?.querySelector('.book')).toBeNull();
+    expect(el.shadowRoot?.querySelector('.path')).not.toBeNull();
+  });
+
+  it('insets the focus ring so the panel does not clip it', () => {
+    expect(styleText(WcStatusLine)).toMatch(
+      /button\.segment:focus-visible\s*{[^}]*outline-offset:\s*-2px/,
+    );
+  });
+
+  it('drops the version, then the palette hint, as the line narrows', () => {
+    const css = styleText(WcStatusLine);
+    const version = css.indexOf('@container (max-width: 760px)');
+    const hint = css.indexOf('@container (max-width: 620px)');
+    expect(css).toMatch(/@container \(max-width: 760px\)\s*{\s*\.version\s*{\s*display:\s*none/);
+    expect(css).toMatch(/@container \(max-width: 620px\)\s*{\s*\.hint\s*{\s*display:\s*none/);
+    expect(version).toBeGreaterThan(-1);
+    expect(hint).toBeGreaterThan(version);
+  });
+
+  it('lets the lock label and the book name shrink with an ellipsis', async () => {
+    const css = styleText(WcStatusLine);
+    expect(css).toMatch(/\.lock \.label\s*{[^}]*text-overflow:\s*ellipsis/);
+    expect(css).toMatch(/\.book-name\s*{[^}]*text-overflow:\s*ellipsis/);
+  });
+
   it('stands down below the mobile breakpoint', () => {
     expect(styleText(WcStatusLine)).toMatch(
       /@media \(max-width: 48rem\)\s*{\s*:host\s*{\s*display:\s*none/,
