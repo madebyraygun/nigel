@@ -40,10 +40,30 @@ export class WcChoiceCard extends LitElement {
       cursor: pointer;
     }
 
-    button.card:is(:hover, :focus-visible) {
+    button.card:hover,
+    :host([preview-state='hover']) button.card {
       border-color: var(--wa-color-brand);
       box-shadow: 0 0 0 3px var(--nc-color-ring);
-      outline: none;
+    }
+
+    button.card:focus-visible,
+    :host([preview-state='focus']) button.card {
+      outline: 2px solid var(--wa-color-focus);
+      outline-offset: 2px;
+    }
+
+    /* Forced colours drop the ring and repaint borders and outlines in system
+       colours, so the hover edge and the focus outline are stated in them. */
+    @media (forced-colors: active) {
+      button.card:hover,
+      :host([preview-state='hover']) button.card {
+        border-color: Highlight;
+      }
+
+      button.card:focus-visible,
+      :host([preview-state='focus']) button.card {
+        outline-color: Highlight;
+      }
     }
 
     .title {
@@ -68,6 +88,10 @@ export class WcChoiceCard extends LitElement {
 
   @property({ type: String })
   description = '';
+
+  /** Pins the hover or focus treatment, for the preview harness. */
+  @property({ type: String, reflect: true, attribute: 'preview-state' })
+  previewState: '' | 'hover' | 'focus' = '';
 
   /** Draws the card as a single button. */
   @property({ type: Boolean, reflect: true })

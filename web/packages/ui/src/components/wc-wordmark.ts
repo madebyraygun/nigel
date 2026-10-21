@@ -115,6 +115,18 @@ export class WcWordmark extends LitElement {
       }
     }
 
+    :host([reduced-motion]) .char {
+      background-image: var(--nc-grad-brand-text);
+      background-size: 100% 100%;
+      animation: none;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      :host([animated]) .char {
+        animation: none;
+      }
+    }
+
     /* One diagonal ramp across the whole mark instead of one per character.
        The gradient is painted on the block and clipped to the glyphs, so the
        characters carry none of their own. */
@@ -127,20 +139,8 @@ export class WcWordmark extends LitElement {
     }
 
     :host([diagonal]) .char {
-      background: none;
+      background-image: none;
       animation: none;
-    }
-
-    :host([reduced-motion]) .char {
-      background-image: var(--nc-grad-brand-text);
-      background-size: 100% 100%;
-      animation: none;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      :host([animated]) .char {
-        animation: none;
-      }
     }
   `;
 

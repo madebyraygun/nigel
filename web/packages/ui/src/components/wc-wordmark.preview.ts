@@ -32,6 +32,10 @@ const preview: Preview = {
       render: () => html`<wc-wordmark diagonal></wc-wordmark>`,
     },
     {
+      name: 'diagonal reduced motion',
+      render: () => html`<wc-wordmark diagonal animated reduced-motion></wc-wordmark>`,
+    },
+    {
       name: 'labelled',
       render: () => html`<wc-wordmark label="Nigel — bookkeeping"></wc-wordmark>`,
     },

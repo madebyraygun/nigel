@@ -21,6 +21,28 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'hover',
+      render: () => html`
+        <wc-choice-card
+          interactive
+          preview-state="hover"
+          heading="A business"
+          description="Schedule C or 1120-S chart of accounts, with tax lines already mapped."
+        ></wc-choice-card>
+      `,
+    },
+    {
+      name: 'focus',
+      render: () => html`
+        <wc-choice-card
+          interactive
+          preview-state="focus"
+          heading="A business"
+          description="Schedule C or 1120-S chart of accounts, with tax lines already mapped."
+        ></wc-choice-card>
+      `,
+    },
+    {
       name: 'short description',
       render: () => html`
         <wc-choice-card

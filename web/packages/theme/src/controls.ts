@@ -67,7 +67,7 @@ export const controlsCss = css`
     filter: none;
   }
 
-  wa-button[variant='brand'][solid]:hover::part(base) {
+  wa-button[variant='brand'][solid]:not([disabled], [loading]):hover::part(base) {
     background: var(--wa-color-brand-hover);
   }
 

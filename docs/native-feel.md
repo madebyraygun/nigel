@@ -187,3 +187,13 @@ draws them the same way:
 - Everything else uses `:focus-visible`: a 2px `--wa-color-focus` outline
   offset 2px, on keyboard focus only, so a click does not leave a ring
   behind.
+
+## Buttons without the gradient
+
+A brand `wa-button` wears the gradient ramp and drifts it on hover. A surface
+that wants the plain brand colour instead — Setup's primary actions — adds the
+`solid` attribute: the fill is `--wa-color-brand`, the label
+`--wa-color-on-brand`, nothing drifts, and the hover shade applies only to a
+button that is not disabled or loading. `pill` is the companion attribute that
+rounds the control and sets it to 38px. Both live in `controlsCss`, so no screen
+styles a primitive itself.

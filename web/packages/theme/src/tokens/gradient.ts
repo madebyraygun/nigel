@@ -111,6 +111,11 @@ export function gradientColor(t: number): string {
 const ramp = unsafeCSS(NIGEL_PALETTE.join(', '));
 const inkRamp = unsafeCSS(NIGEL_PALETTE_INK.join(', '));
 
+/** The setup wordmark's light ramp as one diagonal gradient. */
+export const wordmarkRampLight = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_LIGHT.join(', '))})`;
+/** The setup wordmark's dark ramp as one diagonal gradient. */
+export const wordmarkRampDark = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_DARK.join(', '))})`;
+
 /**
  * The plain ramp, drawn once across whatever it fills.
  *
@@ -119,9 +124,6 @@ const inkRamp = unsafeCSS(NIGEL_PALETTE_INK.join(', '));
  * and tiled in anything that does not also set `--nc-grad-brand-size`, and
  * gradient text sets neither.
  */
-export const wordmarkRampLight = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_LIGHT.join(', '))})`;
-export const wordmarkRampDark = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_DARK.join(', '))})`;
-
 export const brandRamp = css`linear-gradient(90deg, ${ramp})`;
 
 /**
