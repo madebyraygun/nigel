@@ -82,18 +82,6 @@ export class WcStatusLine extends LitElement {
         border-left: 1px solid var(--wa-color-border-soft);
       }
 
-      .brand {
-        display: inline-flex;
-        align-items: center;
-        flex: none;
-        margin: 4px 2px 4px 4px;
-        padding: 0 10px;
-        border-radius: var(--wa-radius-sm);
-        background: var(--nc-grad-pastel);
-        color: var(--nc-color-on-gradient);
-        font-weight: var(--wa-font-weight-semibold);
-      }
-
       button.segment {
         transition: background var(--nc-transition-fast);
       }
@@ -260,7 +248,6 @@ export class WcStatusLine extends LitElement {
       ? html`<wc-icon-lock></wc-icon-lock><span class="label">encrypted</span>`
       : html`<wc-icon-lock-open></wc-icon-lock-open><span class="label">not encrypted</span>`;
     return html`
-      <span class="brand" aria-hidden="true">nigel</span>
       ${
         this.bookName
           ? html`<button

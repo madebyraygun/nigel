@@ -31,6 +31,13 @@ describe('wc-status-line', () => {
     document.body.innerHTML = '';
   });
 
+  it('starts with the book segment, with no brand block before it', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.brand')).toBeNull();
+    const first = el.shadowRoot?.querySelector('.segment, .brand');
+    expect(first?.classList.contains('book')).toBe(true);
+  });
+
   it('names the book with its monogram and the folder it lives in', async () => {
     const el = await mount();
     const book = el.shadowRoot?.querySelector('.book');

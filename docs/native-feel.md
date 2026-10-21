@@ -110,7 +110,7 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   screen and reloads the status and the Review count.
 - **Status line.** A second inset panel under the content (`wc-status-line`,
   34px, the sidebar's material, 12px radius, its bottom edge level with the
-  sidebar's): a pastel `nigel` block, the open book (monogram and name;
+  sidebar's): the open book first (monogram and name;
   `nc-palette-open` scoped to books; absent until the book has a name), the
   data directory as selectable text (`dataDirDisplay`, home written as `~`,
   with the full `dataDir` in the tooltip), `encrypted` / `not encrypted`, then
