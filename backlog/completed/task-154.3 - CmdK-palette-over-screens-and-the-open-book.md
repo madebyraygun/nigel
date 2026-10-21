@@ -1,9 +1,10 @@
 ---
 id: TASK-154.3
 title: Cmd+K palette over screens and the open book
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-21 19:05'
 labels:
   - web
   - design
@@ -23,8 +24,14 @@ Spec section 2, without book switching. Cmd+K / Ctrl+K toggles the palette anywh
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Cmd+K and Ctrl+K toggle the palette from every screen, and Esc and the backdrop close it
-- [ ] #2 Typing filters books and screens; arrow keys and Enter navigate; an unmatched query shows 'Nothing matches "{q}".'
-- [ ] #3 Keyboard and screen-reader use works end to end: focus is trapped while open and returns to the opener on close
-- [ ] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 Cmd+K and Ctrl+K toggle the palette from every screen, and Esc and the backdrop close it
+- [x] #2 Typing filters books and screens; arrow keys and Enter navigate; an unmatched query shows 'Nothing matches "{q}".'
+- [x] #3 Keyboard and screen-reader use works end to end: focus is trapped while open and returns to the opener on close
+- [x] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #62.
+<!-- SECTION:FINAL_SUMMARY:END -->
