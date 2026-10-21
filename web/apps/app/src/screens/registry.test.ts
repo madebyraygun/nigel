@@ -5,6 +5,8 @@ import {
   isScreenId,
   navItems,
   screenDef,
+  shellHeading,
+  type ScreenDef,
   type ScreenId,
 } from './registry.js';
 import { ICON_TAGS } from '@nigel/ui';
@@ -72,6 +74,25 @@ describe('screen registry', () => {
   it('defaults to the dashboard', () => {
     expect(DEFAULT_SCREEN).toBe('dashboard');
     expect(SCREENS.has(DEFAULT_SCREEN)).toBe(true);
+  });
+
+  describe('shellHeading', () => {
+    const base = screenDef('reports');
+
+    it('has the shell draw the visible title by default', () => {
+      expect(shellHeading(base)).toEqual({ title: 'Reports', hidden: false });
+    });
+
+    it('keeps a hidden heading for assistive technology', () => {
+      const def: ScreenDef = { ...base, heading: 'hidden' };
+      expect(shellHeading(def)).toEqual({ title: 'Reports', hidden: true });
+      expect(shellHeading(screenDef('register'))).toEqual({ title: 'Register', hidden: true });
+    });
+
+    it('draws no shell heading for a screen that renders its own', () => {
+      const def: ScreenDef = { ...base, heading: 'screen' };
+      expect(shellHeading(def)).toEqual({ title: '', hidden: false });
+    });
   });
 
   describe('isScreenId', () => {

@@ -3,7 +3,6 @@ import { ApiError, type ApiClient } from '../api/index.js';
 import type {
   BalanceReport,
   CashflowReport,
-  FlaggedTransaction,
   ImportListItem,
   PnlReport,
 } from '../api/types.js';
@@ -26,21 +25,16 @@ export interface DashboardStore {
   pnl: Fetched<PnlReport>;
   balance: Fetched<BalanceReport>;
   cashflow: Fetched<CashflowReport>;
-  flagged: Fetched<FlaggedTransaction[]>;
   imports: Fetched<ImportListItem[]>;
 
-  flaggedCount: Signal.Computed<number>;
   /** True once everything has answered and there is nothing to show. */
   isEmpty: Signal.Computed<boolean>;
-  /** True while any of them is in flight. */
-  busy: Signal.Computed<boolean>;
 
   /** Fetch everything. Safe to call repeatedly; this is also what refresh does. */
   load(): Promise<void>;
   reloadPnl(): Promise<void>;
   reloadBalance(): Promise<void>;
   reloadCashflow(): Promise<void>;
-  reloadFlagged(): Promise<void>;
   reloadImports(): Promise<void>;
 }
 
@@ -106,7 +100,6 @@ export function initializeDashboardStore(client: ApiClient): DashboardStore {
   const pnl = slot<PnlReport>();
   const balance = slot<BalanceReport>();
   const cashflow = slot<CashflowReport>();
-  const flagged = slot<FlaggedTransaction[]>();
   const imports = slot<ImportListItem[]>();
 
   const reloadPnl = () =>
@@ -124,9 +117,6 @@ export function initializeDashboardStore(client: ApiClient): DashboardStore {
     // which the TUI takes client-side and which crosses year boundaries.
     fill(cashflow, async () => (await client.getCashflow()).report);
 
-  const reloadFlagged = () =>
-    fill(flagged, async () => (await client.getFlagged()).report);
-
   const reloadImports = () => fill(imports, () => client.getImports());
 
   const load = async (): Promise<void> => {
@@ -136,7 +126,6 @@ export function initializeDashboardStore(client: ApiClient): DashboardStore {
       reloadPnl(),
       reloadBalance(),
       reloadCashflow(),
-      reloadFlagged(),
       reloadImports(),
     ]);
   };
@@ -151,10 +140,8 @@ export function initializeDashboardStore(client: ApiClient): DashboardStore {
     pnl: expose(pnl),
     balance: expose(balance),
     cashflow: expose(cashflow),
-    flagged: expose(flagged),
     imports: expose(imports),
 
-    flaggedCount: computed(() => flagged.data.get()?.length ?? 0),
 
     // Only empty once something has actually answered — an empty database and
     // a database nobody has asked about yet look identical otherwise, and
@@ -169,20 +156,10 @@ export function initializeDashboardStore(client: ApiClient): DashboardStore {
       );
     }),
 
-    busy: computed(
-      () =>
-        pnl.loading.get() ||
-        balance.loading.get() ||
-        cashflow.loading.get() ||
-        flagged.loading.get() ||
-        imports.loading.get(),
-    ),
-
     load,
     reloadPnl,
     reloadBalance,
     reloadCashflow,
-    reloadFlagged,
     reloadImports,
   };
 

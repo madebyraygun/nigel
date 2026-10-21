@@ -61,6 +61,12 @@ describe('wc-app-shell', () => {
     expect(names).toContain(null);
   });
 
+  it('pushes a page action to the right of the title row', () => {
+    expect(text).toMatch(
+      /\.page-head ::slotted\(\[slot='page-actions'\]\)\s*{[^}]*flex:\s*none;[^}]*margin-left:\s*auto/,
+    );
+  });
+
   it('wraps content in a main landmark', async () => {
     const el = await mount();
     expect(el.shadowRoot?.querySelector('main')).toBeTruthy();
