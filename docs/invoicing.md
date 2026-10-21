@@ -81,6 +81,14 @@ worth calling out on upgrade: it resolves in a browser that already has a
 scheme, and a link in an email has no page to inherit one from. Put `https:` in
 front of it.
 
+Leading and trailing whitespace is trimmed before the address is used, so a
+stray space or newline never reaches a published link; a value that is nothing
+but whitespace counts as unset. A control character anywhere in the value —
+a NUL, an escape, a C1 control, a line or paragraph separator — is refused by
+name (`public_base_url may not contain control characters`), and that refusal
+never quotes the value, in a terminal or over HTTP. The same trim and the same
+refusal apply to `documents_base_url` and `document_response_url`.
+
 The refusal quotes the offending value in a terminal, where it is being read by
 whoever just typed the command; over HTTP it names the key and the defect only,
 because no API response carries a configured setting's value. A `publicUrl` on
@@ -92,7 +100,8 @@ as `invoicing.publicBaseUrlWarning` on `GET /api/status`.
 
 Environment variables keep credentials out of the settings file. If you do store
 them in `settings.json`, note that Nigel writes that file with owner-only
-permissions on Unix. Use Stripe test keys (`sk_test_…`) while trying things out.
+permissions on Unix, and always whole: a new file is written beside it and
+renamed over it, so the file is never left truncated or half written. Use Stripe test keys (`sk_test_…`) while trying things out.
 
 ```json
 {
@@ -1687,8 +1696,11 @@ and add three:
 - **`documents_base_url`** is the address the bucket's `d/` prefix is served
   at. A send that runs on a base not ending in `/d` prints a warning (and the
   API returns it in `configWarnings`) but goes ahead, since a rewrite can map the
-  prefix onto another path.
-- **`document_response_url`** is optional. Without it a published page can be
+  prefix onto another path. It is checked like `public_base_url`: trimmed,
+  refused by name if it carries a control character or is not an absolute
+  http(s) address.
+- **`document_response_url`** is optional, trimmed, and refused by name at send
+  if it carries a control character. Without it a published page can be
   read and its PDF downloaded, but has no form. Send says so in its
   confirmation.
 

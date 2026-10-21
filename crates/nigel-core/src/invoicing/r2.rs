@@ -186,9 +186,37 @@ pub const PUBLIC_BASE_URL_DEFECT: &str = "public_base_url is not an absolute htt
      enough: put https: in front of it, because a link in an email has no page to inherit a \
      scheme from.";
 
-/// A `public_base_url` that cannot produce a working link at all. An absolute
-/// http(s) address with a host is the whole requirement — the path is the
-/// operator's business, and the `/i` question is a warning, not this.
+/// What is wrong with an explicit `documents_base_url`, in the same
+/// key-and-defect wording as [`PUBLIC_BASE_URL_DEFECT`].
+pub const DOCUMENTS_BASE_URL_DEFECT: &str = "documents_base_url is not an absolute http(s) \
+     address. Set it to the address your bucket serves documents at, including the scheme — for \
+     example https://billing.example.com/d.";
+
+/// The refusal a URL-valued setting carrying a control character earns. It
+/// names the key and never quotes the value: a NUL or an escape sequence
+/// printed back is either invisible or rewrites the terminal it lands on.
+fn control_character_refusal(what: &str) -> String {
+    format!("{what} may not contain control characters")
+}
+
+/// Refuse a value composed into a URL if it carries a control character, by
+/// the predicate `validate_header_value` applies to header values. Settings are
+/// trimmed when they are read, so anything this finds sits inside the value or
+/// is not whitespace at all — a trailing run of NUL bytes, for one.
+pub fn validate_url_setting(value: &str, what: &str) -> Result<()> {
+    if value
+        .chars()
+        .any(crate::invoicing::mailgun::is_forbidden_header_char)
+    {
+        return Err(NigelError::Invalid(control_character_refusal(what)));
+    }
+    Ok(())
+}
+
+/// A `public_base_url` that cannot produce a working link at all: one carrying
+/// a control character, or one that is not an absolute http(s) address with a
+/// host. That is the whole requirement — the path is the operator's business,
+/// and the `/i` question is a warning, not this.
 ///
 /// Hand-rolled rather than parsed: `url` is not a dependency, and pulling one in
 /// to answer "does this start with https:// and have a host" would be the
@@ -196,11 +224,56 @@ pub const PUBLIC_BASE_URL_DEFECT: &str = "public_base_url is not an absolute htt
 /// `https://user@/i` and `https://:8787/i` have a non-empty first segment and no
 /// host at all.
 pub fn validate_public_base_url(value: &str) -> Result<()> {
+    validate_base_url(value, "public_base_url", PUBLIC_BASE_URL_DEFECT)
+}
+
+/// [`validate_public_base_url`] for an explicit `documents_base_url`.
+pub fn validate_documents_base_url(value: &str) -> Result<()> {
+    validate_base_url(value, "documents_base_url", DOCUMENTS_BASE_URL_DEFECT)
+}
+
+/// The documents base checked against the setting it came from: an explicit
+/// `documents_base_url`, or one derived from `public_base_url`.
+pub fn validate_documents_base(base: &str, explicit: bool) -> Result<()> {
+    if explicit {
+        validate_documents_base_url(base)
+    } else {
+        validate_public_base_url(base)
+    }
+}
+
+/// Why `public_base_url` cannot produce a working link, in the wording an API
+/// response carries: the key and the defect, never the value.
+pub fn public_base_url_defect(value: &str) -> Option<String> {
+    base_url_defect(value, "public_base_url", PUBLIC_BASE_URL_DEFECT)
+}
+
+/// [`public_base_url_defect`] for the documents base, naming the setting it
+/// came from.
+pub fn documents_base_defect(base: &str, explicit: bool) -> Option<String> {
+    if explicit {
+        base_url_defect(base, "documents_base_url", DOCUMENTS_BASE_URL_DEFECT)
+    } else {
+        public_base_url_defect(base)
+    }
+}
+
+fn base_url_defect(value: &str, what: &str, defect: &str) -> Option<String> {
+    if validate_url_setting(value, what).is_err() {
+        return Some(control_character_refusal(what));
+    }
+    (!has_absolute_http_host(value)).then(|| defect.to_string())
+}
+
+/// The terminal's refusal. A value that is merely the wrong shape is quoted for
+/// the operator who typed the command; one carrying a control character is not.
+fn validate_base_url(value: &str, what: &str, defect: &str) -> Result<()> {
+    validate_url_setting(value, what)?;
     if has_absolute_http_host(value) {
         return Ok(());
     }
     Err(NigelError::Invalid(format!(
-        "public_base_url \"{value}\" is wrong. {PUBLIC_BASE_URL_DEFECT}"
+        "{what} \"{value}\" is wrong. {defect}"
     )))
 }
 
@@ -674,6 +747,56 @@ mod tests {
 
     /// The wire-safe half of the sentence carries no value at all: it is what an
     /// API response says, and no response carries a configured setting.
+    #[test]
+    fn a_base_url_carrying_control_characters_is_refused_by_name_without_quoting_it() {
+        for bad in [
+            "https://billing.example.com/i\0\0\0\0",
+            "billing.example.com\0\0\0\0\0\0\0\0\0\0",
+            "https://billing\0.example.com/i",
+            "https://billing.example.com/i\u{7f}",
+            "https://billing.example.com/i\u{85}",
+            "https://billing.example.com/i\u{1b}[2J",
+        ] {
+            let err = validate_public_base_url(bad).unwrap_err().to_string();
+            assert_eq!(err, "public_base_url may not contain control characters");
+            assert_eq!(
+                public_base_url_defect(bad).as_deref(),
+                Some("public_base_url may not contain control characters")
+            );
+        }
+    }
+
+    #[test]
+    fn a_documents_base_is_refused_naming_the_setting_it_came_from() {
+        let explicit = validate_documents_base("https://docs.example.com/d\0", true)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            explicit,
+            "documents_base_url may not contain control characters"
+        );
+        let derived = validate_documents_base("https://docs.example.com/d\0", false)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            derived,
+            "public_base_url may not contain control characters"
+        );
+
+        assert_eq!(
+            documents_base_defect("docs.example.com/d", true).as_deref(),
+            Some(DOCUMENTS_BASE_URL_DEFECT)
+        );
+        assert_eq!(
+            documents_base_defect("docs.example.com/d", false).as_deref(),
+            Some(PUBLIC_BASE_URL_DEFECT)
+        );
+        assert_eq!(
+            documents_base_defect("https://docs.example.com/d", true),
+            None
+        );
+    }
+
     #[test]
     fn the_defect_sentence_quotes_nothing() {
         assert!(!PUBLIC_BASE_URL_DEFECT.contains('"'));

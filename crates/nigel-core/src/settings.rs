@@ -216,10 +216,47 @@ pub fn save_settings(settings: &Settings) -> Result<()> {
     restrict_dir_permissions(&dir)?;
     let json =
         serde_json::to_string_pretty(settings).map_err(|e| NigelError::Settings(e.to_string()))?;
-    let path = settings_path();
-    std::fs::write(&path, format!("{json}\n"))?;
-    restrict_file_permissions(&path)?;
-    Ok(())
+    write_settings_file(&settings_path(), &format!("{json}\n"))
+}
+
+/// Replace settings.json whole: the contents go to a new owner-only file
+/// beside it, are flushed to disk, and are renamed over the old one. A reader
+/// sees the previous file or the new one, never a partly written or truncated
+/// one, and a crash mid-write leaves the previous file intact.
+fn write_settings_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "settings.json".to_string());
+    let tmp = path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let written = (|| -> Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 pub fn settings_file_exists() -> bool {
@@ -239,7 +276,7 @@ pub fn migrate_company_name() -> Option<String> {
     }
     // Rewrite settings without company_name
     if let Ok(json) = serde_json::to_string_pretty(&raw) {
-        let _ = std::fs::write(&path, format!("{json}\n"));
+        let _ = write_settings_file(&path, &format!("{json}\n"));
     }
     Some(name)
 }
@@ -296,8 +333,18 @@ fn invoicing_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
         r2_access_key: env_or("NIGEL_R2_ACCESS_KEY", &s.r2_access_key),
         r2_secret_key: env_or("NIGEL_R2_SECRET_KEY", &s.r2_secret_key),
         r2_bucket: env_or("NIGEL_R2_BUCKET", &s.r2_bucket),
-        public_base_url: env_or("NIGEL_PUBLIC_BASE_URL", &s.public_base_url),
+        public_base_url: url_setting(env_or("NIGEL_PUBLIC_BASE_URL", &s.public_base_url)),
     }
+}
+
+/// A URL-valued setting as it is composed into links: leading and trailing
+/// whitespace trimmed, and a value that was nothing but whitespace unset.
+/// Control characters are not whitespace and survive this, which is what lets
+/// `r2::validate_url_setting` refuse them by name.
+fn url_setting(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn invoicing_config() -> InvoicingConfig {
@@ -323,8 +370,11 @@ fn documents_config_with(s: &Settings, env: impl Fn(&str) -> Option<String>) -> 
     DocumentsConfig {
         invoicing: invoicing_config_with(s, &env),
         r2_private_bucket: env_or("NIGEL_R2_PRIVATE_BUCKET", &s.r2_private_bucket),
-        documents_base_url: env_or("NIGEL_DOCUMENTS_BASE_URL", &s.documents_base_url),
-        document_response_url: env_or("NIGEL_DOCUMENT_RESPONSE_URL", &s.document_response_url),
+        documents_base_url: url_setting(env_or("NIGEL_DOCUMENTS_BASE_URL", &s.documents_base_url)),
+        document_response_url: url_setting(env_or(
+            "NIGEL_DOCUMENT_RESPONSE_URL",
+            &s.document_response_url,
+        )),
     }
 }
 
@@ -732,6 +782,124 @@ mod tests {
             assert!(invoicing_env_is_suppressed());
         }
         assert!(!invoicing_env_is_suppressed());
+    }
+
+    #[test]
+    fn url_settings_are_trimmed_and_whitespace_alone_is_unset() {
+        let file_settings = Settings {
+            public_base_url: Some("  https://billing.example.com/i \t\n".into()),
+            documents_base_url: Some("\thttps://docs.example.com/d  ".into()),
+            document_response_url: Some("   ".into()),
+            ..Settings::default()
+        };
+        let cfg = documents_config_with(&file_settings, |_| None);
+        assert_eq!(
+            cfg.invoicing.public_base_url.as_deref(),
+            Some("https://billing.example.com/i")
+        );
+        assert_eq!(
+            cfg.documents_base_url.as_deref(),
+            Some("https://docs.example.com/d")
+        );
+        assert_eq!(cfg.document_response_url, None);
+
+        let from_env = invoicing_config_with(&Settings::default(), |name| {
+            (name == "NIGEL_PUBLIC_BASE_URL").then(|| " https://env.example.com/i ".into())
+        });
+        assert_eq!(
+            from_env.public_base_url.as_deref(),
+            Some("https://env.example.com/i")
+        );
+    }
+
+    /// Trimming stops at whitespace: a trailing run of NULs reaches the
+    /// validator intact, which refuses it by name.
+    #[test]
+    fn trailing_nuls_survive_the_trim_for_the_validator_to_refuse() {
+        let file_settings = Settings {
+            public_base_url: Some("billing.example.com\0\0\0\0\0\0\0\0\0\0".into()),
+            ..Settings::default()
+        };
+        let cfg = invoicing_config_with(&file_settings, |_| None);
+        let base = cfg.public_base_url.expect("still set");
+        assert!(base.ends_with('\0'));
+        let err = crate::invoicing::r2::validate_public_base_url(&format!("https://{base}"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("public_base_url"), "got: {err}");
+    }
+
+    /// The file on disk after a save is exactly what the settings serialize to:
+    /// a shorter value written over a longer one leaves no trailing bytes, no
+    /// temporary file is left beside it, and a backup the operator keeps next
+    /// to it is never touched.
+    #[test]
+    fn a_save_writes_settings_json_byte_for_byte_and_leaves_its_backup_alone() {
+        let _config = TempConfigDir::new();
+        let dir = config_dir();
+        let path = settings_path();
+
+        let long = Settings {
+            data_dir: "/books/acme".into(),
+            public_base_url: Some("https://billing.example.com/i".into()),
+            ..Settings::default()
+        };
+        save_settings(&long).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let backup = dir.join("settings.json.bak");
+        std::fs::write(&backup, &before).unwrap();
+
+        let short = Settings {
+            public_base_url: Some("https://a.test/i".into()),
+            ..long.clone()
+        };
+        save_settings(&short).unwrap();
+
+        let after = std::fs::read(&path).unwrap();
+        let expected = format!("{}\n", serde_json::to_string_pretty(&short).unwrap());
+        assert_eq!(after, expected.as_bytes());
+        assert!(after.len() < before.len());
+        assert!(!after.contains(&0), "no NUL byte in the file");
+        assert_eq!(
+            load_settings().public_base_url.as_deref(),
+            Some("https://a.test/i")
+        );
+
+        assert_eq!(std::fs::read(&backup).unwrap(), before);
+
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["settings.json", "settings.json.bak"]);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    /// Nigel never pads a value, but it does not launder one either: a value
+    /// already carrying NULs is written back exactly as it was read, so the
+    /// validator — not the writer — is where it is caught.
+    #[test]
+    fn a_value_round_trips_through_load_and_save_unchanged() {
+        let _config = TempConfigDir::new();
+        let stored = Settings {
+            public_base_url: Some("billing.example.com\0\0\0".into()),
+            documents_base_url: Some("https://docs.example.com/d".into()),
+            ..Settings::default()
+        };
+        save_settings(&stored).unwrap();
+        let first = std::fs::read(settings_path()).unwrap();
+
+        save_settings(&load_settings()).unwrap();
+        assert_eq!(std::fs::read(settings_path()).unwrap(), first);
+        assert_eq!(load_settings().public_base_url, stored.public_base_url);
     }
 
     #[test]
