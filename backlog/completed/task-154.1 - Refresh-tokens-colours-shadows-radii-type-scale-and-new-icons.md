@@ -1,9 +1,10 @@
 ---
 id: TASK-154.1
 title: 'Refresh tokens: colours, shadows, radii, type scale and new icons'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-21 00:31'
 labels:
   - web
   - design
@@ -24,8 +25,14 @@ Extend @nigel/theme (tokens/color.ts, gradient.ts) with the handoff's token tabl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 @nigel/theme carries every token in the handoff's table for light and dark, mapped onto existing role names, with no inline brand values left in @nigel/ui
-- [ ] #2 Text and muted text on every ground and surface meet WCAG AA contrast in both modes, checked by a test
-- [ ] #3 The eleven new icons exist in the icon set and render in the icon preview
-- [ ] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 @nigel/theme carries every token in the handoff's table for light and dark, mapped onto existing role names, with no inline brand values left in @nigel/ui
+- [x] #2 Text and muted text on every ground and surface meet WCAG AA contrast in both modes, checked by a test
+- [x] #3 The eleven new icons exist in the icon set and render in the icon preview
+- [x] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #57.
+<!-- SECTION:FINAL_SUMMARY:END -->
