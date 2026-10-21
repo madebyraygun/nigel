@@ -10,8 +10,12 @@ export const spacingCss = css`
     --wa-space-2xl: 32px;
 
     --nc-icon-size: 20px;
-    --nc-sidebar-width: 232px;
-    --nc-sidebar-collapsed-width: 56px;
-    --nc-header-height: 48px;
+    /* The floating sidebar panel, expanded and collapsed to its icon rail. */
+    --nc-sidebar-width: 224px;
+    --nc-sidebar-collapsed-width: 58px;
+    /* The top bar above the content, and the sidebar header beside it. */
+    --nc-header-height: 50px;
+    /* How far a floating panel sits in from the window's edges. */
+    --nc-window-inset: 8px;
   }
 `;

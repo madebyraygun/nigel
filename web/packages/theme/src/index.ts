@@ -8,6 +8,7 @@ export {
   brandRamp,
   gradientColor,
   gradientCss,
+  PASTEL_COUNT,
 } from './tokens/gradient.js';
 export { colorCss, colorDarkCss } from './tokens/color.js';
 export { typographyCss } from './tokens/typography.js';

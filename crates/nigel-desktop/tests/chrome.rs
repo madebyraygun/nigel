@@ -153,3 +153,21 @@ fn the_palette_report_sets_the_window_appearance() {
         "the window color no longer follows the palette"
     );
 }
+
+#[test]
+fn the_window_title_follows_the_document() {
+    // The SPA titles its document `{Screen} · {Book}` on every route, and the
+    // native title bar is meant to read the same.
+    let main = main_rs();
+    let builder = &main[main
+        .find("fn build_main_window")
+        .expect("the window builder")..];
+    assert!(
+        builder.contains(".on_document_title_changed("),
+        "the main window no longer follows the document title"
+    );
+    assert!(
+        builder.contains("window.set_title(&chrome::window_title(&title))"),
+        "the document title no longer reaches the window"
+    );
+}

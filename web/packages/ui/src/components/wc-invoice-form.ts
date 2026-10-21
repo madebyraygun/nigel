@@ -405,11 +405,6 @@ export class WcInvoiceForm extends LitElement {
         resize: vertical;
       }
 
-      textarea:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
-      }
-
       h3 {
         margin: var(--wa-space-s) 0 0;
         font-size: var(--wa-font-size-s);

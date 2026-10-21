@@ -17,20 +17,21 @@ const ctx: ScreenContext = {
   navigate: () => {},
 };
 
+/** In the sidebar's order: the top group, Statements, Billing, Setup, the footer. */
 const ALL: ScreenId[] = [
   'dashboard',
   'register',
   'review',
-  'import',
   'reports',
-  'accounts',
-  'categories',
-  'rules',
+  'import',
+  'reconcile',
+  'undo',
   'clients',
   'invoices',
   'documents',
-  'reconcile',
-  'undo',
+  'accounts',
+  'categories',
+  'rules',
   'settings',
   'setup',
   'unlock',
@@ -101,7 +102,31 @@ describe('screen registry', () => {
         label: 'Register',
         icon: 'wc-icon-register',
         disabled: false,
+        group: undefined,
+        pinned: false,
+        count: undefined,
       });
+    });
+
+    it('groups the sidebar the way the design does', () => {
+      const groups = new Map<string, string[]>();
+      for (const item of navItems()) {
+        const key = item.pinned ? 'footer' : (item.group ?? '');
+        groups.set(key, [...(groups.get(key) ?? []), item.id]);
+      }
+      expect(Object.fromEntries(groups)).toEqual({
+        '': ['dashboard', 'register', 'review', 'reports'],
+        Statements: ['import', 'reconcile', 'undo'],
+        Billing: ['clients', 'invoices', 'documents'],
+        Setup: ['accounts', 'categories', 'rules'],
+        footer: ['settings'],
+      });
+    });
+
+    it('puts a count beside the screen it is given for', () => {
+      const items = navItems({ counts: { review: 12 } });
+      expect(items.find((i) => i.id === 'review')?.count).toBe(12);
+      expect(items.find((i) => i.id === 'register')?.count).toBeUndefined();
     });
 
     it('can disable everything at once for the locked state', () => {

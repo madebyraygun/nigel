@@ -342,9 +342,14 @@ adds it as an optional options object without disturbing this one.
 ## Screens
 
 `apps/app/src/screens/registry.ts` is the single description of a screen:
-title, nav label, icon, whether it appears in the sidebar, and how it renders.
-The sidebar, the header and the content area all read it, and it is typed as
+title, nav label, icon, whether it appears in the sidebar and under which
+group (`navGroup`, or `pinned` for the footer), and how it renders. Its order is
+the sidebar's order. The sidebar, the breadcrumb, the page heading, the window
+title and the content area all read it, and it is typed as
 `Record<ScreenId, ScreenDef>` so a missing entry is a compile error.
+`screens/trail.ts` turns a route into the breadcrumb after the book — the
+screen, plus `#n` on an open invoice — and the window title from that.
+`docs/native-feel.md` ("The shell") describes the frame these fill.
 
 Routing is `location.hash`, format `#/<screen>?<params>`. Navigation writes the
 hash and nothing else; the `hashchange` listener is the only thing that updates
@@ -603,14 +608,14 @@ boundaries, which is the only thing that reaches inside every `wc-*` element at
 once. **Hiding** cannot ride that channel: a rule that hides an element has to
 be in the tree that element is in, and everything in this app lives inside
 `nigel-app`'s shadow root. So each component hides its own chrome —
-`wc-app-shell` its header, banner and sidebar slot (and its `100vh`/
+`wc-app-shell` its top bar, banner, page heading and sidebar slot (and its `100vh`/
 `overflow: hidden` clamp, which would otherwise crop a long report to one
 screenful), and `wc-nav-sidebar`, `wc-toast`, `wc-export-links`, `wc-period-nav`
 and `wc-register-toolbar` themselves — while `controlsCss` carries the
 `wa-button`/`wa-select` and table rules into every root that hosts a control.
 
-`wc-app-shell` still exposes `sidebar`, `header`, `banner` and `content` as
-parts. They are cheap and `nigel-app` is one boundary away, but print no longer
+`wc-app-shell` still exposes `sidebar`, `header`, `banner`, `page-head` and
+`content` as parts. They are cheap and `nigel-app` is one boundary away, but print no longer
 depends on them.
 
 The print token block is selected by `:root:root`, and the doubling is load

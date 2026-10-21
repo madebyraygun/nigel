@@ -147,9 +147,37 @@ export const controlsCss = css`
     border-bottom: 1px solid var(--wa-color-border);
   }
 
+  /* Buttons, links and anything else that takes the keyboard: a brand
+     outline clear of the edge, on keyboard focus only. */
   :focus-visible {
     outline: 2px solid var(--wa-color-focus);
     outline-offset: 2px;
+  }
+
+  /* A field someone is typing in is ringed rather than outlined: its own
+     border turns brand and a translucent brand halo sits outside it. That is
+     on any focus, pointer included, because a caret in a field is the thing
+     being worked on. Checkboxes, radios and file pickers are controls, not
+     fields, and keep the outline above.
+
+     Web Awesome draws the field's chrome inside its own shadow root, so the
+     same ring reaches it through the part that carries the border; the
+     outline WA puts on that part is turned off, or a field would wear both. */
+  input:not([type='checkbox'], [type='radio'], [type='file'], [type='range'], [type='color']):focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--wa-color-brand);
+    box-shadow: 0 0 0 3px var(--nc-color-ring);
+    outline: none;
+  }
+
+  wa-input:focus-within::part(base),
+  wa-textarea:focus-within::part(base),
+  wa-select:focus-within::part(combobox),
+  wa-select[open]::part(combobox) {
+    border-color: var(--wa-color-brand);
+    box-shadow: 0 0 0 3px var(--nc-color-ring);
+    outline-color: transparent;
   }
 
   /* The document turns off user-select so dragging the desktop shell's chrome

@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
+import { controlsCss } from '@nigel/theme';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { categoryLabel, type CategoryOption } from './category-option.js';
 
@@ -32,7 +33,9 @@ const GROUP_LABELS: Record<string, string> = {
  */
 @customElement('wc-category-picker')
 export class WcCategoryPicker extends LitElement {
-  static styles = css`
+  static styles = [
+    controlsCss,
+    css`
     :host {
       display: block;
       position: relative;
@@ -57,11 +60,6 @@ export class WcCategoryPicker extends LitElement {
       border-radius: var(--wa-radius-m);
       padding: var(--wa-space-xs) var(--wa-space-s);
       user-select: text;
-    }
-
-    input:focus-visible {
-      outline: 2px solid var(--wa-color-brand);
-      outline-offset: 1px;
     }
 
     input[aria-invalid='true'] {
@@ -111,7 +109,8 @@ export class WcCategoryPicker extends LitElement {
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s);
     }
-  `;
+  `,
+  ];
 
   @property({ attribute: false })
   options: CategoryOption[] = [];

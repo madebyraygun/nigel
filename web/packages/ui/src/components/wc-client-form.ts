@@ -148,11 +148,6 @@ export class WcClientForm extends LitElement {
         resize: vertical;
       }
 
-      textarea:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
-      }
-
       fieldset.contacts {
         display: grid;
         gap: var(--wa-space-s);

@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
+import { controlsCss } from '@nigel/theme';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import './wc-category-picker.js';
 import type { WcCategoryPicker, NcCategoryChangeDetail } from './wc-category-picker.js';
@@ -44,7 +45,9 @@ export function patternPrefill(description: string): string {
  */
 @customElement('wc-review-form')
 export class WcReviewForm extends LitElement {
-  static styles = css`
+  static styles = [
+    controlsCss,
+    css`
     :host {
       display: block;
       background: var(--wa-color-surface);
@@ -77,11 +80,6 @@ export class WcReviewForm extends LitElement {
       border-radius: var(--wa-radius-m);
       padding: var(--wa-space-xs) var(--wa-space-s);
       user-select: text;
-    }
-
-    input[type='text']:focus-visible {
-      outline: 2px solid var(--wa-color-brand);
-      outline-offset: 1px;
     }
 
     .checkbox {
@@ -161,7 +159,8 @@ export class WcReviewForm extends LitElement {
     kbd {
       font-family: var(--wa-font-family-mono);
     }
-  `;
+  `,
+  ];
 
   @property({ attribute: false })
   categories: CategoryOption[] = [];

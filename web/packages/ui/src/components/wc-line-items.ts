@@ -152,11 +152,6 @@ export class WcLineItems extends LitElement {
         color: inherit;
       }
 
-      input:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
-      }
-
       td.description input {
         min-width: 12rem;
       }

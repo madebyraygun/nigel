@@ -102,6 +102,111 @@ describePreviewA11y(preview);
 
 describePrintHiding(WcNavSidebar, ':host');
 
+describe('wc-nav-sidebar groups', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('draws the unlabelled group first, then each named one under its label', async () => {
+    const el = await mount();
+    const labels = [...(el.shadowRoot?.querySelectorAll('.group-label') ?? [])].map(
+      (node) => node.textContent,
+    );
+    expect(labels).toEqual(['Statements', 'Billing', 'Setup']);
+    const first = el.shadowRoot?.querySelector('.group ul');
+    expect([...(first?.querySelectorAll('[data-nav]') ?? [])].map((b) => b.getAttribute('data-nav'))).toEqual(
+      ['dashboard', 'register', 'review', 'reports'],
+    );
+  });
+
+  it('names each labelled list by its label', async () => {
+    const el = await mount();
+    const list = button(el, 'invoices')?.closest('ul');
+    const id = list?.getAttribute('aria-labelledby');
+    expect(id).toBeTruthy();
+    expect(el.shadowRoot?.getElementById(id ?? '')?.textContent).toBe('Billing');
+  });
+
+  it('pins Settings in the footer, below every group', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.footer [data-nav="settings"]')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('.groups [data-nav="settings"]')).toBeNull();
+  });
+
+  it('keeps the footer inside the Primary landmark', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('nav .footer')).toBeTruthy();
+  });
+
+  it('shows the review count', async () => {
+    const el = await mount();
+    expect(button(el, 'review')?.querySelector('.count')?.textContent).toBe('84');
+  });
+
+  it('shows no count at zero', async () => {
+    const el = await mount({
+      items: NAV_ITEMS.map((item) => (item.id === 'review' ? { ...item, count: 0 } : item)),
+    });
+    expect(button(el, 'review')?.querySelector('.count')).toBeNull();
+  });
+
+  it('draws the active item with the rainbow hairline', () => {
+    const text = styleText(WcNavSidebar);
+    expect(text).toMatch(
+      /\.item\.active\s*{[^}]*padding-box,\s*var\(--nc-grad-brand-text\) border-box/,
+    );
+  });
+});
+
+describe('wc-nav-sidebar header', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('carries the wordmark', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.head .wordmark')?.textContent).toBe('nigel');
+  });
+
+  it('asks to fold to the rail from its hamburger', async () => {
+    const el = await mount({ collapsed: false });
+    const spy = vi.fn();
+    el.addEventListener('nc-sidebar-toggle', spy);
+    el.shadowRoot?.querySelector<HTMLButtonElement>('.hamburger')?.click();
+    expect(spy.mock.calls[0][0].detail).toEqual({ collapsed: true });
+  });
+
+  it('asks to open again from the rail', async () => {
+    const el = await mount({ collapsed: true });
+    const spy = vi.fn();
+    el.addEventListener('nc-sidebar-toggle', spy);
+    el.shadowRoot?.querySelector<HTMLButtonElement>('.hamburger')?.click();
+    expect(spy.mock.calls[0][0].detail).toEqual({ collapsed: false });
+  });
+
+  it('says whether it is open', async () => {
+    const el = await mount({ collapsed: true });
+    expect(el.shadowRoot?.querySelector('.hamburger')?.getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+  });
+
+  it('does not decide for itself whether it is folded', async () => {
+    const el = await mount({ collapsed: false });
+    el.shadowRoot?.querySelector<HTMLButtonElement>('.hamburger')?.click();
+    await el.updateComplete;
+    expect(el.collapsed).toBe(false);
+  });
+
+  it('folds over 180ms and stops for anyone who asked motion to stop', () => {
+    const text = styleText(WcNavSidebar);
+    expect(text).toMatch(/:host\s*{[^}]*transition:\s*width var\(--nc-transition-sidebar\)/);
+    expect(text).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*:host\s*{[^}]*transition:\s*none/,
+    );
+  });
+});
+
 describe('wc-nav-sidebar on a phone', () => {
   // jsdom has no layout engine, so the rules are read the way the register's
   // fill rules are.
@@ -113,6 +218,12 @@ describe('wc-nav-sidebar on a phone', () => {
     // for the words.
     expect(text).toMatch(
       /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\) \.label[^{]*{[^}]*display:\s*revert/,
+    );
+  });
+
+  it('keeps its count and group labels when it is the drawer', () => {
+    expect(text).toMatch(
+      /@media \(max-width: 48rem\)[\s\S]*:host\(\[collapsed\]\) \.group-label[^{]*{[^}]*display:\s*revert/,
     );
   });
 

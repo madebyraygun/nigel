@@ -1,6 +1,15 @@
 export { WcAppShell, narrowViewport } from './wc-app-shell.js';
 export { WcNavSidebar, type NavItem } from './wc-nav-sidebar.js';
 export {
+  WcBreadcrumb,
+  dispatchPaletteOpen,
+  type BreadcrumbItem,
+  type NcPaletteOpenDetail,
+  type PaletteScope,
+} from './wc-breadcrumb.js';
+export { WcSearchPill } from './wc-search-pill.js';
+export { WcMonogram, monogramInitials, monogramTone } from './wc-monogram.js';
+export {
   WcToast,
   dispatchNcToast,
   NC_TOAST_EVENT,

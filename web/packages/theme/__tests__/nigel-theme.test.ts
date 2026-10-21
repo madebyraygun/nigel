@@ -52,11 +52,31 @@ describe('nigelTheme', () => {
     '--nc-sidebar-width',
     '--nc-sidebar-collapsed-width',
     '--nc-header-height',
+    '--nc-window-inset',
+    '--nc-transition-sidebar',
+    '--nc-color-pastel-1',
+    '--nc-color-pastel-7',
     '--nc-transition-fast',
     '--nc-transition-base',
     '--nc-duration-slow',
   ])('defines the nigel token %s', (token) => {
     expect(text).toContain(`${token}:`);
+  });
+
+  it.each([
+    ['--nc-sidebar-width', '224px'],
+    ['--nc-sidebar-collapsed-width', '58px'],
+    ['--nc-header-height', '50px'],
+    ['--nc-window-inset', '8px'],
+    ['--nc-transition-sidebar', '180ms ease'],
+  ])('sizes the shell to the handoff: %s is %s', (token, value) => {
+    expect(text).toContain(`${token}: ${value};`);
+  });
+
+  it('carries each pastel as its own token, in the ramp order', () => {
+    NIGEL_PALETTE.forEach((hex, i) => {
+      expect(text).toContain(`--nc-color-pastel-${i + 1}: ${hex};`);
+    });
   });
 
   it('makes the bundled mono the primary face', () => {

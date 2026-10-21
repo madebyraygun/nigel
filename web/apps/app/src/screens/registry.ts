@@ -48,6 +48,10 @@ export interface ScreenDef {
   icon: string;
   /** Whether the screen appears in the sidebar. */
   inNav: boolean;
+  /** The sidebar group the screen sits under; none is the unlabelled top group. */
+  navGroup?: 'Statements' | 'Billing' | 'Setup';
+  /** Pinned to the sidebar's footer rather than listed in a group. */
+  pinned?: boolean;
   /**
    * Render the screen. The context carries the api client, the route's query
    * parameters, and navigation — everything a screen needs from the shell,
@@ -90,14 +94,6 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     inNav: true,
     render: renderReview,
   },
-  import: {
-    id: 'import',
-    title: 'Import',
-    navLabel: 'Import',
-    icon: 'wc-icon-import',
-    inNav: true,
-    render: renderImport,
-  },
   reports: {
     id: 'reports',
     title: 'Reports',
@@ -106,53 +102,14 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     inNav: true,
     render: renderReports,
   },
-  accounts: {
-    id: 'accounts',
-    title: 'Accounts',
-    navLabel: 'Accounts',
-    icon: 'wc-icon-account',
+  import: {
+    id: 'import',
+    title: 'Import',
+    navLabel: 'Import',
+    icon: 'wc-icon-import',
     inNav: true,
-    render: renderAccounts,
-  },
-  categories: {
-    id: 'categories',
-    title: 'Categories',
-    navLabel: 'Categories',
-    icon: 'wc-icon-category',
-    inNav: true,
-    render: renderCategories,
-  },
-  rules: {
-    id: 'rules',
-    title: 'Rules',
-    navLabel: 'Rules',
-    icon: 'wc-icon-rule',
-    inNav: true,
-    render: renderRules,
-  },
-  clients: {
-    id: 'clients',
-    title: 'Clients',
-    navLabel: 'Clients',
-    icon: 'wc-icon-clients',
-    inNav: true,
-    render: renderClients,
-  },
-  invoices: {
-    id: 'invoices',
-    title: 'Invoices',
-    navLabel: 'Invoices',
-    icon: 'wc-icon-invoice',
-    inNav: true,
-    render: renderInvoices,
-  },
-  documents: {
-    id: 'documents',
-    title: 'Documents',
-    navLabel: 'Documents',
-    icon: 'wc-icon-edit',
-    inNav: true,
-    render: renderDocuments,
+    navGroup: 'Statements',
+    render: renderImport,
   },
   reconcile: {
     id: 'reconcile',
@@ -160,6 +117,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     navLabel: 'Reconcile',
     icon: 'wc-icon-reconcile',
     inNav: true,
+    navGroup: 'Statements',
     render: renderReconcile,
   },
   undo: {
@@ -168,7 +126,62 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     navLabel: 'Undo',
     icon: 'wc-icon-undo',
     inNav: true,
+    navGroup: 'Statements',
     render: renderUndo,
+  },
+  clients: {
+    id: 'clients',
+    title: 'Clients',
+    navLabel: 'Clients',
+    icon: 'wc-icon-clients',
+    inNav: true,
+    navGroup: 'Billing',
+    render: renderClients,
+  },
+  invoices: {
+    id: 'invoices',
+    title: 'Invoices',
+    navLabel: 'Invoices',
+    icon: 'wc-icon-invoice',
+    inNav: true,
+    navGroup: 'Billing',
+    render: renderInvoices,
+  },
+  documents: {
+    id: 'documents',
+    title: 'Documents',
+    navLabel: 'Documents',
+    icon: 'wc-icon-edit',
+    inNav: true,
+    navGroup: 'Billing',
+    render: renderDocuments,
+  },
+  accounts: {
+    id: 'accounts',
+    title: 'Accounts',
+    navLabel: 'Accounts',
+    icon: 'wc-icon-account',
+    inNav: true,
+    navGroup: 'Setup',
+    render: renderAccounts,
+  },
+  categories: {
+    id: 'categories',
+    title: 'Categories',
+    navLabel: 'Categories',
+    icon: 'wc-icon-category',
+    inNav: true,
+    navGroup: 'Setup',
+    render: renderCategories,
+  },
+  rules: {
+    id: 'rules',
+    title: 'Rules',
+    navLabel: 'Rules',
+    icon: 'wc-icon-rule',
+    inNav: true,
+    navGroup: 'Setup',
+    render: renderRules,
   },
   settings: {
     id: 'settings',
@@ -176,6 +189,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     navLabel: 'Settings',
     icon: 'wc-icon-settings',
     inNav: true,
+    pinned: true,
     render: renderSettings,
   },
   setup: {
@@ -214,8 +228,13 @@ export function screenDef(id: ScreenId): ScreenDef {
   return def;
 }
 
-/** Sidebar items, derived from the same registry the content area reads. */
-export function navItems(options: { disabled?: boolean } = {}): NavItem[] {
+/**
+ * Sidebar items, derived from the same registry the content area reads, in
+ * registry order. `counts` puts a figure beside a screen — Review's queue.
+ */
+export function navItems(
+  options: { disabled?: boolean; counts?: Partial<Record<ScreenId, number>> } = {},
+): NavItem[] {
   return [...SCREENS.values()]
     .filter((def) => def.inNav)
     .map((def) => ({
@@ -223,5 +242,8 @@ export function navItems(options: { disabled?: boolean } = {}): NavItem[] {
       label: def.navLabel,
       icon: def.icon,
       disabled: options.disabled ?? false,
+      group: def.navGroup,
+      pinned: def.pinned ?? false,
+      count: options.counts?.[def.id],
     }));
 }

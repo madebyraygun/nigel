@@ -118,11 +118,6 @@ export class WcCategoryForm extends LitElement {
         padding: var(--wa-space-xs) var(--wa-space-s);
       }
 
-      input.native:focus-visible {
-        outline: 2px solid var(--wa-color-brand);
-        outline-offset: 1px;
-      }
-
       .error {
         margin: var(--wa-space-2xs) 0 0;
         color: var(--wa-color-danger);
