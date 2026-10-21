@@ -31,7 +31,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::guards::{can, ensure_client_active_for_documents, Action};
-use crate::documents::kinds::list_kinds;
+use crate::documents::kinds::{list_kinds, reactivate_kind};
 use crate::documents::lifecycle::{
     republish_after_change, revise_with_republish, withdraw_with_teardown,
 };
@@ -102,6 +102,7 @@ pub fn routes() -> Router<AppState> {
             post(republish_signing_record),
         )
         .route("/document-kinds", get(kinds))
+        .route("/document-kinds/{id}/reactivate", post(reactivate))
 }
 
 // ---------------------------------------------------------------------------
@@ -327,9 +328,51 @@ async fn detail(
     Ok(Json(detail))
 }
 
-async fn kinds(State(state): State<AppState>) -> ApiResult<Json<Vec<DocumentKind>>> {
-    let kinds = with_conn(&state, |conn| list_kinds(conn, false)).await?;
+/// Taken as a string so an unrecognised value lands in the error envelope
+/// instead of axum's plain-text `Query` rejection.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KindsQuery {
+    include_inactive: Option<String>,
+}
+
+async fn kinds(
+    State(state): State<AppState>,
+    Query(query): Query<KindsQuery>,
+) -> ApiResult<Json<Vec<DocumentKind>>> {
+    let include_inactive = match query.include_inactive.as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(value) => {
+            return Err(ApiError::bad_request(format!(
+                "Invalid `includeInactive`: expected true or false, got \"{value}\"."
+            )))
+        }
+    };
+    let kinds = with_conn(&state, move |conn| list_kinds(conn, include_inactive)).await?;
     Ok(Json(kinds))
+}
+
+/// `POST /api/document-kinds/{id}/reactivate` — offer a deactivated kind for
+/// new documents again. An active kind is `409 already_active`.
+async fn reactivate(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<DocumentKind>> {
+    let kind = with_conn_api(&state, move |conn| {
+        reactivate_kind(conn, id).map_err(|e| not_found_because(e, "kind_not_found"))?;
+        list_kinds(conn, true)?
+            .into_iter()
+            .find(|k| k.id == id)
+            .ok_or_else(|| {
+                ApiError::not_found_because(
+                    format!("Document kind not found: id {id}"),
+                    "kind_not_found",
+                )
+            })
+    })
+    .await?;
+    Ok(Json(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -1300,6 +1343,54 @@ mod tests {
         let body = ok_json(&app, "/api/document-kinds", &token).await;
         assert_eq!(names(&body), ["Proposal", "Agreement"], "{body}");
         assert_eq!(body[0]["active"], true, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_deactivated_kind_is_listed_on_request_and_can_be_reactivated() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let estimate = crate::documents::kinds::list_kinds(&conn, false).unwrap()[1].id;
+        crate::documents::kinds::deactivate_kind(&conn, estimate).unwrap();
+        drop(conn);
+
+        let all = ok_json(&app, "/api/document-kinds?includeInactive=true", &token).await;
+        assert_eq!(all.as_array().unwrap().len(), 3, "{all}");
+        assert_eq!(all[1]["active"], false, "{all}");
+        let (status, body) =
+            get_json(&app, "/api/document-kinds?includeInactive=maybe", &token).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let path = format!("/api/document-kinds/{estimate}/reactivate");
+        let (status, body) = post_json(&app, &path, &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            (body["name"].as_str(), body["active"].as_bool()),
+            (Some("Estimate"), Some(true)),
+            "{body}"
+        );
+
+        let (status, body) = post_json(&app, &path, &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "already_active",
+            "{body}"
+        );
+
+        let (status, body) = post_json(
+            &app,
+            "/api/document-kinds/9999/reactivate",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "kind_not_found",
+            "{body}"
+        );
     }
 
     #[tokio::test]

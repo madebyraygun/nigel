@@ -140,7 +140,7 @@ crates/
         model.rs               # Statuses, roles, rows, checksum_of (`sha256:` prefix), recipient/note/moment validation, token generation
         status.rs              # Derives a document's status from its rows — nothing stores it
         guards.rs              # The one table of which action is allowed from which status; `can`, `ensure_allowed`, the archived-client check
-        kinds.rs               # Document kinds: list, add, rename, deactivate, active-by-name
+        kinds.rs               # Document kinds: list, add, rename, deactivate, reactivate, active-by-name
         store.rs               # Filing, editing, every read of the rows, the per-version PDF files and their checksum check
         record.rs              # Transitions that write rows: new versions, the frozen recipient set, mark-sent, manual and online responses, decline, countersign, withdraw
         render.rs              # The signer's and collaborator's pages in each state, the withdrawn notice, the email text, attachment name
@@ -186,7 +186,7 @@ crates/
           reconcile.rs           # POST /api/reconcile, GET /api/reconciliations
           clients.rs             # GET/POST /api/clients, GET/PATCH/DELETE /api/clients/:id
           documents.rs           # GET/POST /api/documents, GET/PATCH /api/documents/:id (+/send, /accept, /request-changes,
-                                  #   /decline, /countersign, /withdraw, /revise, /preview[.pdf], /signing-record[.pdf]), POST /api/documents/sync, GET /api/document-kinds
+                                  #   /decline, /countersign, /withdraw, /revise, /preview[.pdf], /signing-record[.pdf]), POST /api/documents/sync, GET /api/document-kinds, POST /api/document-kinds/{id}/reactivate
           invoices.rs            # GET/POST /api/invoices, GET/PATCH /api/invoices/:number(+/void, /pay,
                                   #   /send, /preview[.pdf]), /aging, /next-number, POST /api/invoices/sync
           settings.rs            # GET/PUT /api/settings/app, PUT company-name, POST data-dir, POST password/{set,change,remove}

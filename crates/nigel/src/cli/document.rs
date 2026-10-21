@@ -5,7 +5,9 @@ use comfy_table::{Cell, Table};
 use nigel_core::db::get_connection;
 use nigel_core::documents::execute::RegeneratedRecord;
 use nigel_core::documents::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
-use nigel_core::documents::kinds::{add_kind, deactivate_kind, list_kinds, rename_kind};
+use nigel_core::documents::kinds::{
+    add_kind, deactivate_kind, list_kinds, reactivate_kind, rename_kind,
+};
 use nigel_core::documents::lifecycle::{
     republish_after_change, revise_with_republish, withdraw_with_teardown,
 };
@@ -75,6 +77,10 @@ pub fn kinds(command: Option<DocumentKindsCommands>) -> Result<()> {
         DocumentKindsCommands::Deactivate { id } => {
             deactivate_kind(&conn, id)?;
             println!("Deactivated document kind #{id}");
+        }
+        DocumentKindsCommands::Reactivate { id } => {
+            reactivate_kind(&conn, id)?;
+            println!("Reactivated document kind #{id}");
         }
     }
     Ok(())

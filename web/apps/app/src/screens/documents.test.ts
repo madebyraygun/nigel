@@ -4,6 +4,7 @@ import type { NigelDocumentsScreen } from './documents.js';
 import type {
   WcDocumentTable,
   WcDocumentTimeline,
+  WcManagerTable,
   WcDropzone,
   WcRecipientEditor,
   WcSendDialog,
@@ -374,6 +375,65 @@ describe('nigel-documents-screen', () => {
       (option) => option.getAttribute('value'),
     );
     expect(kinds).toEqual(['Proposal', 'Estimate', 'Agreement']);
+  });
+
+  it('lists no inactive kinds when every kind is active', async () => {
+    const { el } = await mount();
+    expect(el.shadowRoot?.querySelector('[data-inactive-kinds]')).toBeNull();
+  });
+
+  it('lists an inactive kind apart from filing and reactivates it', async () => {
+    const fake = client();
+    fake.documentKinds = fake.documentKinds.map((kind) =>
+      kind.name === 'Estimate' ? { ...kind, active: false } : kind,
+    );
+    const { el } = await mount('', fake);
+
+    const kinds = [...find(el, '[data-file-kind]').querySelectorAll('wa-option')].map(
+      (option) => option.getAttribute('value'),
+    );
+    expect(kinds).toEqual(['Proposal', 'Agreement']);
+    const table = find<WcManagerTable>(el, '[data-inactive-kinds] wc-manager-table');
+    expect(table.rows.map((row) => row.cells)).toEqual([['Estimate']]);
+    expect(table.actions.map((action) => action.label)).toEqual(['Reactivate']);
+
+    table.dispatchEvent(
+      new CustomEvent('nc-manager-action', {
+        detail: { action: 'reactivate', id: 2 },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+
+    expect(fake.calls).toContain('reactivateDocumentKind:2');
+    expect(el.shadowRoot?.querySelector('[data-inactive-kinds]')).toBeNull();
+    const after = [...find(el, '[data-file-kind]').querySelectorAll('wa-option')].map(
+      (option) => option.getAttribute('value'),
+    );
+    expect(after).toEqual(['Proposal', 'Estimate', 'Agreement']);
+  });
+
+  it('shows a refused reactivation above the list', async () => {
+    const fake = client();
+    fake.documentKinds = fake.documentKinds.map((kind) =>
+      kind.name === 'Estimate' ? { ...kind, active: false } : kind,
+    );
+    const { el } = await mount('', fake);
+    fake.documentKinds = fake.documentKinds.map((kind) => ({ ...kind, active: true }));
+
+    find(el, '[data-inactive-kinds] wc-manager-table').dispatchEvent(
+      new CustomEvent('nc-manager-action', {
+        detail: { action: 'reactivate', id: 2 },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await settle(el);
+
+    expect(find(el, '[data-action-error]').getAttribute('message')).toBe(
+      'That document kind is already active.',
+    );
   });
 
   it('filing a PDF creates a draft and opens it', async () => {

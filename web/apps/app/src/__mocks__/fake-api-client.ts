@@ -1650,10 +1650,24 @@ export class FakeApiClient implements ApiClient {
     return this.document(id);
   }
 
-  async getDocumentKinds(): Promise<DocumentKind[]> {
+  async getDocumentKinds(includeInactive = false): Promise<DocumentKind[]> {
     this.calls.push('getDocumentKinds');
     if (this.documentKindsError) throw this.documentKindsError;
-    return this.documentKinds.filter((kind) => kind.active);
+    return this.documentKinds.filter((kind) => includeInactive || kind.active);
+  }
+
+  async reactivateDocumentKind(id: number): Promise<DocumentKind> {
+    this.calls.push(`reactivateDocumentKind:${id}`);
+    const kind = this.documentKinds.find((k) => k.id === id);
+    if (!kind) throw notFoundError(`Document kind not found: id ${id}`);
+    if (kind.active) {
+      throw conflictError('already_active', {
+        message: 'That document kind is already active.',
+      });
+    }
+    const updated: DocumentKind = { ...kind, active: true };
+    this.documentKinds = this.documentKinds.map((k) => (k.id === id ? updated : k));
+    return updated;
   }
 
   async createDocument(input: NewDocumentRequest): Promise<DocumentDetail> {

@@ -1785,8 +1785,11 @@ nigel document send 3                      # Confirm, then publish and email
 
 `add` files the PDF as a draft and prints its checksum. A new database starts
 with three kinds — Proposal, Estimate and Agreement. `kinds` lists the
-document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`
-and `kinds deactivate <id>` manage them. `list` takes `--client`, `--status` and
+document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`,
+`kinds deactivate <id>` and `kinds reactivate <id>` manage them; deactivating an
+inactive kind or reactivating an active one is refused. The web UI's Documents
+screen lists the inactive kinds under the filing form, each with a
+**Reactivate** button. `list` takes `--client`, `--status` and
 `--kind`, and `show` prints every version, its recipients and every response.
 
 `preview` writes `<data_dir>/previews/document-<id>/` (or `<output-dir>/document-<id>/`): one

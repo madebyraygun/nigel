@@ -116,6 +116,7 @@ nigel document kinds                              # List document kinds, includi
 nigel document kinds add "Statement of Work"      # Add a kind
 nigel document kinds rename 2 "Master Agreement"  # Rename a kind
 nigel document kinds deactivate 2                 # Stop offering a kind for new documents
+nigel document kinds reactivate 2                 # Offer a deactivated kind again
 nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf  # File a PDF as a draft
 nigel document list                               # Every document (--client, --status, --kind narrow it)
 nigel document show 3                             # Versions, recipients, signatures and change requests; a version whose PDF is missing is flagged
