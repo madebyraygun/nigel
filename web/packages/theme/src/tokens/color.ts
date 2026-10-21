@@ -1,5 +1,5 @@
 import { css } from 'lit';
-import { brandCycle, brandRamp } from './gradient.js';
+import { brandCycle, brandRamp, wordmarkRampDark } from './gradient.js';
 import { shadowDarkTokens } from './shadow.js';
 
 /**
@@ -145,6 +145,12 @@ const darkTokens = css`
      sized for the button's hover drift. */
   --nc-grad-brand-text: ${brandRamp};
   --nc-grad-brand-text-cycle: ${brandCycle};
+  --nc-grad-wordmark: ${wordmarkRampDark};
+  --nc-glow-wordmark: radial-gradient(
+    ellipse 55% 45% at 50% 32%,
+    rgb(196 183 255 / 10%),
+    transparent 70%
+  );
 `;
 
 /**

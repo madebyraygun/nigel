@@ -15,6 +15,7 @@ const REVEAL_MS = 1200;
 const REVEAL_TICK_MS = 40;
 
 type Step = 'arrival' | 'profile' | 'identity' | 'first-move';
+const STEPS: readonly Step[] = ['arrival', 'profile', 'identity', 'first-move'];
 
 /**
  * The first-run gate: the four answers a set of books is created from.
@@ -47,6 +48,14 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
         overflow: hidden;
       }
 
+      .stage::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: var(--nc-glow-wordmark);
+        pointer-events: none;
+      }
+
       wc-particle-field {
         position: absolute;
         inset: 0;
@@ -55,21 +64,24 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
       .panel {
         position: relative;
         width: 100%;
-        max-width: 42rem;
+        max-width: 640px;
         display: grid;
-        gap: var(--wa-space-l, 16px);
+        gap: 18px;
         justify-items: center;
         text-align: center;
       }
 
       wc-wordmark {
-        --nc-wordmark-size: var(--wa-font-size-s, 13px);
+        --nc-wordmark-size: 13px;
+        --nc-wordmark-leading: 1.18;
+        --nc-wordmark-weight: 600;
       }
 
       h1 {
         margin: 0;
-        font-size: var(--wa-font-size-2xl, 24px);
-        font-weight: var(--wa-font-weight-semibold, 600);
+        font-size: 26px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
       }
 
       p {
@@ -80,36 +92,16 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
 
       .cards {
         display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: var(--wa-space-m, 12px);
         width: 100%;
         text-align: left;
       }
 
-      .card {
-        display: grid;
-        gap: var(--wa-space-2xs, 4px);
-        padding: var(--wa-space-l, 16px);
-        background: var(--wa-color-surface);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-l, 12px);
-        cursor: pointer;
-        font: inherit;
-        color: inherit;
-        text-align: left;
-      }
-
-      .card:hover,
-      .card:focus-visible {
-        border-color: var(--wa-color-brand);
-      }
-
-      .card strong {
-        font-size: var(--wa-font-size-l, 15px);
-      }
-
-      .card span {
-        color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s, 13px);
+      @media (max-width: 560px) {
+        .cards {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
 
       .form {
@@ -318,9 +310,10 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
       <div class="stage">
         <wc-particle-field></wc-particle-field>
         <div class="panel">
-          <wc-wordmark animated .reveal=${this.reveal}></wc-wordmark>
+          <wc-wordmark diagonal .reveal=${this.reveal}></wc-wordmark>
           ${this.renderStep()}
           ${this.error ? html`<p class="error" role="alert">${this.error}</p>` : nothing}
+          <wc-step-indicator .current=${STEPS.indexOf(this.step)}></wc-step-indicator>
         </div>
       </div>
     `;
@@ -336,40 +329,39 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
           </p>
           <div class=${`actions ${this.introClass(2)}`}>
             <wa-button
+              pill
               appearance="outlined"
               ?disabled=${this.busy !== null}
               @click=${() => this.runSetup('demo')}
               >${this.busy === 'demo' ? 'Loading the demo…' : 'Show me the demo'}</wa-button
             >
-            <wa-button variant="brand" @click=${this.beginSetup}>Set up my books</wa-button>
+            <wa-button pill solid variant="brand" @click=${this.beginSetup}
+              >Set up my books</wa-button
+            >
           </div>
         `;
       case 'profile':
         return html`
           <h1>Who are we keeping books for?</h1>
           <div class="cards">
-            <button
-              class="card"
+            <wc-choice-card
+              interactive
               data-profile="business"
+              heading="A business"
+              description="Schedule C or 1120-S chart of accounts, with tax lines already mapped. Invoices, clients, the lot."
               @click=${() => this.chooseProfile('business')}
-            >
-              <strong>A business</strong>
-              <span>
-                Schedule C or 1120-S chart of accounts, with tax lines already
-                mapped. Invoices, clients, the lot.
-              </span>
-            </button>
-            <button
-              class="card"
+            ></wc-choice-card>
+            <wc-choice-card
+              interactive
               data-profile="personal"
+              heading="Personal finances"
+              description="A household chart. No tax mapping or invoices to chase."
               @click=${() => this.chooseProfile('personal')}
-            >
-              <strong>Personal finances</strong>
-              <span>A household chart. No tax mapping or invoices to chase.</span>
-            </button>
+            ></wc-choice-card>
           </div>
           <p class="footnote">
-            This decides your chart of accounts, and can't be changed later. You can always create a new profile to manage another set of books.
+            This decides your chart of accounts, and can't be changed later. You can always create a
+            new profile to manage another set of books.
           </p>
         `;
       case 'identity':
@@ -409,19 +401,25 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
           .value=${this.password}
           @input=${(e: Event) => this.readField(e, 'password')}
         ></wa-input>
-        ${this.password
-          ? html`<wa-input
-              type="password"
-              label="Type it again"
-              autocomplete="new-password"
-              .value=${this.confirm}
-              @input=${(e: Event) => this.readField(e, 'confirm')}
-            ></wa-input>`
-          : nothing}
+        ${
+          this.password
+            ? html`<wa-input
+                type="password"
+                label="Type it again"
+                autocomplete="new-password"
+                .value=${this.confirm}
+                @input=${(e: Event) => this.readField(e, 'confirm')}
+              ></wa-input>`
+            : nothing
+        }
       </div>
       <div class="actions">
-        <wa-button appearance="outlined" @click=${() => (this.step = 'profile')}>Back</wa-button>
-        <wa-button variant="brand" @click=${() => this.submitIdentity()}>Carry on</wa-button>
+        <wa-button pill appearance="outlined" @click=${() => (this.step = 'profile')}
+          >Back</wa-button
+        >
+        <wa-button pill solid variant="brand" @click=${() => this.submitIdentity()}
+          >Carry on</wa-button
+        >
       </div>
     `;
   }
@@ -430,35 +428,41 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
     return html`
       <h1>How shall we start?</h1>
       <div class="cards">
-        <div class="card">
-          <strong>Start from scratch</strong>
-          <span>
-            An empty ledger and a chart of accounts. Import a statement when
-            you're ready.
-          </span>
+        <wc-choice-card
+          heading="Start from scratch"
+          description="An empty ledger and a chart of accounts. Import a statement when you're ready."
+        >
           <wa-button
+            pill
+            solid
             variant="brand"
             ?disabled=${this.busy !== null}
             @click=${() => this.runSetup('fresh')}
             >${this.busy === 'fresh' ? 'Setting up…' : 'Start fresh'}</wa-button
           >
-        </div>
-        <div class="card">
-          <strong>Load books I already have</strong>
-          <span>Point me at a directory with a nigel.db in it.</span>
+        </wc-choice-card>
+        <wc-choice-card
+          heading="Load books I already have"
+          description="Point me at a directory with a nigel.db in it."
+        >
           <wa-input
             label="Data directory"
             placeholder="~/Documents/nigel"
             .value=${this.dataDir}
             @input=${(e: Event) => this.readField(e, 'dataDir')}
           ></wa-input>
-          <wa-button ?disabled=${this.busy !== null} @click=${this.loadExisting}
+          <wa-button
+            pill
+            appearance="outlined"
+            ?disabled=${this.busy !== null}
+            @click=${this.loadExisting}
             >${this.busy === 'load' ? 'Looking…' : 'Load them'}</wa-button
           >
-        </div>
+        </wc-choice-card>
       </div>
       <div class="actions">
         <wa-button
+          pill
           appearance="outlined"
           ?disabled=${this.busy !== null}
           @click=${() => (this.step = 'identity')}

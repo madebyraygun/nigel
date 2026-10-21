@@ -59,6 +59,30 @@ export const controlsCss = css`
     }
   }
 
+  /* A brand button filled with the plain brand colour instead of the ramp. */
+  wa-button[variant='brand'][solid]::part(base),
+  wa-button[variant='brand'][solid]:hover::part(base) {
+    background: var(--wa-color-brand);
+    color: var(--wa-color-on-brand);
+    filter: none;
+  }
+
+  wa-button[variant='brand'][solid]:hover::part(base) {
+    background: var(--wa-color-brand-hover);
+  }
+
+  wa-button[variant='brand'][solid]:not([appearance='plain'], [disabled], [loading]):is(
+      :hover,
+      :focus-visible
+    )::part(base) {
+    animation: none;
+  }
+
+  /* Pill buttons are a touch taller than the default control. */
+  wa-button[pill] {
+    --wa-form-control-height: 38px;
+  }
+
   wa-button[variant='brand']:active:not([disabled])::part(base) {
     transform: translateY(1px);
   }

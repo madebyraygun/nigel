@@ -25,6 +25,12 @@ const preview: Preview = {
       background: 'inverse',
       render: () => html`<wc-wordmark animated></wc-wordmark>`,
     },
+    { name: 'diagonal', render: () => html`<wc-wordmark diagonal></wc-wordmark>` },
+    {
+      name: 'diagonal on dark',
+      background: 'inverse',
+      render: () => html`<wc-wordmark diagonal></wc-wordmark>`,
+    },
     {
       name: 'labelled',
       render: () => html`<wc-wordmark label="Nigel — bookkeeping"></wc-wordmark>`,
