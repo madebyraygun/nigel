@@ -158,6 +158,15 @@ describe('wc-status-line', () => {
     expect(css).toMatch(/\.book-name\s*{[^}]*text-overflow:\s*ellipsis/);
   });
 
+  it('shows only the lock icon when narrow, keeping the label for assistive tech and the tooltip', async () => {
+    const el = await mount({ encrypted: true });
+    expect(styleText(WcStatusLine)).toMatch(
+      /@container \(max-width: 560px\)\s*{\s*\.lock \.label\s*{[^}]*clip-path:\s*inset\(50%\)/,
+    );
+    expect(el.shadowRoot?.querySelector('.lock .label')?.textContent).toBe('encrypted');
+    expect(el.shadowRoot?.querySelector('.lock')?.getAttribute('title')).toBe('Encrypted');
+  });
+
   it('stands down below the mobile breakpoint', () => {
     expect(styleText(WcStatusLine)).toMatch(
       /@media \(max-width: 48rem\)\s*{\s*:host\s*{\s*display:\s*none/,

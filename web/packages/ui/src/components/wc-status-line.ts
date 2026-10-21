@@ -139,6 +139,7 @@ export class WcStatusLine extends LitElement {
 
       /* The lock's label gives way after the book's name and before the path. */
       .lock {
+        position: relative;
         flex: 0 4 auto;
         min-width: 0;
       }
@@ -176,6 +177,18 @@ export class WcStatusLine extends LitElement {
       @container (max-width: 620px) {
         .hint {
           display: none;
+        }
+      }
+
+      /* Narrower still, the lock is its icon alone; the label stays in the
+         accessibility tree and the tooltip. */
+      @container (max-width: 560px) {
+        .lock .label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
         }
       }
 
@@ -267,7 +280,9 @@ export class WcStatusLine extends LitElement {
           ? html`<span class="segment path" title=${this.fullPath || this.path}>${this.path}</span>`
           : nothing
       }
-      <span class="segment lock">${lock}</span>
+      <span class="segment lock" title=${this.encrypted ? 'Encrypted' : 'Not encrypted'}
+        >${lock}</span
+      >
       <span class="spacer"></span>
       ${
         review
