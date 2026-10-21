@@ -155,6 +155,16 @@ class outranks anyway; on a switch back to `system` the release fires a
 preference change and the bridge re-reports from the OS. Anything other than `light`/`dark` and `explicit`/`system`
 is refused and leaves the chrome as it was.
 
+## Window title
+
+The SPA titles its document `{Screen} · {Book}` on every route
+(`#1254 · Invoices · {Book}` on an open invoice), and the window's title bar
+reads the same: `build_main_window` registers `on_document_title_changed`,
+which hands the document's title to `set_title` through
+`chrome::window_title`. Until the page has titled itself the window keeps
+"Nigel". The hook needs no capability, since the page never calls into
+Tauri for it; `tests/chrome.rs` holds the builder to it.
+
 ## Exports
 
 A webview serving the app from a custom URI scheme cannot download the way a

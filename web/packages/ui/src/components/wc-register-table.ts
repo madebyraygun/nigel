@@ -355,11 +355,6 @@ export class WcRegisterTable extends LitElement {
         padding: var(--wa-space-2xs) var(--wa-space-xs);
       }
 
-      .combobox input:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
-      }
-
       .options {
         position: absolute;
         z-index: 2;

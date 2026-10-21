@@ -29,18 +29,25 @@ describe('wc-app-shell', () => {
     document.body.innerHTML = '';
   });
 
-  it('renders the screen title in the header', async () => {
+  it('renders the screen title as the page heading', async () => {
     const el = await mount({ screenTitle: 'Register' });
-    expect(el.shadowRoot?.querySelector('.title')?.textContent).toBe('Register');
+    const heading = el.shadowRoot?.querySelector('h1');
+    expect(heading?.textContent).toBe('Register');
+    expect(heading?.closest('main')).toBeTruthy();
   });
 
-  it('exposes the sidebar, header-actions, banner and default slots', async () => {
-    const el = await mount();
+  it('draws no page heading for a screen that brings its own', async () => {
+    const el = await mount({ screenTitle: '' });
+    expect(el.shadowRoot?.querySelector('h1')).toBeNull();
+  });
+
+  it('exposes the sidebar, page-actions, banner and default slots', async () => {
+    const el = await mount({ screenTitle: 'Dashboard' });
     const names = [...(el.shadowRoot?.querySelectorAll('slot') ?? [])].map((s) =>
       s.getAttribute('name'),
     );
     expect(names).toContain('sidebar');
-    expect(names).toContain('header-actions');
+    expect(names).toContain('page-actions');
     expect(names).toContain('banner');
     expect(names).toContain(null);
   });
@@ -88,6 +95,11 @@ describe('wc-app-shell', () => {
     );
     expect(parts).toEqual(['sidebar', 'header', 'nav-toggle', 'banner', 'content']);
   });
+
+  it('exposes the page heading as a part when it draws one', async () => {
+    const el = await mount({ screenTitle: 'Dashboard' });
+    expect(el.shadowRoot?.querySelector('[part="page-head"]')).toBeTruthy();
+  });
 });
 
 describePreviewA11y(preview);
@@ -105,7 +117,13 @@ describe('the content area', () => {
   });
 });
 
-describePrintHiding(WcAppShell, 'header', ".banner", "::slotted([slot='sidebar'])");
+describePrintHiding(
+  WcAppShell,
+  'header',
+  '.banner',
+  '.page-head',
+  "::slotted([slot='sidebar'])",
+);
 
 describe('wc-app-shell content area', () => {
   it('lets a screen ask for the whole window below the header', () => {
@@ -171,6 +189,13 @@ function toggleOf(el: WcAppShell): HTMLButtonElement | null {
 describe('wc-app-shell sidebar toggle', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  it('shows the header toggle only at phone width', () => {
+    // Above the breakpoint the hamburger is in the sidebar's own header; two
+    // would be one too many.
+    expect(text).toMatch(/\.nav-toggle\s*{[^}]*display:\s*none/);
+    expect(text).toMatch(/@media \(max-width: 48rem\)[\s\S]*\.nav-toggle\s*{[^}]*display:\s*inline-grid/);
   });
 
   it('puts a labelled toggle in the header', async () => {
@@ -343,7 +368,7 @@ describe('wc-app-shell drawer', () => {
 
 describe('wc-app-shell on a phone', () => {
   it('takes the sidebar out of the flow and lays it over the content', () => {
-    // Docked, the sidebar is 232px of a 390px viewport and the content is left
+    // Docked, the sidebar is 224px of a 390px viewport and the content is left
     // with a 40-character column. jsdom has no layout engine, so the rules are
     // read the way the register's fill rules are.
     expect(text).toMatch(
@@ -353,7 +378,7 @@ describe('wc-app-shell on a phone', () => {
 
   it('slides the drawer off-canvas when the sidebar is put away', () => {
     expect(text).toMatch(
-      /@media \(max-width: 48rem\)[\s\S]*:host\(\[sidebar-collapsed\]\)[^{]*::slotted\(\[slot='sidebar'\]\)[^{]*{[^}]*transform:\s*translateX\(-100%\)/,
+      /@media \(max-width: 48rem\)[\s\S]*:host\(\[sidebar-collapsed\]\)[^{]*::slotted\(\[slot='sidebar'\]\)[^{]*{[^}]*transform:\s*translateX\(calc\(-100% - 2 \* var\(--nc-window-inset\)\)\)/,
     );
   });
 
@@ -366,5 +391,103 @@ describe('wc-app-shell on a phone', () => {
     expect(text).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*::slotted\(\[slot='sidebar'\]\)[^{]*{[^}]*transition:\s*none/,
     );
+  });
+});
+
+describe('wc-app-shell top bar', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('hands the book and the trail to the breadcrumb', async () => {
+    const trail = [{ label: 'Invoices', id: 'invoices' }, { label: '#1254' }];
+    const el = await mount({ bookName: 'Acme Consulting LLC', bookKey: 'acme', trail });
+    const crumb = el.shadowRoot?.querySelector('wc-breadcrumb');
+    expect(crumb?.bookName).toBe('Acme Consulting LLC');
+    expect(crumb?.bookKey).toBe('acme');
+    expect(crumb?.trail).toEqual(trail);
+  });
+
+  it('sits the breadcrumb, the search pill and refresh in the header', async () => {
+    const el = await mount();
+    const header = el.shadowRoot?.querySelector('header');
+    expect(header?.querySelector('wc-breadcrumb')).toBeTruthy();
+    expect(header?.querySelector('wc-search-pill')).toBeTruthy();
+    expect(header?.querySelector('[aria-label="Refresh"]')).toBeTruthy();
+  });
+
+  it('asks for a refresh rather than doing one', async () => {
+    const el = await mount();
+    let asked = 0;
+    el.addEventListener('nc-refresh', () => (asked += 1));
+    el.shadowRoot?.querySelector<HTMLButtonElement>('[aria-label="Refresh"]')?.click();
+    expect(asked).toBe(1);
+  });
+
+  it('passes the shortcut on to the search pill', async () => {
+    const el = await mount({ searchShortcut: 'Ctrl K', searchKeyShortcuts: 'Control+K' });
+    const pill = el.shadowRoot?.querySelector('wc-search-pill');
+    expect(pill?.shortcut).toBe('Ctrl K');
+    expect(pill?.keyShortcuts).toBe('Control+K');
+  });
+});
+
+describe('wc-app-shell scroll', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('puts the content back at the top when the screen changes', async () => {
+    const el = await mount({ scrollKey: 'dashboard' });
+    const content = el.shadowRoot?.querySelector<HTMLElement>('.content');
+    if (!content) throw new Error('no content area');
+    content.scrollTop = 240;
+
+    el.scrollKey = 'register';
+    await el.updateComplete;
+
+    expect(content.scrollTop).toBe(0);
+  });
+
+  it('leaves the scroll alone on any other update', async () => {
+    const el = await mount({ scrollKey: 'dashboard' });
+    const content = el.shadowRoot?.querySelector<HTMLElement>('.content');
+    if (!content) throw new Error('no content area');
+    content.scrollTop = 240;
+
+    el.screenTitle = 'Dashboard, again';
+    await el.updateComplete;
+
+    expect(content.scrollTop).toBe(240);
+  });
+});
+
+describe('wc-app-shell without a sidebar', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('hides the sidebar slot and the toggle that would open it', async () => {
+    const el = await mount({ hideSidebar: true, narrowQuery: viewport(true) });
+    expect(el.hasAttribute('hide-sidebar')).toBe(true);
+    expect(toggleOf(el)).toBeNull();
+    expect(text).toMatch(
+      /:host\(\[hide-sidebar\]\) ::slotted\(\[slot='sidebar'\]\)\s*{[^}]*display:\s*none/,
+    );
+  });
+
+  it('keeps the breadcrumb and the top bar', async () => {
+    const el = await mount({ hideSidebar: true, bookName: 'Acme Consulting LLC' });
+    expect(el.shadowRoot?.querySelector('header wc-breadcrumb')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('header wc-search-pill')).toBeTruthy();
+  });
+
+  it('never draws the drawer backdrop', async () => {
+    const el = await mount({
+      hideSidebar: true,
+      narrowQuery: viewport(true),
+      sidebarCollapsed: false,
+    });
+    expect(el.shadowRoot?.querySelector('.backdrop')).toBeNull();
   });
 });

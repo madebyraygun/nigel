@@ -177,6 +177,11 @@ fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         WebviewUrl::CustomProtocol(scheme_url().parse().expect("scheme url")),
     )
     .title("Nigel")
+    // The SPA titles its document `{Screen} · {Book}` on every route; the
+    // window's title bar follows it rather than staying "Nigel".
+    .on_document_title_changed(|window, title| {
+        let _ = window.set_title(&chrome::window_title(&title));
+    })
     .visible(false)
     .min_inner_size(window_state::MIN_WIDTH, window_state::MIN_HEIGHT)
     .inner_size(plan.inner_width, plan.inner_height)

@@ -73,7 +73,7 @@ type View = 'list' | 'detail' | 'edit' | 'new';
  * needs one, or the screen renders the previous invoice's detail — with live
  * Send, Void and Record-payment actions — under a URL asking for another.
  */
-function numberOf(params: URLSearchParams): number | null {
+export function invoiceNumberOf(params: URLSearchParams): number | null {
   const raw = params.get('number');
   if (raw === null || raw.trim() === '') return null;
   const parsed = Number(raw);
@@ -82,14 +82,14 @@ function numberOf(params: URLSearchParams): number | null {
 
 function viewOf(params: URLSearchParams): View {
   if (params.get('new') === '1') return 'new';
-  if (numberOf(params) !== null) return params.get('edit') === '1' ? 'edit' : 'detail';
+  if (invoiceNumberOf(params) !== null) return params.get('edit') === '1' ? 'edit' : 'detail';
   return 'list';
 }
 
 /** A `number` was asked for and is not one an invoice could have. */
 function hasUnusableNumber(params: URLSearchParams): boolean {
   const raw = params.get('number');
-  return raw !== null && raw.trim() !== '' && numberOf(params) === null;
+  return raw !== null && raw.trim() !== '' && invoiceNumberOf(params) === null;
 }
 
 /**
@@ -335,7 +335,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   private async load(key: string, keepActionError = false): Promise<void> {
     const seq = (this.loadSeq += 1);
     const view = viewOf(this.params);
-    const number = numberOf(this.params);
+    const number = invoiceNumberOf(this.params);
     this.loading = true;
     this.error = null;
     // A refetch that a refusal triggered keeps the refusal; a route change

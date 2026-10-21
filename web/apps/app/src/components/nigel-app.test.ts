@@ -116,6 +116,110 @@ describe('nigel-app', () => {
     expect(el).toBeTruthy();
   });
 
+  it('titles an open invoice innermost first', async () => {
+    window.location.hash = '#/invoices?number=1254';
+    await mount();
+    expect(document.title).toBe('#1254 · Invoices · Test Consultancy');
+  });
+
+  describe('the top bar', () => {
+    it('puts the book and the screen in the breadcrumb', async () => {
+      window.location.hash = '#/register';
+      const el = await mount();
+      expect(shell(el)?.bookName).toBe('Test Consultancy');
+      expect(shell(el)?.bookKey).toBe('/tmp/nigel');
+      expect(shell(el)?.trail).toEqual([{ label: 'Register' }]);
+    });
+
+    it('adds the invoice level on an open invoice', async () => {
+      window.location.hash = '#/invoices?number=1254';
+      const el = await mount();
+      expect(shell(el)?.trail).toEqual([
+        { label: 'Invoices', id: 'invoices' },
+        { label: '#1254' },
+      ]);
+    });
+
+    it('goes back to the invoice list from the breadcrumb', async () => {
+      window.location.hash = '#/invoices?number=1254';
+      const el = await mount();
+      const crumb = shell(el)?.shadowRoot?.querySelector('wc-breadcrumb');
+      crumb?.shadowRoot?.querySelector<HTMLButtonElement>('[data-level="invoices"]')?.click();
+      expect(window.location.hash).toBe('#/invoices');
+    });
+
+    it('lets the palette request out of the app for the palette to answer', async () => {
+      const el = await mount();
+      const scopes: string[] = [];
+      const listen = (event: Event) =>
+        scopes.push((event as CustomEvent<{ scope: string }>).detail.scope);
+      document.addEventListener('nc-palette-open', listen);
+      const crumb = shell(el)?.shadowRoot?.querySelector('wc-breadcrumb');
+      crumb?.shadowRoot?.querySelector<HTMLButtonElement>('.book')?.click();
+      const pill = shell(el)?.shadowRoot?.querySelector('wc-search-pill');
+      pill?.shadowRoot?.querySelector<HTMLButtonElement>('button')?.click();
+      document.removeEventListener('nc-palette-open', listen);
+      expect(scopes).toEqual(['books', 'all']);
+    });
+
+    it('changes the scroll key with the screen, so main goes back to the top', async () => {
+      const el = await mount();
+      const before = shell(el)?.scrollKey;
+      window.location.hash = '#/reports';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await el.updateComplete;
+      expect(shell(el)?.scrollKey).not.toBe(before);
+    });
+
+    it('reloads the screen, the status and the count on refresh', async () => {
+      const client = new FakeApiClient();
+      const el = await mount(client);
+      const screenBefore = shell(el)?.querySelector('nigel-dashboard-screen');
+      const statusCalls = client.calls.filter((c) => c === 'getStatus').length;
+      const queueCalls = client.calls.filter((c) => c === 'getReviewQueue').length;
+
+      shell(el)?.dispatchEvent(new CustomEvent('nc-refresh', { bubbles: true, composed: true }));
+      await el.updateComplete;
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(client.calls.filter((c) => c === 'getStatus').length).toBe(statusCalls + 1);
+      expect(client.calls.filter((c) => c === 'getReviewQueue').length).toBe(queueCalls + 1);
+      const screenAfter = shell(el)?.querySelector('nigel-dashboard-screen');
+      expect(screenAfter).not.toBe(screenBefore);
+    });
+  });
+
+  describe('hosted by the native shell', () => {
+    beforeEach(() => {
+      history.replaceState(null, '', '/?shell=native');
+    });
+
+    afterEach(() => {
+      history.replaceState(null, '', '/');
+    });
+
+    it('renders no sidebar and tells the shell there is none', async () => {
+      const el = await mount();
+      expect(sidebar(el)).toBeNull();
+      expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
+    });
+
+    it('takes the flag from the hash route too, and keeps it from the screen', async () => {
+      history.replaceState(null, '', '/');
+      window.location.hash = '#/settings?shell=native';
+      const el = await mount();
+      expect(sidebar(el)).toBeNull();
+      expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
+      expect(shell(el)?.getAttribute('screen-title')).toBe('Settings');
+    });
+
+    it('keeps the breadcrumb top bar', async () => {
+      const el = await mount();
+      expect(shell(el)?.bookName).toBe('Test Consultancy');
+      expect(shell(el)?.shadowRoot?.querySelector('header wc-breadcrumb')).toBeTruthy();
+    });
+  });
+
   describe('needs setup', () => {
     const freshClient = () => {
       const client = new FakeApiClient();
@@ -507,6 +611,60 @@ describe('nigel-app', () => {
 
       expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
       expect(shell(el)?.hasAttribute('sidebar-collapsed')).toBe(true);
+    });
+
+    it('remembers the rail across a reload', async () => {
+      localStorage.clear();
+      const el = await mount();
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: true },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+      el.remove();
+      resetAppStore();
+
+      const again = await mount();
+      expect(sidebar(again)?.hasAttribute('collapsed')).toBe(true);
+      localStorage.clear();
+    });
+
+    it('does not remember a drawer shut on a phone as a folded rail', async () => {
+      localStorage.clear();
+      phoneScreen();
+      const el = await mount();
+      shell(el)?.dispatchEvent(
+        new CustomEvent('nc-sidebar-toggle', {
+          detail: { collapsed: true },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await el.updateComplete;
+      expect(localStorage.getItem('nigel.sidebar-collapsed')).toBeNull();
+    });
+
+    it('lets the sidebar hamburger fold it to the rail', async () => {
+      const el = await mount();
+      sidebar(el)
+        ?.shadowRoot?.querySelector<HTMLButtonElement>('.hamburger')
+        ?.click();
+      await el.updateComplete;
+      expect(sidebar(el)?.hasAttribute('collapsed')).toBe(true);
+      localStorage.clear();
+    });
+
+    it('shows the review queue as the Review count', async () => {
+      const client = new FakeApiClient();
+      client.reviewQueue = [{ id: 1 }, { id: 2 }, { id: 3 }] as typeof client.reviewQueue;
+      const el = await mount(client);
+      await new Promise((r) => setTimeout(r, 0));
+      await el.updateComplete;
+      const review = sidebar(el)?.items.find((item) => item.id === 'review');
+      expect(review?.count).toBe(3);
     });
 
     it('brings the sidebar back when the shell asks', async () => {

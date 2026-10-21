@@ -76,3 +76,71 @@ or a pattern carry `spellcheck="false"`. Fields where someone writes actual
 sentences — a client's billing address, an invoice's notes and terms, a
 memo — keep spellcheck on, because that is exactly the content a spelling
 correction is for.
+
+## The shell
+
+The frame follows the app-refresh handoff (`docs/design/app-refresh/README.md`,
+section 1) and is built from `@nigel/ui`: `wc-app-shell` draws the top bar
+and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
+`nigel-app` hands both what they show.
+
+- **Floating sidebar.** An inset panel, 8px (`--nc-window-inset`) from the
+  window's edges, 14px radius, `--nc-shadow-floating`, on
+  `--nc-color-sidebar-bg`. 224px wide, folding to a 58px icon rail over
+  180ms (`--nc-transition-sidebar`, zero under reduced motion). The
+  hamburger and the `nigel` wordmark sit in its header; the nav is grouped
+  (an unlabelled top group, then Statements, Billing and Setup, read from
+  `navGroup` in the screen registry); Review carries the queue's count; and
+  Settings is pinned in the footer. The active item is filled with
+  `--nc-color-selected-bg` inside a 1px rainbow hairline: the fill painted to
+  the padding box and `--nc-grad-brand-text` to the border box of a
+  transparent border.
+- **Folded state is per device.** The rail is remembered in `localStorage`
+  under `nigel.sidebar-collapsed`, like the colour mode, and only on a wide
+  viewport: at phone width collapsed means the drawer is shut, which is where
+  it starts anyway. Below 48rem the sidebar is an off-canvas drawer with a
+  backdrop and a hamburger in the top bar.
+- **Top bar.** 50px, with the breadcrumb on the left — the book's monogram
+  (`wc-monogram`: initials on a pastel from `--nc-color-pastel-1…7`, picked by
+  hashing the data directory so a book keeps its colour), its name, then the
+  screen, and `Invoices / #n` on an open invoice with Invoices a way back to
+  the list — then the search pill and refresh. The book and the pill dispatch
+  `nc-palette-open` (`{ scope: 'books' | 'all' }`), which bubbles out of
+  `nigel-app` to the document for the palette to answer; refresh remounts the
+  screen and reloads the status and the Review count.
+- **Window title.** `{Screen} · {Book}`, innermost level first on an open
+  invoice (`#1254 · Invoices · Acme Consulting LLC`). `nigel-app` sets
+  `document.title`; the Tauri window follows it (`docs/desktop.md`).
+- **Scroll.** A screen change puts the content area back at the top, as a
+  native window's new pane would be. The shell resets on a change of
+  `scrollKey`, which the app derives from the breadcrumb, so a filter or a
+  period change within a screen keeps the reader's place.
+- **Hosted mode.** `shell=native` on the URL the page is opened with means
+  it is inside the Swift shell, which draws its own sidebar. The host may put
+  the flag in the query (`nigel://localhost/?shell=native#/dashboard`) or in
+  the hash route's parameters (`nigel://localhost/#/settings?shell=native`,
+  how it opens a screen directly); `isHostedShell` in
+  `apps/app/src/shell-preferences.ts` accepts either, read once at boot, and
+  `parseHash` strips the parameter so no screen sees it. `nigel-app` then
+  renders no `wc-nav-sidebar` and sets `hide-sidebar` on the shell, which
+  drops the sidebar slot and its toggle and keeps the breadcrumb top bar. The
+  flag is read in the app; no `wc-*` component knows which host it is in.
+
+## Focus
+
+Two treatments, both in `controlsCss` so every root that hosts a control
+draws them the same way:
+
+- A **field** — a text `input`, `select`, `textarea`, and `wa-input`,
+  `wa-select` and `wa-textarea` through the part that carries their border —
+  turns its border `--wa-color-brand` and wears a 3px `--nc-color-ring` halo
+  on any focus, pointer included, because a caret in a field is the thing
+  being worked on. Checkboxes, radios, file pickers, range sliders and colour
+  inputs are controls, not fields, and take the outline below. The field
+  keeps a transparent 2px outline rather than none: forced-colors mode drops
+  the halo and repaints that outline, and a `forced-colors: active` rule
+  draws it in `Highlight`, so a high-contrast user still sees which field has
+  the caret.
+- Everything else uses `:focus-visible`: a 2px `--wa-color-focus` outline
+  offset 2px, on keyboard focus only, so a click does not leave a ring
+  behind.

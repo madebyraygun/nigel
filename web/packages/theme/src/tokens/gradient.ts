@@ -166,6 +166,13 @@ export const brandCycleKeyframes = css`
   }
 `;
 
+const pastelStops = unsafeCSS(
+  NIGEL_PALETTE.map((hex, i) => `    --nc-color-pastel-${i + 1}: ${hex};`).join('\n'),
+);
+
+/** How many `--nc-color-pastel-*` tokens there are. */
+export const PASTEL_COUNT = NIGEL_PALETTE.length;
+
 export const gradientCss = css`
   :root {
     --nc-grad-brand: ${cycle};
@@ -199,5 +206,10 @@ export const gradientCss = css`
        light and dark, so a foreground that flips with the mode is unreadable
        in one of them. Held against every stop by contrast.test.ts. */
     --nc-color-on-gradient: #2b2b33;
+
+    /* The seven pastels one at a time, for a tile that takes one colour from
+       the ramp — a book's monogram. Not mode-dependent, and always carrying
+       --nc-color-on-gradient. */
+${pastelStops}
   }
 `;

@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { keyed } from 'lit/directives/keyed.js';
 import '@nigel/ui';
 import { dispatchNcToast, narrowViewport } from '@nigel/ui';
 
@@ -13,6 +14,13 @@ import {
 } from '../state/app-store.js';
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
 import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
+import { trailFor, windowTitle } from '../screens/trail.js';
+import {
+  isHostedShell,
+  paletteShortcut,
+  readSidebarCollapsed,
+  writeSidebarCollapsed,
+} from '../shell-preferences.js';
 import type { ScreenContext } from '../screens/context.js';
 import {
   deepActiveElement,
@@ -72,13 +80,32 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private snakeOpen = false;
 
   /**
-   * Whether the sidebar is put away — the rail on a wide viewport, off-canvas
-   * on a phone, where it starts that way because it would otherwise cover the
-   * screen. The shell renders the control and asks; the sidebar is this
-   * element's slotted child, so only this element can pass the answer down.
+   * Whether the sidebar is put away — the rail on a wide viewport, where it
+   * starts as this device last left it, and off-canvas on a phone, where it
+   * starts that way because it would otherwise cover the screen. The sidebar
+   * and the shell render the controls and ask; the sidebar is this element's
+   * slotted child, so only this element can pass the answer down.
    */
   @state()
-  private sidebarCollapsed = narrowViewport();
+  private sidebarCollapsed = narrowViewport() || readSidebarCollapsed();
+
+  /** How many transactions are waiting in Review, for the sidebar's count. */
+  @state()
+  private reviewCount: number | undefined = undefined;
+
+  /** Bumped by the top bar's refresh, which remounts the screen so it loads afresh. */
+  @state()
+  private refreshes = 0;
+
+  /**
+   * A native window is hosting the page and draws its own sidebar, so this
+   * one is not rendered. Read once: the query string is fixed for the life of
+   * the page.
+   */
+  private readonly hosted = isHostedShell();
+
+  private readonly shortcut = paletteShortcut();
+  private wasReady = false;
 
   private store: AppStore | null = null;
   private reportedError: string | null = null;
@@ -104,7 +131,27 @@ export class NigelApp extends SignalWatcher(LitElement) {
     // goes with it rather than staying up over a screen nobody navigated to.
     this.closeSnake();
     this.syncRouteFromHash();
+    void this.loadReviewCount();
   };
+
+  protected updated(): void {
+    // The count is only worth asking for once there are books to count in,
+    // and asking for it before then would be a query the gates exist to stop.
+    const ready = (this.store ?? getAppStore()).boot.get() === 'ready';
+    const arrived = ready && !this.wasReady;
+    this.wasReady = ready;
+    if (arrived) void this.loadReviewCount();
+  }
+
+  private async loadReviewCount(): Promise<void> {
+    if (!this.wasReady) return;
+    try {
+      this.reviewCount = (await this.client.getReviewQueue()).length;
+    } catch {
+      // The count is a hint; without it the sidebar shows none.
+      this.reviewCount = undefined;
+    }
+  }
 
   protected willUpdate(): void {
     // The other way the dashboard disappears: locking, a failed status, a
@@ -130,6 +177,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
   private handleSidebarToggle = (event: CustomEvent<{ collapsed: boolean }>): void => {
     this.sidebarCollapsed = event.detail.collapsed;
+    // On a phone collapsed means the drawer is shut, which is where it starts
+    // anyway; only the rail is a choice worth remembering.
+    if (!narrowViewport()) writeSidebarCollapsed(event.detail.collapsed);
+  };
+
+  private handleRefresh = (): void => {
+    void this.store?.refreshStatus();
+    void this.loadReviewCount();
+    this.refreshes += 1;
   };
 
   /** Navigation for screens: the same one-directional path the sidebar takes. */
@@ -246,24 +302,36 @@ export class NigelApp extends SignalWatcher(LitElement) {
     }
 
     const screen = screenDef(this.route.screen);
-    document.title = `${screen.title} · ${store.companyName.get()}`;
+    const book = store.companyName.get();
+    const trail = trailFor(this.route);
+    document.title = windowTitle(trail, book);
 
     return html`
       <wc-app-shell
         screen-title=${screen.title}
+        book-name=${book}
+        book-key=${store.status.get()?.dataDir ?? book}
+        .trail=${trail}
+        .scrollKey=${trail.map((item) => item.label).join('/')}
+        search-shortcut=${this.shortcut.keycap}
+        search-key-shortcuts=${this.shortcut.aria}
+        ?hide-sidebar=${this.hosted}
         ?inert=${this.snakeOpen}
         ?sidebar-collapsed=${this.sidebarCollapsed}
         @nc-sidebar-toggle=${this.handleSidebarToggle}
+        @nc-navigate=${this.handleNavigate}
+        @nc-refresh=${this.handleRefresh}
       >
-        <wc-nav-sidebar
-          slot="sidebar"
-          ?collapsed=${this.sidebarCollapsed}
-          .items=${navItems()}
-          active=${screen.id}
-          app-name=${store.companyName.get()}
-          @nc-navigate=${this.handleNavigate}
-        ></wc-nav-sidebar>
-        ${this.renderBanner(error?.message ?? null)} ${screen.render(ctx)}
+        ${this.hosted
+          ? nothing
+          : html`<wc-nav-sidebar
+              slot="sidebar"
+              ?collapsed=${this.sidebarCollapsed}
+              .items=${navItems({ counts: { review: this.reviewCount } })}
+              active=${screen.id}
+            ></wc-nav-sidebar>`}
+        ${this.renderBanner(error?.message ?? null)}
+        ${keyed(this.refreshes, screen.render(ctx))}
       </wc-app-shell>
       ${this.snakeOpen
         ? html`<wc-snake fullscreen @nc-snake-exit=${this.closeSnake}></wc-snake>`

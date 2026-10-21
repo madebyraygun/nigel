@@ -43,6 +43,71 @@ describe('controlsCss', () => {
 });
 
 /**
+ * The handoff's two focus treatments: a field is ringed — brand border and a
+ * 3px translucent halo — and everything else takes a 2px brand outline on
+ * keyboard focus only.
+ */
+describe('focus', () => {
+  const rules = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  const block = (selector: string): string => {
+    const at = rules.indexOf(selector);
+    expect(at, `no rule for ${selector}`).toBeGreaterThanOrEqual(0);
+    return rules.slice(rules.indexOf('{', at), rules.indexOf('}', at) + 1);
+  };
+
+  it('outlines a focused control in brand, clear of its edge, on keyboard focus only', () => {
+    const outline = block('\n  :focus-visible');
+    expect(outline).toMatch(/outline:\s*2px solid var\(--wa-color-focus\)/);
+    expect(outline).toMatch(/outline-offset:\s*2px/);
+  });
+
+  it.each(['select:focus', 'textarea:focus', "[type='color']):focus"])(
+    'rings a native field: %s',
+    (selector) => {
+      const ring = block(selector);
+      expect(ring).toMatch(/border-color:\s*var\(--wa-color-brand\)/);
+      expect(ring).toMatch(/box-shadow:\s*0 0 0 3px var\(--nc-color-ring\)/);
+      // Forced colors drops the halo and repaints a transparent outline in
+      // the system colour; `none` would leave a focused field unmarked.
+      expect(ring).toMatch(/outline:\s*2px solid transparent/);
+      expect(ring).not.toMatch(/outline:\s*none/);
+    },
+  );
+
+  it('marks a focused field in forced-colors mode', () => {
+    const forced = rules.slice(rules.indexOf('@media (forced-colors: active)'));
+    expect(rules).toContain('@media (forced-colors: active)');
+    for (const selector of ['textarea:focus', 'select:focus', 'wa-input:focus-within::part(base)']) {
+      expect(forced).toContain(selector);
+    }
+    expect(forced).toMatch(/outline:\s*2px solid Highlight/);
+  });
+
+  it('never takes the outline off a field', () => {
+    expect(rules).not.toMatch(/outline:\s*none/);
+  });
+
+  it('leaves checkboxes, radios and file pickers to the outline', () => {
+    expect(rules).toMatch(
+      /input:not\(\[type='checkbox'\], \[type='radio'\], \[type='file'\][^)]*\):focus/,
+    );
+  });
+
+  it.each([
+    'wa-input:focus-within::part(base)',
+    'wa-textarea:focus-within::part(base)',
+    'wa-select:focus-within::part(combobox)',
+    "wa-select[open]::part(combobox)",
+  ])('rings %s through the part that carries its border', (selector) => {
+    expect(rules).toContain(selector);
+    const ring = block("wa-select[open]::part(combobox)");
+    expect(ring).toMatch(/border-color:\s*var\(--wa-color-brand\)/);
+    expect(ring).toMatch(/box-shadow:\s*0 0 0 3px var\(--nc-color-ring\)/);
+    expect(ring).toMatch(/outline-color:\s*transparent/);
+  });
+});
+
+/**
  * The document turns off user-select so the desktop shell does not paint a
  * selection while dragging its chrome, and that choice inherits through
  * every shadow boundary underneath it — including into a field someone is

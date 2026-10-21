@@ -99,6 +99,17 @@ pub fn set_chrome_background(window: tauri::WebviewWindow, mode: String, source:
     let _ = window.set_background_color(Some(background_for(palette.mode)));
 }
 
+/// The window's title for a document title the SPA set: the same text, or
+/// the app's name while the page has not titled itself yet.
+pub fn window_title(document_title: &str) -> String {
+    let title = document_title.trim();
+    if title.is_empty() {
+        "Nigel".to_string()
+    } else {
+        title.to_string()
+    }
+}
+
 /// `#rrggbb` to components. Only ever fed the constants above, so a
 /// malformed literal is a programmer error caught by the unit tests.
 fn rgb(hex: &str) -> (u8, u8, u8) {
@@ -109,6 +120,21 @@ fn rgb(hex: &str) -> (u8, u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_window_takes_the_documents_title() {
+        assert_eq!(
+            window_title("#1254 · Invoices · Acme Consulting LLC"),
+            "#1254 · Invoices · Acme Consulting LLC"
+        );
+        assert_eq!(window_title("  Dashboard · Acme  "), "Dashboard · Acme");
+    }
+
+    #[test]
+    fn an_untitled_document_leaves_the_apps_name() {
+        assert_eq!(window_title(""), "Nigel");
+        assert_eq!(window_title("   "), "Nigel");
+    }
 
     #[test]
     fn the_canvas_constants_parse() {
