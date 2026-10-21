@@ -479,7 +479,11 @@ export class WcSendDialog extends LitElement {
       <p class="outcome">This will:</p>
       <ul data-consequences>
         <li>publish the document${this.publishHost ? ` to ${this.publishHost}` : ''}</li>
-        <li>email each of the ${n} recipients their own link with the PDF attached</li>
+        <li>
+          ${n === 1
+            ? 'email the recipient their own link with the PDF attached'
+            : `email each of the ${n} recipients their own link with the PDF attached`}
+        </li>
         <li>
           ${this.responseForm
             ? 'open it for online responses'

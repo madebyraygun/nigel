@@ -271,9 +271,22 @@ pub fn send(
     let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
 
     let config = documents_config();
+    let status = documents_status(&config);
+    if !status.missing.is_empty() {
+        return Err(NigelError::Invalid(format!(
+            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
+            status.missing.join(", ")
+        )));
+    }
+    let host = send_publish_host(&config);
+    let company = company_name(&conn);
+    let clients = build_document_clients(config, &company)?;
+    for warning in clients.warnings() {
+        eprintln!("notice: {warning}");
+    }
+
     if !yes {
         confirm_unless_piped(id)?;
-        let host = send_publish_host(&config);
         println!(
             "{}",
             format_send_summary(
@@ -282,7 +295,7 @@ pub fn send(
                 version.number,
                 &recipients,
                 host.as_deref(),
-                config.document_response_url.is_some(),
+                clients.response_url().is_some(),
             )
         );
         if !confirm_or_refuse("Send it? [y/N]", "", false)? {
@@ -291,18 +304,6 @@ pub fn send(
         }
     }
 
-    let status = documents_status(&config);
-    if !status.missing.is_empty() {
-        return Err(NigelError::Invalid(format!(
-            "Sending documents is not configured: missing {} (set each one in settings.json or the matching NIGEL_ env var)",
-            status.missing.join(", ")
-        )));
-    }
-    let company = company_name(&conn);
-    let clients = build_document_clients(config, &company)?;
-    for warning in clients.warnings() {
-        eprintln!("notice: {warning}");
-    }
     let ctx = SendContext {
         data_dir: &data_dir,
         company: &company,

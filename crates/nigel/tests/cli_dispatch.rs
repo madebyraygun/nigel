@@ -4733,11 +4733,24 @@ fn document_preview_writes_files_without_any_configuration() {
         .exists());
 }
 
+/// Every key a document send needs, set to values that never reach a network.
+fn configured_for_documents(cmd: &mut assert_cmd::Command) -> &mut assert_cmd::Command {
+    cmd.env("NIGEL_MAILGUN_API_KEY", "key-not-real")
+        .env("NIGEL_MAILGUN_DOMAIN", "mg.example.test")
+        .env("NIGEL_FROM_EMAIL", "billing@mg.example.test")
+        .env("NIGEL_R2_ACCOUNT_ID", "acct")
+        .env("NIGEL_R2_ACCESS_KEY", "ak")
+        .env("NIGEL_R2_SECRET_KEY", "sk")
+        .env("NIGEL_R2_BUCKET", "billing")
+        .env("NIGEL_R2_PRIVATE_BUCKET", "private")
+        .env("NIGEL_DOCUMENTS_BASE_URL", "https://docs.example.test/d")
+}
+
 #[test]
 fn document_send_without_yes_on_a_pipe_refuses_and_sends_nothing() {
     let env = TestEnv::new();
     filed_document(&env);
-    env.cmd()
+    configured_for_documents(&mut env.cmd())
         .args(["document", "send", "1"])
         .assert()
         .failure()
@@ -4751,6 +4764,20 @@ fn document_send_without_yes_on_a_pipe_refuses_and_sends_nothing() {
         )
         .unwrap();
     assert!(sent.is_none());
+}
+
+#[test]
+fn document_send_checks_configuration_before_asking_to_confirm() {
+    let env = TestEnv::new();
+    filed_document(&env);
+    env.cmd()
+        .args(["document", "send", "1"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Sending documents is not configured: missing")
+                .and(predicate::str::contains("Pass --yes").not()),
+        );
 }
 
 #[test]

@@ -108,6 +108,23 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'document-confirm-single',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${1}
+          .publishHost=${'docs.example.com'}
+        >
+          <wc-recipient-editor
+            slot="recipients"
+            .value=${{ ...DOC_RECIPIENTS, collaborators: [] }}
+          ></wc-recipient-editor>
+        </wc-send-dialog>
+      `,
+    },
+    {
       name: 'document-sending',
       render: () => html`
         <wc-send-dialog

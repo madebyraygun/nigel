@@ -1640,7 +1640,7 @@ To bill from a different domain, point that hostname at your bucket and set
 
 ## Documents
 
-A document is a PDF filed for a client — a proposal, a statement of work, an
+A document is a PDF filed for a client — a proposal, an estimate, an
 agreement — and sent to one **signer** and any number of **collaborators**, each
 with a link of their own. The signer can accept it or ask for changes on their
 page; a collaborator can only ask for changes. You can revise it, record a
@@ -1783,7 +1783,8 @@ nigel document preview 3                   # Writes the pages and PDF locally; n
 nigel document send 3                      # Confirm, then publish and email
 ```
 
-`add` files the PDF as a draft and prints its checksum. `kinds` lists the
+`add` files the PDF as a draft and prints its checksum. A new database starts
+with three kinds — Proposal, Estimate and Agreement. `kinds` lists the
 document kinds, including inactive ones; `kinds add`, `kinds rename <id> <name>`
 and `kinds deactivate <id>` manage them. `list` takes `--client`, `--status` and
 `--kind`, and `show` prints every version, its recipients and every response.
@@ -1795,7 +1796,8 @@ receive, rendered by the code `send` publishes with.
 
 `send` defaults the signer to the client's billing contact; `--signer
 "Name <email>"` names someone else, and `--collaborator "Name <email>"` (repeat
-it) adds collaborators. It prints who gets what and asks, and `--yes` skips the
+it) adds collaborators. It checks the configuration first, so a missing key is
+named before anything is asked, then prints who gets what and asks; `--yes` skips the
 question and is required when stdin is not a terminal. A document can be sent
 once, from `draft`, and not for an archived client.
 
