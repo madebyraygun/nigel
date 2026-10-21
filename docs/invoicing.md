@@ -1684,6 +1684,10 @@ and add three:
   is published or emailed.
 - **Sync** needs only the private store: `r2_account_id`, `r2_access_key`,
   `r2_secret_key` and `r2_private_bucket`.
+- **`documents_base_url`** is the address the bucket's `d/` prefix is served
+  at. A send that runs on a base not ending in `/d` prints a warning (and the
+  API returns it in `configWarnings`) but goes ahead, since a rewrite can map the
+  prefix onto another path.
 - **`document_response_url`** is optional. Without it a published page can be
   read and its PDF downloaded, but has no form. Send says so in its
   confirmation.

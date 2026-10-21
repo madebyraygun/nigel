@@ -1413,7 +1413,7 @@ A completed send answers:
 
 `links` is each recipient's page **as it was emailed**. `configWarnings` carries
 configuration the send went ahead with, such as a From address off the Mailgun
-domain. Both arrays are always present. A send that committed is never an
+domain or a `documents_base_url` that does not end in `/d`. Both arrays are always present. A send that committed is never an
 error: if reloading the document afterwards fails, `document` is `null` and
 `warnings` says to refresh, so the links are not lost and nothing invites a
 second send.
