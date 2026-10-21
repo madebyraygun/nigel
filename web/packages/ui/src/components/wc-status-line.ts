@@ -268,7 +268,7 @@ export class WcStatusLine extends LitElement {
               class="segment book"
               aria-haspopup="dialog"
               title="Switch books"
-              @click=${() => dispatchPaletteOpen(this, 'books')}
+              @click=${(e: Event) => dispatchPaletteOpen(e.currentTarget!, 'books')}
             >
               <wc-monogram name=${this.bookName} seed=${this.bookKey}></wc-monogram>
               <span class="book-name">${this.bookName}</span>
@@ -296,7 +296,7 @@ export class WcStatusLine extends LitElement {
         class="segment hint"
         aria-haspopup="dialog"
         aria-keyshortcuts=${this.keyShortcuts}
-        @click=${() => dispatchPaletteOpen(this, 'all')}
+        @click=${(e: Event) => dispatchPaletteOpen(e.currentTarget!, 'all')}
       >
         <kbd>${this.shortcut}</kbd> palette
       </button>

@@ -167,6 +167,19 @@ describe('wc-status-line', () => {
     expect(el.shadowRoot?.querySelector('.lock')?.getAttribute('title')).toBe('Encrypted');
   });
 
+  it('fires nc-palette-open from the pressed button so focus can return to it', async () => {
+    const el = await mount();
+    const origins: EventTarget[] = [];
+    document.body.addEventListener('nc-palette-open', (event) => {
+      origins.push(event.composedPath()[0]);
+    });
+    const book = el.shadowRoot?.querySelector<HTMLButtonElement>('.book');
+    const hint = el.shadowRoot?.querySelector<HTMLButtonElement>('.hint');
+    book?.click();
+    hint?.click();
+    expect(origins).toEqual([book, hint]);
+  });
+
   it('stands down below the mobile breakpoint', () => {
     expect(styleText(WcStatusLine)).toMatch(
       /@media \(max-width: 48rem\)\s*{\s*:host\s*{\s*display:\s*none/,
