@@ -154,11 +154,11 @@ export class WcReportTable extends LitElement {
     }
 
     tr[data-tone='income'] td.label {
-      color: var(--nc-color-income, #1a7f5a);
+      color: var(--nc-color-income);
     }
 
     tr[data-tone='expense'] td.label {
-      color: var(--nc-color-expense, #b3261e);
+      color: var(--nc-color-expense);
     }
 
     td.indent-1 {
@@ -170,7 +170,7 @@ export class WcReportTable extends LitElement {
     }
 
     tr[data-link]:hover td {
-      background: var(--wa-color-surface-alt, rgba(0, 0, 0, 0.03));
+      background: var(--wa-color-surface-alt);
     }
 
     td a {

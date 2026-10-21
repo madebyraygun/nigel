@@ -94,7 +94,7 @@ export class WcRuleForm extends LitElement {
 
       .error {
         margin: var(--wa-space-2xs, 4px) 0 0;
-        color: var(--wa-color-danger, #b3261e);
+        color: var(--wa-color-danger);
         font-size: var(--wa-font-size-s, 13px);
       }
 

@@ -135,4 +135,32 @@ describe('inline sizing', () => {
   });
 });
 
+/**
+ * The glyphs the app-refresh handoff asks for (`docs/design/app-refresh`,
+ * "Assets"). Its `x` is `wc-icon-close`.
+ */
+describe('the handoff icons', () => {
+  const HANDOFF = [
+    'wc-icon-lock',
+    'wc-icon-lock-open',
+    'wc-icon-search',
+    'wc-icon-chevron-down',
+    'wc-icon-chevron-up-down',
+    'wc-icon-flag',
+    'wc-icon-plus',
+    'wc-icon-folder',
+    'wc-icon-monitor',
+    'wc-icon-keyboard',
+    'wc-icon-close',
+  ] as const;
+
+  it.each(HANDOFF)('%s is in the set', (tag) => {
+    expect(ICON_TAGS).toContain(tag);
+  });
+
+  it.each(HANDOFF)('%s is drawn in the preview gallery', (tag) => {
+    expect(marksIn('default').map(tagOf)).toContain(tag);
+  });
+});
+
 describePreviewA11y(preview);

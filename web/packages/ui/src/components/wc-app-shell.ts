@@ -112,7 +112,7 @@ export class WcAppShell extends LitElement {
       position: fixed;
       inset: 0;
       z-index: 1;
-      background: var(--nc-color-backdrop, rgb(0 0 0 / 45%));
+      background: var(--wa-color-overlay-modal);
     }
 
     .actions {

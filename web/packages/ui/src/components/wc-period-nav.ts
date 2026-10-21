@@ -156,8 +156,8 @@ export class WcPeriodNav extends LitElement {
     }
 
     .kinds button[aria-checked='true'] {
-      background: var(--wa-color-brand, #4a6cf7);
-      color: var(--wa-color-on-brand, #fff);
+      background: var(--wa-color-brand);
+      color: var(--wa-color-on-brand);
     }
 
     /* Screen chrome, not part of the report. This lives here rather than in

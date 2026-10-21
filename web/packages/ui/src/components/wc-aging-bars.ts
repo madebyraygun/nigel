@@ -130,7 +130,7 @@ export class WcAgingBars extends LitElement {
 
     .bar {
       width: 100%;
-      background: var(--wa-color-brand, #2f6feb);
+      background: var(--wa-color-brand);
       border-radius: var(--wa-radius-sm, 4px) var(--wa-radius-sm, 4px) 0 0;
       min-height: 2px;
       opacity: 0.75;

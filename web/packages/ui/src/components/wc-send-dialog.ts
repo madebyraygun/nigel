@@ -179,11 +179,11 @@ export class WcSendDialog extends LitElement {
 
       .steps li[data-state='ok'] .mark,
       .steps li[data-state='reused'] .mark {
-        color: var(--nc-color-income, #1a7f5a);
+        color: var(--nc-color-income);
       }
 
       .steps li[data-state='failed'] {
-        color: var(--wa-color-danger, #b3261e);
+        color: var(--wa-color-danger);
       }
 
       .outcome {
@@ -194,13 +194,13 @@ export class WcSendDialog extends LitElement {
         margin: 0 0 var(--wa-space-m, 12px);
         padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
         border-radius: var(--wa-radius-m, 8px);
-        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+        background: var(--wa-color-danger-fill-quiet);
       }
 
       .failure h3 {
         margin: 0 0 var(--wa-space-2xs, 4px);
         font-size: var(--wa-font-size-m, 15px);
-        color: var(--wa-color-danger, #b3261e);
+        color: var(--wa-color-danger);
       }
 
       .upstream {
@@ -217,7 +217,7 @@ export class WcSendDialog extends LitElement {
 
       .blocked {
         margin: 0 0 var(--wa-space-m, 12px);
-        color: var(--wa-color-danger, #b3261e);
+        color: var(--wa-color-danger);
       }
 
       .caveat {

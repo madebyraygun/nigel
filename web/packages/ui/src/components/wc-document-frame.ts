@@ -40,7 +40,7 @@ export class WcDocumentFrame extends LitElement {
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-sm, 6px);
       overflow: hidden;
-      background: var(--wa-color-surface, #fff);
+      background: var(--wa-color-surface);
     }
 
     iframe {
@@ -56,7 +56,7 @@ export class WcDocumentFrame extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--wa-color-surface, #fff);
+      background: var(--wa-color-surface);
     }
   `;
 

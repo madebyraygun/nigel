@@ -43,7 +43,7 @@ export class WcReviewProgress extends LitElement {
     .track {
       height: 6px;
       border-radius: 999px;
-      background: var(--wa-color-neutral-fill, rgb(0 0 0 / 12%));
+      background: var(--wa-color-border-soft);
       overflow: hidden;
     }
 

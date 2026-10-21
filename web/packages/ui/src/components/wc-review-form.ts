@@ -111,15 +111,15 @@ export class WcReviewForm extends LitElement {
     .field-error {
       margin: var(--wa-space-2xs, 4px) 0 0;
       font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-danger, #b3261e);
+      color: var(--wa-color-danger);
     }
 
     .form-error {
       margin: 0 0 var(--wa-space-m, 12px);
       padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
       border-radius: var(--wa-radius-m, 8px);
-      background: var(--wa-color-danger-fill, rgb(179 38 30 / 10%));
-      color: var(--wa-color-danger, #b3261e);
+      background: var(--wa-color-danger-fill-quiet);
+      color: var(--wa-color-danger);
       font-size: var(--wa-font-size-s, 13px);
     }
 
@@ -143,7 +143,7 @@ export class WcReviewForm extends LitElement {
     button[type='submit'] {
       background: var(--wa-color-brand);
       border-color: var(--wa-color-brand);
-      color: var(--wa-color-on-brand, #fff);
+      color: var(--wa-color-on-brand);
       font-weight: var(--wa-font-weight-medium, 500);
     }
 

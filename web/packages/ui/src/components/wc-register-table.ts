@@ -283,11 +283,11 @@ export class WcRegisterTable extends LitElement {
       }
 
       tbody tr[aria-selected='true'] {
-        background: var(--wa-color-surface-alt, rgba(120, 120, 160, 0.18));
+        background: var(--nc-color-highlight);
       }
 
       tbody tr[data-flagged='true'] td.date {
-        box-shadow: inset 3px 0 0 var(--nc-color-flagged, #e0a13a);
+        box-shadow: inset 3px 0 0 var(--nc-color-flagged);
       }
 
       tbody tr:focus-visible {
@@ -315,7 +315,7 @@ export class WcRegisterTable extends LitElement {
       }
 
       .icon-button[aria-pressed='true'] {
-        color: var(--nc-color-flagged, #e0a13a);
+        color: var(--nc-color-flagged);
       }
 
       .icon-button:focus-visible {
@@ -372,7 +372,7 @@ export class WcRegisterTable extends LitElement {
         background: var(--wa-color-surface);
         border: 1px solid var(--wa-color-border);
         border-radius: var(--wa-radius-sm, 6px);
-        box-shadow: var(--wa-shadow-m, 0 4px 12px rgba(0, 0, 0, 0.25));
+        box-shadow: var(--wa-shadow-m);
       }
 
       .options li {
@@ -382,8 +382,8 @@ export class WcRegisterTable extends LitElement {
       }
 
       .options li[aria-selected='true'] {
-        background: var(--wa-color-brand, #4a6cf7);
-        color: var(--wa-color-on-brand, #fff);
+        background: var(--wa-color-brand);
+        color: var(--wa-color-on-brand);
       }
 
       /* The label names the field for a screen reader; the column header shows

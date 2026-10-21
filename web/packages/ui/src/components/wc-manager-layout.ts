@@ -67,9 +67,9 @@ export class WcManagerLayout extends LitElement {
         gap: var(--wa-space-s, 8px);
         margin-bottom: var(--wa-space-m, 12px);
         padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
-        border: 1px solid var(--wa-color-danger, #b3261e);
+        border: 1px solid var(--wa-color-danger);
         border-radius: var(--wa-radius-m, 8px);
-        background: var(--wa-color-danger-fill, rgb(179 38 30 / 8%));
+        background: var(--wa-color-danger-fill-quiet);
         font-size: var(--wa-font-size-s, 13px);
       }
 

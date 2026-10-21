@@ -137,14 +137,12 @@ export class WcToast extends LitElement {
       font-family: var(--wa-font-family-sans);
       font-size: var(--wa-font-size-base, 14px);
       font-weight: var(--wa-font-weight-medium, 500);
-      box-shadow: var(--wa-shadow-lg, 0 12px 32px rgb(0 0 0 / 25%));
+      box-shadow: var(--wa-shadow-lg);
       animation: toast-in var(--nc-duration-fast, 120ms) ease;
-      /* A consistently dark chip in both themes: the toast paints over cards
-       * and dialogs that already use --wa-color-surface, so reusing surface
-       * here would make it disappear into them. */
-      background: #1f1f28;
-      color: #ece9f5;
-      border: 1px solid rgb(255 255 255 / 10%);
+      /* A consistently dark chip in both themes; see --nc-color-inverse-bg. */
+      background: var(--nc-color-inverse-bg);
+      color: var(--nc-color-inverse-text);
+      border: 1px solid var(--nc-color-inverse-border);
       /* 100% is the region, which is the viewport minus its gutters, so a long
        * message wraps inside the chip instead of widening it off-screen. */
       max-width: min(var(--nc-toast-max-width), 100%);
@@ -159,13 +157,13 @@ export class WcToast extends LitElement {
     .toast[data-variant='success'] {
       background: var(--wa-color-success);
       border-color: var(--wa-color-success);
-      color: #ffffff;
+      color: var(--wa-color-on-brand);
     }
 
     .toast[data-variant='danger'] {
       background: var(--wa-color-danger);
       border-color: var(--wa-color-danger);
-      color: #ffffff;
+      color: var(--wa-color-on-brand);
     }
 
     .action {
@@ -185,7 +183,7 @@ export class WcToast extends LitElement {
 
     .action:hover,
     .action:focus-visible {
-      background: rgb(255 255 255 / 15%);
+      background: var(--nc-color-inverse-hover);
     }
 
     .close {
@@ -203,7 +201,7 @@ export class WcToast extends LitElement {
 
     .close:hover,
     .close:focus-visible {
-      background: rgb(255 255 255 / 15%);
+      background: var(--nc-color-inverse-hover);
     }
 
     @keyframes toast-in {

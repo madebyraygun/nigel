@@ -24,7 +24,7 @@ export class WcRuleTestPreview extends LitElement {
   static styles = css`
     :host {
       display: block;
-      background: var(--wa-color-neutral-fill, rgb(0 0 0 / 4%));
+      background: var(--wa-color-surface-alt);
       border-radius: var(--wa-radius-m, 8px);
       padding: var(--wa-space-s, 8px) var(--wa-space-m, 12px);
       font-family: var(--wa-font-family-sans);
@@ -40,7 +40,7 @@ export class WcRuleTestPreview extends LitElement {
     }
 
     .error {
-      color: var(--wa-color-danger, #b3261e);
+      color: var(--wa-color-danger);
     }
 
     ul {

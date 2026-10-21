@@ -69,7 +69,7 @@ export class WcExportLinks extends LitElement {
 
     a:hover,
     button:hover:not(:disabled) {
-      background: var(--wa-color-surface-alt, rgba(0, 0, 0, 0.03));
+      background: var(--wa-color-surface-alt);
     }
 
     a:focus-visible,

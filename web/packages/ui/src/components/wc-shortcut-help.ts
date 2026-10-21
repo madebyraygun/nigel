@@ -84,7 +84,7 @@ export class WcShortcutHelp extends LitElement {
       color: var(--wa-color-text);
       border: 1px solid var(--wa-color-border);
       border-radius: var(--wa-radius-md, 8px);
-      box-shadow: var(--wa-shadow-m, 0 4px 12px rgba(0, 0, 0, 0.25));
+      box-shadow: var(--wa-shadow-m);
     }
 
     .panel h2 {

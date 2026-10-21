@@ -101,10 +101,10 @@ export const waContractCss = css`
     --wa-color-text-quiet: var(--wa-color-muted);
     --wa-color-text-link: var(--wa-color-brand);
 
-    /* The dialog scrim. Deliberately a literal black at low alpha rather than
-       a token: it is the same darkening in both modes, and a scrim built from
-       --wa-color-text would invert to a white wash over a dark app. */
-    --wa-color-overlay-modal: rgb(0 0 0 / 45%);
+    /* The dialog scrim, --wa-color-overlay-modal, is a colour token and
+       lives in color.ts with its dark override. The inline overlay is a
+       literal black at low alpha: the same darkening in both modes, where a
+       scrim built from --wa-color-text would invert to a white wash. */
     --wa-color-overlay-inline: rgb(0 0 0 / 20%);
 
     /* Hover and active are mixed into currentColor by WA as
@@ -194,11 +194,11 @@ export const waContractCss = css`
     /* Form controls — the family whose absence left every input, select and
        switch with no chrome and every button with no padding. Upstream's own
        proportions, in em, so they track the base size rather than fighting it. */
-    --wa-form-control-background-color: var(--wa-color-surface);
+    --wa-form-control-background-color: var(--nc-color-field);
     --wa-form-control-border-color: var(--wa-color-border);
     --wa-form-control-border-style: var(--wa-border-style);
     --wa-form-control-border-width: var(--wa-border-width-s);
-    --wa-form-control-border-radius: var(--wa-radius-sm);
+    --wa-form-control-border-radius: var(--wa-radius-md);
     --wa-form-control-activated-color: var(--wa-color-brand);
 
     --wa-form-control-label-color: var(--wa-color-text);
