@@ -79,9 +79,12 @@ describe('wc-stat-strip', () => {
 
   it('names each retry button for its cell', async () => {
     const el = await mount({ cells: [{ ...cells[1]!, error: 'boom' }] });
-    expect(
-      el.shadowRoot?.querySelector('.retry')?.getAttribute('aria-label'),
-    ).toBe('Retry Expenses, year to date');
+    // wa-button does not forward a host aria-label to its inner button, so
+    // the cell's name is in the content, where the inner button's name comes from.
+    const retry = el.shadowRoot?.querySelector('.retry');
+    expect(retry?.hasAttribute('aria-label')).toBe(false);
+    expect(retry?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Retry Expenses, year to date');
+    expect(retry?.querySelector('.sr-only')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Expenses, year to date');
   });
 
   it('divides cells with a left hairline that becomes a top one when the strip is narrow', () => {

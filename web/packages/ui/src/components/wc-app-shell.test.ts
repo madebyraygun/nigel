@@ -428,14 +428,14 @@ describe('wc-app-shell top bar', () => {
     const header = el.shadowRoot?.querySelector('header');
     expect(header?.querySelector('wc-breadcrumb')).toBeTruthy();
     expect(header?.querySelector('wc-search-pill')).toBeTruthy();
-    expect(header?.querySelector('[aria-label="Refresh"]')).toBeTruthy();
+    expect(header?.querySelector('wa-button.refresh wc-icon-refresh[label="Refresh"]')).toBeTruthy();
   });
 
   it('asks for a refresh rather than doing one', async () => {
     const el = await mount();
     let asked = 0;
     el.addEventListener('nc-refresh', () => (asked += 1));
-    el.shadowRoot?.querySelector<HTMLButtonElement>('[aria-label="Refresh"]')?.click();
+    el.shadowRoot?.querySelector<HTMLButtonElement>('wa-button.refresh')?.click();
     expect(asked).toBe(1);
   });
 

@@ -12,7 +12,7 @@ export const spacingCss = css`
     --nc-icon-size: 20px;
 
     /* The standard button (controlsCss): 32px by default, 38px at
-       size=large, 28px at size=small, with an icon-only button's glyph at
+       size=l, 28px at size=s, with an icon-only button's glyph at
        17px inside its circle. */
     --nc-button-height: 32px;
     --nc-button-height-lg: 38px;

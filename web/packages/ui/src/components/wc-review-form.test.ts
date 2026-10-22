@@ -97,6 +97,51 @@ describe('wc-review-form', () => {
     document.body.innerHTML = '';
   });
 
+  it('applies on Enter in the rule pattern, where the browser would not submit', async () => {
+    // Two text fields and a submit that is a wa-button rather than a native
+    // button: no implicit submission, so the form submits Enter itself.
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    await toggleRule(el);
+
+    const pattern = field<HTMLInputElement>(el, '#rule-pattern');
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    pattern.dispatchEvent(enter);
+    await el.updateComplete;
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ categoryId: 12, createRule: true, rulePattern: 'ADOBE CREATIVE' });
+  });
+
+  it('applies on Enter in the vendor field', async () => {
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    field<HTMLInputElement>(el, '#vendor').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await el.updateComplete;
+    expect(seen).toHaveLength(1);
+  });
+
+  it('leaves a modified Enter alone', async () => {
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    field<HTMLInputElement>(el, '#vendor').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }),
+    );
+    await el.updateComplete;
+    expect(seen).toHaveLength(0);
+  });
+
   it('applies with the chosen category and no vendor', async () => {
     const el = await mount();
     const seen = applies(el);

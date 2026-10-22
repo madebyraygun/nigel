@@ -356,7 +356,7 @@ export class WcDropzone extends LitElement {
         <span class="spacer"></span>
         <wa-button
           class="replace"
-          size="small"
+          size="s"
           ?disabled=${this.blocked}
           @click=${this.handleBrowse}
         >
@@ -364,7 +364,7 @@ export class WcDropzone extends LitElement {
         </wa-button>
         <wa-button
           class="replace"
-          size="small"
+          size="s"
           ?disabled=${this.blocked}
           @click=${this.handleClear}
         >

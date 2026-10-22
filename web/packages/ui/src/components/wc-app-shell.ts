@@ -480,7 +480,6 @@ export class WcAppShell extends LitElement {
           <wa-button
             class="refresh"
             appearance="plain"
-            aria-label="Refresh"
             title="Refresh"
             @click=${this.requestRefresh}
           >

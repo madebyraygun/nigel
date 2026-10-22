@@ -94,7 +94,7 @@ export class WcStatCard extends LitElement {
     if (this.error) {
       return html`
         <p class="error">${this.error}</p>
-        <wa-button class="retry" size="small" @click=${this.handleRetry}>
+        <wa-button class="retry" size="s" @click=${this.handleRetry}>
           Retry
         </wa-button>
       `;

@@ -39,8 +39,10 @@ export function patternPrefill(description: string): string {
  * screen above it owns every network call, including the debounced rule test
  * whose result arrives back through the `rule-test` slot.
  *
- * Apply is a real submit button in a real form, so Enter applies without a key
- * handler and the browser's own focus order does the rest. Skip and Back are
+ * Apply is a submit `wa-button` in a real form. That is not a native submit
+ * button, so the browser's implicit submission stops once the rule pattern
+ * makes two text fields; `handleKeydown` submits on Enter from any text field
+ * instead, and the browser's own focus order does the rest. Skip and Back are
  * ordinary buttons: the TUI skips on Tab, which on the web is the key that
  * moves between these five controls and cannot be taken away from it.
  */
@@ -230,6 +232,21 @@ export class WcReviewForm extends LitElement {
     );
   }
 
+  /**
+   * Enter in a text field applies. A form with more than one text field and
+   * no native submit button gets no implicit submission from the browser,
+   * and wa-button is not one — so with the rule pattern open, Enter would
+   * otherwise do nothing.
+   */
+  private handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.composedPath()[0];
+    if (!(target instanceof HTMLInputElement) || target.type !== 'text') return;
+    event.preventDefault();
+    (event.currentTarget as HTMLFormElement).requestSubmit();
+  }
+
   private handleSubmit(event: Event): void {
     event.preventDefault();
     if (this.busy) return;
@@ -261,7 +278,7 @@ export class WcReviewForm extends LitElement {
   render() {
     return html`
       ${this.error ? html`<p class="form-error" role="alert">${this.error}</p>` : nothing}
-      <form @submit=${this.handleSubmit} novalidate>
+      <form @submit=${this.handleSubmit} @keydown=${this.handleKeydown} novalidate>
         <div class="fields">
           <div>
             <wc-category-picker

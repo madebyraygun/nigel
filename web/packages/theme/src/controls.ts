@@ -43,11 +43,11 @@ export const controlsCss = css`
     font-size: var(--nc-font-size-control);
   }
 
-  wa-button:is([size='large'], [size='l']) {
+  wa-button[size='l'] {
     --wa-form-control-height: var(--nc-button-height-lg);
   }
 
-  wa-button:is([size='small'], [size='s']) {
+  wa-button[size='s'] {
     --wa-form-control-height: var(--nc-button-height-sm);
     --wa-form-control-padding-inline: var(--nc-button-padding-inline-sm);
   }
@@ -92,6 +92,21 @@ export const controlsCss = css`
      and Web Awesome's own exclude its .disabled class. */
   wa-button[disabled] {
     opacity: 0.4;
+  }
+
+  /* Text for assistive technology alone. A wa-button does not pass its
+     host's aria-label to the button inside it, so a name longer than the
+     visible label goes in the content: Retry<span class="sr-only"> Revenue</span>. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* An icon-only button is a circle the button's height across. Its icon is
@@ -169,13 +184,20 @@ export const controlsCss = css`
     opacity: 0.4;
   }
 
-  /* Forced colors drops the fills: the edge is repainted, the check (an
-     image) and the knob's position still say which state it is in, and the
-     knob keeps a focus outline in the system colour. */
+  /* Forced colors drops the fills, so the switch is redrawn in system
+     colours: both edges in ButtonText, the knob filled ButtonText when on
+     (the brand-inked check would be the one author colour left), and the
+     knob's position and fill say which state it is in. The knob keeps a
+     focus outline in Highlight. */
   @media (forced-colors: active) {
     wa-switch::part(control),
     wa-switch::part(thumb) {
       border-color: ButtonText;
+    }
+
+    wa-switch:state(checked)::part(thumb) {
+      background-color: ButtonText;
+      background-image: none;
     }
 
     wa-switch:focus-within::part(thumb) {

@@ -135,11 +135,10 @@ export class WcStatStrip extends LitElement {
         <p class="error">${cell.error}</p>
         <wa-button
           class="retry"
-          size="small"
-          aria-label="Retry ${cell.label}"
+          size="s"
           @click=${() => this.retry(cell)}
         >
-          Retry
+          Retry<span class="sr-only"> ${cell.label}</span>
         </wa-button>
       `;
     }

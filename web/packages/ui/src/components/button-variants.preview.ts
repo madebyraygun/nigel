@@ -41,7 +41,7 @@ const preview: Preview = {
   title: 'Standard Button',
   group: 'Actions',
   description:
-    'Every wa-button is a pill. Brand is the flat primary with on-brand text; neutral, with or without appearance=outlined, is an outline in the border colour; danger outlined is the destructive trigger and danger filled the destructive confirm. 32px by default, 38px at size=large, 28px at size=small. A labelled icon alone in the button makes it a round icon button. Disabled sits at 40% with no hover change; keyboard focus draws a 2px brand outline offset 2px.',
+    'Every wa-button is a pill. Brand is the flat primary with on-brand text; neutral, with or without appearance=outlined, is an outline in the border colour; danger outlined is the destructive trigger and danger filled the destructive confirm. 32px by default, 38px at size=l, 28px at size=s. A labelled icon alone in the button makes it a round icon button. Disabled sits at 40% with no hover change; keyboard focus draws a 2px brand outline offset 2px.',
   layout: 'stack',
   states: [
     { name: 'default', render: standard },
@@ -50,17 +50,17 @@ const preview: Preview = {
       name: 'large',
       render: () =>
         row(html`
-          <wa-button size="large" appearance="outlined">Show me the demo</wa-button>
-          <wa-button size="large" variant="brand">Set up my books</wa-button>
+          <wa-button size="l" appearance="outlined">Show me the demo</wa-button>
+          <wa-button size="l" variant="brand">Set up my books</wa-button>
         `),
     },
     {
       name: 'small',
       render: () =>
         row(html`
-          <wa-button size="small" appearance="outlined">Add row</wa-button>
-          <wa-button size="small" variant="danger" appearance="outlined">Undo</wa-button>
-          <wa-button size="small" appearance="plain">
+          <wa-button size="s" appearance="outlined">Add row</wa-button>
+          <wa-button size="s" variant="danger" appearance="outlined">Undo</wa-button>
+          <wa-button size="s" appearance="plain">
             <wc-icon-close label="Dismiss"></wc-icon-close>
           </wa-button>
         `),

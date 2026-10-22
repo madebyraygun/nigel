@@ -36,8 +36,8 @@ describe('standard button preview', () => {
     ['the brand primary', 'variant="brand"'],
     ['the outline', 'appearance="outlined"'],
     ['the danger outline', 'variant="danger" appearance="outlined"'],
-    ['the large size', 'size="large"'],
-    ['the small size', 'size="small"'],
+    ['the large size', 'size="l"'],
+    ['the small size', 'size="s"'],
     ['a disabled button', 'disabled'],
     ['an icon button', 'label="Refresh"'],
   ])('shows %s', (_label, marker) => {

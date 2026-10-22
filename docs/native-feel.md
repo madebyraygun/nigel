@@ -213,15 +213,42 @@ picks what a button *means* and never what it looks like:
 | `appearance="plain"` | A row action drawn as bare text |
 | a labelled icon alone, `<wa-button appearance="plain"><wc-icon-refresh label="Refresh"></wc-icon-refresh></wa-button>` | An icon button: a 32px circle with a 17px glyph in `--wa-color-muted`, filling with `--nc-color-hover` |
 
-Every button is 32px tall with 13px type; `size="large"` is 38px (Setup's
-steps) and `size="small"` 28px (dense rows and forms). Disabled is 40% with
-no hover change. Nothing else sets a button's radius, height or fill: no
-`pill` or `solid` attributes, no native `<button>` filled with the brand, no
-`::part(base)` rule in a component. `button-ownership.test.ts` in each
-package fails the build on any of those. Controls that are not buttons keep
-their own design — nav items, chips, the search and review pills, segmented
-toggles, cards, the sidebar hamburger (a square with 8px corners) — and a
-toggle may fill its checked or pressed state with the brand.
+Every button is 32px tall with 13px type at the default `size="m"`;
+`size="l"` is 38px (Setup's steps) and `size="s"` 28px (dense rows and
+forms). Disabled is 40% with no hover change.
+
+`wa-button` does not pass a host `aria-label` to the button inside it, so a
+name longer than the visible label goes in the content, hidden with the
+`sr-only` class `controlsCss` carries: `Retry<span class="sr-only">
+Revenue</span>`. An icon button's name is its icon's `label`.
+
+`button-ownership.test.ts` in each package (`packages/ui/preview/button-guard.ts`)
+reads every `css` template, splits each selector list on its top-level
+commas, and fails the build on any single selector that:
+
+- names `wa-button` and sets `border-radius` (or a corner), `height`,
+  `min-`/`max-height`, `block-size`, `background*`,
+  `--wa-form-control-height`, `--wa-form-control-border-radius`,
+  `--wa-form-control-padding-inline`, `--wa-border-radius-*`,
+  `--wa-color-fill-*`/`-on-*`/`-border-*` or `--wa-color-brand*`;
+- names a native `button` and sets a `background`, `background-color` or
+  `background-image` reading `--wa-color-brand*` or `--nc-grad-brand*`,
+  unless that same selector is a checked or pressed toggle
+  (`[aria-checked`, `[aria-pressed`, `:checked`);
+- reaches `::part(base)` or `::part(button)` on any host other than a known
+  non-button primitive (`wa-input`, `wa-select`, `wa-textarea`, `wa-dialog`,
+  `wa-drawer`, `wa-switch`, `wa-checkbox`, `wa-radio`, `wa-radio-group`,
+  `wa-details`, `wa-tooltip`, `wa-popup`, `wa-callout`, `wa-card`, `wa-tag`,
+  `wa-badge`, `wa-spinner`, `wa-progress-bar`, `wa-format-bytes`) and sets
+  a radius, height, `background*`, border colour or `color`;
+- names `wa-switch` or `[role=switch]` and sets `--width`, `--height`,
+  `--thumb-size`, a width or height, any `border*` or `background*`.
+
+In templates it fails on a `pill` or `solid` attribute on `wa-button`, and
+on the deprecated `size="small"` or `size="large"`. Controls that are not
+buttons keep their own design — nav items, chips, the search and review
+pills, segmented toggles, cards, the sidebar hamburger (a square with 8px
+corners).
 
 ## Switches
 
@@ -232,5 +259,7 @@ control is visible on any plane (3:1, pinned by `contrast.test.ts`). On fills
 the track with `--wa-color-brand` and puts the icon set's check in the knob,
 so on and off differ in shape as well as colour. The knob slides over 150ms
 (`--nc-transition-switch`, instant under reduced motion), and disabled sits
-at 40%. A component places a switch but never sizes, edges or fills it; the
-same guard test covers it.
+at 40%. Under forced colors both edges are `ButtonText`, the on knob is a
+solid `ButtonText` in place of the check, and focus outlines the knob in
+`Highlight`. A component places a switch but never sizes, edges or fills it;
+the same guard test covers it.

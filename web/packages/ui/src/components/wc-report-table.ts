@@ -341,7 +341,7 @@ export class WcReportTable extends LitElement {
       return html`
         <div class="state">
           <p class="error">${this.error}</p>
-          <wa-button class="retry" size="small" @click=${this.handleRetry}>Retry</wa-button>
+          <wa-button class="retry" size="s" @click=${this.handleRetry}>Retry</wa-button>
         </div>
       `;
     }

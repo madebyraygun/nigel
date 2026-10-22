@@ -73,9 +73,11 @@ describe('wc-notice-bar', () => {
 
   it('gives the icon-only dismiss button an accessible name', async () => {
     const el = await mount({ dismissible: true });
-    expect(
-      el.shadowRoot?.querySelector('.dismiss')?.getAttribute('aria-label'),
-    ).toBe('Dismiss');
+    // The name is the icon's label, inside the button, which is where the
+    // inner button's name comes from.
+    const dismiss = el.shadowRoot?.querySelector('.dismiss');
+    expect(dismiss?.querySelector('wc-icon-close')?.getAttribute('label')).toBe('Dismiss');
+    expect(dismiss?.getAttribute('size') ?? 'm').toBe('m');
   });
 
   it('renders slotted content alongside the message', async () => {

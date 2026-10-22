@@ -102,16 +102,14 @@ export class WcNoticeBar extends LitElement {
           : nothing}
         <span class="message">${this.message}<slot></slot></span>
         ${this.actionLabel
-          ? html`<wa-button class="action" size="small" @click=${this.handleAction}>
+          ? html`<wa-button class="action" size="s" @click=${this.handleAction}>
               ${this.actionLabel}
             </wa-button>`
           : nothing}
         ${this.dismissible
           ? html`<wa-button
               class="dismiss"
-              size="small"
               appearance="plain"
-              aria-label="Dismiss"
               @click=${this.handleDismiss}
             >
               <wc-icon-close label="Dismiss"></wc-icon-close>

@@ -152,11 +152,11 @@ describe('the standard button', () => {
     expect(base).toContain('font-size:var(--nc-font-size-control)');
   });
 
-  it('is 38px at size=large and 28px at size=small', () => {
-    expect(body("wa-button:is([size='large'],[size='l'])")).toContain(
+  it('is 38px at size=l and 28px at size=s', () => {
+    expect(body("wa-button[size='l']")).toContain(
       '--wa-form-control-height:var(--nc-button-height-lg)',
     );
-    expect(body("wa-button:is([size='small'],[size='s'])")).toContain(
+    expect(body("wa-button[size='s']")).toContain(
       '--wa-form-control-height:var(--nc-button-height-sm)',
     );
   });
@@ -287,6 +287,11 @@ describe('the standard switch', () => {
     expect(forced.length).toBeGreaterThan(0);
     expect(forced).toContain(
       'wa-switch:focus-within::part(thumb){outline:2pxsolidHighlight;outline-offset:2px;}',
+    );
+    // The on state in system colours: a solid knob rather than the
+    // brand-inked check image.
+    expect(forced).toContain(
+      'wa-switch:state(checked)::part(thumb){background-color:ButtonText;background-image:none;}',
     );
   });
 

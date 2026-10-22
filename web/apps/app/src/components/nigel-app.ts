@@ -490,7 +490,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
       return html`
         <div slot="banner" class="banner">
           <strong>Could not load status.</strong> ${errorMessage}
-          <wa-button class="retry" size="small" @click=${this.handleRetry}>
+          <wa-button class="retry" size="s" @click=${this.handleRetry}>
             Retry
           </wa-button>
         </div>
