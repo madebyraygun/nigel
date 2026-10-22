@@ -84,11 +84,62 @@ describe('wc-register-table', () => {
     expect(rowEls(el).map((tr) => Number(tr.dataset.id))).toEqual([100, 101, 102, 103]);
   });
 
-  it('shows an em dash for an uncategorized row and nothing for a missing vendor', async () => {
+  it('labels the footer with what it covers and its total', async () => {
+    const el = await mount({
+      total: -12.5,
+      footerLabel: 'BofA Checking',
+      footerNote: '2 of 4 rows shown',
+    });
+    const foot = el.shadowRoot?.querySelector('tfoot');
+    const label = foot?.querySelector('.foot-label')?.textContent?.replace(/\s+/g, ' ');
+    expect(label?.trim()).toBe('BofA Checking · 2 of 4 rows shown');
+    expect(foot?.querySelector('.foot-total')?.textContent?.trim()).toMatch(/^Total/);
+    expect(foot?.querySelector('wc-money')?.amount).toBe(-12.5);
+  });
+
+  it('names an uncategorized row and shows nothing for a missing vendor', async () => {
     const el = await mount();
     const cells = [...(rowEls(el)[0]?.querySelectorAll('td') ?? [])];
-    expect(cells[3]?.textContent?.trim()).toBe('—');
+    expect(cells[3]?.textContent?.trim()).toBe('Uncategorized');
+    expect(rowEls(el)[0]?.dataset.uncategorized).toBe('true');
+    expect(rowEls(el)[1]?.dataset.uncategorized).toBe('false');
     expect(cells[4]?.textContent?.trim()).toBe('');
+  });
+
+  it('toggles a flag from its button without selecting the row', async () => {
+    const el = await mount({ selectedId: 101 });
+    const flags = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    const selects = listen<NcRowEventDetail>(el, 'nc-row-select');
+    const button = rowEls(el)[3]?.querySelector<HTMLButtonElement>('button.icon-button');
+    if (!button) throw new Error('no flag button');
+
+    button.focus();
+    button.click();
+    await el.updateComplete;
+
+    expect(flags).toEqual([{ id: 103, flag: true }]);
+    expect(selects).toEqual([]);
+    expect(selectedId(el)).toBe(101);
+  });
+
+  it('flags and edits only a selected row', async () => {
+    const el = await mount();
+    const flags = listen<NcFlagToggleDetail>(el, 'nc-flag-toggle');
+    const edits = listen<NcRowEventDetail>(el, 'nc-row-activate');
+
+    await press(el, 'f');
+    await press(el, 'Enter');
+
+    expect(flags).toEqual([]);
+    expect(edits).toEqual([]);
+  });
+
+  it('titles an amount cell with the full figure, which the column may clip', async () => {
+    const rows = fixture(1).map((row) => ({ ...row, amount: -1234567.89 }));
+    const el = await mount({ rows });
+    expect(rowEls(el)[0]?.querySelector('td.amount')?.getAttribute('title')).toBe(
+      '-$1,234,567.89',
+    );
   });
 
   it('marks a flagged row for more than color alone', async () => {
@@ -1051,6 +1102,98 @@ describe('a register too big to put in the DOM', () => {
     expect(scroller.scrollTop).toBe(1000 * 33 + 33 / 2 - (40 + band / 2));
   });
 
+  it('sets an end-aligned row on the bottom of the band, above the footer', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+
+    el.scrollToIndex(1000, 'end');
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(1001 * 33 - (660 - 40 - 20));
+    expect(selectedId(el)).toBe(1100);
+  });
+
+  it('scrolls to the last rows without selecting one', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+
+    el.scrollToEnd();
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(BIG * 33 - (660 - 40 - 20));
+    expect(renderedIds(el)).toContain(100 + BIG - 1);
+    expect(selectedId(el)).toBeNull();
+  });
+
+  it('lands the tab stop and the arrow keys on the last row after scrolling to the end', async () => {
+    const el = await mount({ rows: fixture(BIG), total: 12 });
+    stubLayout(el, 33, 660, 40, 20);
+    el.scrollToEnd();
+    await el.updateComplete;
+
+    const lastId = 100 + BIG - 1;
+    const stops = dataRows(el).filter((tr) => tr.tabIndex === 0);
+    expect(stops.map((tr) => Number(tr.dataset.id))).toEqual([lastId]);
+
+    await press(el, 'ArrowUp');
+    expect(selectedId(el)).toBe(lastId);
+  });
+
+  /** The private resize handler, which a ResizeObserver calls and jsdom has none of. */
+  function resize(el: WcRegisterTable): void {
+    (el as unknown as { handleViewportResize(): void }).handleViewportResize();
+  }
+
+  it('re-anchors on the first row shown when a resize changes the row height', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    await el.updateComplete;
+    await scrollTo(el, 33 * 400);
+
+    // The card narrowed into the stacked layout: rows are now 60px.
+    stubLayout(el, 60, 660);
+    (el.shadowRoot?.querySelector('.scroller') as HTMLElement).scrollTop = 33 * 400;
+    resize(el);
+    await el.updateComplete;
+
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    expect(scroller.scrollTop).toBe(400 * 60);
+    // The spacers stand for the new height, so the scrollbar is still the
+    // whole register.
+    const shown = dataRows(el).length;
+    const total = spacerHeights(el).reduce((sum, height) => sum + height, 0);
+    expect(total / 60 + shown).toBe(BIG);
+  });
+
+  it('keeps a selection in view across a change of row height', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    el.scrollToIndex(500, 'end');
+    await el.updateComplete;
+
+    stubLayout(el, 60, 660);
+    const scroller = el.shadowRoot?.querySelector('.scroller') as HTMLElement;
+    scroller.scrollTop = 501 * 33 - 660;
+    resize(el);
+    await el.updateComplete;
+
+    // Row 500 now ends at 501 * 60; the view has to reach it.
+    expect(scroller.scrollTop).toBe(501 * 60 - 660);
+    expect(selectedId(el)).toBe(600);
+  });
+
+  it('asks for nothing when a resize leaves the row height alone', async () => {
+    const el = await mount({ rows: fixture(BIG) });
+    stubLayout(el, 33, 660);
+    await el.updateComplete;
+    await scrollTo(el, 33 * 100);
+    resize(el);
+    await el.updateComplete;
+    expect((el.shadowRoot?.querySelector('.scroller') as HTMLElement).scrollTop).toBe(33 * 100);
+  });
+
   it('never leaves a scroll pending across an unrelated update', async () => {
     const el = await mount({ rows: fixture(BIG), selectedId: 100 });
     stubLayout(el);
@@ -1082,6 +1225,48 @@ describe('a register too big to put in the DOM', () => {
   it('can be told to render everything anyway', async () => {
     const el = await mount({ rows: fixture(200), virtualizeAbove: Infinity });
     expect(dataRows(el).length).toBe(200);
+  });
+});
+
+describe('wc-register-table stacked layout', () => {
+  /** The rules inside the stacked container query, as one string. */
+  function stackedRules(): string {
+    const start = text.indexOf('@container (max-width: 860px)');
+    expect(start).toBeGreaterThan(-1);
+    return text.slice(start);
+  }
+
+  it('switches on the card\'s own width, not the viewport\'s', () => {
+    expect(text).toMatch(/\.scroller\s*{[^}]*container-type:\s*inline-size/);
+    expect(text).toContain('@container (max-width: 860px)');
+  });
+
+  it('gives every stacked row the same height, so the window can place rows by arithmetic', () => {
+    expect(stackedRules()).toMatch(/tbody tr\[data-id\]\s*{[^}]*height:\s*60px/);
+    // Two lines: 32px and 27px, plus the 1px divider.
+    expect(stackedRules()).toMatch(/td\.amount\s*{[^}]*height:\s*32px/);
+    expect(stackedRules()).toMatch(/td\.account\s*{[^}]*height:\s*27px/);
+  });
+
+  it('keeps the header for assistive technology without drawing it', () => {
+    expect(stackedRules()).toMatch(/thead\s*{[^}]*position:\s*absolute[^}]*clip-path:\s*inset\(50%\)/);
+  });
+
+  it('labels every header cell as a column header, which a stacked row keeps by role', async () => {
+    const el = document.createElement('wc-register-table');
+    Object.assign(el, { rows: fixture(), categories });
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const roles = [...(el.shadowRoot?.querySelectorAll('thead th') ?? [])].map((th) =>
+      th.getAttribute('role'),
+    );
+    expect(roles.every((role) => role === 'columnheader')).toBe(true);
+    el.remove();
+  });
+
+  it('pins the footer as a whole and draws no sideways scroll', () => {
+    expect(stackedRules()).toMatch(/tfoot\s*{[^}]*position:\s*sticky[^}]*bottom:\s*0/);
+    expect(text).not.toMatch(/table\s*{\s*width:\s*860px/);
   });
 });
 

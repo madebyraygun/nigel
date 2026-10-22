@@ -172,6 +172,27 @@ export class WcAppShell extends LitElement {
         flex: none;
       }
 
+      /* A screen whose toolbar is its first line keeps its heading for
+         assistive technology, so heading navigation still finds the page,
+         without spending the height on it. Out of flow, so the content
+         column's gap does not open up for it either. */
+      .title-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      /* A page action sits at the right of the title row, however many
+         there are, and wraps under the title on a phone. */
+      .page-head ::slotted([slot='page-actions']) {
+        flex: none;
+        margin-left: auto;
+      }
+
       .title {
         margin: 0;
         font-size: var(--nc-font-size-display);
@@ -283,6 +304,14 @@ export class WcAppShell extends LitElement {
   /** The page heading over the content. Empty draws none, for a screen with its own. */
   @property({ type: String, attribute: 'screen-title' })
   screenTitle = '';
+
+  /**
+   * Keep the page heading for assistive technology only. The breadcrumb
+   * already names the screen to a sighted user, and a screen that opens on
+   * its own toolbar gives the rows that height.
+   */
+  @property({ type: Boolean, attribute: 'title-hidden' })
+  titleHidden = false;
 
   /** The open book's name, first in the breadcrumb. */
   @property({ type: String, attribute: 'book-name' })
@@ -459,7 +488,10 @@ export class WcAppShell extends LitElement {
           <slot name="banner" @slotchange=${this.onBannerChange}></slot>
         </div>
         <main class="content" part="content">
-          ${this.screenTitle
+          ${this.screenTitle && this.titleHidden
+            ? html`<h1 class="title-hidden">${this.screenTitle}</h1>`
+            : nothing}
+          ${this.screenTitle && !this.titleHidden
             ? html`<div class="page-head" part="page-head">
                 <h1 class="title">${this.screenTitle}</h1>
                 <slot name="page-actions"></slot>
