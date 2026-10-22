@@ -2,6 +2,7 @@ import { LitElement, html, css, nothing } from 'lit';
 import { roundHalfEven } from './round-half-even.js';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
 import './wc-money.js';
 import { controlsCss } from '@nigel/theme';
@@ -142,30 +143,28 @@ export class WcLineItems extends LitElement {
         text-align: end;
       }
 
-      input {
-        font: inherit;
-        width: 100%;
+      td wa-input {
         min-width: 5rem;
-        padding: var(--wa-space-2xs) var(--wa-space-xs);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
-        background: var(--wa-color-surface);
-        color: inherit;
       }
 
-      td.description input {
+      td.description wa-input {
         min-width: 12rem;
       }
 
-      td.figure input {
+      td.figure wa-input::part(input) {
         text-align: end;
         font-variant-numeric: tabular-nums;
       }
 
-      .money-input {
-        display: flex;
-        align-items: center;
-        gap: var(--wa-space-2xs);
+      /* The label names each field for a screen reader; the column header
+         shows a sighted user the same thing, so it takes no space. */
+      td wa-input::part(form-control-label) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
 
       .prefix {
@@ -442,50 +441,49 @@ export class WcLineItems extends LitElement {
     return html`
       <tr data-row=${index}>
         <td class="description">
-          <input
+          <wa-input
             data-description
-            type="text"
+            size="s"
             autocomplete="off"
-            aria-label=${`Description, line ${index + 1}`}
+            label=${`Description, line ${index + 1}`}
             .value=${item.description}
             ?disabled=${this.disabled}
             @input=${this.handleField(index, 'description')}
-          />
+          ></wa-input>
           ${errors.description
             ? html`<p class="error" role="alert">${errors.description}</p>`
             : nothing}
         </td>
         <td class="figure end">
-          <input
+          <wa-input
             data-quantity
-            type="text"
+            size="s"
             inputmode="decimal"
             autocomplete="off"
             spellcheck="false"
-            aria-label=${`Quantity, line ${index + 1}`}
+            label=${`Quantity, line ${index + 1}`}
             .value=${item.quantity}
             ?disabled=${this.disabled}
             @input=${this.handleField(index, 'quantity')}
-          />
+          ></wa-input>
           ${errors.quantity
             ? html`<p class="error" role="alert">${errors.quantity}</p>`
             : nothing}
         </td>
         <td class="figure end">
-          <div class="money-input">
-            <span class="prefix" aria-hidden="true">$</span>
-            <input
-              data-unit
-              type="text"
-              inputmode="decimal"
-              autocomplete="off"
-              spellcheck="false"
-              aria-label=${`Unit amount, line ${index + 1}`}
-              .value=${item.unitAmount}
-              ?disabled=${this.disabled}
-              @input=${this.handleField(index, 'unitAmount')}
-            />
-          </div>
+          <wa-input
+            data-unit
+            size="s"
+            inputmode="decimal"
+            autocomplete="off"
+            spellcheck="false"
+            label=${`Unit amount, line ${index + 1}`}
+            .value=${item.unitAmount}
+            ?disabled=${this.disabled}
+            @input=${this.handleField(index, 'unitAmount')}
+          >
+            <span slot="start" class="prefix" data-prefix aria-hidden="true">$</span>
+          </wa-input>
           ${errors.unitAmount
             ? html`<p class="error" role="alert">${errors.unitAmount}</p>`
             : nothing}

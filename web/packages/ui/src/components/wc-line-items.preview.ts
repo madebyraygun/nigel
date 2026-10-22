@@ -33,6 +33,17 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'unit-prefix-in-field',
+      render: () => html`
+        <wc-line-items
+          .items=${[
+            { description: 'Platform build', quantity: '1', unitAmount: '12500.00' },
+            { description: 'Support hours', quantity: '12.5', unitAmount: '165' },
+          ]}
+        ></wc-line-items>
+      `,
+    },
+    {
       name: 'readonly',
       render: () => html`
         <wc-line-items readonly .items=${many} .total=${2400}></wc-line-items>

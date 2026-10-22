@@ -162,7 +162,7 @@ describe('wc-line-items', () => {
 
   it('offers no editing at all in readonly mode', async () => {
     const el = await mount({ readonly: true, total: 1850 });
-    expect(el.shadowRoot?.querySelector('input')).toBeNull();
+    expect(el.shadowRoot?.querySelector('input, wa-input')).toBeNull();
     expect(el.shadowRoot?.querySelector('[data-add-row]')).toBeNull();
     expect(el.shadowRoot?.querySelector('[data-remove]')).toBeNull();
   });
@@ -181,9 +181,29 @@ describe('wc-line-items', () => {
     expect(editing.shadowRoot?.querySelectorAll('th')[2]?.textContent?.trim()).toBe('Unit');
   });
 
+  it('puts the unit amount’s $ inside its field, in the start slot', async () => {
+    const el = await mount();
+    const prefixes = [...(el.shadowRoot?.querySelectorAll('[data-prefix]') ?? [])];
+    expect(prefixes).toHaveLength(ITEMS.length);
+    for (const prefix of prefixes) {
+      expect(prefix.textContent).toBe('$');
+      expect(prefix.getAttribute('slot')).toBe('start');
+      expect(prefix.parentElement?.hasAttribute('data-unit')).toBe(true);
+    }
+  });
+
+  it('names each field for a screen reader by line', async () => {
+    const el = await mount();
+    const unit = el.shadowRoot?.querySelector('[data-unit]');
+    expect(unit?.getAttribute('label')).toBe('Unit amount, line 1');
+  });
+
   it('disables every control while a save is in flight', async () => {
     const el = await mount({ disabled: true });
-    const inputs = [...(el.shadowRoot?.querySelectorAll('input') ?? [])];
+    const inputs = [
+      ...(el.shadowRoot?.querySelectorAll<HTMLInputElement>('wa-input') ?? []),
+    ];
+    expect(inputs.length).toBeGreaterThan(0);
     expect(inputs.every((input) => input.disabled)).toBe(true);
     expect(el.shadowRoot?.querySelector('[data-add-row]')?.hasAttribute('disabled')).toBe(
       true,
