@@ -196,12 +196,12 @@ describe('the standard button', () => {
     );
   });
 
-  it('draws neutral as an outline in the border colour on the card ground', () => {
+  it('draws neutral as an outline in the 3:1 control edge on the card ground', () => {
     const neutral = body(
       "wa-button:is(:not([variant]),[variant='neutral']):not([appearance='plain'])::part(base)",
     );
     expect(neutral).toContain('background-color:var(--wa-color-surface)');
-    expect(neutral).toContain('border-color:var(--wa-color-border)');
+    expect(neutral).toContain('border-color:var(--nc-color-control-border)');
     expect(neutral).toContain('color:var(--wa-color-text)');
   });
 
@@ -265,7 +265,7 @@ describe('the standard switch', () => {
   it('is a pill whose off edge and track come from the tokens', () => {
     const track = body('wa-switch::part(control)');
     expect(track).toContain('border-radius:var(--wa-radius-pill)');
-    expect(track).toContain('border:1pxsolidvar(--nc-color-switch-border)');
+    expect(track).toContain('border:1pxsolidvar(--nc-color-control-border)');
     expect(track).toContain('background-color:var(--wa-color-surface-alt)');
     expect(track).toContain('box-sizing:border-box');
   });
@@ -280,7 +280,7 @@ describe('the standard switch', () => {
 
   it('gives the white knob the same edge when off', () => {
     const knob = body('wa-switch::part(thumb)');
-    expect(knob).toContain('border:1pxsolidvar(--nc-color-switch-border)');
+    expect(knob).toContain('border:1pxsolidvar(--nc-color-control-border)');
     expect(knob).toContain('background-color:var(--nc-color-switch-knob)');
   });
 

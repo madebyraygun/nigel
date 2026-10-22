@@ -6,7 +6,7 @@ import { css, unsafeCSS } from 'lit';
  * The knob is white in both modes — the design's 16px white knob — so the
  * check drawn on it does not flip with the mode either: one brand ink, held
  * to 3:1 against the knob by `contrast.test.ts`. The mode-dependent half of
- * the switch, its off edge, is `--nc-color-switch-border` in `color.ts`.
+ * the switch, its off edge, is `--nc-color-control-border` in `color.ts`.
  */
 export const SWITCH_KNOB = '#ffffff';
 export const SWITCH_CHECK = '#5a3fd6';

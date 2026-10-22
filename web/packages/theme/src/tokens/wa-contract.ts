@@ -132,8 +132,8 @@ export const waContractCss = css`
     --wa-color-neutral-border-normal: var(--wa-color-border);
     /* Loud is the edge of an outlined neutral control — the only thing
        separating it from the canvas, so it owes WCAG 1.4.11's 3:1. The
-       standard button is the exception: controlsCss draws its outline in
-       --wa-color-border, as the design does, and its label identifies it. */
+       standard button's outline is --nc-color-control-border, which owes the
+       same and is drawn by controlsCss. */
     --wa-color-neutral-border-loud: var(--wa-color-muted);
 
     /* Brand's loud fill is the solid brand colour under on-brand text: the

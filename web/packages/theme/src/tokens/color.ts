@@ -59,10 +59,11 @@ export const colorCss = css`
        they read as panels over the canvas rather than as more card. */
     --nc-color-sidebar-bg: #fbfafe;
 
-    /* A switch's edge when off, and its knob's: a mid-grey that holds 3:1
-       against every plane a switch sits on and against its own track, so the
-       off state is a visible control rather than a pale smudge. */
-    --nc-color-switch-border: #85848f;
+    /* The edge of a control whose edge is all that separates it from the
+       page: the outline button, an off switch's track and knob. A mid-grey
+       that holds WCAG 1.4.11's 3:1 against the canvas, a card, the sidebar
+       and the switch's own track, in both modes. */
+    --nc-color-control-border: #85848f;
 
     /* An input's own ground. White in light mode like a card; a shade below
        the card in dark mode, so a field reads as recessed into it. */
@@ -137,7 +138,7 @@ const darkTokens = css`
   --nc-color-hover: #2a2a35;
   --nc-color-sidebar-bg: #22222b;
   --nc-color-field: #1b1b22;
-  --nc-color-switch-border: #7e7b91;
+  --nc-color-control-border: #7e7b91;
   --nc-color-ring: rgb(196 183 255 / 25%);
   --wa-color-overlay-modal: rgb(0 0 0 / 45%);
 

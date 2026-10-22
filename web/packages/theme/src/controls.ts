@@ -58,14 +58,16 @@ export const controlsCss = css`
     --wa-font-weight-action: var(--wa-font-weight-medium);
   }
 
-  /* Neutral is the design's secondary: an outline in the border colour on a
-     card's ground, whether or not the author asked for appearance=outlined.
+  /* Neutral is the design's secondary: an outline on a card's ground,
+     whether or not the author asked for appearance=outlined. The edge is
+     --nc-color-control-border, which holds 3:1 against every plane a button
+     sits on, because it is the only thing marking the control's extent.
      Plain stays bare text. An outer-tree part rule beats the shadow tree's
      own for the same property, Web Awesome's hover included, so the hover
      fill is stated here as well. */
   wa-button:is(:not([variant]), [variant='neutral']):not([appearance='plain'])::part(base) {
     background-color: var(--wa-color-surface);
-    border-color: var(--wa-color-border);
+    border-color: var(--nc-color-control-border);
     color: var(--wa-color-text);
   }
 
@@ -151,7 +153,7 @@ export const controlsCss = css`
 
   wa-switch::part(control) {
     box-sizing: border-box;
-    border: 1px solid var(--nc-color-switch-border);
+    border: 1px solid var(--nc-color-control-border);
     border-radius: var(--wa-radius-pill);
     background-color: var(--wa-color-surface-alt);
     transition:
@@ -162,7 +164,7 @@ export const controlsCss = css`
 
   wa-switch::part(thumb) {
     box-sizing: border-box;
-    border: 1px solid var(--nc-color-switch-border);
+    border: 1px solid var(--nc-color-control-border);
     background-color: var(--nc-color-switch-knob);
   }
 

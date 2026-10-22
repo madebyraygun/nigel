@@ -102,23 +102,23 @@ is meant to read as the same product as the CLI, and the app has almost no
 prose to lose by it — the longest strings anywhere are two-sentence guardrail
 explanations and empty states.
 
-Weights **400 / 500 / 600**, matching `--wa-font-weight-normal` / `-medium` /
-`-bold` exactly. That match is why Plex Mono and not Fira Mono, which has no
-600: every table header and field label would be browser-synthesised, which
-looks worst at small sizes on a mono. No italics — nothing in the UI is italic.
+Weights **400 / 500 / 600 / 700**: `--wa-font-weight-normal` / `-medium` /
+`-bold`, and `--nc-font-weight-table-heading` for every table heading. Each is
+a real face, which is why Plex Mono and not Fira Mono, which has no 600: every
+table header and field label would be browser-synthesised, which looks worst
+at small sizes on a mono. No italics — nothing in the UI is italic.
 
 | | bytes |
 |---|---|
 | `ibm-plex-mono-400.woff2` | 21,676 |
 | `ibm-plex-mono-500.woff2` | 22,264 |
 | `ibm-plex-mono-600.woff2` | 22,348 |
-| **total on disk** | **66,288** |
-| `web/dist` | 659,310 → 726,897 (**+67,587**) |
-| `target/release/nigel` | 25,618,704 → 25,684,688 (**+65,984**, +0.26%) |
+| `ibm-plex-mono-700.woff2` | 22,176 |
+| **total on disk** | **88,464** |
 
-The binary delta is the number that matters and it is measured, not derived —
-rust-embed stores the bytes plus path metadata, so it is not the sum of the
-files.
+rust-embed bakes each file into the binary once, with its path metadata, so
+the binary carries roughly the total on disk — under a third of a percent of
+`target/release/nigel`.
 
 ### How they reach the browser
 

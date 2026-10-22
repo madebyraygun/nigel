@@ -112,6 +112,17 @@ describe.each([
   it.each([
     ['on the canvas', '--wa-color-bg'],
     ['on a card', '--wa-color-surface'],
+    ['on the sidebar panel', '--nc-color-sidebar-bg'],
+    ['on a subtle fill', '--wa-color-surface-alt'],
+    ['against its own hover fill', '--nc-color-hover'],
+  ])('draws the outline button edge above the graphic threshold %s', (_label, bg) => {
+    // The edge is the only thing marking an outline button's extent.
+    expect(contrast(t('--nc-color-control-border'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+
+  it.each([
+    ['on the canvas', '--wa-color-bg'],
+    ['on a card', '--wa-color-surface'],
   ])('draws its focus ring above the graphic threshold %s', (_label, bg) => {
     expect(contrast(t('--wa-color-focus'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
   });
@@ -119,7 +130,7 @@ describe.each([
 
 /**
  * The standard switch (controlsCss). Off is a light track whose only edge is
- * --nc-color-switch-border, and the white knob carries the same edge: WCAG
+ * --nc-color-control-border, and the white knob carries the same edge: WCAG
  * 1.4.11 asks 3:1 of both, against every plane a switch sits on and against
  * the track itself. On, the check in the knob carries the state, so it owes
  * 3:1 against the knob. Knob and check are the same in both modes.
@@ -134,7 +145,7 @@ describe.each([
     ['on the sidebar panel', '--nc-color-sidebar-bg'],
     ['against its own track, where the knob edge sits', '--wa-color-surface-alt'],
   ])('draws its edge above the graphic threshold %s', (_label, bg) => {
-    expect(contrast(t('--nc-color-switch-border'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
+    expect(contrast(t('--nc-color-control-border'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
   });
 });
 
