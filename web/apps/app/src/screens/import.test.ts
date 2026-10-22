@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import './import.js';
 import type { NigelImportScreen } from './import.js';
+import type WaButton from '@awesome.me/webawesome/dist/components/button/button.js';
 import {
   EMPTY_IMPORT_FORM,
   GENERIC_FORMAT_CHOICE,
@@ -116,12 +117,9 @@ function form(el: NigelImportScreen): WcImportForm {
 }
 
 /** The screen's buttons, by their visible text. */
-function button(el: NigelImportScreen, text: string): HTMLButtonElement | null {
-  const buttons = [...(el.shadowRoot?.querySelectorAll('button') ?? [])];
-  return (
-    (buttons.find((b) => b.textContent?.trim().startsWith(text)) as HTMLButtonElement) ??
-    null
-  );
+function button(el: NigelImportScreen, text: string): WaButton | null {
+  const buttons = [...(el.shadowRoot?.querySelectorAll('wa-button') ?? [])];
+  return buttons.find((b) => b.textContent?.trim().startsWith(text)) ?? null;
 }
 
 function panelHeadings(el: NigelImportScreen): string[] {

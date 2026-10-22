@@ -203,7 +203,7 @@ describe('wc-review-form', () => {
     el.addEventListener('nc-review-skip', () => seen.push('skip'));
     el.addEventListener('nc-review-back', () => seen.push('back'));
 
-    const buttons = [...(el.shadowRoot?.querySelectorAll('button') ?? [])];
+    const buttons = [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('wa-button') ?? [])];
     buttons.find((b) => b.textContent?.includes('Skip'))?.click();
     buttons.find((b) => b.textContent?.includes('Back'))?.click();
 
@@ -212,7 +212,7 @@ describe('wc-review-form', () => {
 
   it('disables Back on the first transaction', async () => {
     const el = await mount({ canGoBack: false });
-    const back = [...(el.shadowRoot?.querySelectorAll('button') ?? [])].find((b) =>
+    const back = [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('wa-button') ?? [])].find((b) =>
       b.textContent?.includes('Back'),
     );
     expect(back?.disabled).toBe(true);

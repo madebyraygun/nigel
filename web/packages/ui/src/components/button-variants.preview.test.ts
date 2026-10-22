@@ -1,28 +1,54 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { render } from 'lit';
+import { controlsCss } from '@nigel/theme';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './button-variants.preview.js';
 
 /**
- * The preview has no component of its own — it is the theme's variant families
- * shown on the primitive that reads them — so this file exists to give its
- * states the same axe coverage every other preview's component test provides.
+ * The preview has no component of its own — it is the theme's standard button
+ * shown on the primitive that carries it — so this file exists to give its
+ * states the same axe coverage every other preview's component test provides,
+ * under both colour classes.
  */
 describePreviewA11y(preview);
 
-describe('button variants preview', () => {
-  it('shows every appearance a button in this app is rendered with', () => {
-    // accent is the confirmation dialog's destructive action, outlined its
-    // Cancel, and plain the row actions in the client and line-item forms.
-    const names = preview.states.map((s) => s.name);
-    for (const appearance of ['accent', 'outlined', 'plain']) {
-      expect(names.some((name) => name.includes(appearance)), appearance).toBe(true);
-    }
+describe('in dark mode', () => {
+  beforeAll(() => document.documentElement.classList.add('dark-mode'));
+  afterAll(() => document.documentElement.classList.remove('dark-mode'));
+  describePreviewA11y(preview);
+});
+
+describe('standard button preview', () => {
+  /** The states as DOM, which is the only place the injected sheet appears. */
+  const rendered = preview.states
+    .map((state) => {
+      const host = document.createElement('div');
+      render(state.render(), host);
+      return host.innerHTML;
+    })
+    .join();
+
+  it('shows the real sheet rather than a copy of the rules', () => {
+    expect(rendered).toContain(controlsCss.cssText.trim().slice(0, 120));
   });
 
-  it('leaves brand out, whose fill is the gradient controlsCss paints', () => {
-    // A preview host does not adopt controlsCss, so a brand button would show
-    // a flat purple it never has in the app.
-    const rendered = preview.states.map((s) => JSON.stringify(s.render().values)).join();
-    expect(rendered).not.toContain('brand');
+  it.each([
+    ['the brand primary', 'variant="brand"'],
+    ['the outline', 'appearance="outlined"'],
+    ['the danger outline', 'variant="danger" appearance="outlined"'],
+    ['the large size', 'size="large"'],
+    ['the small size', 'size="small"'],
+    ['a disabled button', 'disabled'],
+    ['an icon button', 'label="Refresh"'],
+  ])('shows %s', (_label, marker) => {
+    expect(rendered).toContain(marker);
+  });
+
+  it('shows the filled destructive confirm', () => {
+    const confirm = preview.states.find((s) => s.name === 'destructive confirm')!;
+    const host = document.createElement('div');
+    render(confirm.render(), host);
+    const danger = host.querySelector('wa-button[variant="danger"]');
+    expect(danger?.getAttribute('appearance') ?? 'accent').toBe('accent');
   });
 });

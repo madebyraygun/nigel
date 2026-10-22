@@ -58,7 +58,6 @@ describe('nigelTheme', () => {
     '--nc-color-pastel-7',
     '--nc-transition-fast',
     '--nc-transition-base',
-    '--nc-duration-slow',
   ])('defines the nigel token %s', (token) => {
     expect(text).toContain(`${token}:`);
   });
@@ -109,14 +108,20 @@ describe('nigelTheme', () => {
   });
 
   it('zeroes the durations a button animates over when motion is reduced', () => {
-    // WA's own base-part transitions run at --wa-transition-fast; the hover
-    // edge runs at --nc-duration-slow. Zeroing both is the whole of
-    // prefers-reduced-motion for a button's chrome — the brand drift is an
-    // animation rather than a transition and is turned off in controlsCss.
+    // WA's own base-part transitions run at --wa-transition-fast, so zeroing
+    // it is the whole of prefers-reduced-motion for a button's chrome.
     expect(text).toMatch(/--wa-transition-fast:\s*var\(--nc-duration-fast\)/);
     const reduced = text.slice(text.indexOf('prefers-reduced-motion'));
     expect(reduced).toMatch(/--nc-duration-fast:\s*0ms/);
-    expect(reduced).toMatch(/--nc-duration-slow:\s*0ms/);
+  });
+
+  it.each([
+    ['--nc-button-height', '32px'],
+    ['--nc-button-height-lg', '38px'],
+    ['--nc-button-height-sm', '28px'],
+    ['--nc-button-icon-size', '17px'],
+  ])('sizes the standard button: %s is %s', (token, value) => {
+    expect(text).toMatch(new RegExp(`${token}:\\s*${value};`));
   });
 
   it('orders light tokens before dark overrides before print', () => {
@@ -132,11 +137,11 @@ describe('nigelTheme', () => {
 });
 
 /**
- * The brand ramp as the button draws it: a periodic image plus the size that
- * makes one `background-position: 100%` shift exactly one period.
+ * The brand ramp as a periodic image plus the size that makes one
+ * `background-position: 100%` shift exactly one period.
  *
- * The pair is the whole of the hover drift's seamlessness, and the pair is
- * also what keeps a button that never moves looking as it always did — so the
+ * The pair is the whole of the wordmark drift's seamlessness, and the pair is
+ * also what keeps a ramp that never moves looking like the plain one — so the
  * arithmetic is asserted rather than eyeballed.
  */
 describe('the brand ramp', () => {

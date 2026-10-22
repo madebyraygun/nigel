@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { controlsCss } from '../src/controls.js';
 import { nigelTheme } from '../src/themes/nigel.js';
+import { SWITCH_CHECK, SWITCH_CHECK_PATH } from '../src/tokens/switch.js';
 
 const text = controlsCss.cssText;
 const composed = nigelTheme.cssText;
@@ -17,8 +18,7 @@ describe('controlsCss', () => {
     'wa-dialog::part(header)',
     'wa-dialog::part(body)',
     'wa-dialog::part(footer)',
-    "wa-button[variant='brand']::part(base)",
-    '::part(label)',
+    "wa-button:is(:not([variant]), [variant='neutral']):not([appearance='plain'])::part(base)",
     ':focus-visible',
   ])('carries %s', (rule) => {
     expect(text).toContain(rule);
@@ -127,118 +127,175 @@ describe('field selection', () => {
   );
 });
 
-/** The rules behind AC #1: an edge on hover and on focus-visible. */
-describe('the button hover edge', () => {
+/**
+ * TASK-154.15: every wa-button is the refresh's pill, and this sheet is the
+ * one place that draws it.
+ */
+describe('the standard button', () => {
   /** Rules with their comments stripped and their whitespace collapsed. */
   const rules = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
 
-  /** The one rule that draws the edge, and the selector it draws it for. */
-  const applied = rules.match(/([^{}]+)\{border-color:var\(--nc-hover-border\)/);
-  const selectors = applied?.[1] ?? '';
+  /** The declarations of the first rule whose selector is exactly `selector`. */
+  const body = (selector: string): string => {
+    const head = `${selector}{`;
+    const at = rules.startsWith(head) ? 0 : rules.indexOf(`}${head}`) + 1;
+    expect(at, `no rule for ${selector}`).toBeGreaterThan(rules.startsWith(head) ? -1 : 0);
+    const open = at + head.length;
+    return rules.slice(open, rules.indexOf('}', open));
+  };
 
-  /** Which colour a variant points `--nc-hover-border` at. */
-  const edgeFor = (selector: string): string | undefined =>
-    rules.match(new RegExp(`${selector}\\{--nc-hover-border:var\\((--wa-color-[a-z]+)\\)`))?.[1];
-
-  it('is applied by one rule, so every button is excluded on the same terms', () => {
-    expect(applied).not.toBeNull();
+  it('is a pill at the 32px control height with 13px type', () => {
+    const base = body('wa-button');
+    expect(base).toContain('--wa-form-control-height:var(--nc-button-height)');
+    expect(base).toContain('--wa-form-control-border-radius:var(--wa-radius-pill)');
+    expect(base).toContain('border-radius:var(--wa-radius-pill)');
+    expect(base).toContain('font-size:var(--nc-font-size-control)');
   });
 
-  it('draws on hover and on keyboard focus', () => {
-    expect(selectors).toContain(':hover');
-    expect(selectors).toContain(':focus-visible');
+  it('is 38px at size=large and 28px at size=small', () => {
+    expect(body("wa-button:is([size='large'],[size='l'])")).toContain(
+      '--wa-form-control-height:var(--nc-button-height-lg)',
+    );
+    expect(body("wa-button:is([size='small'],[size='s'])")).toContain(
+      '--wa-form-control-height:var(--nc-button-height-sm)',
+    );
   });
 
-  it('reaches the control through the host, which wa-button delegates focus to', () => {
-    expect(selectors).toMatch(/::part\(base\)$/);
+  it('sets a filled button in 500 and an outline at the body weight', () => {
+    expect(body('wa-button')).toContain('--wa-font-weight-action:var(--wa-font-weight-normal)');
+    expect(
+      body(
+        "wa-button:is([variant='brand'],[variant='danger']):is(:not([appearance]),[appearance='accent'])",
+      ),
+    ).toContain('--wa-font-weight-action:var(--wa-font-weight-medium)');
   });
 
-  it.each([
-    ['wa-button', '--wa-color-text'],
-    ["wa-button\\[variant='brand']", '--wa-color-brand'],
-    ["wa-button\\[variant='danger']", '--wa-color-danger'],
-    ["wa-button\\[variant='success']", '--wa-color-success'],
-    ["wa-button\\[variant='warning']", '--wa-color-warning'],
-  ])('gives %s an edge in its own hue', (selector, token) => {
-    expect(edgeFor(selector)).toBe(token);
+  it('fills brand flat, with no gradient and no drift', () => {
+    // The fill itself is Web Awesome's accent read through the brand family
+    // (wa-contract.ts); nothing here paints over it.
+    expect(rules).not.toContain('--nc-grad-brand');
+    expect(rules).not.toContain('animation');
+    expect(rules).not.toContain('@keyframes');
+    expect(rules).toMatch(
+      /wa-button\[variant='brand'\][^{}]*:hover::part\(base\)\{background-color:var\(--wa-color-brand-hover\);?\}/,
+    );
   });
 
-  it('excludes the three buttons that must not invite a click', () => {
-    // A plain button is a row action drawn as bare text; a disabled one is
-    // refusing; a loading one swallows the click in handleClick.
-    expect(selectors).toContain(":not([appearance='plain'],[disabled],[loading])");
+  it('draws neutral as an outline in the border colour on the card ground', () => {
+    const neutral = body(
+      "wa-button:is(:not([variant]),[variant='neutral']):not([appearance='plain'])::part(base)",
+    );
+    expect(neutral).toContain('background-color:var(--wa-color-surface)');
+    expect(neutral).toContain('border-color:var(--wa-color-border)');
+    expect(neutral).toContain('color:var(--wa-color-text)');
   });
 
-  it('names no variant Web Awesome does not have', () => {
-    // wa-button's variants are neutral, brand, success, warning and danger.
-    expect(rules).not.toContain("variant='primary'");
+  it('dims a disabled button to 40%', () => {
+    expect(body('wa-button[disabled]')).toBe('opacity:0.4;');
   });
 
-  it('draws no halo, which the edge replaced', () => {
-    expect(rules).not.toContain('--nc-glow');
-  });
-
-  it('restates the whole of the transition it had to override', () => {
-    // A transition declared out here replaces wa-button's own list rather
-    // than adding to it, so every property WA transitions on the base part is
-    // named again. Anything dropped from this list stops transitioning on
-    // every button in the app, silently.
-    const declared = rules.match(/wa-button::part\(base\)\{transition:([^;]+);/)?.[1] ?? '';
-    for (const property of ['background', 'color', 'opacity', 'transform']) {
-      expect(declared).toContain(`${property}var(--wa-transition-fast)`);
+  it('changes nothing on hover for a disabled or loading button', () => {
+    const hovers = [...rules.matchAll(/([^{}]+):hover::part\(base\)\{/g)].map((m) => m[1]);
+    expect(hovers.length).toBeGreaterThan(0);
+    for (const selector of hovers) {
+      expect(selector).toMatch(/:not\(\[disabled\],\[loading\]\)/);
     }
-    // Both halves of the edge fade together, or the second pixel arrives
-    // 380ms after the first.
-    expect(declared).toContain('border-colorvar(--nc-duration-slow)');
-    expect(declared).toContain('box-shadowvar(--nc-duration-slow)');
   });
 
-  it('draws the second pixel inward, so hovering moves nothing', () => {
-    // Widening the border would grow the box and shove every neighbour along.
-    // An inset shadow is clipped to the padding edge, so it lands flush inside
-    // the border and the two read as one --wa-border-width-m edge.
-    // Anchored on the edge's own declaration: the brand drift's selector ends
-    // the same way and would otherwise match first.
-    const rule = rules.match(/\{border-color:var\(--nc-hover-border\);([^{}]+)\}/)?.[1] ?? '';
-    expect(rule).toContain('box-shadow:inset000');
-    expect(rule).toContain('calc(var(--wa-border-width-m)-var(--wa-form-control-border-width))');
-    // The property, not the tokens the calc reads: setting it is the layout
-    // shift this test exists to prevent.
-    expect(rule).not.toContain('border-width:');
+  it('makes an icon-only button a circle the button height across', () => {
+    const icon = body('wa-button:has(>[label]:not([slot]))');
+    expect(icon).toContain('--wa-form-control-padding-inline:0');
+    expect(icon).toContain('width:var(--wa-form-control-height)');
+    expect(icon).toContain('--nc-icon-size:var(--nc-button-icon-size)');
+  });
+
+  it('keeps a focus outline and an edge under forced colors', () => {
+    const forced = rules.slice(rules.indexOf('@media(forced-colors:active)'));
+    expect(forced).toContain('wa-button::part(base){border-color:ButtonBorder;}');
+    expect(forced).toContain(
+      'wa-button::part(base):focus-visible{outline:2pxsolidHighlight;outline-offset:2px;}',
+    );
+  });
+
+  it('draws the 2px focus ring Web Awesome reads from the tokens', () => {
+    // wa-button's .button:focus-visible reads --wa-focus-ring and its offset.
+    const composedRules = composed.replace(/\s+/g, ' ');
+    expect(composedRules).toMatch(/--wa-focus-ring-width: 2px/);
+    expect(composedRules).toMatch(/--wa-focus-ring-offset: 2px/);
+    expect(composedRules).toMatch(/--wa-focus-ring: var\(--wa-focus-ring-style\) var\(--wa-focus-ring-width\) var\(--wa-color-focus\)/);
+  });
+
+  it('has no opt-in attributes: one button, not a family of them', () => {
+    expect(rules).not.toMatch(/wa-button\[(pill|solid)\]/);
   });
 });
 
-/** The hover treatment for the one button with a gradient to move. */
-describe('the brand button drift', () => {
+/** TASK-154.16: every wa-switch is the theme's switch. */
+describe('the standard switch', () => {
   const rules = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
+  const body = (selector: string): string => {
+    const at = rules.indexOf(`}${selector}{`);
+    expect(at, `no rule for ${selector}`).toBeGreaterThan(-1);
+    const open = at + selector.length + 2;
+    return rules.slice(open, rules.indexOf('}', open));
+  };
 
-  it('scrolls the ramp rather than recolouring it', () => {
-    // Same seven stops: the image is periodic and the animation shifts it by
-    // exactly one period. Nothing here rotates a hue.
-    expect(rules).toContain('animation:nc-brand-cycle2.4slinearinfinite');
-    expect(rules).not.toContain('hue-rotate');
+  it('is 38×22 with a 16px knob', () => {
+    const host = body('wa-switch');
+    expect(host).toContain('--width:var(--nc-switch-width)');
+    expect(host).toContain('--height:var(--nc-switch-height)');
+    expect(host).toContain('--thumb-size:var(--nc-switch-knob-size)');
   });
 
-  it('sizes the base part for the period the keyframes step through', () => {
-    // --nc-grad-brand is periodic and only reads correctly at this size; a
-    // background shorthand on hover would reset it, which is why the hover
-    // rule sets background-image alone.
-    expect(rules).toContain('background-size:var(--nc-grad-brand-size)');
-    expect(rules).toContain('background-image:var(--nc-grad-brand-hover)');
+  it('is a pill whose off edge and track come from the tokens', () => {
+    const track = body('wa-switch::part(control)');
+    expect(track).toContain('border-radius:var(--wa-radius-pill)');
+    expect(track).toContain('border:1pxsolidvar(--nc-color-switch-border)');
+    expect(track).toContain('background-color:var(--wa-color-surface-alt)');
+    expect(track).toContain('box-sizing:border-box');
   });
 
-  it('carries the keyframes it names, which a document sheet may not reach', () => {
-    expect(rules).toContain('@keyframesnc-brand-cycle');
+  it('slides on the 150ms switch transition, which reduced motion zeroes', () => {
+    expect(body('wa-switch::part(control)')).toContain('translatevar(--nc-transition-switch)');
+    const composedRules = composed.replace(/\s+/g, ' ');
+    expect(composedRules).toContain('--nc-transition-switch: 150ms ease');
+    const reduced = composedRules.slice(composedRules.indexOf('prefers-reduced-motion'));
+    expect(reduced).toContain('--nc-transition-switch: 0ms linear');
   });
 
-  it('is the brand button alone', () => {
-    const animated = rules.match(/([^{}]+)\{animation:nc-brand-cycle/)?.[1] ?? '';
-    expect(animated).toContain("wa-button[variant='brand']");
+  it('gives the white knob the same edge when off', () => {
+    const knob = body('wa-switch::part(thumb)');
+    expect(knob).toContain('border:1pxsolidvar(--nc-color-switch-border)');
+    expect(knob).toContain('background-color:var(--nc-color-switch-knob)');
   });
 
-  it('stops moving under a reduced-motion preference', () => {
-    const reduced = rules.slice(rules.indexOf('prefers-reduced-motion'));
-    expect(reduced).toMatch(/wa-button\[variant='brand'][^{}]*\{animation:none/);
+  it('fills the track with the brand and checks the knob when on', () => {
+    expect(body('wa-switch:state(checked)::part(control)')).toContain(
+      'background-color:var(--wa-color-brand)',
+    );
+    const knob = body('wa-switch:state(checked)::part(thumb)');
+    expect(knob).toContain('background-image:var(--nc-switch-check-image)');
+    expect(knob).toContain('border-color:var(--nc-color-switch-check)');
+  });
+
+  it('dims a disabled switch to 40% on the part Web Awesome dims', () => {
+    expect(body('wa-switch[disabled]::part(base)')).toBe('opacity:0.4;');
+  });
+
+  it('keeps an edge and a focus outline under forced colors', () => {
+    const forced = rules.slice(rules.indexOf('wa-switch::part(control),wa-switch::part(thumb){border-color:ButtonText'));
+    expect(forced.length).toBeGreaterThan(0);
+    expect(forced).toContain(
+      'wa-switch:focus-within::part(thumb){outline:2pxsolidHighlight;outline-offset:2px;}',
+    );
+  });
+
+  it('draws the check image from the icon set’s path in the check colour', () => {
+    const image = composed.match(/--nc-switch-check-image:\s*url\("data:image\/svg\+xml,([^"]+)"\)/);
+    expect(image).not.toBeNull();
+    const svg = decodeURIComponent(image![1]);
+    expect(svg).toContain(`d='${SWITCH_CHECK_PATH}'`);
+    expect(svg).toContain(`stroke='${SWITCH_CHECK}'`);
   });
 });
 

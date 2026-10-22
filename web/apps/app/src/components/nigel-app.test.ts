@@ -672,7 +672,7 @@ describe('nigel-app', () => {
 
       const banner = el.shadowRoot?.querySelector('[slot="banner"]');
       expect(banner?.textContent).toContain('database is on fire');
-      expect(banner?.querySelector('button')).toBeTruthy();
+      expect(banner?.querySelector('wa-button')).toBeTruthy();
     });
 
     it('retries the status call when asked', async () => {
@@ -686,7 +686,7 @@ describe('nigel-app', () => {
       const el = await mount(client);
 
       client.statusError = null;
-      el.shadowRoot?.querySelector<HTMLButtonElement>('[slot="banner"] button')?.click();
+      el.shadowRoot?.querySelector<HTMLButtonElement>('[slot="banner"] wa-button')?.click();
       await new Promise((r) => setTimeout(r, 0));
       await el.updateComplete;
 

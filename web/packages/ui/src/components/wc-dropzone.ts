@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/format-bytes/format-bytes.js';
 import '../icons/icons.js';
 import { controlsCss } from '@nigel/theme';
@@ -134,30 +135,6 @@ export class WcDropzone extends LitElement {
         flex: 1 1 auto;
       }
 
-      .replace {
-        font: inherit;
-        font-size: var(--wa-font-size-s);
-        padding: var(--wa-space-2xs) var(--wa-space-s);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
-        background: none;
-        color: inherit;
-        cursor: default;
-      }
-
-      .replace:hover:not(:disabled) {
-        border-color: var(--wa-color-brand);
-      }
-
-      .replace:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 2px;
-      }
-
-      .replace:disabled {
-        cursor: default;
-        opacity: 0.6;
-      }
 
       .error {
         margin: var(--wa-space-xs) 0 0;
@@ -377,22 +354,22 @@ export class WcDropzone extends LitElement {
           ? html`<wa-format-bytes class="size" .value=${this.size}></wa-format-bytes>`
           : nothing}
         <span class="spacer"></span>
-        <button
-          type="button"
+        <wa-button
           class="replace"
+          size="small"
           ?disabled=${this.blocked}
           @click=${this.handleBrowse}
         >
           Choose a different file
-        </button>
-        <button
-          type="button"
+        </wa-button>
+        <wa-button
           class="replace"
+          size="small"
           ?disabled=${this.blocked}
           @click=${this.handleClear}
         >
           Remove
-        </button>
+        </wa-button>
       </div>
     `;
   }

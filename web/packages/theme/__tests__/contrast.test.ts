@@ -85,9 +85,94 @@ describe.each([
 });
 
 /**
+ * The standard button (controlsCss): a flat brand fill under on-brand text,
+ * which darkens or lightens to --wa-color-brand-hover under the pointer; a
+ * neutral outline on the card ground that fills with --nc-color-hover; the
+ * danger outline's text; and the filled destructive confirm. Each label is
+ * held to AA on every fill it sits on, and the focus ring to the graphic 3:1
+ * on both grounds a button sits on.
+ */
+describe.each([
+  ['light', light],
+  ['dark', dark],
+])('%s mode: the standard button is readable', (_mode, t) => {
+  it.each([
+    ['brand label on the brand fill', '--wa-color-on-brand', '--wa-color-brand'],
+    ['brand label on the brand hover', '--wa-color-on-brand', '--wa-color-brand-hover'],
+    ['neutral label on its ground', '--wa-color-text', '--wa-color-surface'],
+    ['neutral label on its hover', '--wa-color-text', '--nc-color-hover'],
+    ['danger outline text on a card', '--wa-color-danger', '--wa-color-surface'],
+    ['danger outline text on the canvas', '--wa-color-danger', '--wa-color-bg'],
+    ['danger confirm label on the danger fill', '--wa-color-on-brand', '--wa-color-danger'],
+    ['icon button glyph on its hover', '--wa-color-muted', '--nc-color-hover'],
+  ])('%s', (_label, fg, bg) => {
+    expect(contrast(t(fg), t(bg))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each([
+    ['on the canvas', '--wa-color-bg'],
+    ['on a card', '--wa-color-surface'],
+  ])('draws its focus ring above the graphic threshold %s', (_label, bg) => {
+    expect(contrast(t('--wa-color-focus'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+});
+
+/**
+ * The standard switch (controlsCss). Off is a light track whose only edge is
+ * --nc-color-switch-border, and the white knob carries the same edge: WCAG
+ * 1.4.11 asks 3:1 of both, against every plane a switch sits on and against
+ * the track itself. On, the check in the knob carries the state, so it owes
+ * 3:1 against the knob. Knob and check are the same in both modes.
+ */
+describe.each([
+  ['light', light],
+  ['dark', dark],
+])('%s mode: the standard switch is visible off', (_mode, t) => {
+  it.each([
+    ['on the canvas', '--wa-color-bg'],
+    ['on a card', '--wa-color-surface'],
+    ['on the sidebar panel', '--nc-color-sidebar-bg'],
+    ['against its own track, where the knob edge sits', '--wa-color-surface-alt'],
+  ])('draws its edge above the graphic threshold %s', (_label, bg) => {
+    expect(contrast(t('--nc-color-switch-border'), t(bg))).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+});
+
+describe('the standard switch shows its state in the knob', () => {
+  it('declares the knob and the check once, with no dark override', () => {
+    for (const name of ['--nc-color-switch-knob', '--nc-color-switch-check']) {
+      const declarations = [
+        ...nigelTheme.cssText.matchAll(new RegExp(`${name}:\\s*#[0-9a-fA-F]{6}`, 'g')),
+      ];
+      expect(declarations, name).toHaveLength(1);
+    }
+  });
+
+  it('draws the check above the graphic threshold on the knob', () => {
+    expect(
+      contrast(light('--nc-color-switch-check'), light('--nc-color-switch-knob')),
+    ).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+
+  it('stands the knob off the light brand track by its fill', () => {
+    expect(
+      contrast(light('--nc-color-switch-knob'), light('--wa-color-brand')),
+    ).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+
+  it('stands the knob off the pale dark-mode brand track by its check-coloured ring', () => {
+    // A white knob on the dark mode's lavender is under 2:1; the ring the
+    // checked knob wears is what separates the two.
+    expect(
+      contrast(light('--nc-color-switch-check'), dark('--wa-color-brand')),
+    ).toBeGreaterThanOrEqual(AA_GRAPHIC);
+  });
+});
+
+/**
  * The gradient is the one background that is not a token pair: it is seven
- * pastel stops, identical in both modes, and a primary button's label sits on
- * whichever one it happens to land on. So the label is checked against all of
+ * pastel stops, identical in both modes, and the label on a monogram tile or
+ * the status line's nigel block sits on any one of them. So it is checked against all of
  * them, and it is checked once rather than per mode — a foreground that flips
  * with the mode cannot clear a background that does not, which is why
  * `--nc-color-on-gradient` exists instead of reusing `--wa-color-text`.

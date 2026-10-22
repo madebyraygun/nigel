@@ -13,7 +13,7 @@ async function mount(props: Partial<WcNoticeBar> = {}): Promise<WcNoticeBar> {
 }
 
 function buttons(el: WcNoticeBar): HTMLButtonElement[] {
-  return [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+  return [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('wa-button') ?? [])];
 }
 
 describe('wc-notice-bar', () => {

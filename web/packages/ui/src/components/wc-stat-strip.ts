@@ -1,4 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
@@ -26,7 +28,7 @@ export interface StatStripCell {
  */
 @customElement('wc-stat-strip')
 export class WcStatStrip extends LitElement {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: block;
       background: var(--wa-color-surface);
@@ -105,21 +107,8 @@ export class WcStatStrip extends LitElement {
 
     .retry {
       margin-top: var(--wa-space-xs);
-      font: inherit;
-      font-size: var(--nc-font-size-meta);
-      color: var(--wa-color-brand);
-      background: none;
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm);
-      padding: var(--wa-space-2xs) var(--wa-space-s);
-      cursor: default;
     }
-
-    .retry:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
-  `;
+  `];
 
   @property({ attribute: false })
   cells: StatStripCell[] = [];
@@ -144,14 +133,14 @@ export class WcStatStrip extends LitElement {
     if (cell.error) {
       return html`
         <p class="error">${cell.error}</p>
-        <button
+        <wa-button
           class="retry"
-          type="button"
+          size="small"
           aria-label="Retry ${cell.label}"
           @click=${() => this.retry(cell)}
         >
           Retry
-        </button>
+        </wa-button>
       `;
     }
 

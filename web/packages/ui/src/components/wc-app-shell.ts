@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-toast.js';
 import './wc-breadcrumb.js';
 import './wc-search-pill.js';
@@ -113,11 +114,13 @@ export class WcAppShell extends LitElement {
       }
 
       .refresh {
-        border-radius: var(--wa-radius-pill);
+        flex: none;
       }
 
-      /* The drawer's toggle. Above the breakpoint the hamburger lives in the
-         sidebar's own header, so this one only exists on a phone. */
+      /* The drawer's toggle: the design's hamburger, a 32px square with 8px
+         corners rather than the round icon button refresh is. Above the
+         breakpoint it lives in the sidebar's own header, so this one only
+         exists on a phone. */
       .nav-toggle {
         display: none;
         border-radius: var(--wa-radius-md);
@@ -474,15 +477,15 @@ export class WcAppShell extends LitElement {
             shortcut=${this.searchShortcut}
             key-shortcuts=${this.searchKeyShortcuts}
           ></wc-search-pill>
-          <button
-            type="button"
-            class="icon-button refresh"
+          <wa-button
+            class="refresh"
+            appearance="plain"
             aria-label="Refresh"
             title="Refresh"
             @click=${this.requestRefresh}
           >
-            <wc-icon-refresh></wc-icon-refresh>
-          </button>
+            <wc-icon-refresh label="Refresh"></wc-icon-refresh>
+          </wa-button>
         </header>
         <div class=${this.hasBanner ? 'banner filled' : 'banner'} part="banner">
           <slot name="banner" @slotchange=${this.onBannerChange}></slot>

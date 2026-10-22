@@ -69,7 +69,6 @@ export const printCss = css`
       --nc-color-field: #ffffff;
 
       --nc-grad-brand: none;
-      --nc-grad-brand-hover: none;
       --nc-grad-brand-text: none;
       --nc-grad-brand-text-cycle: none;
       --nc-grad-pastel: none;

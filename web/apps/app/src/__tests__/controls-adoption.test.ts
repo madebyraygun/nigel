@@ -21,6 +21,9 @@ const srcDir = resolve(here, '../');
 
 const PRIMITIVE_IMPORT = '@awesome.me/webawesome/dist/components/';
 
+/** A `wa-*` tag inside an html template, whoever registered it. */
+const RENDERED_PRIMITIVE = /html`[^`]*<wa-[a-z]/;
+
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -40,7 +43,7 @@ function isSource(file: string): boolean {
 }
 
 export function rendersPrimitive(text: string): boolean {
-  return text.includes(PRIMITIVE_IMPORT);
+  return text.includes(PRIMITIVE_IMPORT) || RENDERED_PRIMITIVE.test(text);
 }
 
 /**
@@ -80,7 +83,11 @@ ${offenders.join('\n')}`,
 
   it.each([
     ["import '@awesome.me/webawesome/dist/components/input/input.js';", true],
+    // Rendered with no import of its own, because something else registered
+    // it: the tag still lands in this file's shadow root.
+    ['return html`<header><wa-button variant="brand">New</wa-button></header>`;', true],
     ["import { html } from 'lit';", false],
+    ['// A <wa-button> named in a comment renders nothing.', false],
   ])('detects %s as a primitive host: %s', (line, expected) => {
     expect(rendersPrimitive(line)).toBe(expected);
   });

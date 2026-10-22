@@ -5,6 +5,7 @@ import { WcStatStrip as Ctor } from './wc-stat-strip.js';
 import type { WcMoney } from './wc-money.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
+import { controlsCss } from '@nigel/theme';
 import preview from './wc-stat-strip.preview.js';
 
 const cells: StatStripCell[] = [
@@ -90,7 +91,9 @@ describe('wc-stat-strip', () => {
   });
 
   it('wraps on its own width rather than the viewport', () => {
-    const text = styleText(Ctor);
+    // Its own rules only: the adopted controlsCss carries forced-colors and
+    // print queries, which are not layout.
+    const text = styleText(Ctor).replace(controlsCss.cssText, '');
     expect(text).toMatch(/:host\s*{[^}]*container-type:\s*inline-size/);
     expect(text).not.toMatch(/@media/);
   });

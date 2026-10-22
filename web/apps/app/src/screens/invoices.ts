@@ -7,6 +7,8 @@ import {
   type TemplateResult,
 } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -123,7 +125,7 @@ function isFilteredList(params: URLSearchParams): boolean {
  */
 @customElement('nigel-invoices-screen')
 export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -227,7 +229,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       font-size: var(--wa-font-size-s, 13px);
       color: var(--wa-color-muted);
     }
-  `;
+  `];
 
   @property({ attribute: false })
   client!: ApiClient;

@@ -86,7 +86,7 @@ static styles = [controlsCss, css`  …your rules…  `];
 ```
 
 `controlsCss` is the theme's treatment for Web Awesome primitives — the dialog
-panel, field chrome, the brand gradient on primary buttons, the focus ring. It
+panel, field chrome, the standard button and switch, the focus ring. It
 is adopted rather than loaded because a `::part()` rule reaches exactly one
 shadow boundary down, *from the tree the rule is written in*: a `wa-dialog`
 inside `wc-manager-dialog` inside a screen inside `nigel-app` is three
@@ -279,9 +279,9 @@ every value in both modes, so the table and the theme cannot drift apart.
 | monogram text | `--nc-color-on-gradient` | `#2b2b33` on any pastel |
 
 Radii: `--wa-radius-xs` 4px (badges), `-sm` 6px (chips), `-md` 8px (nav items,
-inputs, icon buttons), `--nc-radius-tile` 10px (dropzone, icon tiles), `-lg`
+inputs, the sidebar hamburger), `--nc-radius-tile` 10px (dropzone, icon tiles), `-lg`
 12px (cards, palette), `-xl` 14px (sidebar, setup cards), `-2xl` 18px (mobile
-drawer), `-pill` 999px.
+drawer), `-pill` 999px (every button, icon buttons included, and every switch).
 
 Type: `--nc-font-size-display` 28px (page h1), `-heading` 26px and
 `-heading-sm` 24px (Setup), `-figure` 22px, `-section` 16px, `-card-title`

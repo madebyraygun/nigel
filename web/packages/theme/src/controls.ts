@@ -1,5 +1,4 @@
 import { css } from 'lit';
-import { brandCycleKeyframes } from './tokens/gradient.js';
 
 /**
  * The brand treatment for Web Awesome primitives, adopted by the components
@@ -22,110 +21,167 @@ import { brandCycleKeyframes } from './tokens/gradient.js';
  * properties inherit, which is why the document sheet still owns them.
  */
 export const controlsCss = css`
-  ${brandCycleKeyframes}
+  /* The standard button. Every wa-button in the app is the refresh's pill
+     (docs/design/app-refresh/README.md, "Radius": 999px for pills, buttons
+     and switches), and this sheet is the only place that says so: a guard
+     test in each package fails the build when a component sets a button's
+     radius, height or fill itself.
 
-  wa-button[variant='brand']::part(base) {
-    background: var(--nc-grad-brand);
-    background-size: var(--nc-grad-brand-size);
-    background-position: 0% 50%;
-    color: var(--nc-color-on-gradient);
-    border-color: transparent;
+     Size, shape and type ride the custom properties Web Awesome's own
+     .button rule reads, set on the host so they inherit into the shadow
+     root. A declaration here, in the tree that hosts the button, wins over
+     the component's :host([size]) rules for the same property whatever the
+     specificity, which is what keeps the label at the 13px control size at
+     every size. The host carries the radius too, so the focus outline drawn
+     on it follows the pill. */
+  wa-button {
+    --wa-form-control-height: var(--nc-button-height);
+    --wa-form-control-border-radius: var(--wa-radius-pill);
+    --wa-form-control-padding-inline: var(--nc-button-padding-inline);
+    --wa-font-weight-action: var(--wa-font-weight-normal);
+    border-radius: var(--wa-radius-pill);
+    font-size: var(--nc-font-size-control);
   }
 
-  /* background-image, not the background shorthand: the shorthand resets
-     background-size to auto, and the drift below is a position shift measured
-     against that size. */
-  wa-button[variant='brand']:hover::part(base) {
-    background-image: var(--nc-grad-brand-hover);
-    filter: brightness(1.04);
+  wa-button:is([size='large'], [size='l']) {
+    --wa-form-control-height: var(--nc-button-height-lg);
   }
 
-  /* The hover treatment for the one button that has a gradient to move: the
-     ramp drifts by exactly one period per iteration and starts over where it
-     began. Same seven colours — nothing is rotated or recoloured, the image
-     is scrolled. */
-  wa-button[variant='brand']:not([appearance='plain'], [disabled], [loading]):is(
-      :hover,
-      :focus-visible
-    )::part(base) {
-    animation: nc-brand-cycle 2.4s linear infinite;
+  wa-button:is([size='small'], [size='s']) {
+    --wa-form-control-height: var(--nc-button-height-sm);
+    --wa-form-control-padding-inline: var(--nc-button-padding-inline-sm);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    /* The border below still draws, instantly, so hover and focus keep an
-       indication here — the motion is what goes, not the feedback. */
-    wa-button[variant='brand']:is(:hover, :focus-visible)::part(base) {
-      animation: none;
+  /* A filled button — the brand primary, the destructive confirm — sets its
+     label in 500; an outline sits at the body weight beside it. */
+  wa-button:is([variant='brand'], [variant='danger']):is(:not([appearance]), [appearance='accent']) {
+    --wa-font-weight-action: var(--wa-font-weight-medium);
+  }
+
+  /* Neutral is the design's secondary: an outline in the border colour on a
+     card's ground, whether or not the author asked for appearance=outlined.
+     Plain stays bare text. An outer-tree part rule beats the shadow tree's
+     own for the same property, Web Awesome's hover included, so the hover
+     fill is stated here as well. */
+  wa-button:is(:not([variant]), [variant='neutral']):not([appearance='plain'])::part(base) {
+    background-color: var(--wa-color-surface);
+    border-color: var(--wa-color-border);
+    color: var(--wa-color-text);
+  }
+
+  wa-button:is(:not([variant]), [variant='neutral']):not([disabled], [loading]):hover::part(base) {
+    background-color: var(--nc-color-hover);
+  }
+
+  /* The brand primary is a flat --wa-color-brand fill under
+     --wa-color-on-brand text: Web Awesome's accent appearance read through
+     the brand family in wa-contract.ts. Only its hover is stated here. */
+  wa-button[variant='brand']:is(:not([appearance]), [appearance='accent']):not(
+      [disabled],
+      [loading]
+    ):hover::part(base) {
+    background-color: var(--wa-color-brand-hover);
+  }
+
+  /* Danger needs no rule of its own. appearance=outlined is the outline in
+     --wa-color-danger with danger text; the default accent appearance is the
+     filled destructive confirm, --wa-color-danger under on-brand text. Both
+     come from the danger family in wa-contract.ts. */
+
+  /* Disabled is 40% and refuses hover: every hover rule above excludes it,
+     and Web Awesome's own exclude its .disabled class. */
+  wa-button[disabled] {
+    opacity: 0.4;
+  }
+
+  /* An icon-only button is a circle the button's height across. Its icon is
+     the only thing in the default slot and carries the accessible name as
+     its label — a button with text leaves its icon decorative or puts it in
+     the start slot — so a labelled icon there is what marks one. */
+  wa-button:has(> [label]:not([slot])) {
+    --wa-form-control-padding-inline: 0;
+    --nc-icon-size: var(--nc-button-icon-size);
+    width: var(--wa-form-control-height);
+  }
+
+  wa-button[appearance='plain']:has(> [label]:not([slot]))::part(base) {
+    color: var(--wa-color-muted);
+  }
+
+  /* Forced colors drops every fill, so each button keeps an edge, and the
+     focus outline is repainted in the system colour rather than lost. */
+  @media (forced-colors: active) {
+    wa-button::part(base) {
+      border-color: ButtonBorder;
+    }
+
+    wa-button::part(base):focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
     }
   }
 
-  wa-button[variant='brand']:active:not([disabled])::part(base) {
-    transform: translateY(1px);
+  /* The standard switch, drawn here and nowhere else (the same guard test
+     covers it): a 38×22 pill track and a 16px white knob. Off is a light
+     track with a mid-grey edge, and the knob carries the same edge, both
+     held to 3:1 by contrast.test.ts. On fills the track with the brand and
+     puts a check from the icon set in the knob, so the state never rests on
+     colour alone. The knob's slide rides the track's transition, which Web
+     Awesome passes down with transition: inherit. */
+  wa-switch {
+    --width: var(--nc-switch-width);
+    --height: var(--nc-switch-height);
+    --thumb-size: var(--nc-switch-knob-size);
   }
 
-  /* Which edge a button draws on hover. One line per variant, so the rule
-     that applies it below is written once and every button is excluded on the
-     same terms. Neutral names the text colour because its own border tokens
-     are where an outlined button already sits — hovering to them is no change
-     at all. */
-  wa-button {
-    --nc-hover-border: var(--wa-color-text);
-  }
-
-  wa-button[variant='brand'] {
-    --nc-hover-border: var(--wa-color-brand);
-  }
-
-  wa-button[variant='danger'] {
-    --nc-hover-border: var(--wa-color-danger);
-  }
-
-  wa-button[variant='success'] {
-    --nc-hover-border: var(--wa-color-success);
-  }
-
-  wa-button[variant='warning'] {
-    --nc-hover-border: var(--wa-color-warning);
-  }
-
-  /* Web Awesome already gives the base part a --wa-border-width-s border in
-     transparent and transitions it, along with five other properties, over
-     --wa-transition-fast. A transition declared out here replaces that whole
-     list rather than adding to it, so the list is restated with the two
-     properties the edge is drawn from on their own longer duration and
-     everything else left where WA had it. controls.test.ts pins which
-     properties this is answerable for. */
-  wa-button::part(base) {
+  wa-switch::part(control) {
+    box-sizing: border-box;
+    border: 1px solid var(--nc-color-switch-border);
+    border-radius: var(--wa-radius-pill);
+    background-color: var(--wa-color-surface-alt);
     transition:
-      background var(--wa-transition-fast),
-      border-color var(--nc-duration-slow),
-      box-shadow var(--nc-duration-slow),
-      color var(--wa-transition-fast),
-      opacity var(--wa-transition-fast),
-      transform var(--wa-transition-fast);
+      translate var(--nc-transition-switch),
+      background-color var(--nc-transition-switch),
+      border-color var(--nc-transition-switch);
   }
 
-  /* A plain button is a row action drawn as bare text, a disabled one is
-     refusing, and a loading one drops the click in handleClick — none of the
-     three should be carrying the strongest click invitation in the theme.
-
-     The edge is --wa-border-width-m, drawn in two halves so the box never
-     changes: the border WA already reserved space for, plus the rest of the
-     way as an inset ring. Widening the border itself would move every
-     neighbour a pixel on hover, and an inset shadow is clipped to the padding
-     edge, so the ring lands flush inside the border and the two read as one
-     solid 2px edge. The remainder is subtracted rather than written as 1px,
-     so a change to either width token stays a --wa-border-width-m edge. */
-  wa-button:not([appearance='plain'], [disabled], [loading]):is(:hover, :focus-visible)::part(base) {
-    border-color: var(--nc-hover-border);
-    box-shadow: inset 0 0 0
-      calc(var(--wa-border-width-m) - var(--wa-form-control-border-width)) var(--nc-hover-border);
+  wa-switch::part(thumb) {
+    box-sizing: border-box;
+    border: 1px solid var(--nc-color-switch-border);
+    background-color: var(--nc-color-switch-knob);
   }
 
-  wa-button::part(label) {
-    font-family: var(--wa-font-family-sans);
-    font-weight: var(--wa-font-weight-medium);
-    letter-spacing: 0.01em;
+  wa-switch:state(checked)::part(control) {
+    border-color: var(--wa-color-brand);
+    background-color: var(--wa-color-brand);
+  }
+
+  wa-switch:state(checked)::part(thumb) {
+    border-color: var(--nc-color-switch-check);
+    background-image: var(--nc-switch-check-image);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: 10px;
+  }
+
+  /* 40%, on the part Web Awesome dims itself so the two do not multiply. */
+  wa-switch[disabled]::part(base) {
+    opacity: 0.4;
+  }
+
+  /* Forced colors drops the fills: the edge is repainted, the check (an
+     image) and the knob's position still say which state it is in, and the
+     knob keeps a focus outline in the system colour. */
+  @media (forced-colors: active) {
+    wa-switch::part(control),
+    wa-switch::part(thumb) {
+      border-color: ButtonText;
+    }
+
+    wa-switch:focus-within::part(thumb) {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
+    }
   }
 
   /* Field chrome and label type are deliberately *not* here. They belong to
@@ -148,7 +204,8 @@ export const controlsCss = css`
   }
 
   /* Buttons, links and anything else that takes the keyboard: a brand
-     outline clear of the edge, on keyboard focus only. */
+     outline clear of the edge, on keyboard focus only. A wa-button draws the
+     same ring on its own base part from the --wa-focus-ring tokens. */
   :focus-visible {
     outline: 2px solid var(--wa-color-focus);
     outline-offset: 2px;

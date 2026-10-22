@@ -59,6 +59,11 @@ export const colorCss = css`
        they read as panels over the canvas rather than as more card. */
     --nc-color-sidebar-bg: #fbfafe;
 
+    /* A switch's edge when off, and its knob's: a mid-grey that holds 3:1
+       against every plane a switch sits on and against its own track, so the
+       off state is a visible control rather than a pale smudge. */
+    --nc-color-switch-border: #85848f;
+
     /* An input's own ground. White in light mode like a card; a shade below
        the card in dark mode, so a field reads as recessed into it. */
     --nc-color-field: #ffffff;
@@ -132,6 +137,7 @@ const darkTokens = css`
   --nc-color-hover: #2a2a35;
   --nc-color-sidebar-bg: #22222b;
   --nc-color-field: #1b1b22;
+  --nc-color-switch-border: #7e7b91;
   --nc-color-ring: rgb(196 183 255 / 25%);
   --wa-color-overlay-modal: rgb(0 0 0 / 45%);
 
