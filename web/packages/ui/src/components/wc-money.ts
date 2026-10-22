@@ -5,6 +5,18 @@ import { roundHalfEven } from './round-half-even.js';
 export type WcMoneyAlign = 'start' | 'end';
 
 /**
+ * An amount as `wc-money` prints it, for places that need the text without
+ * the element — a title on a cell that may clip the figure.
+ */
+export function formatMoney(amount: number, currency = 'USD', locale?: string): string {
+  const format = new Intl.NumberFormat(locale, { style: 'currency', currency });
+  // The currency decides how many decimals it keeps, so the rounding that
+  // precedes it asks rather than assuming the two dollars have.
+  const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
+  return format.format(roundHalfEven(amount, digits));
+}
+
+/**
  * A signed cash amount — the web counterpart of `tui::money_span`.
  *
  * One deliberate difference from the TUI: `money_span` prints the absolute
@@ -79,14 +91,7 @@ export class WcMoney extends LitElement {
 
   /** The formatted text, exposed so callers can reuse it (titles, exports). */
   get formatted(): string {
-    const format = new Intl.NumberFormat(this.locale, {
-      style: 'currency',
-      currency: this.currency,
-    });
-    // The currency decides how many decimals it keeps, so the rounding that
-    // precedes it asks rather than assuming the two dollars have.
-    const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
-    return format.format(roundHalfEven(this.amount, digits));
+    return formatMoney(this.amount, this.currency, this.locale);
   }
 
   render() {

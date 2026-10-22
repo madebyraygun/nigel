@@ -20,7 +20,13 @@ import {
   type AppStore,
 } from '../state/app-store.js';
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
-import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
+import {
+  DEFAULT_SCREEN,
+  navItems,
+  screenDef,
+  shellHeading,
+  type ScreenId,
+} from '../screens/registry.js';
 import { trailFor, windowTitle } from '../screens/trail.js';
 import {
   isHostedShell,
@@ -409,13 +415,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
     }
 
     const screen = screenDef(this.route.screen);
+    const heading = shellHeading(screen);
     const book = store.companyName.get();
     const trail = trailFor(this.route);
     document.title = windowTitle(trail, book);
 
     return html`
       <wc-app-shell
-        screen-title=${screen.title}
+        screen-title=${heading.title}
+        ?title-hidden=${heading.hidden}
         book-name=${book}
         book-key=${store.status.get()?.dataDir ?? book}
         .trail=${trail}

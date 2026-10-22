@@ -110,3 +110,12 @@ export function buildPatch(
 export function replaceRow(rows: RegisterRow[], updated: RegisterRow): RegisterRow[] {
   return rows.map((row) => (row.id === updated.id ? updated : row));
 }
+
+/**
+ * The net of a set of rows, in whole cents: summing two-decimal floats drifts
+ * in the last place, and a total is compared against the server's to the cent.
+ */
+export function sumAmounts(rows: readonly RegisterRow[]): number {
+  const cents = rows.reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+  return cents / 100;
+}

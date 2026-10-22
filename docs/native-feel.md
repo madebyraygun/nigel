@@ -100,6 +100,15 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   viewport: at phone width collapsed means the drawer is shut, which is where
   it starts anyway. Below 48rem the sidebar is an off-canvas drawer with a
   backdrop and a hamburger in the top bar.
+- **Page heading.** The shell draws the screen's `title` as the page `h1`
+  under the top bar. A screen's registry entry can change that with
+  `heading`: `'hidden'` keeps the `h1` for assistive technology only
+  (`title-hidden` on `wc-app-shell`, visually hidden and out of flow), for a
+  screen whose toolbar is its first line, such as the register; `'screen'`
+  means the screen renders its own `h1` and the shell renders none. The
+  breadcrumb and the window title read `title` either way, and
+  `shellHeading()` in `screens/registry.ts` is the one place the field is
+  turned into what the shell draws.
 - **Top bar.** 50px, with the breadcrumb on the left — the book's monogram
   (`wc-monogram`: initials on a pastel from `--nc-color-pastel-1…7`, picked by
   hashing the data directory so a book keeps its colour), its name, then the

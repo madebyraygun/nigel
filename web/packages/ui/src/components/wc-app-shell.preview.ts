@@ -13,6 +13,8 @@ interface ShellAttrs {
   book?: string;
   collapsed?: boolean;
   hosted?: boolean;
+  /** The heading is kept for assistive technology only. */
+  titleHidden?: boolean;
   /** Stands in for a phone-width viewport, which a desktop preview is not. */
   narrow?: boolean;
 }
@@ -26,6 +28,7 @@ const shell = (extra = html``, attrs: ShellAttrs = {}) => {
     >
       <wc-app-shell
         screen-title=${title}
+        ?title-hidden=${attrs.titleHidden ?? false}
         book-name=${attrs.book ?? 'Acme Consulting LLC'}
         book-key="acme-consulting"
         .trail=${attrs.trail ?? [{ label: title }]}
@@ -77,6 +80,11 @@ const preview: Preview = {
       render: () => shell(html``, { title: 'Settings', active: 'settings' }),
     },
     { name: 'hosted', render: () => shell(html``, { hosted: true }) },
+    {
+      name: 'title-hidden',
+      render: () =>
+        shell(html``, { title: 'Register', active: 'register', titleHidden: true }),
+    },
     {
       name: 'long book name',
       render: () =>

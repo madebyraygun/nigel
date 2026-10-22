@@ -80,6 +80,17 @@ describe('nigel-app', () => {
     expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
   });
 
+  it('keeps the register heading for assistive technology only', async () => {
+    window.location.hash = '#/register';
+    const el = await mount();
+    expect(shell(el)?.hasAttribute('title-hidden')).toBe(true);
+
+    window.location.hash = '#/reports';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await el.updateComplete;
+    expect(shell(el)?.hasAttribute('title-hidden')).toBe(false);
+  });
+
   it('swaps screens on hashchange', async () => {
     const el = await mount();
     expect(shell(el)?.getAttribute('screen-title')).toBe('Dashboard');
