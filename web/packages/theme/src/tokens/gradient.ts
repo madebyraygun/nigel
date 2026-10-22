@@ -100,7 +100,7 @@ const inkRamp = unsafeCSS(NIGEL_PALETTE_INK.join(', '));
 export const brandRamp = css`linear-gradient(90deg, ${ramp})`;
 
 /**
- * The brand ramp as a *periodic* image, so the button's hover drift can loop.
+ * The brand ramp as a *periodic* image, so the wordmark's drift can loop.
  *
  * Counted in the ramp's own step — seven stops across the element is six gaps,
  * so a step is a sixth of the element's width. One period is the ramp plus a
@@ -112,7 +112,7 @@ export const brandRamp = css`linear-gradient(90deg, ${ramp})`;
  *
  * At rest the element shows steps 0-6, which is pink at the left edge and
  * magenta at the right: the same seven stops in the same places the plain
- * `linear-gradient` put them, so a button that never moves looks unchanged.
+ * `linear-gradient` put them, so a ramp that never moves looks unchanged.
  * The wrap segment lives off the right-hand edge until the drift brings it in.
  *
  * Anything reading `--nc-grad-brand` therefore has to set
@@ -144,28 +144,6 @@ const cycleSize = unsafeCSS(`${((IMAGE_STEPS / GAPS) * 100).toFixed(4)}% 100%`);
  */
 export const brandCycle = css`${cycle}`;
 
-/**
- * The drift itself: one period per iteration, which `--nc-grad-brand-size`
- * makes exactly one `background-position: 100%`.
- *
- * It is defined here and composed into both `nigelTheme` and `controlsCss`.
- * `@keyframes` are name-defining and scoped to a tree, and the element that
- * animates is `wa-button`'s `base` part — inside its shadow root, which is
- * neither the tree the rule is written in nor the document. Browsers do not
- * agree on how far that lookup walks, so the name is put within reach both
- * ways rather than relying on one of them.
- */
-export const brandCycleKeyframes = css`
-  @keyframes nc-brand-cycle {
-    from {
-      background-position: 0% 50%;
-    }
-    to {
-      background-position: 100% 50%;
-    }
-  }
-`;
-
 const pastelStops = unsafeCSS(
   NIGEL_PALETTE.map((hex, i) => `    --nc-color-pastel-${i + 1}: ${hex};`).join('\n'),
 );
@@ -187,7 +165,6 @@ export const gradientCss = css`
       rgb(196 183 255 / 18%),
       rgb(255 179 222 / 18%)
     );
-    --nc-grad-brand-hover: ${cycle};
 
     /* The plain pastel ramp in both modes, drawn once across what it fills:
        the status line's nigel block, which carries --nc-color-on-gradient. */

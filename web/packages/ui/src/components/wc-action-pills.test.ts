@@ -20,7 +20,7 @@ async function mount(actions = ACTIONS): Promise<WcActionPills> {
 }
 
 function button(el: WcActionPills, key: string): HTMLButtonElement {
-  const found = el.shadowRoot?.querySelector<HTMLButtonElement>(`[data-action="${key}"]`);
+  const found = el.shadowRoot?.querySelector<HTMLButtonElement>(`wa-button[data-action="${key}"]`);
   if (!found) throw new Error(`no ${key}`);
   return found;
 }
@@ -32,7 +32,7 @@ describe('wc-action-pills', () => {
 
   it('draws one button per action, in order, with its tone', async () => {
     const el = await mount();
-    const buttons = [...(el.shadowRoot?.querySelectorAll('button') ?? [])];
+    const buttons = [...(el.shadowRoot?.querySelectorAll('wa-button') ?? [])];
     expect(buttons.map((b) => b.textContent?.trim())).toEqual([
       'Send…',
       'Edit',

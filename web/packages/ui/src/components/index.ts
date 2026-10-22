@@ -125,6 +125,7 @@ export {
 export { WcExportLinks } from './wc-export-links.js';
 export { WcLinkGrid, type LinkGridItem } from './wc-link-grid.js';
 export { WcManagerLayout } from './wc-manager-layout.js';
+export { WcFilteredList } from './wc-filtered-list.js';
 export {
   WcManagerTable,
   type ManagerAction,

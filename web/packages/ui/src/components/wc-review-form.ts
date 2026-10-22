@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { controlsCss } from '@nigel/theme';
 import { customElement, property, state, query } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-category-picker.js';
 import type { WcCategoryPicker, NcCategoryChangeDetail } from './wc-category-picker.js';
 import type { CategoryOption } from './category-option.js';
@@ -38,8 +39,10 @@ export function patternPrefill(description: string): string {
  * screen above it owns every network call, including the debounced rule test
  * whose result arrives back through the `rule-test` slot.
  *
- * Apply is a real submit button in a real form, so Enter applies without a key
- * handler and the browser's own focus order does the rest. Skip and Back are
+ * Apply is a submit `wa-button` in a real form. That is not a native submit
+ * button, so the browser's implicit submission stops once the rule pattern
+ * makes two text fields; `handleKeydown` submits on Enter from any text field
+ * instead, and the browser's own focus order does the rest. Skip and Back are
  * ordinary buttons: the TUI skips on Tab, which on the web is the key that
  * moves between these five controls and cannot be taken away from it.
  */
@@ -126,28 +129,6 @@ export class WcReviewForm extends LitElement {
       gap: var(--wa-space-s);
       margin-top: var(--wa-space-l);
       flex-wrap: wrap;
-    }
-
-    button {
-      font: inherit;
-      padding: var(--wa-space-xs) var(--wa-space-m);
-      border-radius: var(--wa-radius-m);
-      border: 1px solid var(--wa-color-border);
-      background: var(--wa-color-surface);
-      color: inherit;
-      cursor: default;
-    }
-
-    button[type='submit'] {
-      background: var(--wa-color-brand);
-      border-color: var(--wa-color-brand);
-      color: var(--wa-color-on-brand);
-      font-weight: var(--wa-font-weight-medium);
-    }
-
-    button:disabled {
-      opacity: 0.5;
-      cursor: default;
     }
 
     .keys {
@@ -251,6 +232,21 @@ export class WcReviewForm extends LitElement {
     );
   }
 
+  /**
+   * Enter in a text field applies. A form with more than one text field and
+   * no native submit button gets no implicit submission from the browser,
+   * and wa-button is not one — so with the rule pattern open, Enter would
+   * otherwise do nothing.
+   */
+  private handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.composedPath()[0];
+    if (!(target instanceof HTMLInputElement) || target.type !== 'text') return;
+    event.preventDefault();
+    (event.currentTarget as HTMLFormElement).requestSubmit();
+  }
+
   private handleSubmit(event: Event): void {
     event.preventDefault();
     if (this.busy) return;
@@ -282,7 +278,7 @@ export class WcReviewForm extends LitElement {
   render() {
     return html`
       ${this.error ? html`<p class="form-error" role="alert">${this.error}</p>` : nothing}
-      <form @submit=${this.handleSubmit} novalidate>
+      <form @submit=${this.handleSubmit} @keydown=${this.handleKeydown} novalidate>
         <div class="fields">
           <div>
             <wc-category-picker
@@ -323,17 +319,23 @@ export class WcReviewForm extends LitElement {
         </div>
 
         <div class="actions">
-          <button type="submit" ?disabled=${this.busy}>Apply</button>
-          <button type="button" ?disabled=${this.busy} @click=${() => this.emit('nc-review-skip')}>
+          <wa-button type="submit" variant="brand" ?disabled=${this.busy}>Apply</wa-button>
+          <wa-button
+            data-skip
+            appearance="outlined"
+            ?disabled=${this.busy}
+            @click=${() => this.emit('nc-review-skip')}
+          >
             Skip
-          </button>
-          <button
-            type="button"
+          </wa-button>
+          <wa-button
+            data-back
+            appearance="outlined"
             ?disabled=${this.busy || !this.canGoBack}
             @click=${() => this.emit('nc-review-back')}
           >
             Back
-          </button>
+          </wa-button>
         </div>
         <p class="keys"><kbd>Enter</kbd> apply · <kbd>Esc</kbd> back</p>
       </form>

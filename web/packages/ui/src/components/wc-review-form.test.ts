@@ -97,6 +97,51 @@ describe('wc-review-form', () => {
     document.body.innerHTML = '';
   });
 
+  it('applies on Enter in the rule pattern, where the browser would not submit', async () => {
+    // Two text fields and a submit that is a wa-button rather than a native
+    // button: no implicit submission, so the form submits Enter itself.
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    await toggleRule(el);
+
+    const pattern = field<HTMLInputElement>(el, '#rule-pattern');
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+    });
+    pattern.dispatchEvent(enter);
+    await el.updateComplete;
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ categoryId: 12, createRule: true, rulePattern: 'ADOBE CREATIVE' });
+  });
+
+  it('applies on Enter in the vendor field', async () => {
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    field<HTMLInputElement>(el, '#vendor').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await el.updateComplete;
+    expect(seen).toHaveLength(1);
+  });
+
+  it('leaves a modified Enter alone', async () => {
+    const el = await mount();
+    const seen = applies(el);
+    await chooseCategory(el, 12);
+    field<HTMLInputElement>(el, '#vendor').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }),
+    );
+    await el.updateComplete;
+    expect(seen).toHaveLength(0);
+  });
+
   it('applies with the chosen category and no vendor', async () => {
     const el = await mount();
     const seen = applies(el);
@@ -203,7 +248,7 @@ describe('wc-review-form', () => {
     el.addEventListener('nc-review-skip', () => seen.push('skip'));
     el.addEventListener('nc-review-back', () => seen.push('back'));
 
-    const buttons = [...(el.shadowRoot?.querySelectorAll('button') ?? [])];
+    const buttons = [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('wa-button') ?? [])];
     buttons.find((b) => b.textContent?.includes('Skip'))?.click();
     buttons.find((b) => b.textContent?.includes('Back'))?.click();
 
@@ -212,7 +257,7 @@ describe('wc-review-form', () => {
 
   it('disables Back on the first transaction', async () => {
     const el = await mount({ canGoBack: false });
-    const back = [...(el.shadowRoot?.querySelectorAll('button') ?? [])].find((b) =>
+    const back = [...(el.shadowRoot?.querySelectorAll<HTMLButtonElement>('wa-button') ?? [])].find((b) =>
       b.textContent?.includes('Back'),
     );
     expect(back?.disabled).toBe(true);

@@ -98,7 +98,7 @@ export class WcManagerTable extends LitElement {
       }
 
       th {
-        font-weight: var(--wa-font-weight-medium);
+        font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         white-space: nowrap;
       }
@@ -228,13 +228,12 @@ export class WcManagerTable extends LitElement {
                         appearance="outlined"
                         variant=${action.variant === 'danger' ? 'danger' : 'neutral'}
                         ?disabled=${busy}
-                        aria-label=${`${action.label} ${row.label}`}
                         @click=${() => this.handleAction(action.name, row.id)}
                       >
                         ${action.icon
                           ? html`<span slot="start">${iconFor(action.icon)}</span>`
                           : nothing}
-                        ${action.label}
+                        ${action.label}<span class="sr-only"> ${row.label}</span>
                       </wa-button>
                     `,
                   )}

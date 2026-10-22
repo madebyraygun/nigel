@@ -70,7 +70,7 @@ export class NigelRegisterScreen extends LitElement {
         flex-direction: column;
         flex: 1 1 auto;
         min-height: 0;
-        gap: var(--wa-space-m, 12px);
+        gap: var(--nc-toolbar-gap);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }

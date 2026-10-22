@@ -10,7 +10,7 @@ const preview: Preview = {
   title: 'Payment form',
   group: 'Invoicing',
   description:
-    'Amount, date and method. The amount defaults to the whole outstanding balance and reuses the reconcile form’s currency treatment.',
+    'Amount, date and method. The amount defaults to the whole outstanding balance; its "$" sits inside the field, in the input’s start slot, on the line of the figure.',
   layout: 'stack',
   states: [
     {
@@ -24,6 +24,17 @@ const preview: Preview = {
           .value=${{ ...full, amount: '500.00' }}
           .balance=${1200}
         ></wc-payment-form>
+      `,
+    },
+    {
+      name: 'prefix-in-field',
+      render: () => html`
+        <div style="max-width:22rem">
+          <wc-payment-form
+            .value=${{ ...full, amount: '12,500.00' }}
+            .balance=${12500}
+          ></wc-payment-form>
+        </div>
       `,
     },
     {

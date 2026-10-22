@@ -31,7 +31,7 @@ export class WcFilterChips extends LitElement {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
+      gap: var(--nc-filter-row-gap);
       font-size: var(--nc-font-size-control);
     }
 

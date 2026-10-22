@@ -71,6 +71,7 @@ export class NigelRulesScreen extends LitElement {
     }
 
     .filter {
+      margin: 0;
       display: flex;
       align-items: center;
       gap: var(--wa-space-s, 8px);

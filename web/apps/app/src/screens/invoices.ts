@@ -7,6 +7,8 @@ import {
   type TemplateResult,
 } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -130,7 +132,7 @@ function isFilteredList(params: URLSearchParams): boolean {
  */
 @customElement('nigel-invoices-screen')
 export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -222,7 +224,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       font-size: var(--nc-font-size-meta);
       color: var(--wa-color-muted);
     }
-  `;
+  `];
 
   @property({ attribute: false })
   client!: ApiClient;
@@ -822,14 +824,17 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           </p>`
         : nothing}
 
-      <wc-filter-chips label="Status" .chips=${chips} active=${status}></wc-filter-chips>
+      <wc-filtered-list label="Invoice filters">
+        <span class="label" slot="filters">Status</span>
+        <wc-filter-chips slot="filters" .chips=${chips} active=${status}></wc-filter-chips>
 
-      <wc-invoice-table
-        .rows=${invoiceTableRows(shown)}
-        empty-message=${this.rows.length === 0
-          ? 'No invoices yet — start one with New invoice.'
-          : 'No invoices with this status.'}
-      ></wc-invoice-table>
+        <wc-invoice-table
+          .rows=${invoiceTableRows(shown)}
+          empty-message=${this.rows.length === 0
+            ? 'No invoices yet — start one with New invoice.'
+            : 'No invoices with this status.'}
+        ></wc-invoice-table>
+      </wc-filtered-list>
     `;
   }
 

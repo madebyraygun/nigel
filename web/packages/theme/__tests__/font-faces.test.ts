@@ -19,12 +19,13 @@ describe('fontFacesCss', () => {
   });
 
   it('bundles exactly the weights the typography tokens ask for', () => {
-    // 400/500/600 are --wa-font-weight-normal/medium/bold. A weight the tokens
+    // 400/500/600 are --wa-font-weight-normal/medium/bold and 700 is
+    // --nc-font-weight-table-heading. A weight the tokens
     // name but nothing bundles is a browser-synthesised fake; a weight bundled
     // and never named is dead bytes in the binary.
-    expect([...BUNDLED_FONT_WEIGHTS]).toEqual([400, 500, 600]);
+    expect([...BUNDLED_FONT_WEIGHTS]).toEqual([400, 500, 600, 700]);
     for (const weight of BUNDLED_FONT_WEIGHTS) {
-      expect(typographyCss.cssText).toMatch(new RegExp(`font-weight-\\w+:\\s*${weight}`));
+      expect(typographyCss.cssText).toMatch(new RegExp(`font-weight-[\\w-]+:\\s*${weight}`));
     }
   });
 

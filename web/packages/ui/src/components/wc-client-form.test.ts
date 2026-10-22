@@ -107,6 +107,22 @@ describe('wc-client-form', () => {
     document.body.innerHTML = '';
   });
 
+  it('names each contact in its row buttons, in the content the inner button reads', async () => {
+    // wa-button does not forward a host aria-label, so the name is content.
+    const el = await mount({ value: two });
+    const name = (selector: string, index: number): string | undefined =>
+      [...(el.shadowRoot?.querySelectorAll(selector) ?? [])]
+        .at(index)
+        ?.textContent?.replace(/\s+/g, ' ')
+        .trim();
+    expect(name('[data-remove-contact]', 1)).toBe('Remove dana@acme.test');
+    expect(name('[data-move-up]', 1)).toBe('↑Move dana@acme.test up');
+    expect(name('[data-move-down]', 0)).toBe('↓Move ap@acme.test down');
+    for (const button of el.shadowRoot?.querySelectorAll('.row-actions wa-button') ?? []) {
+      expect(button.hasAttribute('aria-label')).toBe(false);
+    }
+  });
+
   it('collects the client fields and a row per contact', async () => {
     const el = await mount({ value: two });
     for (const hook of ['[data-name]', '[data-address]', '[data-notes]']) {

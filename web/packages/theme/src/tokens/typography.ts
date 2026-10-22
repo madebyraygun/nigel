@@ -44,6 +44,9 @@ export const typographyCss = css`
     /* Uppercase group labels, 500, drawn with --nc-letter-spacing-label. */
     --nc-font-size-label: 10.5px;
 
+    /* Every table's column and row headings, in every table. */
+    --nc-font-weight-table-heading: 700;
+
     --nc-letter-spacing-tight: -0.02em;
     --nc-letter-spacing-label: 0.08em;
 

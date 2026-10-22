@@ -133,7 +133,7 @@ export class WcLineItems extends LitElement {
 
       th {
         color: var(--wa-color-muted);
-        font-weight: var(--wa-font-weight-medium);
+        font-weight: var(--nc-font-weight-table-heading);
         white-space: nowrap;
       }
 
@@ -208,7 +208,6 @@ export class WcLineItems extends LitElement {
       :host([readonly]) th {
         padding: 0 0 8px;
         font-size: var(--nc-font-size-meta);
-        font-weight: var(--wa-font-weight-normal);
         border-bottom: 1px solid var(--wa-color-border);
       }
 

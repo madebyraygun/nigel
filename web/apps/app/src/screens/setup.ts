@@ -336,12 +336,13 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
           </p>
           <div class=${`actions ${this.introClass(2)}`}>
             <wa-button
+              size="l"
               appearance="outlined"
               ?disabled=${this.busy !== null}
               @click=${() => this.runSetup('demo')}
               >${this.busy === 'demo' ? 'Loading the demo…' : 'Show me the demo'}</wa-button
             >
-            <wa-button variant="brand" @click=${this.beginSetup}>Set up my books</wa-button>
+            <wa-button size="l" variant="brand" @click=${this.beginSetup}>Set up my books</wa-button>
           </div>
         `;
       case 'profile':
@@ -420,8 +421,8 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
           : nothing}
       </div>
       <div class="actions">
-        <wa-button appearance="outlined" @click=${() => (this.step = 'profile')}>Back</wa-button>
-        <wa-button variant="brand" @click=${() => this.submitIdentity()}>Carry on</wa-button>
+        <wa-button size="l" appearance="outlined" @click=${() => (this.step = 'profile')}>Back</wa-button>
+        <wa-button size="l" variant="brand" @click=${() => this.submitIdentity()}>Carry on</wa-button>
       </div>
     `;
   }
@@ -437,6 +438,7 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
             you're ready.
           </span>
           <wa-button
+            size="l"
             variant="brand"
             ?disabled=${this.busy !== null}
             @click=${() => this.runSetup('fresh')}
@@ -452,13 +454,14 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
             .value=${this.dataDir}
             @input=${(e: Event) => this.readField(e, 'dataDir')}
           ></wa-input>
-          <wa-button ?disabled=${this.busy !== null} @click=${this.loadExisting}
+          <wa-button size="l" ?disabled=${this.busy !== null} @click=${this.loadExisting}
             >${this.busy === 'load' ? 'Looking…' : 'Load them'}</wa-button
           >
         </div>
       </div>
       <div class="actions">
         <wa-button
+          size="l"
           appearance="outlined"
           ?disabled=${this.busy !== null}
           @click=${() => (this.step = 'identity')}

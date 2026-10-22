@@ -113,7 +113,7 @@ export class WcInvoiceTable extends LitElement {
       border-bottom: 1px solid var(--wa-color-border);
       color: var(--wa-color-muted);
       font-size: var(--nc-font-size-meta);
-      font-weight: var(--wa-font-weight-medium);
+      font-weight: var(--nc-font-weight-table-heading);
     }
 
     td {
