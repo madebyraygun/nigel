@@ -1,5 +1,7 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   dispatchNcToast,
@@ -82,7 +84,7 @@ function busyLabel(busy: Busy): string {
  */
 @customElement('nigel-import-screen')
 export class NigelImportScreen extends LitElement {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -121,27 +123,6 @@ export class NigelImportScreen extends LitElement {
       font-size: var(--wa-font-size-s, 13px);
     }
 
-    button.action {
-      font: inherit;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-m, 12px);
-      border-radius: var(--wa-radius-m, 8px);
-      border: 1px solid var(--wa-color-border);
-      background: var(--wa-color-surface);
-      color: inherit;
-      cursor: pointer;
-    }
-
-    button.action.primary {
-      border-color: var(--wa-color-brand);
-      color: var(--wa-color-brand);
-      font-weight: var(--wa-font-weight-medium, 500);
-    }
-
-    button.action:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-
     a {
       color: var(--wa-color-brand);
     }
@@ -151,7 +132,7 @@ export class NigelImportScreen extends LitElement {
       color: var(--wa-color-danger);
       font-size: var(--wa-font-size-s, 13px);
     }
-  `;
+  `];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })
@@ -664,15 +645,14 @@ export class NigelImportScreen extends LitElement {
         </div>
 
         ${this.preview === null && this.dirty ? this.renderCancel() : nothing}
-        <button
-          class="action primary"
+        <wa-button
+          variant="brand"
           slot="actions"
-          type="button"
           ?disabled=${!this.ready}
           @click=${this.handlePreview}
         >
           Preview
-        </button>
+        </wa-button>
       </wc-panel>
     `;
   }
@@ -688,15 +668,14 @@ export class NigelImportScreen extends LitElement {
    */
   private renderCancel(): TemplateResult {
     return html`
-      <button
-        class="action"
+      <wa-button
+        appearance="outlined"
         slot="actions"
-        type="button"
         ?disabled=${this.busy !== null}
         @click=${this.handleCancel}
       >
         Cancel
-      </button>
+      </wa-button>
     `;
   }
 
@@ -735,15 +714,14 @@ export class NigelImportScreen extends LitElement {
         </div>
 
         ${this.renderCancel()}
-        <button
-          class="action primary"
+        <wa-button
+          variant="brand"
           slot="actions"
-          type="button"
           ?disabled=${this.busy !== null || !this.importable}
           @click=${this.handleConfirm}
         >
           Import ${preview.imported} transactions
-        </button>
+        </wa-button>
       </wc-panel>
     `;
   }
@@ -756,9 +734,9 @@ export class NigelImportScreen extends LitElement {
             variant="warning"
             message="That file had already been imported, so nothing was added."
           ></wc-notice-bar>
-          <button class="action" slot="actions" type="button" @click=${this.handleReset}>
+          <wa-button appearance="outlined" slot="actions" @click=${this.handleReset}>
             Import another
-          </button>
+          </wa-button>
         </wc-panel>
       `;
     }
@@ -781,9 +759,9 @@ export class NigelImportScreen extends LitElement {
               >Review ${result.stillFlagged} flagged</a
             >`
           : nothing}
-        <button class="action" slot="actions" type="button" @click=${this.handleReset}>
+        <wa-button appearance="outlined" slot="actions" @click=${this.handleReset}>
           Import another
-        </button>
+        </wa-button>
       </wc-panel>
     `;
   }

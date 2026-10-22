@@ -1,6 +1,6 @@
 import { css } from 'lit';
 import { colorCss, colorDarkCss } from '../tokens/color.js';
-import { brandCycleKeyframes, gradientCss } from '../tokens/gradient.js';
+import { gradientCss } from '../tokens/gradient.js';
 import { typographyCss } from '../tokens/typography.js';
 import { spacingCss } from '../tokens/spacing.js';
 import { radiusCss } from '../tokens/radius.js';
@@ -8,6 +8,7 @@ import { shadowCss } from '../tokens/shadow.js';
 import { motionCss } from '../tokens/motion.js';
 import { fontFacesCss } from '../tokens/font-faces.js';
 import { waContractCss } from '../tokens/wa-contract.js';
+import { switchCss } from '../tokens/switch.js';
 import { printCss } from '../print.js';
 
 /**
@@ -33,11 +34,11 @@ export const nigelTheme = css`
   ${typographyCss}
   ${spacingCss}
   ${gradientCss}
-  ${brandCycleKeyframes}
   ${radiusCss}
   ${shadowCss}
   ${motionCss}
   ${waContractCss}
+  ${switchCss}
   ${colorDarkCss}
   ${printCss}
 `;

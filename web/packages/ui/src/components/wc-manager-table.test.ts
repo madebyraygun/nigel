@@ -67,7 +67,7 @@ describe('wc-manager-table', () => {
     const el = await mount();
     const labels = [
       ...(el.shadowRoot?.querySelectorAll('tr[data-row="1"] [data-action]') ?? []),
-    ].map((button) => button.getAttribute('aria-label'));
+    ].map((button) => button.textContent?.replace(/\s+/g, ' ').trim());
     expect(labels).toEqual(['Rename BofA Checking', 'Delete BofA Checking']);
   });
 

@@ -7,6 +7,8 @@ import {
   type TemplateResult,
 } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   dispatchNcToast,
@@ -52,7 +54,7 @@ type Phase = 'loading' | 'empty' | 'reviewing' | 'summary' | 'error';
  */
 @customElement('nigel-review-screen')
 export class NigelReviewScreen extends LitElement {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -92,22 +94,7 @@ export class NigelReviewScreen extends LitElement {
     a {
       color: var(--wa-color-brand);
     }
-
-    button.undo-last {
-      font: inherit;
-      padding: var(--wa-space-xs, 6px) var(--wa-space-m, 12px);
-      border-radius: var(--wa-radius-m, 8px);
-      border: 1px solid var(--wa-color-border);
-      background: var(--wa-color-surface);
-      color: inherit;
-      cursor: pointer;
-    }
-
-    button.undo-last:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-  `;
+  `];
 
   /** Supplied by the registry from the screen context. */
   @property({ attribute: false })
@@ -481,15 +468,15 @@ export class NigelReviewScreen extends LitElement {
           <dd>${counts.rulesCreated}</dd>
         </dl>
         ${this.history.length > 0
-          ? html`<button
+          ? html`<wa-button
               class="undo-last"
+              appearance="outlined"
               slot="actions"
-              type="button"
               ?disabled=${this.busy}
               @click=${this.handleBack}
             >
               Back to the last transaction
-            </button>`
+            </wa-button>`
           : nothing}
         <a slot="actions" href="#/register">Open the register</a>
         <a slot="actions" href="#/dashboard">Back to the dashboard</a>

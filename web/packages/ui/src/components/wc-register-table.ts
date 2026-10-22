@@ -230,7 +230,7 @@ export class WcRegisterTable extends LitElement {
         box-sizing: border-box;
         text-align: left;
         font-size: var(--nc-font-size-meta);
-        font-weight: var(--wa-font-weight-medium);
+        font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         background: var(--wa-color-surface-alt);
         padding: 0 var(--wa-space-s);

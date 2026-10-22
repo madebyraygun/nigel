@@ -84,7 +84,7 @@ export class WcImportHistory extends LitElement {
       }
 
       th {
-        font-weight: var(--wa-font-weight-medium);
+        font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         white-space: nowrap;
       }
@@ -231,10 +231,9 @@ export class WcImportHistory extends LitElement {
             appearance="outlined"
             variant="danger"
             ?disabled=${busy}
-            aria-label=${`Undo import of ${item.filename}`}
             @click=${() => this.handleUndo(item.id)}
           >
-            Undo
+            Undo<span class="sr-only"> import of ${item.filename}</span>
           </wa-button>
         </td>
       </tr>

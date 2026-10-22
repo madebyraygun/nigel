@@ -195,4 +195,90 @@ draws them the same way:
   the caret.
 - Everything else uses `:focus-visible`: a 2px `--wa-color-focus` outline
   offset 2px, on keyboard focus only, so a click does not leave a ring
-  behind.
+  behind. A button draws it on its own pill, and a switch on its knob; both
+  repaint it in `Highlight` under forced colors.
+
+## Buttons
+
+There is one button, and it is `wa-button`. `controlsCss` draws it as the
+handoff's pill (`docs/design/app-refresh/README.md`, "Radius"), so a screen
+picks what a button *means* and never what it looks like:
+
+| Markup | What it is |
+|---|---|
+| `variant="brand"` | The primary: a flat `--wa-color-brand` fill under `--wa-color-on-brand` text at weight 500, hovering to `--wa-color-brand-hover` |
+| no variant, or `appearance="outlined"` | The secondary: an outline in `--nc-color-control-border` on the card ground, text at 400, hovering to `--nc-color-hover`. The outline meets WCAG 1.4.11's 3:1 against the canvas, a card and the sidebar in both modes (`contrast.test.ts`), since it is all that marks the button's extent |
+| `variant="danger" appearance="outlined"` | A destructive trigger (Void…, Remove…): `--wa-color-danger` edge and text |
+| `variant="danger"` | The destructive confirm inside a dialog: a filled `--wa-color-danger` |
+| `appearance="plain"` | A row action drawn as bare text |
+| a labelled icon alone, `<wa-button appearance="plain"><wc-icon-refresh label="Refresh"></wc-icon-refresh></wa-button>` | An icon button: a 32px circle with a 17px glyph in `--wa-color-muted`, filling with `--nc-color-hover` |
+
+Every button is 32px tall with 13px type at the default `size="m"`;
+`size="l"` is 38px (Setup's steps) and `size="s"` 28px (dense rows and
+forms). Disabled is 40% with no hover change.
+
+`wa-button` does not pass a host `aria-label` to the button inside it, so a
+name longer than the visible label goes in the content, hidden with the
+`sr-only` class `controlsCss` carries: `Retry<span class="sr-only">
+Revenue</span>`. An icon button's name is its icon's `label`.
+
+`button-ownership.test.ts` in each package (`packages/ui/preview/button-guard.ts`)
+reads every `css` template, splits each selector list on its top-level
+commas, and fails the build on any single selector that:
+
+- names `wa-button` and sets `border-radius` (or a corner), `height`,
+  `min-`/`max-height`, `block-size`, `background*`,
+  `--wa-form-control-height`, `--wa-form-control-border-radius`,
+  `--wa-form-control-padding-inline`, `--wa-border-radius-*`,
+  `--wa-color-fill-*`/`-on-*`/`-border-*` or `--wa-color-brand*`;
+- names a native `button` and sets a `background`, `background-color` or
+  `background-image` reading `--wa-color-brand*` or `--nc-grad-brand*`,
+  unless that same selector is a checked or pressed toggle
+  (`[aria-checked`, `[aria-pressed`, `:checked`);
+- reaches `::part(base)` or `::part(button)` on any host other than a known
+  non-button primitive (`wa-input`, `wa-select`, `wa-textarea`, `wa-dialog`,
+  `wa-drawer`, `wa-switch`, `wa-checkbox`, `wa-radio`, `wa-radio-group`,
+  `wa-details`, `wa-tooltip`, `wa-popup`, `wa-callout`, `wa-card`, `wa-tag`,
+  `wa-badge`, `wa-spinner`, `wa-progress-bar`, `wa-format-bytes`) and sets
+  a radius, height, `background*`, border colour or `color`;
+- names `wa-switch` or `[role=switch]` and sets `--width`, `--height`,
+  `--thumb-size`, a width or height, any `border*` or `background*`.
+
+In templates it fails on a `pill` or `solid` attribute on `wa-button`, and
+on the deprecated `size="small"` or `size="large"`. Controls that are not
+buttons keep their own design — nav items, chips, the search and review
+pills, segmented toggles, cards, the sidebar hamburger (a square with 8px
+corners).
+
+## Lists
+
+A list screen's filter or toolbar row sits `--nc-toolbar-gap` (16px) above
+the table it filters, from one of two places: `wc-filtered-list` (its
+`filters` slot over its default slot — Invoices, Documents) or
+`wc-manager-layout`'s `toolbar` slot (Clients, Rules, and the other
+managers). The register spaces its toolbar from its table with the same
+token. Either way the row is one wrapping line of items centred on each
+other, `--nc-filter-row-gap` apart: a `.label` span ("Status") before its
+chips, a switch, or a `wa-select`, which `controlsCss` lays out with its
+label inline to its left in the muted control type rather than stacked
+above it. No screen sets its own margin between a filter row and a table.
+
+Every table heading — column and row headings alike, in the manager,
+invoice, document, register, report, line-item and the other tables — is
+set at `--nc-font-weight-table-heading` (700, Plex Mono's own bold face,
+bundled beside 400, 500 and 600). `table-headings.test.ts` fails the build
+on a `th` weight set any other way; `tfoot` and total bands keep their own.
+
+## Switches
+
+There is one switch, `wa-switch`, drawn by `controlsCss`: a 38×22 pill with
+a 16px white knob. Off is a light track with a mid-grey
+`--nc-color-control-border` edge, and the knob wears the same edge, so the
+control is visible on any plane (3:1, pinned by `contrast.test.ts`). On fills
+the track with `--wa-color-brand` and puts the icon set's check in the knob,
+so on and off differ in shape as well as colour. The knob slides over 150ms
+(`--nc-transition-switch`, instant under reduced motion), and disabled sits
+at 40%. Under forced colors both edges are `ButtonText`, the on knob is a
+solid `ButtonText` in place of the check, and focus outlines the knob in
+`Highlight`. A component places a switch but never sizes, edges or fills it;
+the same guard test covers it.

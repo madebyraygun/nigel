@@ -253,10 +253,9 @@ export class WcRecipientEditor extends LitElement {
           size="s"
           appearance="plain"
           variant="danger"
-          aria-label=${`Remove ${label}`}
           ?disabled=${this.disabled}
           @click=${this.removeCollaborator(index)}
-          >Remove</wa-button
+          >Remove<span class="sr-only"> ${label}</span></wa-button
         >
       </div>
       ${this.renderError(this.errors.collaborators?.[index])}

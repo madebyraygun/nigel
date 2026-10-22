@@ -5,6 +5,7 @@ import { WcStatStrip as Ctor } from './wc-stat-strip.js';
 import type { WcMoney } from './wc-money.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import { styleText } from '../../preview/controls-suite.js';
+import { controlsCss } from '@nigel/theme';
 import preview from './wc-stat-strip.preview.js';
 
 const cells: StatStripCell[] = [
@@ -78,9 +79,12 @@ describe('wc-stat-strip', () => {
 
   it('names each retry button for its cell', async () => {
     const el = await mount({ cells: [{ ...cells[1]!, error: 'boom' }] });
-    expect(
-      el.shadowRoot?.querySelector('.retry')?.getAttribute('aria-label'),
-    ).toBe('Retry Expenses, year to date');
+    // wa-button does not forward a host aria-label to its inner button, so
+    // the cell's name is in the content, where the inner button's name comes from.
+    const retry = el.shadowRoot?.querySelector('.retry');
+    expect(retry?.hasAttribute('aria-label')).toBe(false);
+    expect(retry?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Retry Expenses, year to date');
+    expect(retry?.querySelector('.sr-only')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Expenses, year to date');
   });
 
   it('divides cells with a left hairline that becomes a top one when the strip is narrow', () => {
@@ -90,7 +94,9 @@ describe('wc-stat-strip', () => {
   });
 
   it('wraps on its own width rather than the viewport', () => {
-    const text = styleText(Ctor);
+    // Its own rules only: the adopted controlsCss carries forced-colors and
+    // print queries, which are not layout.
+    const text = styleText(Ctor).replace(controlsCss.cssText, '');
     expect(text).toMatch(/:host\s*{[^}]*container-type:\s*inline-size/);
     expect(text).not.toMatch(/@media/);
   });

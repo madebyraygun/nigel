@@ -3,12 +3,12 @@ import { css } from 'lit';
 /**
  * - `xs` 4px: badges.
  * - `sm` 6px: chips, small tiles.
- * - `md` 8px: nav items, inputs, icon buttons.
+ * - `md` 8px: nav items, inputs, the sidebar hamburger.
  * - `--nc-radius-tile` 10px: the dropzone, icon tiles.
  * - `lg` 12px: cards, the palette, the status panel.
  * - `xl` 14px: the sidebar, mobile cards, setup cards.
  * - `2xl` 18px: the mobile drawer.
- * - `pill` 999px: pills, buttons, switches.
+ * - `pill` 999px: pills, every button (icon buttons included), switches.
  */
 export const radiusCss = css`
   :root {

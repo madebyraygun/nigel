@@ -7,6 +7,8 @@ import {
   type TemplateResult,
 } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -123,7 +125,7 @@ function isFilteredList(params: URLSearchParams): boolean {
  */
 @customElement('nigel-invoices-screen')
 export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -150,18 +152,6 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       display: flex;
       flex-wrap: wrap;
       gap: var(--wa-space-s, 8px);
-    }
-
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--wa-space-xs, 6px);
-      font-size: var(--wa-font-size-s, 13px);
-    }
-
-    .filters .label {
-      color: var(--wa-color-muted);
     }
 
     .chip {
@@ -227,7 +217,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       font-size: var(--wa-font-size-s, 13px);
       color: var(--wa-color-muted);
     }
-  `;
+  `];
 
   @property({ attribute: false })
   client!: ApiClient;
@@ -824,11 +814,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           </p>`
         : nothing}
 
-      <div class="filters">
-        <span class="label">Status</span>
+      <wc-filtered-list label="Invoice filters">
+        <span class="label" slot="filters">Status</span>
         ${STATUS_FILTERS.map((filter) => {
           const active = activeStatusFilter(this.params) === filter.value;
           return html`<a
+            slot="filters"
             class="chip"
             data-filter=${filter.value}
             aria-current=${active ? 'true' : nothing}
@@ -837,16 +828,16 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           >`;
         })}
         ${this.params.get('clientId')
-          ? html`<a class="chip" data-clear-client href=${this.href({ clientId: null })}
+          ? html`<a slot="filters" class="chip" data-clear-client href=${this.href({ clientId: null })}
               >Clear client filter</a
             >`
           : nothing}
-      </div>
 
-      <wc-invoice-table
-        .rows=${invoiceTableRows(this.rows)}
-        empty-message="No invoices yet — start one with New invoice."
-      ></wc-invoice-table>
+        <wc-invoice-table
+          .rows=${invoiceTableRows(this.rows)}
+          empty-message="No invoices yet — start one with New invoice."
+        ></wc-invoice-table>
+      </wc-filtered-list>
     `;
   }
 

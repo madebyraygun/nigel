@@ -130,16 +130,14 @@ export const waContractCss = css`
     --wa-color-neutral-on-loud: var(--wa-color-bg);
     --wa-color-neutral-border-quiet: var(--wa-color-border-soft);
     --wa-color-neutral-border-normal: var(--wa-color-border);
-    /* Loud is the outlined button's edge — the only thing separating that
-       control from the canvas, so it owes WCAG 1.4.11's 3:1 where the panel
-       border it used to name sits at 1.2:1. */
+    /* Loud is the edge of an outlined neutral control — the only thing
+       separating it from the canvas, so it owes WCAG 1.4.11's 3:1. The
+       standard button's outline is --nc-color-control-border, which owes the
+       same and is drawn by controlsCss. */
     --wa-color-neutral-border-loud: var(--wa-color-muted);
 
-    /* Brand's loud fill is the solid brand colour and is what an outlined or
-       plain brand control shows; on the default appearance nothing sees it,
-       because controls.ts paints --nc-grad-brand over the button's base part
-       and an outer-tree part rule wins for the same property. The two do not
-       fight — the gradient covers exactly the case this fills. */
+    /* Brand's loud fill is the solid brand colour under on-brand text: the
+       standard primary button, a flat --wa-color-brand pill. */
     --wa-color-brand-fill-quiet: var(--wa-color-surface-alt);
     --wa-color-brand-fill-normal: var(--wa-color-border-soft);
     --wa-color-brand-fill-loud: var(--wa-color-brand);
@@ -186,8 +184,7 @@ export const waContractCss = css`
     --wa-color-warning-border-normal: var(--wa-color-warning);
     --wa-color-warning-border-loud: var(--wa-color-warning);
 
-    /* Buttons keep their press feedback; controls.ts translates the brand
-       button on top of this. */
+    /* Buttons keep their press feedback. */
     --wa-button-transform-hover: none;
     --wa-button-transform-active: scale(0.9875);
 

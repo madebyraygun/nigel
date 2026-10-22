@@ -110,31 +110,30 @@ describe('the wa-button variant families', () => {
     },
   );
 
-  it.each(['danger', 'success', 'warning'])(
-    'draws a %s button its hover edge from the colour it is filled with',
-    (variant) => {
-      // The edge and the fill have to be the same hue or a hovered danger
-      // button wears somebody else's outline. Both sides read the one token,
-      // so the pairing holds in either mode without a second declaration.
-      const family = indirection.get(variant)!.get('--wa-color-fill-loud')!;
-      const edge = controlsCss.cssText.match(
-        new RegExp(`wa-button\\[variant='${variant}'\\]\\s*\\{\\s*--nc-hover-border:\\s*([^;]+);`),
-      );
-
-      expect(edge?.[1]).toBe(`var(--wa-color-${variant})`);
-      for (const mode of MODES) {
-        expect(resolveToken(family, mode)).toBe(resolveToken(`--wa-color-${variant}`, mode));
-      }
-    },
-  );
-
-  it('leaves the brand button its gradient', () => {
-    // controlsCss paints --nc-grad-brand over ::part(base), and an outer-tree
-    // part rule wins over the shadow tree's own for the same property. The
-    // brand family below it is what the outlined and plain appearances show.
-    const family = indirection.get('brand')!.get('--wa-color-fill-loud')!;
+  it('fills a brand button flat in the brand colour under on-brand text', () => {
+    // The standard primary: Web Awesome's accent appearance read through the
+    // brand family, with nothing in controlsCss painting over it.
+    const fill = indirection.get('brand')!.get('--wa-color-fill-loud')!;
+    const on = indirection.get('brand')!.get('--wa-color-on-loud')!;
     for (const mode of MODES) {
-      expect(resolveToken(family, mode)).toBe(resolveToken('--wa-color-brand', mode));
+      expect(resolveToken(fill, mode)).toBe(resolveToken('--wa-color-brand', mode));
+      expect(resolveToken(on, mode)).toBe(resolveToken('--wa-color-on-brand', mode));
+    }
+    expect(controlsCss.cssText).not.toMatch(/wa-button\[variant='brand'\]::part\(base\)\s*\{/);
+  });
+
+  it('outlines a danger button in the danger colour, and fills its confirm', () => {
+    // appearance=outlined reads border-loud and on-quiet; the default accent
+    // appearance reads fill-loud and on-loud.
+    const roles = indirection.get('danger')!;
+    for (const mode of MODES) {
+      const danger = resolveToken('--wa-color-danger', mode);
+      expect(resolveToken(roles.get('--wa-color-border-loud')!, mode)).toBe(danger);
+      expect(resolveToken(roles.get('--wa-color-on-quiet')!, mode)).toBe(danger);
+      expect(resolveToken(roles.get('--wa-color-fill-loud')!, mode)).toBe(danger);
+      expect(resolveToken(roles.get('--wa-color-on-loud')!, mode)).toBe(
+        resolveToken('--wa-color-on-brand', mode),
+      );
     }
   });
 });

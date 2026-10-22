@@ -22,11 +22,12 @@ import { css } from 'lit';
 export const FONT_FAMILY = 'IBM Plex Mono';
 
 /**
- * Exactly `--wa-font-weight-normal`, `-medium` and `-bold`. Plex Mono ships a
- * real 600, which is the reason it was chosen over Fira Mono — whose absence
- * of one would leave every table header and field label synthesised.
+ * Exactly `--wa-font-weight-normal`, `-medium` and `-bold`, plus 700 for
+ * `--nc-font-weight-table-heading`. Plex Mono ships every one as a real face,
+ * which is the reason it was chosen over Fira Mono — whose lack of a 600 would
+ * leave every field label synthesised.
  */
-export const BUNDLED_FONT_WEIGHTS = [400, 500, 600] as const;
+export const BUNDLED_FONT_WEIGHTS = [400, 500, 600, 700] as const;
 
 export const fontFacesCss = css`
   @font-face {
@@ -51,5 +52,13 @@ export const fontFacesCss = css`
     font-weight: 600;
     font-display: swap;
     src: url('../fonts/ibm-plex-mono-600.woff2') format('woff2');
+  }
+
+  @font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/ibm-plex-mono-700.woff2') format('woff2');
   }
 `;

@@ -130,7 +130,7 @@ async function back(el: NigelReviewScreen): Promise<void> {
 }
 
 async function backFromSummary(el: NigelReviewScreen): Promise<void> {
-  const button = el.shadowRoot?.querySelector<HTMLButtonElement>('button.undo-last');
+  const button = el.shadowRoot?.querySelector<HTMLButtonElement>('wa-button.undo-last');
   if (!button) throw new Error('no back button on the summary');
   button.click();
   await settle(el);
