@@ -27,6 +27,7 @@ import {
   indexOfToday,
   registerParamsFrom,
   replaceRow,
+  sumAmounts,
   todayIso,
 } from './register-data.js';
 import type { ScreenContext } from './context.js';
@@ -53,38 +54,29 @@ export class NigelRegisterScreen extends LitElement {
     controlsCss,
     css`
       /* The register is a full-height screen: the toolbar keeps its own
-         height and the table takes everything between it and the bottom of
-         the window, scrolling inside itself. Growing is what the shell's
-         content area answers.
+         height and the table card takes everything between it and the bottom
+         of the content area, scrolling inside itself.
 
-         The automatic minimum is left in place — the toolbar plus the table's
-         own floor — so a window too short for both scrolls the page instead
-         of squeezing the table to nothing. */
+         The minimum height is zero rather than the flex default. The default
+         is the screen's content height — every row of the table, since the
+         spacer rows stand in for the ones not drawn — so the screen would grow
+         to the whole register and the content area would scroll the toolbar
+         away instead of the table scrolling under it. The table carries its
+         own floor (--nc-register-min-height), so a window too short for the
+         toolbar and that floor still scrolls the page rather than squeezing
+         the table to nothing. */
       :host {
         display: flex;
         flex-direction: column;
         flex: 1 1 auto;
-        gap: var(--wa-space-m, 12px);
-        padding: var(--wa-space-l, 16px);
+        min-height: 0;
+        gap: var(--nc-toolbar-gap);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
 
-
-      .bar {
-        display: flex;
-        align-items: end;
-        gap: var(--wa-space-m, 12px);
-        flex-wrap: wrap;
-        flex: 0 0 auto;
-      }
-
       wc-register-toolbar {
-        flex: 1 1 auto;
-      }
-
-      wc-shortcut-help {
-        padding-bottom: var(--wa-space-2xs, 4px);
+        flex: 0 0 auto;
       }
     `,
   ];
@@ -164,6 +156,9 @@ export class NigelRegisterScreen extends LitElement {
       this.loading = false;
 
       await this.updateComplete;
+      // The table renders on its own cycle, after this one, and landing
+      // measures its rows.
+      await this.table?.updateComplete;
       if (seq !== this.loadSeq) return;
       this.landOnOpeningRow(request);
     } catch (error) {
@@ -184,12 +179,14 @@ export class NigelRegisterScreen extends LitElement {
   }
 
   /**
-   * Where the register opens.
+   * Where the register opens: at the newest rows.
    *
-   * A deep link to a transaction wins. Otherwise an unfiltered load lands on
-   * the last row dated on or before today, which is `scroll_to_today`; a
-   * filtered load stays at the top, because the TUI only scrolls to today when
-   * no date filter is in play and a March register has no "today" to find.
+   * A deep link to a transaction wins. Otherwise an unfiltered load selects
+   * the last row dated on or before today, which is `scroll_to_today`, and
+   * sets it at the bottom of the view so the rows before it fill the card. A
+   * date-filtered load selects nothing, because the TUI only scrolls to today
+   * when no date filter is in play and a March register has no "today" to
+   * find, but it still opens on its last rows.
    */
   private landOnOpeningRow(request: RegisterParams): void {
     if (this.rows.length === 0) return;
@@ -206,9 +203,11 @@ export class NigelRegisterScreen extends LitElement {
       request.month !== undefined ||
       request.from !== undefined;
 
-    if (!dated) {
+    if (dated) {
+      this.table?.scrollToEnd();
+    } else {
       const index = indexOfToday(this.rows, todayIso());
-      this.table?.scrollToIndex(index === -1 ? 0 : index);
+      this.table?.scrollToIndex(index === -1 ? 0 : index, 'end');
     }
 
     this.takeFocus();
@@ -237,6 +236,11 @@ export class NigelRegisterScreen extends LitElement {
 
   private get visibleRows(): RegisterRow[] {
     return filterRows(this.rows, this.search);
+  }
+
+  /** What the footer's total covers: the account filter, or every account. */
+  private get accountLabel(): string {
+    return this.params.get('account') || 'All accounts';
   }
 
   /** Rewrite the route; the hashchange listener is what actually reloads us. */
@@ -364,21 +368,20 @@ export class NigelRegisterScreen extends LitElement {
     const searching = this.search !== '';
 
     return html`
-      <div class="bar">
-        <wc-register-toolbar
-          .accounts=${this.accountOptions}
-          .account=${this.params.get('account')}
-          .period=${this.period}
-          .search=${this.search}
-          .matchCount=${searching ? visible.length : null}
-          .totalCount=${this.rows.length}
-          ?busy=${this.loading}
-          @nc-account-change=${this.handleAccountChange}
-          @nc-period-change=${this.handlePeriodChange}
-          @nc-search-change=${this.handleSearchChange}
-        ></wc-register-toolbar>
+      <wc-register-toolbar
+        .accounts=${this.accountOptions}
+        .account=${this.params.get('account')}
+        .period=${this.period}
+        .search=${this.search}
+        .matchCount=${searching ? visible.length : null}
+        .totalCount=${this.rows.length}
+        ?busy=${this.loading}
+        @nc-account-change=${this.handleAccountChange}
+        @nc-period-change=${this.handlePeriodChange}
+        @nc-search-change=${this.handleSearchChange}
+      >
         ${this.renderHelp()}
-      </div>
+      </wc-register-toolbar>
 
       ${this.loading
         ? html`<wc-spinner size="l" show-label label="Loading the register"></wc-spinner>`
@@ -404,8 +407,9 @@ export class NigelRegisterScreen extends LitElement {
               .selectedId=${this.selectedId}
               .editingId=${this.editingId}
               .busyId=${this.busyId}
-              .total=${this.total}
+              .total=${searching ? sumAmounts(visible) : this.total}
               .showAccount=${!this.params.get('account')}
+              footer-label=${this.accountLabel}
               footer-note=${searching
                 ? `${visible.length} of ${this.rows.length} rows shown`
                 : ''}
@@ -431,6 +435,8 @@ export class NigelRegisterScreen extends LitElement {
   private renderHelp(): TemplateResult {
     return html`
       <wc-shortcut-help
+        slot="end"
+        label="Keys"
         .shortcuts=${[...REGISTER_SHORTCUTS]}
         heading="Register shortcuts"
       ></wc-shortcut-help>

@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { controlsCss } from '@nigel/theme';
 import './wc-send-dialog.js';
 import { WcSendDialog, type SendStepView } from './wc-send-dialog.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
@@ -142,7 +143,7 @@ describe('wc-send-dialog', () => {
     const el = await mount({ phase: 'failed', steps: STEPS });
     const mark = el.shadowRoot?.querySelector('[data-step] .mark');
     expect(mark?.hasAttribute('inline')).toBe(true);
-    expect(styles()).not.toContain('--nc-icon-size');
+    expect(styles().replace(controlsCss.cssText, '')).not.toContain('--nc-icon-size');
   });
 
   describe('a step label long enough to wrap', () => {

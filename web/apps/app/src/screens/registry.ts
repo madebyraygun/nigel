@@ -42,6 +42,15 @@ export interface ScreenDef {
   id: ScreenId;
   /** Header and document title. */
   title: string;
+  /**
+   * Who draws the page heading. Absent, the shell draws `title` as the
+   * visible h1. `hidden`: the shell keeps the h1 for assistive technology
+   * only, for a screen whose toolbar is its first line (the breadcrumb names
+   * it on screen). `screen`: the screen renders its own h1 and the shell
+   * renders none. The breadcrumb and the window title read `title` either
+   * way.
+   */
+  heading?: 'hidden' | 'screen';
   /** Sidebar label — usually shorter than the title. */
   navLabel: string;
   /** Tag name of a `wc-icon-*` element. */
@@ -81,6 +90,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
   register: {
     id: 'register',
     title: 'Register',
+    heading: 'hidden',
     navLabel: 'Register',
     icon: 'wc-icon-register',
     inNav: true,
@@ -220,6 +230,12 @@ export const DEFAULT_SCREEN: ScreenId = 'dashboard';
 
 export function isScreenId(value: string): value is ScreenId {
   return SCREENS.has(value as ScreenId);
+}
+
+/** What the shell is told to draw as the page heading for a screen. */
+export function shellHeading(def: ScreenDef): { title: string; hidden: boolean } {
+  if (def.heading === 'screen') return { title: '', hidden: false };
+  return { title: def.title, hidden: def.heading === 'hidden' };
 }
 
 export function screenDef(id: ScreenId): ScreenDef {

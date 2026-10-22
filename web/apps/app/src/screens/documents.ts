@@ -165,18 +165,6 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         gap: var(--wa-space-s, 8px);
       }
 
-      .filters {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: var(--wa-space-xs, 6px);
-        font-size: var(--wa-font-size-s, 13px);
-      }
-
-      .filters .label {
-        color: var(--wa-color-muted);
-      }
-
       .chip {
         padding: var(--wa-space-2xs, 4px) var(--wa-space-s, 8px);
         border: 1px solid var(--wa-color-border);
@@ -1002,11 +990,12 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
       ${this.renderActionError()} ${this.renderSyncReport()}
 
-      <div class="filters">
-        <span class="label">Status</span>
+      <wc-filtered-list label="Document filters">
+        <span class="label" slot="filters">Status</span>
         ${DOCUMENT_STATUS_FILTERS.map((filter) => {
           const current = activeStatusFilter(this.params) === filter.value;
           return html`<a
+            slot="filters"
             class="chip"
             data-filter=${filter.value}
             aria-current=${current ? 'true' : nothing}
@@ -1015,6 +1004,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           >`;
         })}
         <wa-select
+          slot="filters"
           data-client-filter
           size="s"
           label="Client"
@@ -1031,12 +1021,12 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
                 html`<wa-option value=${String(client.id)}>${client.name}</wa-option>`,
           )}
         </wa-select>
-      </div>
 
-      <wc-document-table
-        .rows=${documentTableRows(this.rows)}
-        empty-message="No documents yet — file one below."
-      ></wc-document-table>
+        <wc-document-table
+          .rows=${documentTableRows(this.rows)}
+          empty-message="No documents yet — file one below."
+        ></wc-document-table>
+      </wc-filtered-list>
 
       <wc-panel heading="File a document">
         <div class="filing">

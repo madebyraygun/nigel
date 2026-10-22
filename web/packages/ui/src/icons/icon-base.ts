@@ -13,6 +13,9 @@ import { property } from 'lit/decorators.js';
  * size a standalone mark wants — a toolbar button, an empty state. `inline`
  * makes it 1em instead, so a mark set in a run of text tracks the text rather
  * than the token, which is what every status mark needs.
+ *
+ * `--nc-icon-fill` fills the shape as well as stroking it; it inherits, so a
+ * control sets it on itself for the icon inside.
  */
 export abstract class WcIconBase extends LitElement {
   static styles = css`
@@ -31,9 +34,12 @@ export abstract class WcIconBase extends LitElement {
       height: 1em;
     }
 
+    /* Outline by default; --nc-icon-fill paints the shape solid, which is
+       how a pressed toggle such as the register's flag reads as on. */
     svg {
       width: 100%;
       height: 100%;
+      fill: var(--nc-icon-fill, none);
     }
   `;
 

@@ -49,6 +49,10 @@ export {
   type BarBucket,
   type BarHeights,
 } from './wc-bar-chart.js';
+export { WcStatStrip, type StatStripCell } from './wc-stat-strip.js';
+export { WcCashflowCard } from './wc-cashflow-card.js';
+export { WcBalancesCard } from './wc-balances-card.js';
+export { WcReviewPill } from './wc-review-pill.js';
 export { WcNoticeBar, type WcNoticeVariant } from './wc-notice-bar.js';
 export {
   WcPeriodNav,
@@ -121,6 +125,7 @@ export {
 export { WcExportLinks } from './wc-export-links.js';
 export { WcLinkGrid, type LinkGridItem } from './wc-link-grid.js';
 export { WcManagerLayout } from './wc-manager-layout.js';
+export { WcFilteredList } from './wc-filtered-list.js';
 export {
   WcManagerTable,
   type ManagerAction,

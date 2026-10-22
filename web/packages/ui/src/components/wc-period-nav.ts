@@ -92,6 +92,13 @@ const KIND_LABELS: Record<NcPeriodKind, string> = {
  * table, so a route that only accepts `year` cannot be asked for a month. The
  * register turns `allowAll` on because its default view is every transaction;
  * report views leave it off and get year/month only.
+ *
+ * @csspart pager - The previous / label / next group.
+ * @csspart step - The previous and next buttons.
+ * @csspart label - The period's name between them.
+ * @csspart kinds - The granularity radio group.
+ * @csspart kind - Each granularity button.
+ * @csspart kind-checked - The granularity button that is on.
  */
 @customElement('wc-period-nav')
 export class WcPeriodNav extends LitElement {
@@ -261,20 +268,22 @@ export class WcPeriodNav extends LitElement {
     const kinds = this.kinds;
 
     return html`
-      <div class="pager" role="group" aria-label="Period">
+      <div class="pager" part="pager" role="group" aria-label="Period">
         <button
           type="button"
+          part="step"
           aria-label="Previous period"
           ?disabled=${this.disabled || !pageable}
           @click=${() => this.step(-1)}
         >
           <wc-icon-chevron-left></wc-icon-chevron-left>
         </button>
-        <span class="label" aria-live="polite"
+        <span class="label" part="label" aria-live="polite"
           >${periodLabel(this.period, this.locale)}</span
         >
         <button
           type="button"
+          part="step"
           aria-label="Next period"
           ?disabled=${this.disabled || !pageable}
           @click=${() => this.step(1)}
@@ -288,6 +297,7 @@ export class WcPeriodNav extends LitElement {
         : html`
             <div
               class="kinds"
+              part="kinds"
               role="radiogroup"
               aria-label="Period granularity"
               @keydown=${this.handleKindKeydown}
@@ -297,6 +307,7 @@ export class WcPeriodNav extends LitElement {
                 return html`
                   <button
                     type="button"
+                    part=${checked ? 'kind kind-checked' : 'kind'}
                     role="radio"
                     aria-checked=${checked ? 'true' : 'false'}
                     tabindex=${checked ? '0' : '-1'}

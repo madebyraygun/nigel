@@ -255,6 +255,7 @@ export class WcClientForm extends LitElement {
   private renderContact(contact: ClientFormContact, index: number) {
     const error = this.errors.contacts?.[index];
     const last = this.value.contacts.length - 1;
+    const contactName = contact.email || `contact ${index + 1}`;
 
     return html`
       <div class="contact" data-contact=${index}>
@@ -263,7 +264,7 @@ export class WcClientForm extends LitElement {
             type="radio"
             name="billing-contact"
             data-billing=${index}
-            aria-label=${`Bill ${contact.email || `contact ${index + 1}`}`}
+            aria-label=${`Bill ${contactName}`}
             .checked=${this.value.billingIndex === index}
             ?disabled=${this.disabled}
             @change=${this.chooseBilling(index)}
@@ -302,29 +303,28 @@ export class WcClientForm extends LitElement {
             data-move-up
             size="s"
             appearance="plain"
-            aria-label=${`Move ${contact.email || `contact ${index + 1}`} up`}
             ?disabled=${this.disabled || index === 0}
             @click=${this.moveContact(index, -1)}
-            >↑</wa-button
+            ><span aria-hidden="true">↑</span
+            ><span class="sr-only">Move ${contactName} up</span></wa-button
           >
           <wa-button
             data-move-down
             size="s"
             appearance="plain"
-            aria-label=${`Move ${contact.email || `contact ${index + 1}`} down`}
             ?disabled=${this.disabled || index === last}
             @click=${this.moveContact(index, 1)}
-            >↓</wa-button
+            ><span aria-hidden="true">↓</span
+            ><span class="sr-only">Move ${contactName} down</span></wa-button
           >
           <wa-button
             data-remove-contact
             size="s"
             appearance="plain"
             variant="danger"
-            aria-label=${`Remove ${contact.email || `contact ${index + 1}`}`}
             ?disabled=${this.disabled}
             @click=${this.removeContact(index)}
-            >Remove</wa-button
+            >Remove<span class="sr-only"> ${contactName}</span></wa-button
           >
         </span>
       </div>
