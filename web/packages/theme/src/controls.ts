@@ -214,6 +214,31 @@ export const controlsCss = css`
      disabled and filled-appearance treatments as well as its default one.
      The token reaches the same declaration and leaves the variants intact. */
 
+  /* A select on a list's filter row (wc-filtered-list's filters slot,
+     wc-manager-layout's toolbar) carries its label inline to its left, the
+     way "Status" sits before its chips, so every item on the row shares one
+     centre line. Web Awesome stacks the label: its host is a flex column and
+     the label part has a bottom margin. */
+  :is(wc-filtered-list, wc-manager-layout) > wa-select:is([slot='filters'], [slot='toolbar']) {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--nc-filter-row-gap);
+  }
+
+  :is(wc-filtered-list, wc-manager-layout)
+    > wa-select:is([slot='filters'], [slot='toolbar'])::part(form-control-label) {
+    margin: 0;
+    color: var(--wa-color-muted);
+    font-weight: var(--wa-font-weight-normal);
+    font-size: var(--nc-font-size-control);
+    white-space: nowrap;
+  }
+
+  :is(wc-filtered-list, wc-manager-layout)
+    > wa-select:is([slot='filters'], [slot='toolbar'])::part(form-control-input) {
+    min-width: 12rem;
+  }
+
   wa-dialog::part(header),
   wa-dialog::part(body),
   wa-dialog::part(footer) {

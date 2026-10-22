@@ -50,7 +50,7 @@ export class WcBalanceList extends LitElement {
     th {
       text-align: left;
       font-size: var(--wa-font-size-s);
-      font-weight: var(--wa-font-weight-medium);
+      font-weight: var(--nc-font-weight-table-heading);
       color: var(--wa-color-muted);
       padding: var(--wa-space-2xs) 0;
       border-bottom: 1px solid var(--wa-color-border);

@@ -26,6 +26,11 @@ export const spacingCss = css`
     --nc-sidebar-collapsed-width: 58px;
     /* The top bar above the content, and the sidebar header beside it. */
     --nc-header-height: 50px;
+    /* A list screen's filter or toolbar row: the gap from it down to the
+       table it filters (wc-filtered-list, wc-manager-layout's toolbar), and
+       between the items on the row. */
+    --nc-toolbar-gap: 16px;
+    --nc-filter-row-gap: 8px;
     /* How far a floating panel sits in from the window's edges. */
     --nc-window-inset: 8px;
   }

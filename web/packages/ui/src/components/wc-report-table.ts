@@ -119,7 +119,7 @@ export class WcReportTable extends LitElement {
 
     th {
       font-size: var(--wa-font-size-s);
-      font-weight: var(--wa-font-weight-medium);
+      font-weight: var(--nc-font-weight-table-heading);
       color: var(--wa-color-muted);
       text-transform: uppercase;
       letter-spacing: 0.04em;

@@ -98,7 +98,7 @@ export class WcManagerTable extends LitElement {
       }
 
       th {
-        font-weight: var(--wa-font-weight-medium);
+        font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         white-space: nowrap;
       }

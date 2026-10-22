@@ -250,6 +250,25 @@ buttons keep their own design — nav items, chips, the search and review
 pills, segmented toggles, cards, the sidebar hamburger (a square with 8px
 corners).
 
+## Lists
+
+A list screen's filter or toolbar row sits `--nc-toolbar-gap` (16px) above
+the table it filters, from one of two places: `wc-filtered-list` (its
+`filters` slot over its default slot — Invoices, Documents) or
+`wc-manager-layout`'s `toolbar` slot (Clients, Rules, and the other
+managers). The register spaces its toolbar from its table with the same
+token. Either way the row is one wrapping line of items centred on each
+other, `--nc-filter-row-gap` apart: a `.label` span ("Status") before its
+chips, a switch, or a `wa-select`, which `controlsCss` lays out with its
+label inline to its left in the muted control type rather than stacked
+above it. No screen sets its own margin between a filter row and a table.
+
+Every table heading — column and row headings alike, in the manager,
+invoice, document, register, report, line-item and the other tables — is
+set at `--nc-font-weight-table-heading` (700, drawn with Plex Mono's 600
+face, the heaviest the app ships). `table-headings.test.ts` fails the build
+on a `th` weight set any other way; `tfoot` and total bands keep their own.
+
 ## Switches
 
 There is one switch, `wa-switch`, drawn by `controlsCss`: a 38×22 pill with

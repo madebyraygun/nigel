@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import './wc-spinner.js';
@@ -84,12 +84,19 @@ export class WcManagerLayout extends LitElement {
         flex: 0 0 auto;
       }
 
+      /* The list's filter row, laid out as wc-filtered-list lays out its own:
+         one wrapping, vertically centred row, --nc-toolbar-gap above the
+         table. Nothing slotted leaves no row and no gap. */
       .toolbar {
-        margin-bottom: var(--wa-space-s);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--nc-filter-row-gap);
+        margin-bottom: var(--nc-toolbar-gap);
+        font-size: var(--nc-font-size-control);
       }
 
-      /* Nothing slotted should not leave a gap where a filter chip would be. */
-      .toolbar:not(:has(*)) {
+      .toolbar[hidden] {
         display: none;
       }
 
@@ -144,6 +151,13 @@ export class WcManagerLayout extends LitElement {
 
   private emit(name: string): void {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
+  }
+
+  @state()
+  private hasToolbar = false;
+
+  private handleToolbarChange(event: Event): void {
+    this.hasToolbar = (event.target as HTMLSlotElement).assignedElements().length > 0;
   }
 
   private handleAdd = () => this.emit('nc-manager-add');
@@ -201,7 +215,9 @@ export class WcManagerLayout extends LitElement {
           `
         : nothing}
 
-      <div class="toolbar"><slot name="toolbar"></slot></div>
+      <div class="toolbar" ?hidden=${!this.hasToolbar}>
+        <slot name="toolbar" @slotchange=${this.handleToolbarChange}></slot>
+      </div>
 
       ${this.busy
         ? html`<div class="busy">

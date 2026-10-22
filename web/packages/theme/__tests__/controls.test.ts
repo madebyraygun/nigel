@@ -28,13 +28,28 @@ describe('controlsCss', () => {
     'wa-input::part(base)',
     'wa-select::part(base)',
     'wa-textarea::part(base)',
-    '::part(form-control-label)',
+    'wa-input::part(form-control-label)',
+    'wa-textarea::part(form-control-label)',
   ])('leaves %s to the tokens', (rule) => {
     // Field chrome is --wa-form-control-* now. A part rule for it would also
     // override Web Awesome's disabled and appearance variants, because an
     // outer-tree ::part() rule wins over the shadow tree's own for the same
     // property regardless of specificity.
     expect(text).not.toContain(rule);
+  });
+
+  it('touches a field label only on a list filter row, where it sits inline', () => {
+    // Everywhere else the label is the --wa-form-control-label-* tokens'.
+    const rules = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ');
+    const labelRules = [...rules.matchAll(/([^{}]+)::part\(form-control-label\)/g)].map((m) =>
+      m[1].trim(),
+    );
+    expect(labelRules.length).toBeGreaterThan(0);
+    for (const selector of labelRules) {
+      expect(selector).toBe(
+        ":is(wc-filtered-list, wc-manager-layout) > wa-select:is([slot='filters'], [slot='toolbar'])",
+      );
+    }
   });
 
   it('reads only tokens, never a literal brand value', () => {
