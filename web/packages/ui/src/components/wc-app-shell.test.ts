@@ -36,6 +36,15 @@ describe('wc-app-shell', () => {
     expect(heading?.closest('main')).toBeTruthy();
   });
 
+  it('keeps a hidden title as a heading for assistive technology, outside the page head', async () => {
+    const el = await mount({ screenTitle: 'Register', titleHidden: true });
+    const heading = el.shadowRoot?.querySelector('h1');
+    expect(heading?.textContent).toBe('Register');
+    expect(heading?.classList.contains('title-hidden')).toBe(true);
+    expect(heading?.closest('main')).toBeTruthy();
+    expect(el.shadowRoot?.querySelector('[part="page-head"]')).toBeNull();
+  });
+
   it('draws no page heading for a screen that brings its own', async () => {
     const el = await mount({ screenTitle: '' });
     expect(el.shadowRoot?.querySelector('h1')).toBeNull();
@@ -50,6 +59,12 @@ describe('wc-app-shell', () => {
     expect(names).toContain('page-actions');
     expect(names).toContain('banner');
     expect(names).toContain(null);
+  });
+
+  it('pushes a page action to the right of the title row', () => {
+    expect(text).toMatch(
+      /\.page-head ::slotted\(\[slot='page-actions'\]\)\s*{[^}]*flex:\s*none;[^}]*margin-left:\s*auto/,
+    );
   });
 
   it('wraps content in a main landmark', async () => {
@@ -413,14 +428,14 @@ describe('wc-app-shell top bar', () => {
     const header = el.shadowRoot?.querySelector('header');
     expect(header?.querySelector('wc-breadcrumb')).toBeTruthy();
     expect(header?.querySelector('wc-search-pill')).toBeTruthy();
-    expect(header?.querySelector('[aria-label="Refresh"]')).toBeTruthy();
+    expect(header?.querySelector('wa-button.refresh wc-icon-refresh[label="Refresh"]')).toBeTruthy();
   });
 
   it('asks for a refresh rather than doing one', async () => {
     const el = await mount();
     let asked = 0;
     el.addEventListener('nc-refresh', () => (asked += 1));
-    el.shadowRoot?.querySelector<HTMLButtonElement>('[aria-label="Refresh"]')?.click();
+    el.shadowRoot?.querySelector<HTMLButtonElement>('wa-button.refresh')?.click();
     expect(asked).toBe(1);
   });
 

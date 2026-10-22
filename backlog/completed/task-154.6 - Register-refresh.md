@@ -1,9 +1,10 @@
 ---
 id: TASK-154.6
 title: Register refresh
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-22 16:50'
 labels:
   - web
   - design
@@ -23,8 +24,14 @@ Spec section 5. Rebuild screens/register.ts on the new toolbar (account select, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every existing register feature and shortcut still works, covered by the existing tests
-- [ ] #2 The table scrolls within the card, opens at the newest rows, and the footer total matches the filtered rows
-- [ ] #3 On a phone the toolbar stays reachable and the table scrolls (TASK-111's criteria)
-- [ ] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 Every existing register feature and shortcut still works, covered by the existing tests
+- [x] #2 The table scrolls within the card, opens at the newest rows, and the footer total matches the filtered rows
+- [x] #3 On a phone the toolbar stays reachable and the table scrolls (TASK-111's criteria)
+- [x] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #66 (Register refresh; phone width stacks rows into two lines).
+<!-- SECTION:FINAL_SUMMARY:END -->

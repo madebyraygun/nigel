@@ -87,7 +87,7 @@ describe('wc-import-history', () => {
   it('names the file in each button, so a screen reader gets more than "Undo"', async () => {
     const el = await mount();
     const button = el.shadowRoot?.querySelector('tbody tr [data-undo]');
-    expect(button?.getAttribute('aria-label')).toBe('Undo import of march-checking.csv');
+    expect(button?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Undo import of march-checking.csv');
   });
 
   it('reports which import to undo', async () => {

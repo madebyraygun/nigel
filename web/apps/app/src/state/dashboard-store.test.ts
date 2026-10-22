@@ -48,10 +48,6 @@ beforeEach(() => {
   client.pnl = PNL;
   client.balance = BALANCE;
   client.cashflow = CASHFLOW;
-  client.flagged = [
-    { id: 1, date: '2026-01-04', description: 'UNKNOWN', amount: -12, accountName: 'BofA Checking' },
-    { id: 2, date: '2026-01-05', description: 'ALSO UNKNOWN', amount: -30, accountName: 'BofA Checking' },
-  ];
   store = initializeDashboardStore(client);
 });
 
@@ -60,13 +56,13 @@ afterEach(() => {
 });
 
 describe('dashboard store', () => {
-  it('fetches all four figures exactly once per load', async () => {
+  it('fetches the reports exactly once per load', async () => {
     await store.load();
 
     expect(client.calls.filter((c) => c.startsWith('getPnl')).length).toBe(1);
     expect(client.calls.filter((c) => c === 'getBalance').length).toBe(1);
     expect(client.calls.filter((c) => c.startsWith('getCashflow')).length).toBe(1);
-    expect(client.calls.filter((c) => c === 'getFlagged').length).toBe(1);
+    expect(client.calls).not.toContain('getFlagged');
   });
 
   it('populates every slot', async () => {
@@ -75,7 +71,6 @@ describe('dashboard store', () => {
     expect(store.pnl.data.get()).toEqual(PNL);
     expect(store.balance.data.get()).toEqual(BALANCE);
     expect(store.cashflow.data.get()).toEqual(CASHFLOW);
-    expect(store.flagged.data.get()?.length).toBe(2);
   });
 
   it('asks for the current year of profit and loss', async () => {
@@ -95,7 +90,7 @@ describe('dashboard store', () => {
     expect(client.calls.filter((c) => c === 'getBalance').length).toBe(2);
   });
 
-  it('keeps one failure from blanking the other three', async () => {
+  it('keeps one failure from blanking the others', async () => {
     client.balanceError = new ApiError({
       code: 'internal',
       rawCode: 'internal',
@@ -109,7 +104,6 @@ describe('dashboard store', () => {
     expect(store.balance.data.get()).toBeNull();
     expect(store.pnl.data.get()).toEqual(PNL);
     expect(store.cashflow.data.get()).toEqual(CASHFLOW);
-    expect(store.flagged.data.get()?.length).toBe(2);
     expect(store.pnl.error.get()).toBeNull();
   });
 
@@ -117,7 +111,6 @@ describe('dashboard store', () => {
     client.pnlError = new Error('network gone');
     client.balanceError = new Error('network gone');
     client.cashflowError = new Error('network gone');
-    client.flaggedError = new Error('network gone');
 
     await expect(store.load()).resolves.toBeUndefined();
     expect(store.pnl.error.get()?.message).toBe('Error: network gone');
@@ -175,15 +168,6 @@ describe('dashboard store', () => {
     expect(store.balance.loading.get()).toBe(false);
   });
 
-  it('counts the flagged transactions', async () => {
-    await store.load();
-    expect(store.flaggedCount.get()).toBe(2);
-  });
-
-  it('counts zero before anything has loaded', () => {
-    expect(store.flaggedCount.get()).toBe(0);
-  });
-
   it('reports an empty database once both answers are in', async () => {
     client.balance = {
       accounts: [],
@@ -207,13 +191,6 @@ describe('dashboard store', () => {
   it('is not empty when there are accounts', async () => {
     await store.load();
     expect(store.isEmpty.get()).toBe(false);
-  });
-
-  it('reports busy while a fetch is in flight', async () => {
-    const pending = store.load();
-    expect(store.busy.get()).toBe(true);
-    await pending;
-    expect(store.busy.get()).toBe(false);
   });
 
   it('hands back the same store from getDashboardStore', () => {

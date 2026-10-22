@@ -1,4 +1,6 @@
 import { LitElement, html, css, nothing } from 'lit';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
 import './wc-spinner.js';
@@ -13,7 +15,7 @@ import './wc-spinner.js';
  */
 @customElement('wc-stat-card')
 export class WcStatCard extends LitElement {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: block;
       background: var(--wa-color-surface);
@@ -53,21 +55,8 @@ export class WcStatCard extends LitElement {
 
     .retry {
       margin-top: var(--wa-space-xs);
-      font: inherit;
-      font-size: var(--wa-font-size-s);
-      color: var(--wa-color-brand);
-      background: none;
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm);
-      padding: var(--wa-space-2xs) var(--wa-space-s);
-      cursor: default;
     }
-
-    .retry:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
-  `;
+  `];
 
   @property({ type: String })
   label = '';
@@ -105,9 +94,9 @@ export class WcStatCard extends LitElement {
     if (this.error) {
       return html`
         <p class="error">${this.error}</p>
-        <button class="retry" type="button" @click=${this.handleRetry}>
+        <wa-button class="retry" size="s" @click=${this.handleRetry}>
           Retry
-        </button>
+        </wa-button>
       `;
     }
 

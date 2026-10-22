@@ -17,7 +17,7 @@ const preview: Preview = {
       render: () =>
         html`<div style=${width}>
           <wc-folder-path path="~/Documents/Nigel/acme-consulting">
-            <wa-button size="small">Reveal in Finder</wa-button>
+            <wa-button>Reveal in Finder</wa-button>
           </wc-folder-path>
         </div>`,
     },

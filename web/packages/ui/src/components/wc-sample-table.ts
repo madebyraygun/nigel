@@ -57,7 +57,7 @@ export class WcSampleTable extends LitElement {
 
     thead th {
       color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium);
+      font-weight: var(--nc-font-weight-table-heading);
       white-space: nowrap;
     }
 

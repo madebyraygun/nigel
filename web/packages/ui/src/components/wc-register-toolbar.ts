@@ -27,7 +27,9 @@ export interface NcSearchChangeDetail {
 const ALL_ACCOUNTS = '__all__';
 
 /**
- * Filters above the register: account, period, and incremental search.
+ * Filters above the register: account, period, and incremental search, with
+ * an `end` slot for the screen's own trailing controls (the register puts its
+ * keyboard legend there).
  *
  * Search is client-side — `/api/reports/register` has no search parameter and
  * the TUI filters in memory too — so there is no debounce. A keystroke is a
@@ -39,29 +41,141 @@ export class WcRegisterToolbar extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* One wrapping row of 32px controls. On a phone it wraps into three
+         short lines — account and granularity, the pager and the slotted
+         end controls, then search and the count — rather than one control a
+         line. */
       :host {
         display: flex;
         flex-wrap: wrap;
-        align-items: end;
-        gap: var(--wa-space-m);
+        align-items: center;
+        gap: var(--wa-space-s);
         font-family: var(--wa-font-family-sans);
+        font-size: var(--nc-font-size-control);
         color: var(--wa-color-text);
+        --wa-form-control-height: 32px;
+        --wa-form-control-value-font-size: var(--nc-font-size-control);
+        --wa-form-control-padding-inline: 10px;
       }
 
       wa-select {
-        min-width: 14rem;
+        flex: 0 1 12rem;
+        min-width: 9rem;
+      }
+
+      /* Each field is named for assistive technology; its placeholder and
+         its options show a sighted user what it is, so the label takes no
+         room. */
+      wa-select::part(form-control-label),
+      .search::part(form-control-label) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      wc-period-nav {
+        gap: var(--wa-space-s);
+      }
+
+      wc-period-nav::part(pager) {
+        height: 32px;
+        box-sizing: border-box;
+        gap: 0;
+        background: var(--nc-color-field);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-md);
+      }
+
+      wc-period-nav::part(step) {
+        height: 30px;
+        padding: 0 var(--wa-space-s);
+        border: none;
+        border-radius: var(--wa-radius-md);
+        color: var(--wa-color-muted);
+      }
+
+      wc-period-nav::part(label) {
+        min-width: 132px;
+        font-weight: var(--wa-font-weight-medium);
+        white-space: nowrap;
+      }
+
+      wc-period-nav::part(kinds) {
+        height: 32px;
+        box-sizing: border-box;
+        padding: 3px;
+        gap: 2px;
+        background: var(--wa-color-surface-alt);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-md);
+      }
+
+      wc-period-nav::part(kind) {
+        height: 100%;
+        padding: 0 10px;
+        border-radius: var(--wa-radius-sm);
+        color: var(--wa-color-muted);
+        font-size: var(--nc-font-size-control);
+      }
+
+      wc-period-nav::part(kind-checked) {
+        background: var(--wa-color-surface);
+        color: var(--wa-color-text);
+        box-shadow: var(--wa-shadow-sm);
       }
 
       .search {
-        min-width: 16rem;
-        flex: 1 1 16rem;
+        flex: 1 1 220px;
+        min-width: 12rem;
+      }
+
+      .search wc-icon-search {
+        --nc-icon-size: 16px;
+        color: var(--wa-color-muted);
       }
 
       .status {
-        font-size: var(--wa-font-size-s);
+        margin: 0;
+        font-size: var(--nc-font-size-meta);
         color: var(--wa-color-muted);
-        padding-bottom: var(--wa-space-2xs);
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* A phone lays the same controls out in three full lines: account
+         and granularity, then the pager beside the slotted end controls, then
+         search and the count. The pager's two halves become items of this
+         row so each can sit on its own line. */
+      @media (max-width: 48rem) {
+        wa-select {
+          order: -2;
+          flex: 1 1 8rem;
+        }
+
+        wc-period-nav {
+          display: contents;
+        }
+
+        wc-period-nav::part(kinds) {
+          order: -1;
+        }
+
+        wc-period-nav::part(pager) {
+          flex: 1 1 auto;
+          justify-content: space-between;
+        }
+
+        .search,
+        .status {
+          order: 1;
+        }
+
+        .search {
+          min-width: 0;
+        }
       }
 
       /* Screen chrome, not part of the report. This lives here rather than in
@@ -179,6 +293,7 @@ export class WcRegisterToolbar extends LitElement {
       </wa-input>
 
       <p class="status" role="status" aria-live="polite">${this.statusText}</p>
+      <slot name="end"></slot>
     `;
   }
 }

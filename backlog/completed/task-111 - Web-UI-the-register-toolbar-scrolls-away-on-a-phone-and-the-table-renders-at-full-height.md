@@ -3,10 +3,10 @@ id: TASK-111
 title: >-
   Web UI: the register toolbar scrolls away on a phone, and the table renders at
   full height
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-16 16:58'
-updated_date: '2026-10-20 22:57'
+updated_date: '2026-10-22 16:50'
 labels:
   - web
   - ui
@@ -35,12 +35,12 @@ Related: task-91 (virtualize or lazy-load the register table) addresses the row 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The account, period, granularity and search controls stay reachable while scrolling the register on a phone
-- [ ] #2 Why the table renders at full height rather than filling and scrolling internally at this width is established and stated, and fixed if that is the cause
-- [ ] #3 Opening the register on a phone does not land the user below the filters
-- [ ] #4 The toolbar costs materially less than 172px of a 390px viewport, without hiding a control behind a menu that takes a tap to discover
-- [ ] #5 Category and Amount are readable on a phone, whether by horizontal scroll within the table, a narrower column set, or a different row shape
-- [ ] #6 Measured at 390x844 before and after, with the numbers in the task
+- [x] #1 The account, period, granularity and search controls stay reachable while scrolling the register on a phone
+- [x] #2 Why the table renders at full height rather than filling and scrolling internally at this width is established and stated, and fixed if that is the cause
+- [x] #3 Opening the register on a phone does not land the user below the filters
+- [x] #4 The toolbar costs materially less than 172px of a 390px viewport, without hiding a control behind a menu that takes a tap to discover
+- [x] #5 Category and Amount are readable on a phone, whether by horizontal scroll within the table, a narrower column set, or a different row shape
+- [x] #6 Measured at 390x844 before and after, with the numbers in the task
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -50,3 +50,9 @@ Measurements above (screen host 14,092px, table 13,831px, toolbar 172px, scrolle
 
 Absorbed by TASK-154.6 (Register refresh); close when that lands.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #66 (Register refresh; phone width stacks rows into two lines).
+<!-- SECTION:FINAL_SUMMARY:END -->

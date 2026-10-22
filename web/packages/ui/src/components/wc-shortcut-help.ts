@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
+import '../icons/icons.js';
 
 let instances = 0;
 
@@ -47,25 +48,38 @@ export class WcShortcutHelp extends LitElement {
       color: var(--wa-color-muted);
     }
 
+    /* A 32px toolbar control: the keyboard glyph and the label on the
+       field ground, sized and edged like the fields beside it. */
     .trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      box-sizing: border-box;
       font: inherit;
-      color: inherit;
-      background: none;
-      border: 1px solid transparent;
-      border-radius: var(--wa-radius-sm);
-      padding: var(--wa-space-2xs) var(--wa-space-xs);
+      font-size: var(--nc-font-size-control);
+      color: var(--wa-color-text);
+      background: var(--nc-color-field);
+      border: 1px solid var(--wa-color-border);
+      border-radius: var(--wa-radius-md);
+      padding: 0 10px;
       cursor: default;
+      white-space: nowrap;
+    }
+
+    .trigger wc-icon-keyboard {
+      --nc-icon-size: 16px;
+      color: var(--wa-color-muted);
     }
 
     .trigger:hover,
     .trigger[aria-expanded='true'] {
-      color: var(--wa-color-text);
-      border-color: var(--wa-color-border);
+      background: var(--nc-color-hover);
     }
 
     .trigger:focus-visible {
       outline: 2px solid var(--wa-color-focus);
-      outline-offset: 1px;
+      outline-offset: 2px;
     }
 
     /* Out of flow, so opening the legend never moves the toolbar or the table
@@ -251,6 +265,7 @@ export class WcShortcutHelp extends LitElement {
         aria-controls=${this.panelId}
         @click=${this.toggle}
       >
+        <wc-icon-keyboard></wc-icon-keyboard>
         ${this.label}
       </button>
       <div

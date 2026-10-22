@@ -196,7 +196,6 @@ export class WcLogoField extends LitElement {
         </div>
         <div class="actions">
           <wa-button
-            size="small"
             appearance="outlined"
             ?disabled=${this.disabled}
             @click=${this.choose}
@@ -204,7 +203,6 @@ export class WcLogoField extends LitElement {
           >
           ${this.logo
             ? html`<wa-button
-                size="small"
                 appearance="outlined"
                 ?disabled=${this.disabled}
                 @click=${this.clear}

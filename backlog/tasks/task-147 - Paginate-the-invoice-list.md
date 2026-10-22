@@ -4,7 +4,7 @@ title: Paginate the invoice list
 status: To Do
 assignee: []
 created_date: '2026-10-05 17:10'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-21 20:12'
 labels:
   - invoicing
   - web
@@ -30,3 +30,9 @@ Paginate the list in the API and the web UI. Filters (status, client) and sort o
 - [ ] #5 docs/api.md documents the new parameters and response shape
 - [ ] #6 Component previews cover first, middle, last and single-page states, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The Invoices screen (TASK-154.7, PR #67) filters status chips in the browser over the full list and counts each status from it. Paginating the list breaks both: the API must return per-status counts for the whole set (or the chips must ask the server), and the status query parameter must come back so a filtered page draws from the whole set.
+<!-- SECTION:NOTES:END -->

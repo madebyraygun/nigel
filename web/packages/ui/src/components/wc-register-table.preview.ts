@@ -94,6 +94,19 @@ const wholeYear: RegisterTableRow[] = Array.from({ length: 1872 }, (_, index) =>
   return { ...base, id: 2000 + index };
 });
 
+/** Wider than the Amount column, so the wide layout clips it and its title has it. */
+const sevenFigures: RegisterTableRow = {
+  id: 105,
+  date: '2025-03-14',
+  description: 'WIRE IN — CEDAR SYSTEMS ACQUISITION',
+  amount: 1234567.89,
+  category: 'Consulting income',
+  categoryId: 3,
+  vendor: 'Cedar Systems',
+  accountName: 'BofA Checking',
+  isFlagged: false,
+};
+
 const categories: CategoryOption[] = [
   { id: 3, name: 'Consulting income', categoryType: 'income' },
   { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
@@ -117,8 +130,71 @@ const preview = {
           .categories=${categories}
           .selectedId=${102}
           .total=${8281.51}
+          footer-label="All accounts"
           footer-note="4 of 480 rows"
         ></wc-register-table>
+      `,
+    },
+    {
+      // A phone's card: below 860px every row is two lines — flag, date,
+      // description and amount, then category · vendor · account — at one
+      // height, with no header row and no sideways scroll. The seven-figure
+      // amount is whole on its line.
+      name: 'stacked',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-register-table
+            .rows=${[...rows, sevenFigures]}
+            .categories=${categories}
+            .total=${8281.51}
+            footer-label="All accounts"
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
+      name: 'stacked-selected',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-register-table
+            .rows=${rows}
+            .categories=${categories}
+            .selectedId=${102}
+            .total=${8281.51}
+            footer-label="BofA Checking"
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
+      // Flagged and uncategorised: the stripe runs down both lines, and an
+      // empty category reads "Uncategorized" in the flag colour.
+      name: 'stacked-flagged',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-register-table
+            .rows=${rows.filter((row) => row.isFlagged || row.categoryId === null)}
+            .categories=${categories}
+            .total=${-18.5}
+            footer-label="All accounts"
+          ></wc-register-table>
+        </div>
+      `,
+    },
+    {
+      // The editors take the second line, Save and Cancel at its end.
+      name: 'stacked-editing',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-register-table
+            .rows=${rows}
+            .categories=${categories}
+            .selectedId=${101}
+            .editingId=${101}
+            .total=${8281.51}
+            footer-label="All accounts"
+          ></wc-register-table>
+        </div>
       `,
     },
     {
@@ -143,6 +219,7 @@ const preview = {
             .categories=${categories}
             .selectedId=${1000}
             .total=${8281.51}
+            footer-label="BofA Checking"
             footer-note="32 of 1,872 rows"
           ></wc-register-table>
         </div>

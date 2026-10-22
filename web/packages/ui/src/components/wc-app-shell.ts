@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import './wc-toast.js';
 import './wc-breadcrumb.js';
 import './wc-search-pill.js';
@@ -113,11 +114,13 @@ export class WcAppShell extends LitElement {
       }
 
       .refresh {
-        border-radius: var(--wa-radius-pill);
+        flex: none;
       }
 
-      /* The drawer's toggle. Above the breakpoint the hamburger lives in the
-         sidebar's own header, so this one only exists on a phone. */
+      /* The drawer's toggle: the design's hamburger, a 32px square with 8px
+         corners rather than the round icon button refresh is. Above the
+         breakpoint it lives in the sidebar's own header, so this one only
+         exists on a phone. */
       .nav-toggle {
         display: none;
         border-radius: var(--wa-radius-md);
@@ -170,6 +173,27 @@ export class WcAppShell extends LitElement {
         flex-wrap: wrap;
         gap: var(--wa-space-m);
         flex: none;
+      }
+
+      /* A screen whose toolbar is its first line keeps its heading for
+         assistive technology, so heading navigation still finds the page,
+         without spending the height on it. Out of flow, so the content
+         column's gap does not open up for it either. */
+      .title-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      /* A page action sits at the right of the title row, however many
+         there are, and wraps under the title on a phone. */
+      .page-head ::slotted([slot='page-actions']) {
+        flex: none;
+        margin-left: auto;
       }
 
       .title {
@@ -283,6 +307,14 @@ export class WcAppShell extends LitElement {
   /** The page heading over the content. Empty draws none, for a screen with its own. */
   @property({ type: String, attribute: 'screen-title' })
   screenTitle = '';
+
+  /**
+   * Keep the page heading for assistive technology only. The breadcrumb
+   * already names the screen to a sighted user, and a screen that opens on
+   * its own toolbar gives the rows that height.
+   */
+  @property({ type: Boolean, attribute: 'title-hidden' })
+  titleHidden = false;
 
   /** The open book's name, first in the breadcrumb. */
   @property({ type: String, attribute: 'book-name' })
@@ -445,21 +477,23 @@ export class WcAppShell extends LitElement {
             shortcut=${this.searchShortcut}
             key-shortcuts=${this.searchKeyShortcuts}
           ></wc-search-pill>
-          <button
-            type="button"
-            class="icon-button refresh"
-            aria-label="Refresh"
+          <wa-button
+            class="refresh"
+            appearance="plain"
             title="Refresh"
             @click=${this.requestRefresh}
           >
-            <wc-icon-refresh></wc-icon-refresh>
-          </button>
+            <wc-icon-refresh label="Refresh"></wc-icon-refresh>
+          </wa-button>
         </header>
         <div class=${this.hasBanner ? 'banner filled' : 'banner'} part="banner">
           <slot name="banner" @slotchange=${this.onBannerChange}></slot>
         </div>
         <main class="content" part="content">
-          ${this.screenTitle
+          ${this.screenTitle && this.titleHidden
+            ? html`<h1 class="title-hidden">${this.screenTitle}</h1>`
+            : nothing}
+          ${this.screenTitle && !this.titleHidden
             ? html`<div class="page-head" part="page-head">
                 <h1 class="title">${this.screenTitle}</h1>
                 <slot name="page-actions"></slot>

@@ -55,26 +55,6 @@ export class WcSwitchRow extends LitElement {
         color: var(--wa-color-muted);
       }
 
-      wa-switch {
-        --height: 22px;
-        --width: 38px;
-        --thumb-size: 16px;
-      }
-
-      wa-switch::part(control) {
-        background: var(--nc-color-switch-off);
-        border-color: transparent;
-        transition: background var(--nc-transition-fast);
-      }
-
-      wa-switch.on::part(control) {
-        background: var(--wa-color-brand);
-      }
-
-      wa-switch::part(thumb) {
-        background: var(--nc-color-knob);
-      }
-
       .visually-hidden {
         position: absolute;
         width: 1px;
@@ -121,7 +101,6 @@ export class WcSwitchRow extends LitElement {
           ${this.description ? html`<p class="description">${this.description}</p>` : ''}
         </div>
         <wa-switch
-          class=${this.checked ? 'on' : ''}
           .checked=${live(this.checked)}
           ?disabled=${this.disabled}
           @change=${this.onChange}

@@ -59,6 +59,12 @@ export const colorCss = css`
        they read as panels over the canvas rather than as more card. */
     --nc-color-sidebar-bg: #fbfafe;
 
+    /* The edge of a control whose edge is all that separates it from the
+       page: the outline button, an off switch's track and knob. A mid-grey
+       that holds WCAG 1.4.11's 3:1 against the canvas, a card, the sidebar
+       and the switch's own track, in both modes. */
+    --nc-color-control-border: #85848f;
+
     /* An input's own ground. White in light mode like a card; a shade below
        the card in dark mode, so a field reads as recessed into it. */
     --nc-color-field: #ffffff;
@@ -105,15 +111,6 @@ export const colorCss = css`
     --nc-color-arcade-ink: #ece9f5;
     --nc-color-arcade-food: #50dc64;
 
-    /* A switch's knob: white on the brand track and on the off track, in
-       both modes. */
-    --nc-color-knob: #ffffff;
-
-    /* A switch's track while it is off. The track is the control's only
-       boundary, so it owes WCAG 1.4.11's 3:1 against the card it sits on,
-       which the border colour is far too light to give. */
-    --nc-color-switch-off: #85819a;
-
     /* The Appearance picker's miniature windows. Each draws one mode while
        the app is in either, so neither flips with the colour mode: the light
        set is the light canvas, sidebar, card, border and brand, the dark set
@@ -156,7 +153,7 @@ const darkTokens = css`
   --nc-color-hover: #2a2a35;
   --nc-color-sidebar-bg: #22222b;
   --nc-color-field: #1b1b22;
-  --nc-color-switch-off: #76738c;
+  --nc-color-control-border: #7e7b91;
   --nc-color-ring: rgb(196 183 255 / 25%);
   --wa-color-overlay-modal: rgb(0 0 0 / 45%);
 

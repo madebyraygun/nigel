@@ -198,9 +198,39 @@ describe('register screen', () => {
     expect(table(el).selectedId).toBe(1);
   });
 
-  it('stays at the top of a dated register, which has no today to find', async () => {
+  it('selects nothing on a dated register, which has no today to find', async () => {
     const { el } = await mount(client(), 'month=2025-03');
     expect(table(el).selectedId).toBeNull();
+  });
+
+  it('flags nothing when f is pressed on a dated register before a row is chosen', async () => {
+    const { el, fake } = await mount(client(), 'month=2025-03');
+    const grid = table(el);
+    grid.shadowRoot
+      ?.querySelector('.scroller')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true, composed: true }));
+    await settle(el);
+
+    expect(fake.calls.filter((call) => call.startsWith('patchTransaction'))).toEqual([]);
+    expect(grid.rows.every((r) => !r.isFlagged)).toBe(true);
+  });
+
+  it('opens a dated register on its last rows', async () => {
+    const scrolled = vi.spyOn(
+      customElements.get('wc-register-table')!.prototype as WcRegisterTable,
+      'scrollToEnd',
+    );
+    await mount(client(), 'month=2025-03');
+    expect(scrolled).toHaveBeenCalledTimes(1);
+  });
+
+  it('sets today at the foot of the view, so the newest rows fill it', async () => {
+    const scrolled = vi.spyOn(
+      customElements.get('wc-register-table')!.prototype as WcRegisterTable,
+      'scrollToIndex',
+    );
+    await mount();
+    expect(scrolled).toHaveBeenCalledWith(3, 'end');
   });
 
   it('lands the keyboard on the opening row, so the shortcuts work at once', async () => {
@@ -255,12 +285,26 @@ describe('register screen', () => {
     expect(table(el).getAttribute('footer-note')).toBe('2 of 5 rows shown');
   });
 
-  it('keeps the footer total on the whole result set, not the filtered rows', async () => {
-    const { el } = await mount();
-    const before = table(el).total;
+  it('totals only the rows the search leaves, and the whole set again once it clears', async () => {
+    const amounts = [-10, 25.5, -0.1, -0.2, 7];
+    const rows = spanningToday().map((r, index) => ({ ...r, amount: amounts[index] ?? 0 }));
+    const { el } = await mount(client(rows));
     search(el, 'today');
     await settle(el);
-    expect(table(el).total).toBe(before);
+    expect(table(el).total).toBe(-0.3);
+
+    search(el, '');
+    await settle(el);
+    expect(table(el).total).toBeCloseTo(22.2, 2);
+  });
+
+  it('names the account filter on the footer, or every account', async () => {
+    const all = await mount();
+    expect(table(all.el).footerLabel).toBe('All accounts');
+
+    document.body.innerHTML = '';
+    const one = await mount(client(), 'account=BofA Checking');
+    expect(table(one.el).footerLabel).toBe('BofA Checking');
   });
 
   it('searches without going back to the server', async () => {

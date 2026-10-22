@@ -83,14 +83,14 @@ export class WcSaveBar extends LitElement {
         <span class="message" role="status">${this.message}</span>
         <span class="actions">
           <wa-button
-            size="small"
+            size="s"
             appearance="outlined"
             ?disabled=${this.busy}
             @click=${() => this.emit('nc-save-bar-discard')}
             >Discard</wa-button
           >
           <wa-button
-            size="small"
+            size="s"
             variant="brand"
             ?disabled=${this.busy}
             @click=${() => this.emit('nc-save-bar-save')}

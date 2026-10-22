@@ -6,10 +6,8 @@ export const motionCss = css`
     --nc-transition-base: 200ms ease;
     --nc-duration-fast: 120ms;
     --nc-duration-base: 200ms;
-    /* Long enough to read as a fade rather than a switch. The button's hover
-       edge is the only thing that takes it: a press or a focus ring at this
-       length would feel unresponsive. */
-    --nc-duration-slow: 500ms;
+    /* A switch sliding between off and on. */
+    --nc-transition-switch: 150ms ease;
     /* The sidebar folding to its rail and back. */
     --nc-transition-sidebar: 180ms ease;
   }
@@ -20,7 +18,7 @@ export const motionCss = css`
       --nc-transition-base: 0ms linear;
       --nc-duration-fast: 0ms;
       --nc-duration-base: 0ms;
-      --nc-duration-slow: 0ms;
+      --nc-transition-switch: 0ms linear;
       --nc-transition-sidebar: 0ms linear;
     }
   }

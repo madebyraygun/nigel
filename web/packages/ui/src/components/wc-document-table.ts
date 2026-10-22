@@ -61,7 +61,7 @@ export class WcDocumentTable extends LitElement {
 
     th {
       color: var(--wa-color-muted);
-      font-weight: var(--wa-font-weight-medium);
+      font-weight: var(--nc-font-weight-table-heading);
     }
 
     td.title,

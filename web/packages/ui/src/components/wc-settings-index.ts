@@ -101,8 +101,7 @@ export class WcSettingsIndex extends LitElement {
 
       /* The active item's tick: the rainbow run top to bottom, drawn
          across and turned upright since the ramp itself runs sideways. */
-      button[aria-current='true']::before {
-        content: '';
+      .tick {
         position: absolute;
         left: 0.5px;
         top: 13.5px;
@@ -166,7 +165,9 @@ export class WcSettingsIndex extends LitElement {
                       aria-current=${item.id === this.active ? 'true' : 'false'}
                       @click=${() => this.select(item.id)}
                     >
-                      ${item.label}
+                      ${item.id === this.active
+                        ? html`<span class="tick" aria-hidden="true"></span>`
+                        : ''}${item.label}
                     </button>
                   </li>`,
                 )}

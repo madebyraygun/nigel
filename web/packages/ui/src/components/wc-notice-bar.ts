@@ -1,5 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 
 export type WcNoticeVariant = 'info' | 'success' | 'warning' | 'danger';
@@ -15,7 +17,7 @@ export type WcNoticeVariant = 'info' | 'success' | 'warning' | 'danger';
  */
 @customElement('wc-notice-bar')
 export class WcNoticeBar extends LitElement {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: block;
       --nc-notice-accent: var(--wa-color-info);
@@ -57,35 +59,10 @@ export class WcNoticeBar extends LitElement {
       min-width: 0;
     }
 
-    button {
-      font: inherit;
-      font-size: var(--wa-font-size-s);
-      background: none;
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-sm);
-      padding: var(--wa-space-2xs) var(--wa-space-s);
-      color: var(--wa-color-text);
-      cursor: default;
+    wa-button {
       flex: 0 0 auto;
     }
-
-    button:hover {
-      border-color: var(--nc-notice-accent);
-    }
-
-    button:focus-visible {
-      outline: 2px solid var(--wa-color-focus);
-      outline-offset: 2px;
-    }
-
-    .dismiss {
-      display: inline-flex;
-      align-items: center;
-      padding: var(--wa-space-2xs);
-      border-color: transparent;
-      color: var(--wa-color-muted);
-    }
-  `;
+  `];
 
   @property({ type: String, reflect: true })
   variant: WcNoticeVariant = 'info';
@@ -125,19 +102,18 @@ export class WcNoticeBar extends LitElement {
           : nothing}
         <span class="message">${this.message}<slot></slot></span>
         ${this.actionLabel
-          ? html`<button type="button" @click=${this.handleAction}>
+          ? html`<wa-button class="action" size="s" @click=${this.handleAction}>
               ${this.actionLabel}
-            </button>`
+            </wa-button>`
           : nothing}
         ${this.dismissible
-          ? html`<button
-              type="button"
+          ? html`<wa-button
               class="dismiss"
-              aria-label="Dismiss"
+              appearance="plain"
               @click=${this.handleDismiss}
             >
-              <wc-icon-close></wc-icon-close>
-            </button>`
+              <wc-icon-close label="Dismiss"></wc-icon-close>
+            </wa-button>`
           : nothing}
       </div>
     `;

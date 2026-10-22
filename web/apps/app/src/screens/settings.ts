@@ -703,7 +703,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     return html`
       <wc-folder-path path=${dataDir}>
         ${reveal
-          ? html`<wa-button size="small" appearance="outlined" @click=${this.revealDataDir}
+          ? html`<wa-button appearance="outlined" @click=${this.revealDataDir}
               >${reveal.label}</wa-button
             >`
           : nothing}

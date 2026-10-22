@@ -230,7 +230,6 @@ export class WcSecurityCard extends LitElement {
           <p class="sub">${sub}</p>
         </div>
         <wa-button
-          size="small"
           appearance="outlined"
           variant=${which === 'remove' && !isOpen ? 'danger' : 'neutral'}
           aria-expanded=${isOpen ? 'true' : 'false'}

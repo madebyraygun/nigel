@@ -4,7 +4,6 @@ export { nigelTheme } from './themes/index.js';
 // Token modules — re-exported for callers that want category-level access
 export {
   NIGEL_PALETTE,
-  brandCycleKeyframes,
   brandRamp,
   gradientColor,
   gradientCss,
@@ -17,6 +16,7 @@ export { spacingCss } from './tokens/spacing.js';
 export { radiusCss } from './tokens/radius.js';
 export { shadowCss } from './tokens/shadow.js';
 export { motionCss } from './tokens/motion.js';
+export { switchCss, SWITCH_CHECK, SWITCH_CHECK_PATH, SWITCH_KNOB } from './tokens/switch.js';
 export { controlsCss } from './controls.js';
 
 // The one behaviour module in an otherwise CSS-only package: the writer for

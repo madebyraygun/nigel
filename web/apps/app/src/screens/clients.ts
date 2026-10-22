@@ -380,6 +380,7 @@ export class NigelClientsScreen extends LitElement {
         @nc-manager-error-dismiss=${this.handleErrorDismiss}
       >
         <wa-switch
+          slot="toolbar"
           data-archived-toggle
           ?checked=${showsArchived(this.params)}
           @change=${this.toggleArchivedFilter}

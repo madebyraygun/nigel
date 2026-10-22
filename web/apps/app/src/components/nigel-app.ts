@@ -2,6 +2,8 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
+import { controlsCss } from '@nigel/theme';
+import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   dispatchNcToast,
@@ -21,7 +23,13 @@ import {
   type AppStore,
 } from '../state/app-store.js';
 import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
-import { DEFAULT_SCREEN, navItems, screenDef, type ScreenId } from '../screens/registry.js';
+import {
+  DEFAULT_SCREEN,
+  navItems,
+  screenDef,
+  shellHeading,
+  type ScreenId,
+} from '../screens/registry.js';
 import { trailFor, windowTitle } from '../screens/trail.js';
 import {
   isHostedShell,
@@ -50,7 +58,7 @@ import {
  */
 @customElement('nigel-app')
 export class NigelApp extends SignalWatcher(LitElement) {
-  static styles = css`
+  static styles = [controlsCss, css`
     :host {
       display: block;
       height: 100vh;
@@ -79,7 +87,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
     .retry {
       margin-left: var(--wa-space-s, 8px);
     }
-  `;
+  `];
 
   /** Overridable so tests can drive the app with a fake transport. */
   client: ApiClient = createApiClient();
@@ -430,13 +438,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
     }
 
     const screen = screenDef(this.route.screen);
+    const heading = shellHeading(screen);
     const book = store.companyName.get();
     const trail = trailFor(this.route);
     document.title = windowTitle(trail, book);
 
     return html`
       <wc-app-shell
-        screen-title=${screen.ownsHeading ? '' : screen.title}
+        screen-title=${heading.title}
+        ?title-hidden=${heading.hidden}
         book-name=${book}
         book-key=${store.status.get()?.dataDir ?? book}
         .trail=${trail}
@@ -462,6 +472,12 @@ export class NigelApp extends SignalWatcher(LitElement) {
               active=${screen.id}
             ></wc-nav-sidebar>`}
         ${this.renderBanner(error?.message ?? null)}
+        ${screen.id === 'dashboard' && this.reviewCount
+          ? html`<wc-review-pill
+              slot="page-actions"
+              .count=${this.reviewCount}
+            ></wc-review-pill>`
+          : nothing}
         ${keyed(this.refreshes, screen.render(ctx))}
       </wc-app-shell>
       ${this.hosted
@@ -495,9 +511,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
       return html`
         <div slot="banner" class="banner">
           <strong>Could not load status.</strong> ${errorMessage}
-          <button class="retry" type="button" @click=${this.handleRetry}>
+          <wa-button class="retry" size="s" @click=${this.handleRetry}>
             Retry
-          </button>
+          </wa-button>
         </div>
       `;
     }
