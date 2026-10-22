@@ -13,6 +13,17 @@ const many: LineItemValue[] = [
   { description: 'Out-of-hours support', quantity: '2.5', unitAmount: '220' },
 ];
 
+/** A short line and one long enough to wrap to three lines at a dialog's width. */
+const wrapping: LineItemValue[] = [
+  { description: 'Hosting', quantity: '1', unitAmount: '350' },
+  {
+    description:
+      'Design system build, phase 2: component library, tokens and documentation site, including accessibility review of every component state, two rounds of stakeholder revisions, and handover workshops for the in-house team',
+    quantity: '1',
+    unitAmount: '3200',
+  },
+];
+
 const preview: Preview = {
   id: 'wc-line-items',
   title: 'Line items',
@@ -30,6 +41,16 @@ const preview: Preview = {
           .items=${[]}
           list-error="An invoice needs at least one line."
         ></wc-line-items>
+      `,
+    },
+    {
+      name: 'editor-short-and-long-descriptions',
+      render: () => html`<wc-line-items .items=${wrapping}></wc-line-items>`,
+    },
+    {
+      name: 'readonly-short-and-long-descriptions',
+      render: () => html`
+        <wc-line-items readonly .items=${wrapping} .total=${lineItemsSubtotal(wrapping)}></wc-line-items>
       `,
     },
     {

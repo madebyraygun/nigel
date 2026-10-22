@@ -7,7 +7,7 @@ import {
   parseLineNumber,
   type LineItemValue,
   type NcLineItemsChangeDetail,
-  type WcLineItems,
+  WcLineItems,
 } from './wc-line-items.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-line-items.preview.js';
@@ -196,6 +196,50 @@ describe('wc-line-items', () => {
     const el = await mount();
     const unit = el.shadowRoot?.querySelector('[data-unit]');
     expect(unit?.getAttribute('label')).toBe('Unit amount, line 1');
+  });
+
+  it('takes a description in a field that wraps rather than one that truncates', async () => {
+    const el = await mount();
+    const field = el.shadowRoot?.querySelector('[data-description]');
+    expect(field?.tagName.toLowerCase()).toBe('wa-textarea');
+    expect(field?.getAttribute('resize')).toBe('auto');
+    expect(field?.getAttribute('rows')).toBe('1');
+  });
+
+  it('keeps a description to one line: Enter adds nothing and a pasted newline is a space', async () => {
+    const el = await mount();
+    const seen: LineItemValue[][] = [];
+    el.addEventListener('nc-line-items-change', (event) =>
+      seen.push((event as CustomEvent<{ items: LineItemValue[] }>).detail.items),
+    );
+    const field = el.shadowRoot?.querySelector('[data-description]') as HTMLElement & {
+      value: string;
+    };
+
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
+    field.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+
+    field.value = 'Consulting\nphase two';
+    field.dispatchEvent(new Event('input'));
+    expect(seen.at(-1)?.[0].description).toBe('Consulting phase two');
+  });
+
+  it('gives the numeric columns only what they hold and the description the rest', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="0"]');
+    const cells = [...(row?.querySelectorAll('td') ?? [])];
+    expect(cells[0].classList.contains('description')).toBe(true);
+    expect(cells.slice(1).every((cell) => cell.classList.contains('numeric'))).toBe(true);
+    const css = [WcLineItems.styles].flat().map(String).join('\n');
+    expect(css).toMatch(/td\.qty wa-input \{\s*width: 5\.5rem/);
+    expect(css).toMatch(/td\.unit wa-input \{\s*width: 9\.5rem/);
+  });
+
+  it('wraps a long description in the read-only table too', async () => {
+    const el = await mount({ readonly: true, total: 1850 });
+    const cell = el.shadowRoot?.querySelector('tr[data-row="0"] td');
+    expect(cell?.classList.contains('description')).toBe(true);
   });
 
   it('disables every control while a save is in flight', async () => {

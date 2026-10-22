@@ -108,3 +108,15 @@ if (typeof window !== 'undefined' && window.HTMLElement) {
     proto.hidePopover = function () {};
   }
 }
+
+// `wa-textarea` with `resize="auto"` observes itself to grow with its text.
+// jsdom has no ResizeObserver, and the throw escapes its `updated()` as an
+// unhandled rejection. Nothing here measures layout, so a stub that never
+// fires is enough — the app's test setup carries the same one.
+if (!('ResizeObserver' in globalThis)) {
+  (globalThis as Record<string, unknown>)['ResizeObserver'] = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
