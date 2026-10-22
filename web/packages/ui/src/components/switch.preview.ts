@@ -19,9 +19,13 @@ function row(content: TemplateResult): TemplateResult {
     <div style=${ROW}>${content}</div>`;
 }
 
-/** Focus the switch once it is in the document, so the ring shows. */
+/** Focus the switch once it has rendered its control, so the ring shows. */
 const focusOnMount = ref((el) => {
-  if (el) queueMicrotask(() => (el as HTMLElement).focus());
+  if (!el) return;
+  const host = el as HTMLElement & { updateComplete?: Promise<unknown> };
+  void (host.updateComplete ?? Promise.resolve()).then(() => {
+    if (host.isConnected && host.shadowRoot?.querySelector('input')) host.focus();
+  });
 });
 
 const preview: Preview = {
