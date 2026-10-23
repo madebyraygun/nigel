@@ -94,6 +94,24 @@ struct InvoiceDetail {
     can_void: bool,
     can_pay: bool,
     can_delete: bool,
+    /// Why `can_delete` is false, or `None` when it is true: the same reason
+    /// and sentence the `409` on `DELETE` would answer with, so a screen can
+    /// say why the control is off without asking the write first.
+    delete_blocked: Option<DeleteBlocked>,
+    /// The day `status` was derived on — the request's `asOf`, or the server's
+    /// today. A screen that counts days to the due date counts from this, so
+    /// "3 days overdue" and the `overdue` beside it agree.
+    as_of: String,
+}
+
+/// A delete the detail already knows would be refused.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteBlocked {
+    /// `not_deletable` or `from_schedule` — `details.reason` on the `409`.
+    reason: &'static str,
+    /// The data layer's own sentence, which says what to do instead.
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -128,7 +146,11 @@ fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<Inv
     let not_void = inv::ensure_not_void(&invoice, "sent").is_ok();
     let can_send = not_void && client.email.is_some() && invoice.total > 0.0;
     let can_pay = not_void && inv::payment_amount(&invoice, paid, None).is_ok();
-    let can_delete = inv::delete_blocker(conn, &invoice)?.is_none();
+    let delete_blocked = inv::delete_blocker(conn, &invoice)?.map(|block| DeleteBlocked {
+        reason: block.reason_code(),
+        message: block.to_string(),
+    });
+    let can_delete = delete_blocked.is_none();
 
     let invoice = inv::with_effective_status(invoice, paid, today);
 
@@ -145,6 +167,8 @@ fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<Inv
         can_void,
         can_pay,
         can_delete,
+        delete_blocked,
+        as_of: today.to_string(),
     })
 }
 
@@ -1267,6 +1291,7 @@ mod tests {
         assert_eq!(body["canPay"], true);
         assert_eq!(body["canSend"], true);
         assert_eq!(body["canDelete"], false);
+        assert_eq!(body["asOf"], "2026-03-15", "{body}");
     }
 
     #[tokio::test]
@@ -1281,6 +1306,7 @@ mod tests {
         assert_eq!(draft["canVoid"], true);
         assert_eq!(draft["canPay"], true);
         assert_eq!(draft["canDelete"], true);
+        assert!(draft["deleteBlocked"].is_null(), "{draft}");
         // Never published, so no address to hand out.
         assert!(draft["publicUrl"].is_null(), "{draft}");
 
@@ -1800,6 +1826,63 @@ mod tests {
         assert_eq!(orphans, 0, "the line items went with the invoice");
     }
 
+    /// A schedule-generated draft is still a draft, so the reason is the one
+    /// thing that tells a screen why Delete is off — and that void is the way
+    /// out. The detail answers with the same reason and sentence the `409`
+    /// would.
+    #[tokio::test]
+    async fn a_schedule_generated_draft_says_why_it_cannot_be_deleted() {
+        use crate::invoicing::schedules::{
+            add_schedule, draft_due_schedules, Cadence, NewSchedule,
+        };
+
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let number = {
+            let conn = crate::db::get_connection(&db_path).expect("conn");
+            add_schedule(
+                &conn,
+                &NewSchedule {
+                    client_id: 1,
+                    cadence: Cadence::Monthly,
+                    anchor_day: 1,
+                    start_period: "2026-01-01".into(),
+                    net_days: Some(30),
+                    currency: "USD".into(),
+                    notes: None,
+                    terms: None,
+                    autosend: false,
+                    items: vec![crate::invoicing::invoices::NewLineItem {
+                        description: "Retainer".into(),
+                        quantity: 1.0,
+                        unit_amount: 450.0,
+                    }],
+                },
+            )
+            .expect("schedule");
+            let report = draft_due_schedules(&conn, "2026-01-15").expect("run");
+            let id = report.generated[0].invoice_id;
+            crate::invoicing::invoices::get_invoice(&conn, id)
+                .expect("invoice")
+                .number
+        };
+        let (app, token) = app_for(&db_path);
+
+        let detail = ok_json(&app, &format!("/api/invoices/{number}"), &token).await;
+        assert_eq!(detail["status"], "draft");
+        assert_eq!(detail["canDelete"], false);
+        assert_eq!(detail["canVoid"], true);
+        assert_eq!(detail["deleteBlocked"]["reason"], "from_schedule");
+
+        let (status, body) = delete_json(&app, &format!("/api/invoices/{number}"), &token).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "from_schedule");
+        assert_eq!(
+            detail["deleteBlocked"]["message"], body["error"]["message"],
+            "the detail and the refusal say the same sentence"
+        );
+    }
+
     /// Every refusal is one 409 with one reason and the data layer's own
     /// sentence. No `count`: this block is about the invoice's own state.
     #[tokio::test]
@@ -1817,6 +1900,10 @@ mod tests {
             )
             .await;
             assert_eq!(detail["canDelete"], false, "#{number}: {detail}");
+            assert_eq!(
+                detail["deleteBlocked"]["reason"], "not_deletable",
+                "#{number}: {detail}"
+            );
 
             let (status, body) =
                 delete_json(&app, &format!("/api/invoices/{number}"), &token).await;

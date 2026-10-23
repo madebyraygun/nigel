@@ -21,7 +21,7 @@ describe('trailFor', () => {
   });
 
   it('keeps the invoice level while it is being edited', () => {
-    expect(trailFor(parseHash('#/invoices?number=1254&edit=1'))).toEqual([
+    expect(trailFor(parseHash('#/invoices/1254?edit=1'))).toEqual([
       { label: 'Invoices', id: 'invoices' },
       { label: '#1254' },
     ]);

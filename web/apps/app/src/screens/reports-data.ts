@@ -568,7 +568,7 @@ export function agingInvoicesTable(report: AgingReport): ReportTable {
         days: daysPastDueLabel(invoice.daysPastDue),
         balance: invoice.balance,
       },
-      href: `#/invoices?number=${invoice.number}`,
+      href: `#/invoices/${invoice.number}`,
     })),
   };
 }

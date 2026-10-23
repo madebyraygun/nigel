@@ -1,13 +1,12 @@
-import { LitElement, html, css, type TemplateResult } from 'lit';
+import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import '../icons/icons.js';
 
 /**
  * The six derived statuses, in the order `refresh_status` reasons about them.
  *
  * Kept as data here rather than imported from the app: `@nigel/ui` never sees
  * an API type, and a status the server invents tomorrow still renders — as its
- * own word, with a neutral glyph.
+ * own word, in the neutral colour.
  */
 export const INVOICE_STATUS_WORDS = [
   'draft',
@@ -21,65 +20,58 @@ export const INVOICE_STATUS_WORDS = [
 export type InvoiceStatusWord = (typeof INVOICE_STATUS_WORDS)[number];
 
 /**
- * An icon per status, matching the wireframes and the TUI's own shorthand.
+ * An invoice's status as a pill: a 1px border, a 6px dot and the word, all in
+ * the status colour.
  *
- * The icon is decorative — the word beside it is what carries the meaning.
- * Both are rendered because colour alone cannot be the only channel (WCAG
- * 1.4.1), which is the same reason `wc-money` always prints its sign.
- *
- * They are SVGs rather than characters because IBM Plex Mono, the app's
- * primary face, has a glyph for none of the six: drawn as text they each come
- * from whatever fallback face the browser finds.
+ * The word is what carries the meaning — colour is never the only channel
+ * (WCAG 1.4.1) — so the dot is decoration and the word is announced as
+ * written. It is capitalised by CSS rather than in the text, so a screen reader
+ * and a copy both get the server's own word.
  */
-const STATUS_ICONS = {
-  draft: html`<wc-icon-status-draft inline class="mark"></wc-icon-status-draft>`,
-  sent: html`<wc-icon-status-sent inline class="mark"></wc-icon-status-sent>`,
-  partial: html`<wc-icon-status-partial inline class="mark"></wc-icon-status-partial>`,
-  paid: html`<wc-icon-status-paid inline class="mark"></wc-icon-status-paid>`,
-  overdue: html`<wc-icon-status-overdue inline class="mark"></wc-icon-status-overdue>`,
-  void: html`<wc-icon-status-void inline class="mark"></wc-icon-status-void>`,
-} satisfies Record<InvoiceStatusWord, TemplateResult>;
-
-/**
- * The same six, keyed for lookup by a string nobody vouched for.
- *
- * `status` is whatever the server wrote, and `invoices.status` has no CHECK
- * constraint: `constructor` and `toString` are values a hand-edited row can
- * hold, and an object lookup would answer those with an inherited function.
- */
-const ICON_FOR_STATUS = new Map<string, TemplateResult>(Object.entries(STATUS_ICONS));
-
-/** What a status the six do not cover gets: a neutral mark, and its own word. */
-const UNKNOWN_STATUS_ICON = html`<wc-icon-dot inline class="mark"></wc-icon-dot>`;
-
 @customElement('wc-invoice-status')
 export class WcInvoiceStatus extends LitElement {
   static styles = css`
     :host {
       display: inline-block;
+      vertical-align: middle;
     }
 
     .chip {
       display: inline-flex;
       align-items: center;
-      gap: var(--wa-space-2xs);
-      padding: 0 var(--wa-space-xs);
-      border: 1px solid var(--wa-color-border);
+      gap: 6px;
+      box-sizing: border-box;
+      height: 22px;
+      padding: 0 9px;
+      border: 1px solid currentColor;
       border-radius: var(--wa-radius-pill);
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s);
-      line-height: 1.7;
+      font-size: var(--nc-font-size-meta);
+      font-weight: var(--wa-font-weight-medium);
+      line-height: 1;
       white-space: nowrap;
-      color: var(--wa-color-text);
-    }
-
-    .chip[data-status='draft'] {
       color: var(--wa-color-muted);
     }
 
+    :host([size='l']) .chip {
+      height: 24px;
+      padding: 0 10px;
+    }
+
+    .dot {
+      flex: none;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .word {
+      text-transform: capitalize;
+    }
+
     .chip[data-status='sent'] {
-      color: var(--wa-color-brand);
-      border-color: currentColor;
+      color: var(--wa-color-info);
     }
 
     /*
@@ -90,21 +82,17 @@ export class WcInvoiceStatus extends LitElement {
      */
     .chip[data-status='partial'] {
       color: var(--nc-color-flagged);
-      border-color: currentColor;
     }
 
     .chip[data-status='paid'] {
       color: var(--nc-color-income);
-      border-color: currentColor;
     }
 
     .chip[data-status='overdue'] {
       color: var(--nc-color-expense);
-      border-color: currentColor;
     }
 
-    .chip[data-status='void'] {
-      color: var(--wa-color-muted);
+    .chip[data-status='void'] .word {
       text-decoration: line-through;
     }
   `;
@@ -113,10 +101,14 @@ export class WcInvoiceStatus extends LitElement {
   @property({ type: String, reflect: true })
   status = 'draft';
 
+  /** `l` is the 24px pill beside a page title; the default is the 22px row pill. */
+  @property({ type: String, reflect: true })
+  size: 'm' | 'l' = 'm';
+
   render() {
     return html`
       <span class="chip" part="chip" data-status=${this.status}>
-        ${ICON_FOR_STATUS.get(this.status) ?? UNKNOWN_STATUS_ICON}
+        <span class="dot" aria-hidden="true"></span>
         <span class="word">${this.status}</span>
       </span>
     `;

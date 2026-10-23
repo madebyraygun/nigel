@@ -107,6 +107,15 @@ describe('wc-payment-form', () => {
     }
   });
 
+  it('puts the $ inside the amount field, in its start slot', async () => {
+    const el = await mount();
+    const prefix = el.shadowRoot?.querySelector('[data-prefix]');
+    expect(prefix?.textContent).toBe('$');
+    expect(prefix?.getAttribute('slot')).toBe('start');
+    expect(prefix?.parentElement?.hasAttribute('data-amount')).toBe(true);
+    expect(prefix?.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('emits the whole value on every edit', async () => {
     const el = await mount();
     const seen = changes(el);

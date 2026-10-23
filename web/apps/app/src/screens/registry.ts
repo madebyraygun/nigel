@@ -155,6 +155,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-invoice',
     inNav: true,
     navGroup: 'Billing',
+    heading: 'screen',
     render: renderInvoices,
   },
   documents: {
