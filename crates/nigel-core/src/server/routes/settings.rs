@@ -423,6 +423,10 @@ async fn verify_current_password(
         return Ok(gate);
     }
 
+    // The gate is released before the backoff: a wrong password rewrites
+    // nothing, and holding the write side through a delay of up to the cap
+    // would stall every other request to the database for the same time.
+    drop(gate);
     let (attempts_remaining, delay) = state.unlock.record_failure();
     tokio::time::sleep(delay).await;
     Err(ApiError::invalid_password(
@@ -1037,6 +1041,57 @@ mod tests {
         );
         // The old password still opens the database: nothing was rekeyed.
         assert!(crate::db::validate_password(&db_path, PASSWORD).expect("validate"));
+        crate::db::set_db_password(None);
+    }
+
+    /// A wrong current password is held back by the unlock backoff, and the
+    /// rest of the server goes on answering meanwhile: the database gate is
+    /// released before the delay, not held through it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_backoff_for_a_wrong_password_does_not_hold_the_database_gate() {
+        let (_config, _dir, db_path) = fixture();
+        encrypt(&db_path);
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        let token = crate::server::auth::generate_token();
+        let state = crate::server::state::AppState::new(db_path.clone(), token.clone());
+        let app = crate::server::build_router(state.clone());
+        // Past the free attempts, so the next failure waits four seconds.
+        for _ in 0..4 {
+            state.unlock.record_failure();
+        }
+
+        let change = {
+            let (app, token) = (app.clone(), token.clone());
+            tokio::spawn(async move {
+                post_json(
+                    &app,
+                    "/api/settings/password/change",
+                    &token,
+                    &json!({ "currentPassword": "not it", "newPassword": "a new one" }),
+                )
+                .await
+            })
+        };
+        // The fifth failure is recorded just before the delay starts.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while state.unlock.failures() < 5 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the wrong password was never checked");
+
+        let (status, body) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            get_json(&app, "/api/accounts", &token),
+        )
+        .await
+        .expect("a read waited on the backoff");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!change.is_finished(), "the backoff was skipped");
+
+        let (status, _) = change.await.expect("change task");
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
         crate::db::set_db_password(None);
     }
 

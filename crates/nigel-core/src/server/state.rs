@@ -36,6 +36,13 @@ pub struct UnlockGate {
 }
 
 impl UnlockGate {
+    /// How many failures have been recorded.
+    #[cfg(test)]
+    pub fn failures(&self) -> u32 {
+        // unwrap: poisoned mutex means a thread panicked — unrecoverable
+        *self.failures.lock().unwrap()
+    }
+
     /// Count a failed attempt and report what to tell the caller: how many free
     /// attempts are left, and how long this answer should be held back.
     pub fn record_failure(&self) -> (u32, Duration) {
