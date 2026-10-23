@@ -24,14 +24,14 @@ export class WcRuleTestPreview extends LitElement {
   static styles = css`
     :host {
       display: block;
-      /* A wash of the text colour rather than a plane token, so the panel
-         stands off whatever it is placed on: a card, the subtle fill, a
-         dialog. */
-      background: color-mix(in srgb, var(--wa-color-text) 5%, transparent);
-      border-radius: var(--wa-radius-m);
-      padding: var(--wa-space-s) var(--wa-space-m);
+      /* The refresh's subtle fill inside a hairline, so the panel stands
+         off whatever it is placed on: a card, a dialog, the canvas. */
+      background: var(--wa-color-surface-alt);
+      border: 1px solid var(--wa-color-border-soft);
+      border-radius: var(--nc-radius-tile);
+      padding: 10px 14px;
       font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s);
+      font-size: var(--nc-font-size-control);
       color: var(--wa-color-text);
     }
 

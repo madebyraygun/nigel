@@ -106,7 +106,9 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   (`title-hidden` on `wc-app-shell`, visually hidden and out of flow), for a
   screen whose toolbar is its first line, such as the register; `'screen'`
   means the screen renders its own `h1` and the shell renders none, such as
-  invoices, whose title row carries its actions and an invoice's status. The
+  invoices, whose title row carries its actions and an invoice's status, and
+  the managers (Clients, Accounts, Categories, Rules), whose
+  `wc-manager-layout` draws the `h1` with the list's count and Add. The
   breadcrumb and the window title read `title` either way, and
   `shellHeading()` in `screens/registry.ts` is the one place the field is
   turned into what the shell draws.

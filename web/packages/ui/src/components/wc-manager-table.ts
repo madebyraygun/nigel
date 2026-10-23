@@ -64,15 +64,20 @@ export class WcManagerTable extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* The refresh's table card: the card ground, a 1px border and the
+         card radius, scrolling sideways inside itself on a narrow window. */
       :host {
         display: block;
         overflow-x: auto;
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-lg);
       }
 
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-body);
         color: var(--wa-color-text);
       }
 
@@ -88,19 +93,47 @@ export class WcManagerTable extends LitElement {
       th,
       td {
         text-align: start;
-        padding: var(--wa-space-xs) var(--wa-space-s);
-        border-bottom: 1px solid var(--wa-color-border);
-        vertical-align: top;
+        padding: 0 8px;
+        vertical-align: middle;
       }
 
-      td {
-        user-select: text;
+      /* The column every list keys its rows by keeps room for a short name
+         on one line when the action buttons claim the rest of the width. */
+      th:first-child,
+      td:first-child {
+        min-width: 14ch;
+        padding-left: 16px;
+      }
+
+      th:last-child,
+      td:last-child {
+        padding-right: 12px;
       }
 
       th {
+        height: 36px;
+        background: var(--wa-color-surface-alt);
+        border-bottom: 1px solid var(--wa-color-border);
+        font-size: var(--nc-font-size-meta);
         font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         white-space: nowrap;
+      }
+
+      /* A 44px row: a table cell's height does not count its padding. */
+      td {
+        height: 32px;
+        padding-block: 6px;
+        border-bottom: 1px solid var(--wa-color-border-soft);
+        user-select: text;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      tbody tr:hover td {
+        background: var(--wa-color-surface-alt);
       }
 
       td.end,
@@ -125,7 +158,7 @@ export class WcManagerTable extends LitElement {
       .actions {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-2xs);
+        gap: 6px;
         white-space: nowrap;
         user-select: none;
       }

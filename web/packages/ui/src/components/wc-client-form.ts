@@ -131,9 +131,12 @@ export class WcClientForm extends LitElement {
         gap: var(--wa-space-2xs);
       }
 
+      /* Set as a wa-input's label is, so the contacts group reads as one
+         more field in the column. */
       .label {
-        font-size: var(--wa-font-size-s);
-        font-weight: var(--wa-font-weight-medium);
+        font-size: var(--wa-font-size-base);
+        font-weight: var(--wa-form-control-label-font-weight);
+        color: var(--wa-form-control-label-color);
       }
 
       textarea {
@@ -152,9 +155,10 @@ export class WcClientForm extends LitElement {
         display: grid;
         gap: var(--wa-space-s);
         margin: 0;
-        padding: var(--wa-space-s);
+        padding: 10px 12px 12px;
         border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m);
+        border-radius: var(--nc-radius-tile);
+        background: var(--wa-color-surface-alt);
         justify-items: start;
       }
 

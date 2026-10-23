@@ -258,7 +258,7 @@ export class NigelCategoriesScreen extends SignalWatcher(LitElement) {
 
     return html`
       <wc-manager-layout
-        heading="Chart of Accounts"
+        heading="Categories"
         description=${getAppStore().status.get()?.profile === 'personal'
           ? 'Categories organize your transactions for reports.'
           : 'Categories map transactions onto Schedule C and Form 1120-S lines.'}

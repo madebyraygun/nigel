@@ -45,21 +45,31 @@ export class WcCategoryPicker extends LitElement {
 
     label {
       display: block;
-      font-size: var(--wa-font-size-s);
-      font-weight: var(--wa-font-weight-medium);
+      font-size: var(--wa-font-size-base);
+      font-weight: var(--wa-form-control-label-font-weight);
+      color: var(--wa-form-control-label-color);
       margin-bottom: var(--wa-space-2xs);
     }
 
+    /* Drawn as a wa-input is, from the same form-control tokens, so the
+       picker sits in a form beside one without a seam. */
     input {
       width: 100%;
       box-sizing: border-box;
+      min-height: var(--wa-form-control-height);
       font: inherit;
-      color: inherit;
-      background: var(--wa-color-surface);
-      border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m);
-      padding: var(--wa-space-xs) var(--wa-space-s);
+      font-size: var(--wa-form-control-value-font-size);
+      color: var(--wa-form-control-value-color);
+      background: var(--wa-form-control-background-color);
+      border: var(--wa-form-control-border-width) var(--wa-form-control-border-style)
+        var(--wa-form-control-border-color);
+      border-radius: var(--wa-form-control-border-radius);
+      padding: 0 var(--wa-form-control-padding-inline);
       user-select: text;
+    }
+
+    input::placeholder {
+      color: var(--wa-form-control-placeholder-color);
     }
 
     input[aria-invalid='true'] {

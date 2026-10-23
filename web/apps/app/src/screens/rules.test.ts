@@ -174,7 +174,7 @@ describe('nigel-rules-screen', () => {
     expect(layout(el).empty).toBe(true);
     const empty = el.shadowRoot?.querySelector('wc-empty-state');
     expect(empty?.getAttribute('heading')).toBe('No rules yet');
-    expect(empty?.querySelector('a')?.getAttribute('href')).toBe('#/review');
+    expect(empty?.querySelector('[href]')?.getAttribute('href')).toBe('#/review');
   });
 
   it('creates a rule, sending match type and priority explicitly', async () => {
@@ -392,7 +392,7 @@ describe('nigel-rules-screen', () => {
 
     it('clears itself back to the whole list', async () => {
       const { el, navigations } = await mount(client(), 'categoryId=12');
-      el.shadowRoot?.querySelector<HTMLButtonElement>('[data-filter] button')?.click();
+      el.shadowRoot?.querySelector<HTMLElement>('[data-filter] wa-button')?.click();
       await settle(el);
 
       expect(navigations).toEqual([{ screen: 'rules', params: undefined }]);

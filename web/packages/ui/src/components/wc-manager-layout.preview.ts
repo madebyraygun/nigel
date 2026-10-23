@@ -4,6 +4,7 @@ import './wc-manager-table.js';
 import './wc-manager-dialog.js';
 import './wc-account-form.js';
 import './wc-empty-state.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import type { Preview } from '../../preview/types.js';
 import type { ManagerAction, ManagerColumn, ManagerRow } from './wc-manager-table.js';
 
@@ -46,13 +47,29 @@ const preview: Preview = {
   title: 'Manager layout',
   group: 'Layout',
   description:
-    'The frame the accounts, categories and rules screens share: heading, Add, the list, and the one place a refused delete lands.',
+    'The frame the clients, accounts, categories and rules screens share: the title row with its h1 and Add, a filter row, the list in a table card, and the one place a refused delete lands.',
   layout: 'stack',
   states: [
     {
       name: 'list',
       render: () => html`
         <wc-manager-layout heading="Accounts" .count=${2} add-label="Add account">
+          ${table()}
+        </wc-manager-layout>
+      `,
+    },
+    {
+      // The title row's description line and the filter row above the table
+      // card, --nc-toolbar-gap apart, as Clients and Rules draw them.
+      name: 'description-and-filter-row',
+      render: () => html`
+        <wc-manager-layout
+          heading="Clients"
+          description="Who an invoice is addressed to."
+          .count=${2}
+          add-label="Add client"
+        >
+          <wa-switch slot="toolbar">Show archived</wa-switch>
           ${table()}
         </wc-manager-layout>
       `,

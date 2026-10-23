@@ -6,10 +6,12 @@ import './wc-spinner.js';
 import { controlsCss } from '@nigel/theme';
 
 /**
- * The frame the three manager screens share: heading, an Add button, a list,
- * and one place where a guardrail lands.
+ * The frame the manager screens share: the page's title row (its h1 and an
+ * Add button), a filter row, a list, and one place where a guardrail lands.
+ * A screen built on it registers `heading: 'screen'`, so the shell draws no
+ * second title above this one.
  *
- * One layout for accounts, categories and rules because the three screens are
+ * One layout for clients, accounts, categories and rules because the screens are
  * the same screen with different columns — a list you add to, edit rows of, and
  * delete rows from. The part worth sharing is not the box: it is `error`, the
  * inline region a refused delete renders into. `confirmDialog()` resolves and
@@ -25,57 +27,64 @@ export class WcManagerLayout extends LitElement {
     css`
       /* A column, and one that takes the whole screen: the empty slot holds a
          wc-empty-state, which centres itself in the space under the header
-         only if there is space under the header to have. */
+         only if there is space under the header to have. The shell's content
+         area already pads the screen, so the frame adds none of its own. */
       :host {
         display: flex;
         flex-direction: column;
         flex: 1 1 auto;
-        padding: var(--wa-space-l);
         font-family: var(--wa-font-family-sans);
         color: var(--wa-color-text);
       }
 
+      /* The refresh's title row: the page h1 on the left, the screen's
+         primary action on the right, wrapping under the title on a phone. */
       header {
         display: flex;
+        flex-wrap: wrap;
         align-items: flex-start;
         justify-content: space-between;
-        gap: var(--wa-space-m);
-        margin-bottom: var(--wa-space-m);
+        gap: 12px;
+        margin-bottom: 18px;
       }
 
       .heading {
         margin: 0;
-        font-size: var(--wa-font-size-lg);
-        font-weight: var(--wa-font-weight-semibold);
+        font-size: var(--nc-font-size-display);
+        font-weight: var(--wa-font-weight-medium);
+        letter-spacing: var(--nc-letter-spacing-tight);
+        line-height: 1.2;
       }
 
       .count {
         color: var(--wa-color-muted);
         font-weight: var(--wa-font-weight-normal);
+        font-variant-numeric: tabular-nums;
       }
 
       .description {
-        margin: var(--wa-space-2xs) 0 0;
+        margin: 4px 0 0;
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
         max-width: 68ch;
       }
 
       .error {
         display: flex;
-        align-items: flex-start;
+        flex-wrap: wrap;
+        align-items: center;
         gap: var(--wa-space-s);
-        margin-bottom: var(--wa-space-m);
-        padding: var(--wa-space-s) var(--wa-space-m);
+        margin-bottom: var(--nc-toolbar-gap);
+        padding: 10px 14px;
         border: 1px solid var(--wa-color-danger);
-        border-radius: var(--wa-radius-m);
+        border-radius: var(--wa-radius-lg);
         background: var(--wa-color-danger-fill-quiet);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
       }
 
       .error p {
         margin: 0;
-        flex: 1 1 auto;
+        flex: 1 1 16rem;
       }
 
       .error-actions {
@@ -98,6 +107,10 @@ export class WcManagerLayout extends LitElement {
 
       .toolbar[hidden] {
         display: none;
+      }
+
+      ::slotted(.label) {
+        color: var(--wa-color-muted);
       }
 
       .busy {
@@ -168,12 +181,12 @@ export class WcManagerLayout extends LitElement {
     return html`
       <header>
         <div>
-          <h2 class="heading">
+          <h1 class="heading">
             ${this.heading}
             ${this.count === null
               ? nothing
               : html`<span class="count">(${this.count})</span>`}
-          </h2>
+          </h1>
           ${this.description
             ? html`<p class="description">${this.description}</p>`
             : nothing}

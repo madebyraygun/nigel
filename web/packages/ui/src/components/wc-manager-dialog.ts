@@ -31,11 +31,12 @@ export class WcManagerDialog extends LitElement {
 
       .error {
         margin: 0 0 var(--wa-space-m);
-        padding: var(--wa-space-xs) var(--wa-space-s);
-        border-radius: var(--wa-radius-m);
+        padding: 8px 12px;
+        border: 1px solid var(--wa-color-danger);
+        border-radius: var(--wa-radius-md);
         background: var(--wa-color-danger-fill-quiet);
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
       }
 
       .footer {
