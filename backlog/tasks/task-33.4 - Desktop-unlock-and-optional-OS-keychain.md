@@ -4,11 +4,10 @@ title: Desktop unlock and optional OS keychain
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:29'
-updated_date: '2026-10-07 18:45'
+updated_date: '2026-10-23 16:56'
 labels:
   - tauri
   - frontend
-milestone: m-3
 dependencies:
   - TASK-33.2
 parent_task_id: TASK-33
@@ -32,4 +31,6 @@ Unlock screen parity for encrypted databases in the desktop shell, plus an opt-i
 
 <!-- SECTION:NOTES:BEGIN -->
 Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+
+Removed from the 2.0 milestone: superseded by the Swift shell (TASK-144). Close when 144's phase 2 reaches parity.
 <!-- SECTION:NOTES:END -->

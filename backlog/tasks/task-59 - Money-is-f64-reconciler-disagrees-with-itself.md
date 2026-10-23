@@ -1,11 +1,11 @@
 ---
 id: TASK-59
 title: 'Money is f64, and the reconciler already disagrees with itself'
-status: In Progress
+status: To Do
 assignee:
   - '@claude'
 created_date: '2026-08-07 14:12'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 16:56'
 labels:
   - tech-debt
   - correctness
@@ -32,3 +32,9 @@ This is a conversion touching most of the data layer and should not be bolted on
 - [ ] #2 is_reconciled and the serialized discrepancy are computed from the same value
 - [ ] #3 If the type change is taken, report figures are unchanged byte-for-byte
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Status reset to To Do: no implementation exists yet. Starts with phase 1 of the 2.0 plan.
+<!-- SECTION:NOTES:END -->

@@ -4,11 +4,10 @@ title: Decide where the window's menu control belongs on a wide viewport
 status: To Do
 assignee: []
 created_date: '2026-08-21 00:12'
-updated_date: '2026-10-07 18:45'
+updated_date: '2026-10-23 16:56'
 labels:
   - tauri
   - ui
-milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: low
@@ -41,4 +40,6 @@ The choice is the operator's. Whichever way it goes, it intersects TASK-33.20's 
 
 <!-- SECTION:NOTES:BEGIN -->
 Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+
+Removed from the 2.0 milestone: superseded by the Swift shell (TASK-144). Close when 144's phase 2 reaches parity.
 <!-- SECTION:NOTES:END -->

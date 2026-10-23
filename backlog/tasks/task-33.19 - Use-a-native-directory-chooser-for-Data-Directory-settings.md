@@ -4,11 +4,10 @@ title: Use a native directory chooser for Data Directory settings
 status: To Do
 assignee: []
 created_date: '2026-08-20 19:01'
-updated_date: '2026-10-07 18:45'
+updated_date: '2026-10-23 16:56'
 labels:
   - tauri
   - ui
-milestone: m-3
 dependencies: []
 parent_task_id: TASK-33
 priority: medium
@@ -32,4 +31,6 @@ The Settings screen's Data Directory panel currently asks for a filesystem path 
 
 <!-- SECTION:NOTES:BEGIN -->
 Superseded by TASK-144 (Swift shell). Close once 144's phase 2 reaches parity.
+
+Removed from the 2.0 milestone: superseded by the Swift shell (TASK-144). Close when 144's phase 2 reaches parity.
 <!-- SECTION:NOTES:END -->
