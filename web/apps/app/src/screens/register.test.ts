@@ -481,6 +481,18 @@ describe('register screen', () => {
     expect(table(el).selectedId).toBe(2);
   });
 
+  it('opens a tapped row with focus on the dialog rather than a text field', async () => {
+    const { el } = await mount();
+    emitOnTable(el, 'nc-row-activate', { id: 2, touch: true });
+    await settle(el);
+    expect(dialog(el).initialFocus).toBe('dialog');
+
+    emitOnDialog(el, 'nc-edit-cancel', { id: 2 });
+    emitOnTable(el, 'nc-row-activate', { id: 3, touch: false });
+    await settle(el);
+    expect(dialog(el).initialFocus).toBe('category');
+  });
+
   it('saves from the dialog, closes it and keeps the row selected', async () => {
     const { el, fake } = await mount();
     emitOnTable(el, 'nc-row-activate', { id: 1 });

@@ -90,6 +90,7 @@ export {
   REGISTER_SHORTCUTS,
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
+  type NcRowActivateDetail,
   type NcRowEventDetail,
   type RegisterTableRow,
 } from './wc-register-table.js';

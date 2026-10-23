@@ -74,11 +74,12 @@ export class WcTransactionDialog extends LitElement {
 
       .error {
         margin: 0 0 var(--wa-space-m);
-        padding: var(--wa-space-xs) var(--wa-space-s);
-        border-radius: var(--wa-radius-m);
+        padding: 8px 12px;
+        border: 1px solid var(--wa-color-danger);
+        border-radius: var(--wa-radius-md);
         background: var(--wa-color-danger-fill-quiet);
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
       }
 
       .footer {
@@ -117,6 +118,14 @@ export class WcTransactionDialog extends LitElement {
   @property({ type: String, attribute: 'validation-error' })
   validationError = '';
 
+  /**
+   * Where focus lands once the dialog is open: the category box, or the
+   * dialog itself. A row opened by a tap asks for the dialog, so no soft
+   * keyboard comes up over the form before anything is touched.
+   */
+  @property({ type: String, attribute: 'initial-focus' })
+  initialFocus: 'category' | 'dialog' = 'category';
+
   @state() private categoryId: number | null = null;
   @state() private vendor = '';
 
@@ -142,9 +151,13 @@ export class WcTransactionDialog extends LitElement {
     this.picker.value = this.row?.categoryId ?? null;
   }
 
-  /** Put the cursor in the category box. */
+  /**
+   * Put the cursor in the category box with its list shut, so Enter still
+   * saves and Esc still closes until the user types, presses ArrowDown or
+   * clicks the box.
+   */
   focusCategory(): void {
-    this.picker?.focus();
+    this.picker?.focus({ openList: false });
   }
 
   private handleCategoryChange = (event: CustomEvent<NcCategoryChangeDetail>): void => {
@@ -159,6 +172,8 @@ export class WcTransactionDialog extends LitElement {
   /** Enter saves from anywhere in the form the key is not already spoken for. */
   private handleKeydown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' || event.defaultPrevented) return;
+    // A held key repeats, and an IME uses Enter to confirm what it composed.
+    if (event.repeat || event.isComposing) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     const target = event.composedPath()[0];
     if (target instanceof HTMLElement && target.closest('button, wa-button, textarea')) return;
@@ -211,7 +226,7 @@ export class WcTransactionDialog extends LitElement {
 
   private handleAfterShow = (event: Event): void => {
     if (event.target !== event.currentTarget) return;
-    this.focusCategory();
+    if (this.initialFocus === 'category') this.focusCategory();
   };
 
   private handleAfterHide = (event: Event): void => {

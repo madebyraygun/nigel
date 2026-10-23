@@ -242,7 +242,23 @@ describe('wc-register-table', () => {
     rowEls(el)[3]?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await el.updateComplete;
 
-    expect(seen).toEqual([{ id: 101 }, { id: 103 }]);
+    expect(seen).toEqual([
+      { id: 101, touch: false },
+      { id: 103, touch: false },
+    ]);
+  });
+
+  it('ignores a held Enter and an Enter that confirms an IME composition', async () => {
+    const el = await mount({ selectedId: 101 });
+    const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const scroller = el.shadowRoot?.querySelector('.scroller');
+    for (const init of [{ repeat: true }, { isComposing: true }]) {
+      scroller?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, ...init }),
+      );
+    }
+    await el.updateComplete;
+    expect(seen).toEqual([]);
   });
 
   it('asks the host to edit on a tap, and only selects on a mouse click', async () => {
@@ -261,9 +277,29 @@ describe('wc-register-table', () => {
     await el.updateComplete;
     tapRow(3, 'touch');
     await el.updateComplete;
+    tapRow(1, 'pen');
+    await el.updateComplete;
 
-    expect(selected).toEqual([{ id: 102 }, { id: 103 }]);
-    expect(activated).toEqual([{ id: 103 }]);
+    expect(selected).toEqual([{ id: 102 }, { id: 103 }, { id: 101 }]);
+    expect(activated).toEqual([
+      { id: 103, touch: true },
+      { id: 101, touch: true },
+    ]);
+  });
+
+  it('commits an open inline edit rather than dropping it when another row is tapped', async () => {
+    const el = await mount({ selectedId: 101, editingId: 101 });
+    const activated = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const committed = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
+
+    rowEls(el)[3]?.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'touch' }),
+    );
+    rowEls(el)[3]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await el.updateComplete;
+
+    expect(committed.map((detail) => detail.id)).toEqual([101]);
+    expect(activated).toEqual([]);
   });
 
   it('asks the toolbar for focus on slash', async () => {
@@ -538,7 +574,7 @@ describe('the documented shortcuts', () => {
       const el = await mount({ selectedId: 101 });
       const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
       await pressOnRow(el, 'Enter');
-      expect(seen).toEqual([{ id: 101 }]);
+      expect(seen).toEqual([{ id: 101, touch: false }]);
     },
     // Two jobs, as the legend says: the editors' cancel while one is open, and
     // the TUI's clear-the-cursor when none is.
@@ -1077,7 +1113,7 @@ describe('a register too big to put in the DOM', () => {
     expect(el.selectedId).toBe(100);
     const seen = listen<NcRowEventDetail>(el, 'nc-row-activate');
     await press(el, 'Enter');
-    expect(seen).toEqual([{ id: 100 }]);
+    expect(seen).toEqual([{ id: 100, touch: false }]);
   });
 
   it('keeps its place when an edit drops a row from the same set', async () => {

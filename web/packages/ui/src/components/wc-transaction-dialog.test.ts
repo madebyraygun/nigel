@@ -162,6 +162,79 @@ describe('wc-transaction-dialog', () => {
     expect(picker(el).value).toBe(14);
   });
 
+  describe('the keyboard straight after opening', () => {
+    const uncategorized = { ...row, category: null, categoryId: null };
+
+    async function opened(props: Partial<WcTransactionDialog> = {}) {
+      const el = await mount(props);
+      el.focusCategory();
+      await picker(el).updateComplete;
+      return el;
+    }
+
+    function key(target: Element, init: KeyboardEventInit): KeyboardEvent {
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+        ...init,
+      });
+      target.dispatchEvent(event);
+      return event;
+    }
+
+    it('puts the cursor in the category box with its list shut', async () => {
+      const el = await opened({ row: uncategorized });
+      expect(picker(el).shadowRoot?.activeElement).toBe(
+        picker(el).shadowRoot?.querySelector('input'),
+      );
+      expect(picker(el).listOpen).toBe(false);
+    });
+
+    it('saves the row unchanged on Enter, rather than the first category', async () => {
+      const el = await opened({ row: uncategorized });
+      const seen = commits(el);
+      key(picker(el).shadowRoot!.querySelector('input')!, { key: 'Enter' });
+      expect(seen).toEqual([{ id: 7, categoryId: null, vendor: 'Acme' }]);
+    });
+
+    it('lets Escape through to the dialog, which closes', async () => {
+      const el = await opened();
+      let cancelled = 0;
+      el.addEventListener('nc-edit-cancel', () => (cancelled += 1));
+      // The picker leaves the key alone, so it reaches wa-dialog's own
+      // document listener, which asks to close.
+      key(picker(el).shadowRoot!.querySelector('input')!, { key: 'Escape' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(picker(el).listOpen).toBe(false);
+      expect(cancelled).toBe(1);
+    });
+
+    it('saves once for a held Enter', async () => {
+      const el = await opened();
+      const seen = commits(el);
+      const box = picker(el).shadowRoot!.querySelector('input')!;
+      key(box, { key: 'Enter' });
+      key(box, { key: 'Enter', repeat: true });
+      key(box, { key: 'Enter', repeat: true });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('does not save on the Enter that confirms an IME composition in Vendor', async () => {
+      const el = await opened();
+      const seen = commits(el);
+      key(vendorInput(el), { key: 'Enter', isComposing: true });
+      expect(seen).toEqual([]);
+    });
+
+    it('leaves focus on the dialog when asked to, as a tap does', async () => {
+      const el = await mount({ initialFocus: 'dialog' });
+      el.shadowRoot!.querySelector('wa-dialog')!.dispatchEvent(new CustomEvent('wa-after-show'));
+      await el.updateComplete;
+      expect(picker(el).shadowRoot?.activeElement ?? null).toBeNull();
+    });
+  });
+
   it('cancels from the Cancel button and from the dialog dismissing itself', async () => {
     const el = await mount();
     const cancelled: number[] = [];

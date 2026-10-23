@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   REGISTER_INLINE_EDIT_KEY,
   SIDEBAR_STORAGE_KEY,
@@ -95,6 +95,32 @@ describe('the register editing preference', () => {
   it('survives storage that refuses', () => {
     expect(readRegisterInlineEdit(refusing)).toBe(false);
     expect(() => writeRegisterInlineEdit(true, refusing)).not.toThrow();
+  });
+});
+
+describe('with blocked site data, where reaching localStorage itself throws', () => {
+  let original: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (original) Object.defineProperty(globalThis, 'localStorage', original);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  });
+
+  it('reads the defaults and writes nothing, without throwing', () => {
+    expect(readSidebarCollapsed()).toBe(false);
+    expect(readRegisterInlineEdit()).toBe(false);
+    expect(() => writeSidebarCollapsed(true)).not.toThrow();
+    expect(() => writeRegisterInlineEdit(true)).not.toThrow();
   });
 });
 

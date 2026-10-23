@@ -44,10 +44,10 @@ function defaultStorage(): PreferenceStorage | undefined {
  * sidebar preference is not a reason for the app to fail to boot.
  */
 export function readSidebarCollapsed(
-  storage: PreferenceStorage | undefined = defaultStorage(),
+  storage?: PreferenceStorage,
 ): boolean {
   try {
-    return storage?.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+    return (storage ?? defaultStorage())?.getItem(SIDEBAR_STORAGE_KEY) === 'true';
   } catch {
     return false;
   }
@@ -56,10 +56,10 @@ export function readSidebarCollapsed(
 /** Remember the folded state. A refusal is silent: it still holds for this page. */
 export function writeSidebarCollapsed(
   collapsed: boolean,
-  storage: PreferenceStorage | undefined = defaultStorage(),
+  storage?: PreferenceStorage,
 ): void {
   try {
-    storage?.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
+    (storage ?? defaultStorage())?.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
   } catch {
     // Storage disabled; the choice lasts until a reload.
   }
@@ -73,10 +73,10 @@ export const REGISTER_INLINE_EDIT_KEY = 'nigel.register-inline-edit';
 
 /** Whether this device edits register rows in place rather than in a dialog. */
 export function readRegisterInlineEdit(
-  storage: PreferenceStorage | undefined = defaultStorage(),
+  storage?: PreferenceStorage,
 ): boolean {
   try {
-    return storage?.getItem(REGISTER_INLINE_EDIT_KEY) === 'true';
+    return (storage ?? defaultStorage())?.getItem(REGISTER_INLINE_EDIT_KEY) === 'true';
   } catch {
     return false;
   }
@@ -85,10 +85,10 @@ export function readRegisterInlineEdit(
 /** Remember the editing style. A refusal is silent: it still holds for this page. */
 export function writeRegisterInlineEdit(
   inline: boolean,
-  storage: PreferenceStorage | undefined = defaultStorage(),
+  storage?: PreferenceStorage,
 ): void {
   try {
-    storage?.setItem(REGISTER_INLINE_EDIT_KEY, String(inline));
+    (storage ?? defaultStorage())?.setItem(REGISTER_INLINE_EDIT_KEY, String(inline));
   } catch {
     // Storage disabled; the choice lasts until a reload.
   }

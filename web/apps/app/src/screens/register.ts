@@ -13,6 +13,7 @@ import {
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
   type NcPeriod,
+  type NcRowActivateDetail,
   type NcRowEventDetail,
   type NcSearchChangeDetail,
   type WcRegisterTable,
@@ -115,6 +116,8 @@ export class NigelRegisterScreen extends LitElement {
    */
   @state() private dialogId: number | null = null;
   @state() private dialogOpen = false;
+  /** A row opened by a tap starts with no text field focused, so no soft keyboard. */
+  @state() private dialogFocus: 'category' | 'dialog' = 'category';
   @state() private dialogBusy = false;
   @state() private dialogError: string | null = null;
 
@@ -310,12 +313,13 @@ export class NigelRegisterScreen extends LitElement {
     this.selectedId = event.detail.id;
   };
 
-  private handleRowActivate = (event: CustomEvent<NcRowEventDetail>): void => {
+  private handleRowActivate = (event: CustomEvent<NcRowActivateDetail>): void => {
     if (this.inlineEdit) {
       this.editingId = event.detail.id;
       return;
     }
     this.selectedId = event.detail.id;
+    this.dialogFocus = event.detail.touch ? 'dialog' : 'category';
     this.dialogError = null;
     this.dialogId = event.detail.id;
     this.dialogOpen = true;
@@ -503,6 +507,7 @@ export class NigelRegisterScreen extends LitElement {
         : html`
             <wc-transaction-dialog
               ?open=${this.dialogOpen}
+              initial-focus=${this.dialogFocus}
               .row=${this.dialogRow}
               .categories=${this.categoryOptions}
               .showAccount=${!this.params.get('account')}

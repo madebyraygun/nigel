@@ -50,6 +50,14 @@ export interface NcRowEventDetail {
   id: number;
 }
 
+export interface NcRowActivateDetail extends NcRowEventDetail {
+  /** Opened by a tap (touch or pen), where a soft keyboard is not wanted yet. */
+  touch: boolean;
+}
+
+/** The pointers a press from is a tap: no double-click to spare, no Enter key. */
+const TAP_POINTERS = new Set(['touch', 'pen']);
+
 export interface NcEditCommitDetail {
   id: number;
   /** The chosen category, or null when the row is left uncategorized. */
@@ -1333,6 +1341,8 @@ export class WcRegisterTable extends LitElement {
         // Editing and flagging act on the selection, never on a row the user
         // has not chosen.
         if (current === -1) return;
+        // A held key repeats, and an IME uses Enter to confirm what it composed.
+        if (event.repeat || event.isComposing) return;
         this.activateRow(this.rows[from]);
         break;
       case 'Escape':
@@ -1359,14 +1369,20 @@ export class WcRegisterTable extends LitElement {
     event.preventDefault();
   };
 
-  private activateRow(row: RegisterTableRow | undefined): void {
+  private activateRow(row: RegisterTableRow | undefined, touch = false): void {
     if (!row) return;
     this.setActive(row.id);
     // A read-only table still moves its cursor; it just never asks to edit.
     if (this.readonly) return;
+    // Another row open in the inline editor keeps what was typed into it:
+    // it is committed, and this row is only selected.
+    if (this.editingId !== null && this.editingId !== row.id) {
+      this.commitEdit();
+      return;
+    }
     this.dispatchEvent(
-      new CustomEvent<NcRowEventDetail>('nc-row-activate', {
-        detail: { id: row.id },
+      new CustomEvent<NcRowActivateDetail>('nc-row-activate', {
+        detail: { id: row.id, touch },
         bubbles: true,
         composed: true,
       }),
@@ -1379,7 +1395,7 @@ export class WcRegisterTable extends LitElement {
    */
   private handleRowClick(row: RegisterTableRow, event: MouseEvent): void {
     const pointerType = 'pointerType' in event ? (event as PointerEvent).pointerType : '';
-    if ((pointerType || this.lastPointerType) === 'touch') this.activateRow(row);
+    if (TAP_POINTERS.has(pointerType || this.lastPointerType)) this.activateRow(row, true);
     else this.setActive(row.id);
   }
 
@@ -1816,7 +1832,7 @@ declare global {
 
   interface HTMLElementEventMap {
     'nc-row-select': CustomEvent<NcRowEventDetail>;
-    'nc-row-activate': CustomEvent<NcRowEventDetail>;
+    'nc-row-activate': CustomEvent<NcRowActivateDetail>;
     'nc-edit-commit': CustomEvent<NcEditCommitDetail>;
     'nc-edit-cancel': CustomEvent<NcRowEventDetail>;
     'nc-flag-toggle': CustomEvent<NcFlagToggleDetail>;
