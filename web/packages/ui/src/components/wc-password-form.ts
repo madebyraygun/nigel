@@ -6,6 +6,14 @@ import { controlsCss } from '@nigel/theme';
 
 export type WcPasswordMode = 'set' | 'change' | 'remove';
 
+/**
+ * `stack` is a bordered group under its own heading. `inline` is the same
+ * form laid flat inside something that already names it, such as a panel in
+ * `wc-security-card`: the heading is kept for assistive tech only and the
+ * fields sit side by side.
+ */
+export type WcPasswordLayout = 'stack' | 'inline';
+
 /** What the form hands back. Only the fields its mode actually collects. */
 export interface NcPasswordSubmitDetail {
   mode: WcPasswordMode;
@@ -30,6 +38,13 @@ const DESCRIPTIONS: Record<WcPasswordMode, string> = {
   change: 'Enter the password in use now, then the one that replaces it.',
   remove:
     'Decrypts the database. Anyone who can read the file can then read the books.',
+};
+
+/** What an inline form says under its button; only removal has a warning. */
+const INLINE_NOTES: Record<WcPasswordMode, string> = {
+  set: '',
+  change: '',
+  remove: 'The database will be decrypted and readable by anyone with access to the file.',
 };
 
 /**
@@ -108,15 +123,59 @@ export class WcPasswordForm extends LitElement {
         color: var(--wa-color-danger);
       }
 
+      .fields {
+        display: grid;
+        gap: var(--wa-space-m);
+      }
+
       .actions {
         display: flex;
         gap: var(--wa-space-s);
+      }
+
+      .note {
+        margin: 0;
+        font-size: var(--wa-font-size-s);
+        color: var(--wa-color-danger);
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      :host([layout='inline']) form {
+        max-width: none;
+      }
+
+      :host([layout='inline']) fieldset {
+        gap: var(--wa-space-s);
+        padding: 0;
+        border: 0;
+      }
+
+      :host([layout='inline']) .fields {
+        grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      }
+
+      :host([layout='inline']) .message:empty {
+        min-height: 0;
       }
     `,
   ];
 
   @property({ type: String, reflect: true })
   mode: WcPasswordMode = 'set';
+
+  @property({ type: String, reflect: true })
+  layout: WcPasswordLayout = 'stack';
 
   @property({ type: Boolean, reflect: true })
   busy = false;
@@ -150,6 +209,16 @@ export class WcPasswordForm extends LitElement {
     for (const field of [this.currentInput, this.newInput, this.confirmInput]) {
       if (field) field.value = '';
     }
+  }
+
+  /**
+   * Empty every field and drop what the form found itself, as when the panel
+   * holding it is closed. A server failure is the `error` property, which
+   * stays its owner's to clear.
+   */
+  reset(): void {
+    this.clearFields();
+    this.localError = '';
   }
 
   private handleSubmit = (event: Event) => {
@@ -193,41 +262,43 @@ export class WcPasswordForm extends LitElement {
 
   render() {
     const message = this.localError || this.error;
+    const inline = this.layout === 'inline';
+    const note = inline ? INLINE_NOTES[this.mode] : '';
     return html`
       <form @submit=${this.handleSubmit}>
         <fieldset>
-          <legend><h3>${HEADINGS[this.mode]}</h3></legend>
-          <p class="description">${DESCRIPTIONS[this.mode]}</p>
-          ${this.needsCurrent
-            ? html`<wa-input
-                data-current
-                type="password"
-                label="Current password"
-                autocomplete="current-password"
-                ?disabled=${this.busy}
-              ></wa-input>`
-            : nothing}
-          ${this.needsNew
-            ? html`
-                <wa-input
-                  data-new
+          <legend class=${inline ? 'visually-hidden' : ''}><h3>${HEADINGS[this.mode]}</h3></legend>
+          ${inline ? nothing : html`<p class="description">${DESCRIPTIONS[this.mode]}</p>`}
+          <div class="fields">
+            ${this.needsCurrent
+              ? html`<wa-input
+                  data-current
                   type="password"
-                  label="New password"
-                  autocomplete="new-password"
+                  label="Current password"
+                  autocomplete="current-password"
                   ?disabled=${this.busy}
-                ></wa-input>
-                <wa-input
-                  data-confirm
-                  type="password"
-                  label="Confirm new password"
-                  autocomplete="new-password"
-                  ?disabled=${this.busy}
-                ></wa-input>
-              `
-            : nothing}
-          <p class="message ${message ? 'error' : ''}" role="status" aria-live="polite">
-            ${message}
-          </p>
+                ></wa-input>`
+              : nothing}
+            ${this.needsNew
+              ? html`
+                  <wa-input
+                    data-new
+                    type="password"
+                    label="New password"
+                    autocomplete="new-password"
+                    ?disabled=${this.busy}
+                  ></wa-input>
+                  <wa-input
+                    data-confirm
+                    type="password"
+                    label=${inline ? 'Type it again' : 'Confirm new password'}
+                    autocomplete="new-password"
+                    ?disabled=${this.busy}
+                  ></wa-input>
+                `
+              : nothing}
+          </div>
+          <p class="message ${message ? 'error' : ''}" role="status" aria-live="polite">${message}</p>
           <div class="actions">
             <wa-button
               type="submit"
@@ -237,6 +308,7 @@ export class WcPasswordForm extends LitElement {
               ${this.busy ? 'Working…' : SUBMIT_LABELS[this.mode]}
             </wa-button>
           </div>
+          ${note ? html`<p class="note">${note}</p>` : nothing}
         </fieldset>
       </form>
     `;

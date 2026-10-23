@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FetchApiClient, type DragDropEvent } from './client.js';
-import { DesktopApiClient, createApiClient } from './desktop-client.js';
+import { DesktopApiClient, createApiClient, fileManagerLabel } from './desktop-client.js';
 
 describe('DesktopApiClient', () => {
   it('answers an action target that fetches the bytes and hands them to the native side', async () => {
@@ -281,6 +281,50 @@ describe('DesktopApiClient importSource', () => {
     bus.emit('tauri://drag-drop', { position: { x: 1, y: 1 } });
 
     expect(seen).toEqual([{ type: 'drop', paths: [] }]);
+  });
+});
+
+describe('DesktopApiClient dataDirReveal', () => {
+  it('asks the shell to open the books folder, naming no path', async () => {
+    const invoked: Array<[string, Record<string, unknown>]> = [];
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async (cmd, args) => {
+        invoked.push([cmd, args]);
+        return null;
+      },
+    });
+
+    await client.dataDirReveal().run();
+    expect(invoked).toEqual([['reveal_data_dir', {}]]);
+  });
+
+  it('passes on what the shell refused', async () => {
+    const client = new DesktopApiClient({
+      fetchImpl: vi.fn(),
+      listen: eventBus().listen,
+      invoke: async () => {
+        throw "Couldn't open /tmp/acme";
+      },
+    });
+    await expect(client.dataDirReveal().run()).rejects.toBe("Couldn't open /tmp/acme");
+  });
+
+  it("calls it by each platform's name", () => {
+    expect(fileManagerLabel('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')).toBe(
+      'Reveal in Finder',
+    );
+    expect(fileManagerLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')).toBe(
+      'Show in Explorer',
+    );
+    expect(fileManagerLabel('Mozilla/5.0 (X11; Linux x86_64)')).toBe('Open folder');
+  });
+});
+
+describe('FetchApiClient dataDirReveal', () => {
+  it('offers none: a browser tab cannot open a folder', () => {
+    expect(new FetchApiClient().dataDirReveal()).toBeNull();
   });
 });
 

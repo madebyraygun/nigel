@@ -4,6 +4,7 @@ import {
   type ApiClient,
   type DragDropEvent,
   type ExportTarget,
+  type FolderReveal,
   type ImportSource,
   type ShellChrome,
 } from './client.js';
@@ -93,6 +94,15 @@ export class DesktopApiClient extends FetchApiClient {
     };
   }
 
+  override dataDirReveal(): FolderReveal {
+    return {
+      label: fileManagerLabel(globalThis.navigator?.userAgent ?? ''),
+      run: async () => {
+        await this.invoke('reveal_data_dir', {});
+      },
+    };
+  }
+
   override importSource(): ImportSource {
     return {
       kind: 'native',
@@ -148,6 +158,13 @@ export class DesktopApiClient extends FetchApiClient {
       },
     };
   }
+}
+
+/** What each platform calls showing a folder in its file manager. */
+export function fileManagerLabel(userAgent: string): string {
+  if (/Mac OS X|Macintosh/.test(userAgent)) return 'Reveal in Finder';
+  if (/Windows/.test(userAgent)) return 'Show in Explorer';
+  return 'Open folder';
 }
 
 /** The name the server chose, or the caller's fallback. */

@@ -3,6 +3,7 @@ import './nigel-app.js';
 import type { NigelApp } from './nigel-app.js';
 import { appLocked, appUnauthorized, ApiError } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
+import { setUnsavedChanges, unsavedChanges } from '../state/unsaved.js';
 import {
   FakeApiClient,
   LOCKED_STATUS,
@@ -78,6 +79,14 @@ describe('nigel-app', () => {
     window.location.hash = '#/register';
     const el = await mount();
     expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
+  });
+
+  it('draws no shell heading over a screen that has its own', async () => {
+    window.location.hash = '#/settings';
+    const el = await mount();
+    expect(shell(el)?.getAttribute('screen-title')).toBe('');
+    expect(shell(el)?.trail.map((item) => item.label)).toEqual(['Settings']);
+    expect(document.title).toBe('Settings · Test Consultancy');
   });
 
   it('keeps the register heading for assistive technology only', async () => {
@@ -206,6 +215,88 @@ describe('nigel-app', () => {
     });
   });
 
+  describe('unsaved changes', () => {
+    const DRAFT = { heading: 'Discard unsaved letterhead changes?', message: 'Not saved.' };
+
+    afterEach(() => {
+      setUnsavedChanges(null);
+      vi.restoreAllMocks();
+    });
+
+    async function onSettingsWithDraft(): Promise<NigelApp> {
+      window.location.hash = '#/settings';
+      const el = await mount();
+      setUnsavedChanges(DRAFT);
+      return el;
+    }
+
+    async function go(el: NigelApp, hash: string): Promise<void> {
+      window.location.hash = hash;
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await new Promise((r) => setTimeout(r, 0));
+      await el.updateComplete;
+    }
+
+    it('asks before leaving, and stays when told to keep editing', async () => {
+      const ui = await import('@nigel/ui');
+      const confirm = vi.spyOn(ui, 'confirmDialog').mockResolvedValue(false);
+      const el = await onSettingsWithDraft();
+
+      await go(el, '#/register');
+
+      expect(confirm).toHaveBeenCalledWith(
+        expect.objectContaining({ heading: 'Discard unsaved letterhead changes?' }),
+      );
+      expect(window.location.hash).toBe('#/settings');
+      expect(shell(el)?.trail.map((item) => item.label)).toEqual(['Settings']);
+      expect(unsavedChanges()).toEqual(DRAFT);
+    });
+
+    it('goes once the edits are discarded', async () => {
+      const ui = await import('@nigel/ui');
+      vi.spyOn(ui, 'confirmDialog').mockResolvedValue(true);
+      const el = await onSettingsWithDraft();
+
+      await go(el, '#/register');
+      // The confirmed leave sets the hash again, which is its own hashchange.
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await el.updateComplete;
+
+      expect(window.location.hash).toBe('#/register');
+      expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
+      expect(unsavedChanges()).toBeNull();
+    });
+
+    it('asks nothing when there is nothing unsaved', async () => {
+      const ui = await import('@nigel/ui');
+      const confirm = vi.spyOn(ui, 'confirmDialog');
+      window.location.hash = '#/settings';
+      const el = await mount();
+
+      await go(el, '#/register');
+      expect(confirm).not.toHaveBeenCalled();
+      expect(shell(el)?.getAttribute('screen-title')).toBe('Register');
+    });
+
+    it('keeps the screen when Refresh is refused', async () => {
+      const ui = await import('@nigel/ui');
+      vi.spyOn(ui, 'confirmDialog').mockResolvedValue(false);
+      const client = new FakeApiClient();
+      window.location.hash = '#/settings';
+      const el = await mount(client);
+      setUnsavedChanges(DRAFT);
+      const before = shell(el)?.querySelector('nigel-settings-screen');
+      const statusCalls = client.calls.filter((c) => c === 'getStatus').length;
+
+      shell(el)?.dispatchEvent(new CustomEvent('nc-refresh', { bubbles: true, composed: true }));
+      await new Promise((r) => setTimeout(r, 0));
+      await el.updateComplete;
+
+      expect(shell(el)?.querySelector('nigel-settings-screen')).toBe(before);
+      expect(client.calls.filter((c) => c === 'getStatus').length).toBe(statusCalls);
+    });
+  });
+
   describe('the dashboard title row', () => {
     const queued = (n: number) =>
       Array.from({ length: n }, (_, i) => ({
@@ -314,7 +405,7 @@ describe('nigel-app', () => {
       const el = await mount();
       expect(sidebar(el)).toBeNull();
       expect(shell(el)?.hasAttribute('hide-sidebar')).toBe(true);
-      expect(shell(el)?.getAttribute('screen-title')).toBe('Settings');
+      expect(shell(el)?.trail.map((item) => item.label)).toEqual(['Settings']);
     });
 
     it('keeps the breadcrumb top bar', async () => {

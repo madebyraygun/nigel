@@ -45,6 +45,32 @@ const preview: Preview = {
       name: 'busy',
       render: () => html`<wc-password-form mode="set" busy></wc-password-form>`,
     },
+    {
+      // Laid flat inside wc-security-card's panels, which name the operation.
+      name: 'inline change',
+      render: () =>
+        html`<div style="width:min(680px, calc(100vw - 32px));">
+          <wc-password-form mode="change" layout="inline"></wc-password-form>
+        </div>`,
+    },
+    {
+      name: 'inline remove',
+      render: () =>
+        html`<div style="width:min(680px, calc(100vw - 32px));">
+          <wc-password-form mode="remove" layout="inline"></wc-password-form>
+        </div>`,
+    },
+    {
+      name: 'inline error',
+      render: () =>
+        html`<div style="width:min(680px, calc(100vw - 32px));">
+          <wc-password-form
+            mode="set"
+            layout="inline"
+            error="Could not encrypt the database."
+          ></wc-password-form>
+        </div>`,
+    },
   ],
 };
 

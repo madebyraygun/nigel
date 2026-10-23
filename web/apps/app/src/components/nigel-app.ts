@@ -16,6 +16,7 @@ import {
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { appUnauthorized, type ApiClient } from '../api/index.js';
 import { createApiClient } from '../api/desktop-client.js';
+import { confirmDiscard, unsavedChanges } from '../state/unsaved.js';
 import {
   getAppStore,
   initializeAppStore,
@@ -165,7 +166,23 @@ export class NigelApp extends SignalWatcher(LitElement) {
     super.disconnectedCallback();
   }
 
+  /** The hash the screen on show was routed from; where a refused leave goes back to. */
+  private routedHash = '';
+
   private handleHashChange = (): void => {
+    const target = window.location.hash;
+    if (unsavedChanges() && this.routedHash && target !== this.routedHash) {
+      // The address bar has already moved. Put it back without a second
+      // hashchange, ask, and only then go where it was going.
+      const back = new URL(window.location.href);
+      back.hash = this.routedHash;
+      history.replaceState(history.state, '', back);
+      this.refocusAfterRoute = false;
+      void confirmDiscard().then((discard) => {
+        if (discard) window.location.hash = target;
+      });
+      return;
+    }
     // A route change takes the screen out from under the game, so the game
     // goes with it rather than staying up over a screen nobody navigated to.
     this.closeSnake();
@@ -214,6 +231,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
       return;
     }
     this.route = parseHash(window.location.hash);
+    this.routedHash = window.location.hash;
   }
 
   private handleNavigate = (event: CustomEvent<{ id: string }>): void => {
@@ -227,7 +245,10 @@ export class NigelApp extends SignalWatcher(LitElement) {
     if (!narrowViewport()) writeSidebarCollapsed(event.detail.collapsed);
   };
 
-  private handleRefresh = (): void => {
+  private handleRefresh = async (): Promise<void> => {
+    // Refresh remounts the screen, which would drop a draft as surely as
+    // leaving it.
+    if (!(await confirmDiscard())) return;
     void this.store?.refreshStatus();
     void this.loadReviewCount();
     this.refreshes += 1;

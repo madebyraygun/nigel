@@ -201,6 +201,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-settings',
     inNav: true,
     pinned: true,
+    heading: 'screen',
     render: renderSettings,
   },
   setup: {

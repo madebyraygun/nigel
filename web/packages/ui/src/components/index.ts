@@ -39,8 +39,27 @@ export { WcUnlockCard, type NcUnlockDetail } from './wc-unlock-card.js';
 export {
   WcPasswordForm,
   type NcPasswordSubmitDetail,
+  type WcPasswordLayout,
   type WcPasswordMode,
 } from './wc-password-form.js';
+export {
+  WcSettingsIndex,
+  type NcSettingsSectionDetail,
+  type SettingsIndexGroup,
+  type SettingsIndexItem,
+} from './wc-settings-index.js';
+export { WcSettingsScope } from './wc-settings-scope.js';
+export { WcSettingsSection } from './wc-settings-section.js';
+export { WcSaveBar } from './wc-save-bar.js';
+export { WcLogoField, type NcLogoFileDetail } from './wc-logo-field.js';
+export {
+  WcSecurityCard,
+  type NcSecurityPanelDetail,
+  type SecurityPanel,
+} from './wc-security-card.js';
+export { WcAppearancePicker } from './wc-appearance-picker.js';
+export { WcSwitchRow, type NcSwitchChangeDetail } from './wc-switch-row.js';
+export { WcFolderPath } from './wc-folder-path.js';
 export { WcStatCard } from './wc-stat-card.js';
 export { WcBalanceList, type BalanceRow } from './wc-balance-list.js';
 export {
