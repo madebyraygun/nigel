@@ -145,6 +145,7 @@ pub struct TempConfigDir {
 #[cfg(any(test, feature = "testutil"))]
 impl TempConfigDir {
     pub fn new() -> Self {
+        crate::db::hold_process_globals_for_tests();
         let dir = tempfile::tempdir().expect("tempdir");
         let previous = set_config_dir_for_tests(Some(dir.path().to_path_buf()));
         let previously_suppressed = suppress_invoicing_env_for_tests(true);
@@ -219,6 +220,12 @@ pub fn config_dir() -> PathBuf {
         return dir.clone();
     }
 
+    // A unit test that never redirected the config directory gets an empty
+    // one of its own rather than the developer's real settings.json.
+    #[cfg(test)]
+    return std::env::temp_dir().join(format!("nigel-test-config-{}", std::process::id()));
+
+    #[cfg(not(test))]
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
@@ -938,6 +945,23 @@ mod tests {
         let json = r#"{"data_dir": "/tmp/test", "user_name": "Bob", "fiscal_year_start": "07"}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(s.user_name, "Bob");
+    }
+
+    #[test]
+    fn an_unredirected_config_dir_is_not_the_developers_own() {
+        crate::db::hold_process_globals_for_tests();
+        let previous = set_config_dir_for_tests(None);
+        let dir = config_dir();
+        set_config_dir_for_tests(previous);
+
+        if let Some(home) = dirs::home_dir() {
+            assert!(
+                !dir.starts_with(&home),
+                "{} is under {}",
+                dir.display(),
+                home.display()
+            );
+        }
     }
 
     #[test]
