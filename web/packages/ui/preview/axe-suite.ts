@@ -4,6 +4,18 @@ import { runA11y } from './a11y.js';
 import type { Preview } from './types.js';
 
 /**
+ * Per-state budget for one axe run.
+ *
+ * axe walks the whole rendered subtree on the CPU, and the previews with the
+ * most nodes (the wordmark's per-character spans, the report tables) take
+ * several seconds when the machine is busy: vitest workers share cores with
+ * each other and with cargo builds. Vitest's default 5s budget sits on that
+ * edge, so this longer one applies to these cases only and every other test
+ * keeps the default.
+ */
+export const AXE_TIMEOUT_MS = 60_000;
+
+/**
  * Assert zero axe violations for **every** state a preview declares.
  *
  * Step 3 of the component-first workflow says each component's states pass
@@ -40,6 +52,7 @@ export function describePreviewA11y(preview: Preview): void {
           `axe violations in "${preview.id}" state "${state.name}"`,
         ).toEqual([]);
       },
+      AXE_TIMEOUT_MS,
     );
   });
 }
