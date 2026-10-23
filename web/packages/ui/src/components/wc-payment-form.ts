@@ -93,7 +93,8 @@ export function validatePaymentForm(value: PaymentFormValue): PaymentFormErrors 
  * Record a payment against an invoice.
  *
  * The amount field is `wc-reconcile-form`'s currency treatment, reused rather
- * than reinvented: a rendered `$` prefix, `inputmode="decimal"`, commas
+ * than reinvented: a `$` in the field's own `start` slot, inside its edge and
+ * on the text's line, `inputmode="decimal"`, commas
  * stripped on the way in and a tidy on blur. It defaults to the whole
  * outstanding balance, which is what `nigel invoice pay` does with no
  * `--amount`, and clearing it means the same thing.
@@ -118,19 +119,8 @@ export class WcPaymentForm extends LitElement {
         min-width: 18rem;
       }
 
-      .money {
-        display: flex;
-        align-items: center;
-        gap: var(--wa-space-2xs);
-      }
-
       .prefix {
         color: var(--wa-color-muted);
-        font-size: var(--wa-font-size-m);
-      }
-
-      .money wa-input {
-        flex: 1 1 auto;
       }
 
       .error {
@@ -190,9 +180,7 @@ export class WcPaymentForm extends LitElement {
     return html`
       <div class="fields">
         <div>
-          <div class="money">
-            <span class="prefix" aria-hidden="true">$</span>
-            <wa-input
+          <wa-input
               data-amount
               label="Amount"
               inputmode="decimal"
@@ -202,8 +190,9 @@ export class WcPaymentForm extends LitElement {
               ?disabled=${this.disabled}
               @input=${this.handleField('amount')}
               @blur=${this.handleAmountBlur}
-            ></wa-input>
-          </div>
+            >
+              <span slot="start" class="prefix" data-prefix aria-hidden="true">$</span>
+            </wa-input>
           ${this.errors.amount
             ? html`<p class="error" role="alert">${this.errors.amount}</p>`
             : html`<p class="hint" data-amount-hint>

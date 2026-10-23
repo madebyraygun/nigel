@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
+import { shortDate } from './short-date.js';
 
 /** One recorded payment, oldest first as `payments` answers them. */
 export interface PaymentRow {
@@ -50,7 +51,8 @@ export class WcPaymentList extends LitElement {
       font-size: var(--wa-font-size-s);
     }
 
-    caption {
+    caption,
+    thead {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -61,10 +63,20 @@ export class WcPaymentList extends LitElement {
 
     th,
     td {
-      padding: var(--wa-space-xs) var(--wa-space-s);
-      border-bottom: 1px solid var(--wa-color-border);
+      padding: 10px 0;
+      border-top: 1px solid var(--wa-color-border-soft);
       text-align: start;
       white-space: nowrap;
+      font-size: var(--nc-font-size-body);
+    }
+
+    td + td {
+      padding-left: 12px;
+    }
+
+    td.amount {
+      width: 100%;
+      color: var(--nc-color-income);
     }
 
     td {
@@ -105,7 +117,7 @@ export class WcPaymentList extends LitElement {
   caption = 'Payments';
 
   @property({ type: String, attribute: 'empty-message' })
-  emptyMessage = 'No payments recorded yet.';
+  emptyMessage = 'No payments recorded.';
 
   render() {
     if (this.payments.length === 0) {
@@ -129,14 +141,14 @@ export class WcPaymentList extends LitElement {
             ${this.payments.map(
               (payment, index) => html`
                 <tr data-row=${payment.id ?? index}>
-                  <td>${payment.paidDate}</td>
+                  <td data-date>${shortDate(payment.paidDate)}</td>
                   <td>
                     ${paymentMethodLabel(payment.method)}
                     ${payment.stripeCheckoutSessionId
                       ? html`<span class="synced" data-synced>(synced)</span>`
                       : ''}
                   </td>
-                  <td class="end">
+                  <td class="end amount">
                     <wc-money
                       .amount=${payment.amount}
                       .currency=${this.currency}

@@ -7,28 +7,57 @@ export interface Route {
 }
 
 /**
- * Parse `#/<screen>?<params>`.
+ * The screen whose route takes one path segment, and the param it lands in:
+ * `#/invoices/1254` is `#/invoices?number=1254` spelled the way the breadcrumb
+ * reads.
+ */
+const SEGMENT_PARAM: Partial<Record<ScreenId, string>> = { invoices: 'number' };
+
+/**
+ * Parse `#/<screen>[/<segment>]?<params>`.
  *
- * Params are carried even though the scaffold has no use for them yet: screens
- * land later wanting deep links like `#/register?account=BofA%20Checking`, and
- * having the shape settled now means those tasks add a screen rather than
- * reopen the routing seam. Anything unrecognized falls back to the default
- * screen — a bad hash should show the dashboard, not a blank page.
+ * Params are carried for deep links like `#/register?account=BofA%20Checking`.
+ * A segment after the screen is accepted only where `SEGMENT_PARAM` names one,
+ * and it lands as that param — so a screen reads `?number=1254` and
+ * `/1254` the same way, and an older link in the query form still opens.
+ * Anything unrecognized falls back to the default screen — a bad hash should
+ * show the dashboard, not a blank page.
  */
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#\/?/, '');
   const [path, query = ''] = raw.split('?');
-  const screen = isScreenId(path) ? path : DEFAULT_SCREEN;
+  const [head, segment, ...rest] = path.split('/');
   const params = new URLSearchParams(query);
   // `shell=native` says which host opened the page (`isHostedShell`), not
   // what the screen should show.
   params.delete(HOSTED_PARAM);
-  return { screen, params };
+
+  if (!isScreenId(head)) return { screen: DEFAULT_SCREEN, params };
+  const param = SEGMENT_PARAM[head];
+  if (segment !== undefined && segment !== '') {
+    if (!param || rest.length > 0) return { screen: DEFAULT_SCREEN, params };
+    let value: string;
+    try {
+      value = decodeURIComponent(segment);
+    } catch {
+      return { screen: DEFAULT_SCREEN, params };
+    }
+    params.set(param, value);
+  }
+  return { screen: head, params };
 }
 
 export function routeToHash(route: Route): string {
-  const query = route.params.toString();
-  return query ? `#/${route.screen}?${query}` : `#/${route.screen}`;
+  const params = new URLSearchParams(route.params);
+  const param = SEGMENT_PARAM[route.screen];
+  const segment = param ? params.get(param) : null;
+  let path = `#/${route.screen}`;
+  if (param && segment !== null && /^\d+$/.test(segment)) {
+    params.delete(param);
+    path += `/${segment}`;
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 export function screenToHash(screen: ScreenId): string {

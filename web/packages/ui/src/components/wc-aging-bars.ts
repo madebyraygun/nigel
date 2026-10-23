@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-money.js';
+import { shortDate } from './short-date.js';
 
 /** One aging bucket, in the shape `ar_aging` reports it. */
 export interface AgingBucketView {
@@ -9,29 +10,42 @@ export interface AgingBucketView {
   total: number;
 }
 
-/**
- * Bar heights as percentages of the largest bucket.
- *
- * Relative to the largest rather than to the total, so a single non-empty
- * bucket still draws a full bar instead of one that says "100% of everything"
- * in a bar the reader has to compare against nothing. All-zero draws nothing.
- */
-export function agingBarHeights(buckets: AgingBucketView[]): number[] {
-  const largest = Math.max(0, ...buckets.map((bucket) => Math.abs(bucket.total)));
-  if (largest === 0) return buckets.map(() => 0);
-  return buckets.map((bucket) => Math.round((Math.abs(bucket.total) / largest) * 100));
+/** What the legend calls each of `ar_aging`'s bucket keys. */
+const BUCKET_LABELS = new Map<string, string>([
+  ['current', 'Current'],
+  ['1-30', '1–30 days'],
+  ['31-60', '31–60 days'],
+  ['61-90', '61–90 days'],
+  ['90+', 'Over 90'],
+]);
+
+/** A bucket key as the legend prints it; a key it does not know, as written. */
+export function agingBucketLabel(label: string): string {
+  return BUCKET_LABELS.get(label) ?? label;
 }
 
 /**
- * The A/R aging strip: five buckets, their bars, and the outstanding total.
+ * Each bucket's share of the bar, as a fraction of the buckets' sum.
  *
- * The bars are decoration over a real `<table>`: a bar has no accessible value,
- * so the figures live in the table and the bars ride along `aria-hidden`. They
- * are a row of that same table rather than a grid beside it, so each bar shares
- * a column with the bucket it measures — the table's own column widths are the
- * only thing keeping the two aligned, and a 1fr grid cannot agree with them.
- * Every figure this component shows is a second view of the aging report, which
- * is why the parity walk skips it whole.
+ * Measured against the buckets themselves rather than the `total` property,
+ * so the segments always fill the track exactly once. An empty bucket draws
+ * no segment, and an all-zero report draws only the track.
+ */
+export function agingShares(buckets: AgingBucketView[]): number[] {
+  const sum = buckets.reduce((acc, bucket) => acc + Math.max(0, bucket.total), 0);
+  if (sum === 0) return buckets.map(() => 0);
+  return buckets.map((bucket) => Math.max(0, bucket.total) / sum);
+}
+
+/**
+ * The Outstanding card: what is owed, across how many open invoices, and how
+ * old it is — a stacked bar over the five aging buckets with a legend under it.
+ *
+ * The bar is decoration: a segment has no accessible value, so it rides along
+ * `aria-hidden` and every figure lives in the legend's definition list, where
+ * each bucket is a label and an amount. Every figure here is a second view of
+ * the aging report, which is why the invoicing parity walk compares this card
+ * against `nigel invoice aging` on its own.
  */
 @customElement('wc-aging-bars')
 export class WcAgingBars extends LitElement {
@@ -42,109 +56,136 @@ export class WcAgingBars extends LitElement {
       color: var(--wa-color-text);
     }
 
-    .frame {
+    .card {
+      display: grid;
+      gap: 12px;
+      padding: 16px 20px 18px;
+      background: var(--wa-color-surface);
       border: 1px solid var(--wa-color-border);
-      border-radius: var(--wa-radius-m);
-      padding: var(--wa-space-m);
+      border-radius: var(--wa-radius-lg);
     }
 
-    header {
+    .top {
       display: flex;
       flex-wrap: wrap;
       align-items: baseline;
-      justify-content: space-between;
-      gap: var(--wa-space-s);
-      margin-bottom: var(--wa-space-s);
+      gap: 4px 12px;
     }
 
-    h3 {
+    h2 {
       margin: 0;
-      font-size: var(--wa-font-size-s);
+      font-size: var(--nc-font-size-control);
+      font-weight: var(--wa-font-weight-normal);
+    }
+
+    .amount {
+      font-size: var(--nc-font-size-figure);
       font-weight: var(--wa-font-weight-medium);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--wa-color-muted);
+      letter-spacing: var(--nc-letter-spacing-tight);
     }
 
-    .as-of {
+    .meta {
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s);
+      font-size: var(--nc-font-size-meta);
     }
 
-    a {
+    .link {
+      margin-left: auto;
       color: var(--wa-color-brand);
-      font-size: var(--wa-font-size-s);
-    }
-
-    .scroll {
-      overflow-x: auto;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--wa-font-size-s);
-    }
-
-    caption {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
+      font-size: var(--nc-font-size-meta);
+      text-decoration: none;
       white-space: nowrap;
     }
 
-    th,
-    td {
-      padding: var(--wa-space-2xs) var(--wa-space-s);
-      text-align: start;
-      border: 0;
+    .link:hover {
+      text-decoration: underline;
     }
 
-    th {
-      color: var(--wa-color-muted);
-      font-weight: var(--nc-font-weight-table-heading);
-      white-space: nowrap;
-    }
-
-    td.amount {
-      text-align: end;
-    }
-
-    tr.total td,
-    tr.total th {
-      border-top: 2px solid var(--wa-color-border);
-      font-weight: var(--wa-font-weight-bold);
-    }
-
-    td.bar-cell {
-      padding-top: var(--wa-space-s);
-    }
-
-    .bar-track {
-      display: flex;
-      align-items: flex-end;
-      height: 44px;
+    .link:focus-visible {
+      outline: 2px solid var(--wa-color-focus);
+      outline-offset: 2px;
+      border-radius: var(--wa-radius-xs);
     }
 
     .bar {
-      width: 100%;
-      background: var(--wa-color-brand);
-      border-radius: var(--wa-radius-sm) var(--wa-radius-sm) 0 0;
-      min-height: 2px;
-      opacity: 0.75;
+      display: flex;
+      gap: 3px;
+      height: 10px;
+      border-radius: var(--wa-radius-pill);
+      background: var(--wa-color-border-soft);
+      overflow: hidden;
     }
 
-    .bar[data-empty='true'] {
-      background: var(--wa-color-border);
-      opacity: 1;
+    .segment {
+      min-width: 3px;
+    }
+
+    [data-bucket='0'] {
+      --nc-aging-fill: var(--nc-color-aging-1);
+    }
+
+    [data-bucket='1'] {
+      --nc-aging-fill: var(--nc-color-aging-2);
+    }
+
+    [data-bucket='2'] {
+      --nc-aging-fill: var(--nc-color-aging-3);
+    }
+
+    [data-bucket='3'] {
+      --nc-aging-fill: var(--nc-color-aging-4);
+    }
+
+    [data-bucket='4'] {
+      --nc-aging-fill: var(--nc-color-aging-5);
+    }
+
+    .segment,
+    .swatch {
+      background: var(--nc-aging-fill);
+    }
+
+    dl {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px 12px;
+      margin: 0;
+    }
+
+    @media (max-width: 40rem) {
+      dl {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    dt {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--wa-color-muted);
+      font-size: var(--nc-font-size-meta);
+    }
+
+    .swatch {
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+
+    dd {
+      margin: 2px 0 0;
+      font-size: var(--nc-font-size-body);
+    }
+
+    dd[data-zero] {
+      color: var(--wa-color-muted);
     }
 
     .empty {
       margin: 0;
       color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s);
+      font-size: var(--nc-font-size-control);
     }
   `;
 
@@ -155,81 +196,82 @@ export class WcAgingBars extends LitElement {
   @property({ type: Number })
   total = 0;
 
-  /** `YYYY-MM-DD`, rendered in the heading the way the report titles it. */
+  /** `YYYY-MM-DD`, the day the report is about. */
   @property({ type: String, attribute: 'as-of' })
   asOf = '';
 
-  /** Where "View aging report" points. Empty hides the link. */
+  /** Where "Aging report →" points. Empty hides the link. */
   @property({ type: String })
   href = '';
 
+  @property({ type: String })
+  currency = 'USD';
+
   render() {
     if (this.buckets.length === 0) {
-      return html`<div class="frame">
+      return html`<section class="card" aria-label="Outstanding">
         <p class="empty">No open receivables.</p>
-      </div>`;
+      </section>`;
     }
 
-    const heights = agingBarHeights(this.buckets);
+    const open = this.buckets.reduce((acc, bucket) => acc + bucket.count, 0);
+    const shares = agingShares(this.buckets);
+    const meta = [
+      `across ${open} open invoice${open === 1 ? '' : 's'}`,
+      this.asOf ? `as of ${shortDate(this.asOf)}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
     return html`
-      <div class="frame">
-        <header>
-          <h3>
-            A/R aging
-            ${this.asOf ? html`<span class="as-of">— as of ${this.asOf}</span>` : nothing}
-          </h3>
+      <section class="card" aria-labelledby="heading">
+        <div class="top">
+          <h2 id="heading">Outstanding</h2>
+          <wc-money
+            class="amount"
+            data-total
+            .amount=${this.total}
+            .currency=${this.currency}
+            variant="plain"
+          ></wc-money>
+          <span class="meta" data-meta>${meta}</span>
           ${this.href
-            ? html`<a href=${this.href}>View aging report →</a>`
+            ? html`<a class="link" href=${this.href}>Aging report →</a>`
             : nothing}
-        </header>
-
-        <div class="scroll">
-          <table>
-            <caption>
-              Accounts receivable aging${this.asOf ? ` as of ${this.asOf}` : ''}
-            </caption>
-            <thead>
-              <tr>
-                ${this.buckets.map(
-                  (bucket) => html`<th scope="col">${bucket.label}</th>`,
-                )}
-                <th scope="col">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                ${this.buckets.map(
-                  (bucket) => html`
-                    <td class="amount">
-                      <wc-money .amount=${bucket.total} variant="plain"></wc-money>
-                    </td>
-                  `,
-                )}
-                <td class="amount">
-                  <wc-money .amount=${this.total} variant="plain"></wc-money>
-                </td>
-              </tr>
-              <tr class="bars" aria-hidden="true">
-                ${heights.map(
-                  (height) => html`
-                    <td class="bar-cell">
-                      <div class="bar-track">
-                        <div
-                          class="bar"
-                          data-empty=${height === 0 ? 'true' : 'false'}
-                          style="height:${Math.max(height, 2)}%"
-                        ></div>
-                      </div>
-                    </td>
-                  `,
-                )}
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
         </div>
-      </div>
+
+        <div class="bar" aria-hidden="true">
+          ${shares.map((share, index) =>
+            share > 0
+              ? html`<span
+                  class="segment"
+                  data-bucket=${index}
+                  style="flex: ${share} 1 0"
+                ></span>`
+              : nothing,
+          )}
+        </div>
+
+        <dl>
+          ${this.buckets.map(
+            (bucket, index) => html`
+              <div data-legend=${bucket.label}>
+                <dt>
+                  <span class="swatch" data-bucket=${index} aria-hidden="true"></span>
+                  ${agingBucketLabel(bucket.label)}
+                </dt>
+                <dd ?data-zero=${bucket.total === 0}>
+                  <wc-money
+                    .amount=${bucket.total}
+                    .currency=${this.currency}
+                    variant="plain"
+                  ></wc-money>
+                </dd>
+              </div>
+            `,
+          )}
+        </dl>
+      </section>
     `;
   }
 }

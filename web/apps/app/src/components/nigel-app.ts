@@ -21,7 +21,7 @@ import {
   initializeAppStore,
   type AppStore,
 } from '../state/app-store.js';
-import { parseHash, screenToHash, type Route } from '../screens/hash-route.js';
+import { parseHash, routeToHash, screenToHash, type Route } from '../screens/hash-route.js';
 import {
   DEFAULT_SCREEN,
   navItems,
@@ -235,8 +235,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
   /** Navigation for screens: the same one-directional path the sidebar takes. */
   private navigate = (screen: ScreenId, params?: URLSearchParams): void => {
-    const query = params?.toString();
-    window.location.hash = query ? `#/${screen}?${query}` : `#/${screen}`;
+    window.location.hash = routeToHash({ screen, params: params ?? new URLSearchParams() });
   };
 
   private screenContext(): ScreenContext {

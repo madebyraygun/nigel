@@ -271,6 +271,7 @@ every value in both modes, so the table and the theme cannot drift apart.
 | `--flag` | `--nc-color-flagged` | review and flag |
 | `--blue` | `--wa-color-info` | Sent status |
 | `--incf` / `--expf` | `--nc-color-income-fill` / `--nc-color-expense-fill` | chart bars |
+| aging bar (Current … Over 90) | `--nc-color-aging-1` … `--nc-color-aging-5` | Outstanding card's stacked bar and legend swatches |
 | `--grad` | `--nc-grad-brand-text` | wordmark, active hairlines (ink ramp light, pastel dark) |
 | `--pastel` | `--nc-grad-pastel` | status-line `nigel` block, both modes |
 | `--fsh` | `--nc-shadow-floating` | floating panels |

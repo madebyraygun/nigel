@@ -6,6 +6,9 @@ import {
   validateInvoiceForm,
   type InvoiceFormValue,
   type LineItemValue,
+  type ActionPill,
+  type FilterChip,
+  type InvoiceTableRow,
   type SendStepState,
   type SendStepView,
 } from '@nigel/ui';
@@ -14,6 +17,7 @@ import type {
   Client,
   ClientContact,
   ClientPatch,
+  ConflictReason,
   InvoiceDetail,
   InvoiceListParams,
   InvoiceListRow,
@@ -28,36 +32,59 @@ import type {
   SendStepResult,
 } from '../api/types.js';
 import { PAYMENT_METHODS, SEND_STEPS } from '../api/types.js';
+import { refusalSentence } from './invoicing-errors.js';
 import type { ClientFormValue, PaymentFormValue } from '@nigel/ui';
 
-/** The status filters the list offers, and what each one asks the server for. */
+/**
+ * The status chips the list offers, one per derived status plus All.
+ *
+ * The filter is applied to the list the screen already holds rather than sent
+ * to the server, because every chip carries a count and the counts are of the
+ * whole list: asking the server for one status would leave the other six
+ * counts unknowable.
+ */
 export const STATUS_FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'draft', label: 'Draft' },
-  { value: 'open', label: 'Open' },
+  { value: 'sent', label: 'Sent' },
+  { value: 'partial', label: 'Partial' },
+  { value: 'overdue', label: 'Overdue' },
   { value: 'paid', label: 'Paid' },
   { value: 'void', label: 'Void' },
 ] as const;
 
 /**
- * The list request a route asks for.
+ * The list request a route asks for: the client, when one is named.
  *
- * An absent filter is omitted rather than sent empty: the server rejects a
- * `status` it does not know instead of ignoring it, so `all` — which is not
- * one of its words — must never reach the query string. A status outside the
- * chips is dropped for the same reason, so a stale or hand-typed hash reads as
- * the unfiltered list rather than as the 400 the server would answer.
+ * Status is not part of it — see `STATUS_FILTERS`. An absent client is
+ * omitted rather than sent empty.
  */
 export function invoiceListParams(params: URLSearchParams): InvoiceListParams {
   const request: InvoiceListParams = {};
-
-  const status = params.get('status');
-  if (status && status !== 'all' && isStatusFilter(status)) request.status = status;
 
   const clientId = Number(params.get('clientId'));
   if (Number.isInteger(clientId) && clientId > 0) request.clientId = clientId;
 
   return request;
+}
+
+/** The rows a status chip shows. `all`, or a status no chip offers, is every row. */
+export function rowsWithStatus(rows: InvoiceListRow[], status: string): InvoiceListRow[] {
+  if (status === 'all' || !isStatusFilter(status)) return rows;
+  return rows.filter((row) => row.status === status);
+}
+
+/** The status chips with their counts and where each one goes. */
+export function statusChips(
+  rows: InvoiceListRow[],
+  hrefFor: (status: string | null) => string,
+): FilterChip[] {
+  return STATUS_FILTERS.map((filter) => ({
+    value: filter.value,
+    label: filter.label,
+    count: rowsWithStatus(rows, filter.value).length,
+    href: hrefFor(filter.value === 'all' ? null : filter.value),
+  }));
 }
 
 /** Whether a route's `status` is one the list actually offers. */
@@ -408,17 +435,156 @@ export function detailBalance(detail: InvoiceDetail): number | null {
 }
 
 /** What the invoice table needs, from what the list route answers with. */
-export function invoiceTableRows(rows: InvoiceListRow[]) {
+export function invoiceTableRows(rows: InvoiceListRow[]): InvoiceTableRow[] {
   return rows.map((row) => ({
     number: row.number,
     status: row.status,
     clientName: row.clientName,
     total: row.total,
     balance: outstandingOrNull(row),
+    issueDate: row.issueDate,
     dueDate: row.dueDate,
     currency: row.currency,
-    href: `#/invoices?number=${row.number}`,
+    href: `#/invoices/${row.number}`,
   }));
+}
+
+/** Whole days from `from` to `to`, both `YYYY-MM-DD`; null if either is not one. */
+export function daysBetween(from: string, to: string): number | null {
+  const parse = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+  };
+  const a = parse(from);
+  const b = parse(to);
+  if (a === null || b === null) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * The line under the detail view's due date, read on `today`.
+ *
+ * Only an invoice still owed has one: a draft is not due yet in any sense the
+ * client knows of, and a paid or void one is past caring. An overdue invoice
+ * says how late it is; any other open one says how long it has.
+ */
+export function dueNote(
+  invoice: { status: string; dueDate: string | null },
+  today: string,
+): string {
+  if (!['sent', 'partial', 'overdue'].includes(invoice.status)) return '';
+  if (invoice.dueDate === null) return '';
+  const days = daysBetween(today, invoice.dueDate);
+  if (days === null) return '';
+  if (days < 0 || invoice.status === 'overdue') {
+    const late = Math.max(-days, 0);
+    if (late === 0) return 'Overdue';
+    return `${late} day${late === 1 ? '' : 's'} overdue`;
+  }
+  if (days === 0) return 'Due today';
+  if (days === 1) return 'Due tomorrow';
+  return `Due in ${days} days`;
+}
+
+/** What the screen knows that the invoice does not. */
+export interface ActionContext {
+  /** Why sending is blocked by this installation, or empty. */
+  sendBlock: string;
+  /** A write is in flight: everything waits, and says nothing about why. */
+  busy: boolean;
+}
+
+const OPEN_STATUSES = ['sent', 'partial', 'overdue'];
+
+/**
+ * The detail view's actions, enabled by the handoff's rules **and** the
+ * server's own guards, each disabled one with the sentence that says why.
+ *
+ * The handoff names when each action makes sense for a status — Send for
+ * anything but paid or void, Record payment for an invoice that has gone out,
+ * Edit for a draft or a sent one, Void for anything not void yet. The `can*`
+ * flags are the data layer's guards called; neither is re-derived from the
+ * other, so an action is on only when both agree.
+ *
+ * Delete… takes the danger slot for a draft and Void… for everything else.
+ * A draft that cannot be deleted but can be voided — the one a recurring
+ * schedule generated — shows both, so the note under Delete has the action it
+ * points at right beside it.
+ */
+export function detailActions(detail: InvoiceDetail, context: ActionContext): ActionPill[] {
+  const { status } = detail;
+  const isVoid = status === 'void';
+  const hasPayments = detail.paid > 0;
+  const busy = context.busy;
+
+  const voidReason = 'A void invoice cannot be sent, paid, edited or voided again.';
+  const paymentsReason = 'An invoice with a payment recorded cannot be edited or voided.';
+
+  const sendOn =
+    status !== 'paid' && !isVoid && detail.canSend && context.sendBlock === '';
+  let sendReason = '';
+  if (!sendOn) {
+    if (context.sendBlock) sendReason = context.sendBlock;
+    else if (isVoid) sendReason = voidReason;
+    else if (status === 'paid') sendReason = 'This invoice is paid in full.';
+    else if (detail.client && detail.client.email === null)
+      sendReason = `${detail.client.name} has no email address. Add one on the client before sending.`;
+    else if (detail.balance <= 0) sendReason = 'This invoice has nothing left to bill for.';
+    else sendReason = 'This invoice cannot be sent.';
+  }
+
+  const payOn = OPEN_STATUSES.includes(status) && detail.canPay;
+  let payReason = '';
+  if (!payOn) {
+    if (isVoid) payReason = voidReason;
+    else if (status === 'paid') payReason = 'This invoice is paid in full.';
+    else if (status === 'draft') payReason = 'A payment can be recorded once the invoice is sent.';
+    else payReason = 'Nothing is outstanding on this invoice.';
+  }
+
+  const editOn = (status === 'draft' || status === 'sent') && detail.canEdit;
+  let editReason = '';
+  if (!editOn) {
+    if (isVoid) editReason = voidReason;
+    else if (hasPayments) editReason = paymentsReason;
+    else if (detail.publishedAt !== null)
+      editReason = 'A sent invoice cannot be edited. Void it and issue a new one, or duplicate it.';
+    else editReason = 'Only a draft can be edited.';
+  }
+
+  const voidOn = !isVoid && detail.canVoid;
+  const voidOffReason = isVoid ? voidReason : hasPayments ? paymentsReason : '';
+
+  const blocked = detail.deleteBlocked ?? null;
+  const showDelete = status === 'draft' || detail.canDelete;
+  const showVoid = !showDelete || (blocked !== null && detail.canVoid);
+  const deleteReason = blocked
+    ? (refusalSentence({ reason: blocked.reason as ConflictReason, status, canVoid: detail.canVoid }) ??
+      blocked.message)
+    : '';
+
+  const pill = (
+    key: string,
+    label: string,
+    on: boolean,
+    reason: string,
+    tone?: ActionPill['tone'],
+  ): ActionPill => ({
+    key,
+    label,
+    ...(tone ? { tone } : {}),
+    disabled: busy || !on,
+    ...(!busy && !on && reason ? { reason } : {}),
+  });
+
+  return [
+    pill('send', detail.publishedAt !== null ? 'Resend…' : 'Send…', sendOn, sendReason, 'primary'),
+    pill('pay', 'Record payment…', payOn, payReason),
+    pill('edit', 'Edit', editOn, editReason),
+    pill('duplicate', 'Duplicate', true, ''),
+    ...(showDelete ? [pill('delete', 'Delete…', detail.canDelete, deleteReason, 'danger')] : []),
+    ...(showVoid ? [pill('void', 'Void…', voidOn, voidOffReason, 'danger')] : []),
+  ];
 }
 
 /** The line-item rows the read-only detail table shows, quantities and all. */

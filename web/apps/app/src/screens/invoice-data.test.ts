@@ -5,8 +5,13 @@ import {
   activeStatusFilter,
   clientFormFrom,
   clientPatch,
+  daysBetween,
+  detailActions,
   detailBalance,
   detailLineItems,
+  dueNote,
+  rowsWithStatus,
+  statusChips,
   invoiceFormFrom,
   invoiceListParams,
   invoicePatch,
@@ -82,6 +87,8 @@ const DETAIL: InvoiceDetail = {
   canVoid: true,
   canPay: true,
   canDelete: false,
+  asOf: '2026-03-15',
+  deleteBlocked: null,
 };
 
 const FORM: InvoiceFormValue = invoiceFormFrom(DETAIL);
@@ -94,9 +101,10 @@ describe('invoiceListParams', () => {
     expect(invoiceListParams(new URLSearchParams())).toEqual({});
   });
 
-  it('passes a real status through', () => {
-    expect(invoiceListParams(new URLSearchParams('status=open'))).toEqual({
-      status: 'open',
+  it('never sends a status, because the chips filter the whole list here', () => {
+    expect(invoiceListParams(new URLSearchParams('status=paid'))).toEqual({});
+    expect(invoiceListParams(new URLSearchParams('status=paid&clientId=3'))).toEqual({
+      clientId: 3,
     });
   });
 
@@ -408,7 +416,7 @@ describe('invoiceTableRows', () => {
   });
 
   it('links each row at its own number', () => {
-    expect(invoiceTableRows(rows)[0].href).toBe('#/invoices?number=1250');
+    expect(invoiceTableRows(rows)[0].href).toBe('#/invoices/1250');
   });
 
   it('keeps a null client name rather than inventing one', () => {
@@ -553,5 +561,175 @@ describe('sendStepViews', () => {
 
   it('gives every step a label in our own words', () => {
     expect(sendStepViews({}).every((view) => view.label.length > 0)).toBe(true);
+  });
+});
+
+function row(number: number, status: string): InvoiceListRow {
+  return {
+    id: number,
+    number,
+    status,
+    clientId: 1,
+    clientName: 'Acme Co',
+    issueDate: '2026-02-20',
+    dueDate: '2026-03-20',
+    currency: 'USD',
+    total: 100,
+    paid: 0,
+    balance: 100,
+  };
+}
+
+describe('status chips', () => {
+  const rows = [row(7, 'paid'), row(6, 'paid'), row(5, 'overdue'), row(4, 'void')];
+
+  it('filters the list it was given, and treats an unknown status as all', () => {
+    expect(rowsWithStatus(rows, 'paid').map((r) => r.number)).toEqual([7, 6]);
+    expect(rowsWithStatus(rows, 'all')).toHaveLength(4);
+    expect(rowsWithStatus(rows, 'open')).toHaveLength(4);
+  });
+
+  it('counts every status from the whole list, in the handoff’s order', () => {
+    const chips = statusChips(rows, (status) => (status ? `#/invoices?status=${status}` : '#/invoices'));
+    expect(chips.map((chip) => [chip.label, chip.count])).toEqual([
+      ['All', 4],
+      ['Draft', 0],
+      ['Sent', 0],
+      ['Partial', 0],
+      ['Overdue', 1],
+      ['Paid', 2],
+      ['Void', 1],
+    ]);
+    expect(chips[0].href).toBe('#/invoices');
+    expect(chips[5].href).toBe('#/invoices?status=paid');
+  });
+});
+
+describe('dueNote', () => {
+  it('counts the days to a due date', () => {
+    expect(daysBetween('2026-10-19', '2026-10-20')).toBe(1);
+    expect(daysBetween('2026-10-19', '2026-09-30')).toBe(-19);
+    expect(dueNote({ status: 'sent', dueDate: '2026-10-19' }, '2026-10-19')).toBe('Due today');
+    expect(dueNote({ status: 'partial', dueDate: '2026-10-20' }, '2026-10-19')).toBe(
+      'Due tomorrow',
+    );
+    expect(dueNote({ status: 'sent', dueDate: '2026-11-05' }, '2026-10-19')).toBe(
+      'Due in 17 days',
+    );
+  });
+
+  it('says how late an overdue invoice is', () => {
+    expect(dueNote({ status: 'overdue', dueDate: '2026-09-30' }, '2026-10-19')).toBe(
+      '19 days overdue',
+    );
+    expect(dueNote({ status: 'overdue', dueDate: '2026-10-18' }, '2026-10-19')).toBe(
+      '1 day overdue',
+    );
+  });
+
+  it('says nothing for an invoice nobody is waiting on', () => {
+    for (const status of ['draft', 'paid', 'void']) {
+      expect(dueNote({ status, dueDate: '2026-09-30' }, '2026-10-19')).toBe('');
+    }
+    expect(dueNote({ status: 'sent', dueDate: null }, '2026-10-19')).toBe('');
+  });
+});
+
+describe('detailActions', () => {
+  const ready = { sendBlock: '', busy: false };
+  const by = (actions: ReturnType<typeof detailActions>) =>
+    Object.fromEntries(actions.map((action) => [action.key, action]));
+
+  it('offers a draft everything but a payment, with Delete in the danger slot', () => {
+    const actions = by(detailActions({ ...DETAIL, canDelete: true }, ready));
+    expect(Object.keys(actions)).toEqual(['send', 'pay', 'edit', 'duplicate', 'delete']);
+    expect(actions.send.label).toBe('Send…');
+    expect(actions.send.disabled).toBe(false);
+    expect(actions.pay.disabled).toBe(true);
+    expect(actions.pay.reason).toBe('A payment can be recorded once the invoice is sent.');
+    expect(actions.edit.disabled).toBe(false);
+    expect(actions.delete.disabled).toBe(false);
+  });
+
+  it('turns Send into Resend once the invoice has gone out, and swaps Delete for Void', () => {
+    const actions = by(
+      detailActions(
+        { ...DETAIL, status: 'sent', publishedAt: '2026-02-20', canEdit: false, canDelete: false },
+        ready,
+      ),
+    );
+    expect(actions.send.label).toBe('Resend…');
+    expect(actions.pay.disabled).toBe(false);
+    expect(actions.edit.reason).toContain('A sent invoice cannot be edited');
+    expect(actions.delete).toBeUndefined();
+    expect(actions.void.disabled).toBe(false);
+  });
+
+  it('requires the server’s flag and the handoff’s rule both', () => {
+    // canPay is true on a draft server-side; the handoff only offers it once sent.
+    expect(by(detailActions({ ...DETAIL, canPay: true }, ready)).pay.disabled).toBe(true);
+    // And a sent invoice the server will not take a payment on stays off.
+    expect(
+      by(detailActions({ ...DETAIL, status: 'sent', canPay: false }, ready)).pay.disabled,
+    ).toBe(true);
+  });
+
+  it('turns off Send and Record payment on a paid invoice and says why once', () => {
+    const actions = by(
+      detailActions(
+        {
+          ...DETAIL,
+          status: 'paid',
+          publishedAt: '2026-02-20',
+          paid: 3200,
+          balance: 0,
+          canEdit: false,
+          canVoid: false,
+          canPay: false,
+        },
+        ready,
+      ),
+    );
+    expect(actions.send.disabled).toBe(true);
+    expect(actions.send.reason).toBe('This invoice is paid in full.');
+    expect(actions.pay.reason).toBe('This invoice is paid in full.');
+    expect(actions.edit.reason).toBe(
+      'An invoice with a payment recorded cannot be edited or voided.',
+    );
+    expect(actions.void.reason).toBe(actions.edit.reason);
+    expect(actions.duplicate.disabled).toBe(false);
+  });
+
+  it('explains a schedule-generated draft’s Delete and puts Void beside it', () => {
+    const actions = by(
+      detailActions(
+        {
+          ...DETAIL,
+          canDelete: false,
+          canVoid: true,
+          deleteBlocked: { reason: 'from_schedule', message: 'Cannot delete: …' },
+        },
+        ready,
+      ),
+    );
+    expect(actions.delete.disabled).toBe(true);
+    expect(actions.delete.reason).toBe(
+      'A recurring schedule generated this invoice and keeps it as the record of what that period billed. Void it instead.',
+    );
+    expect(actions.void.disabled).toBe(false);
+  });
+
+  it('names what the installation is missing before anything about the invoice', () => {
+    const actions = by(
+      detailActions(DETAIL, { sendBlock: 'Sending needs r2_bucket, which is not set.', busy: false }),
+    );
+    expect(actions.send.disabled).toBe(true);
+    expect(actions.send.reason).toBe('Sending needs r2_bucket, which is not set.');
+  });
+
+  it('holds every action while a write is in flight, without inventing a reason', () => {
+    const actions = detailActions(DETAIL, { sendBlock: '', busy: true });
+    expect(actions.every((action) => action.disabled)).toBe(true);
+    expect(actions.some((action) => action.reason)).toBe(false);
   });
 });

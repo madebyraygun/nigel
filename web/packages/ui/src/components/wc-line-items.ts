@@ -1,6 +1,9 @@
 import { LitElement, html, css, nothing } from 'lit';
+import { roundHalfEven } from './round-half-even.js';
 import { customElement, property } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@awesome.me/webawesome/dist/components/input/input.js';
+import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import '../icons/icons.js';
 import './wc-money.js';
 import { controlsCss } from '@nigel/theme';
@@ -141,30 +144,56 @@ export class WcLineItems extends LitElement {
         text-align: end;
       }
 
-      input {
-        font: inherit;
+      /* The description takes the row; every other column is as wide as
+         what it holds. A width of 1% on a cell in an auto-layout table is
+         "no wider than the content", which is what lets 100% mean "the rest". */
+      .description {
         width: 100%;
-        min-width: 5rem;
-        padding: var(--wa-space-2xs) var(--wa-space-xs);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
-        background: var(--wa-color-surface);
-        color: inherit;
-      }
-
-      td.description input {
         min-width: 12rem;
+        overflow-wrap: anywhere;
+        white-space: normal;
       }
 
-      td.figure input {
+      .numeric {
+        width: 1%;
+        white-space: nowrap;
+      }
+
+      /* Qty is about four characters, Unit a typical amount with its $. */
+      td.qty wa-input {
+        width: 5.5rem;
+      }
+
+      td.unit wa-input {
+        width: 9.5rem;
+      }
+
+      td.figure wa-input::part(input) {
         text-align: end;
         font-variant-numeric: tabular-nums;
       }
 
-      .money-input {
-        display: flex;
-        align-items: center;
-        gap: var(--wa-space-2xs);
+      td.description wa-textarea {
+        width: 100%;
+      }
+
+      /* In the editor every cell is top-aligned, and the text of a cell with
+         no field in it is pushed down to the first line of the fields beside
+         it, so a wrapped description grows the row without moving the
+         amount or the row controls off its first line. */
+      tr.editing td.amount {
+        padding-top: calc(var(--wa-space-2xs) + 5px);
+      }
+
+      /* The label names each field for a screen reader; the column header
+         shows a sighted user the same thing, so it takes no space. */
+      td :is(wa-input, wa-textarea)::part(form-control-label) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
 
       .prefix {
@@ -196,6 +225,45 @@ export class WcLineItems extends LitElement {
 
       footer {
         margin-top: var(--wa-space-s);
+      }
+
+      /* The detail view's read-only table: a 12px muted header over a full
+         rule, soft rules between rows, and the Total in 600. */
+      :host([readonly]) table {
+        font-size: var(--nc-font-size-body);
+      }
+
+      :host([readonly]) th {
+        padding: 0 0 8px;
+        font-size: var(--nc-font-size-meta);
+        border-bottom: 1px solid var(--wa-color-border);
+      }
+
+      :host([readonly]) td {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--wa-color-border-soft);
+        user-select: text;
+      }
+
+      :host([readonly]) th + th,
+      :host([readonly]) td + td {
+        padding-left: 12px;
+      }
+
+      /* Narrow figure columns sit close together; a wider gutter keeps a rate
+         and its amount from reading as one number. */
+      :host([readonly]) th.numeric,
+      :host([readonly]) td.numeric {
+        padding-left: 24px;
+      }
+
+      :host([readonly]) tr[data-emphasis] td {
+        border-bottom: 0;
+      }
+
+      :host([readonly]) tr[data-emphasis='total'] td {
+        border-top: 0;
+        font-weight: var(--wa-font-weight-bold);
       }
 
       .list-error {
@@ -268,6 +336,25 @@ export class WcLineItems extends LitElement {
     );
   }
 
+  /**
+   * A description is one line on the invoice: the page and the PDF print it
+   * as a single run of text, so a newline would be lost on the way out.
+   * Enter therefore adds nothing, and a pasted newline becomes a space; the
+   * field still wraps on screen to show all of it.
+   */
+  private handleDescriptionKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Enter') event.preventDefault();
+  };
+
+  private handleDescription(index: number) {
+    return (event: Event) => {
+      const field = event.target as HTMLTextAreaElement;
+      const value = field.value.replace(/\r?\n/g, ' ');
+      if (value !== field.value) field.value = value;
+      this.emit(this.items.map((item, i) => (i === index ? { ...item, description: value } : item)));
+    };
+  }
+
   private handleField(index: number, field: keyof LineItemValue) {
     return (event: Event) => {
       const input = event.target as HTMLInputElement;
@@ -296,6 +383,10 @@ export class WcLineItems extends LitElement {
 
   render() {
     const subtotal = lineItemsSubtotal(this.items);
+    // Read-only, a Subtotal equal to the Total beneath it is the same figure
+    // twice; it earns its row only when something (tax) sits between them.
+    const hideSubtotal =
+      this.readonly && this.total !== null && roundHalfEven(subtotal, 2) === roundHalfEven(this.total, 2);
 
     return html`
       <div class="scroll">
@@ -305,18 +396,20 @@ export class WcLineItems extends LitElement {
           </caption>
           <thead>
             <tr>
-              <th scope="col">Description</th>
-              <th scope="col" class="end">Qty</th>
-              <th scope="col" class="end">Unit</th>
-              <th scope="col" class="end">Amount</th>
-              ${this.readonly ? nothing : html`<th scope="col" class="end">Row</th>`}
+              <th scope="col" class="description">Description</th>
+              <th scope="col" class="end numeric">Qty</th>
+              <th scope="col" class="end numeric">${this.readonly ? 'Rate' : 'Unit'}</th>
+              <th scope="col" class="end numeric">Amount</th>
+              ${this.readonly ? nothing : html`<th scope="col" class="end numeric">Row</th>`}
             </tr>
           </thead>
           <tbody>
             ${this.items.map((item, index) => this.renderRow(item, index))}
           </tbody>
           <tfoot>
-            <tr data-emphasis="subtotal">
+            ${hideSubtotal
+              ? nothing
+              : html`<tr data-emphasis="subtotal">
               <td colspan="3">Subtotal</td>
               <td class="end">
                 <wc-money
@@ -327,7 +420,7 @@ export class WcLineItems extends LitElement {
                 ></wc-money>
               </td>
               ${this.readonly ? nothing : html`<td></td>`}
-            </tr>
+            </tr>`}
             ${this.total === null
               ? nothing
               : html`
@@ -379,8 +472,8 @@ export class WcLineItems extends LitElement {
       return html`
         <tr data-row=${index}>
           <td class="description">${item.description}</td>
-          <td class="end">${item.quantity}</td>
-          <td class="end">
+          <td class="end numeric">${item.quantity}</td>
+          <td class="end numeric">
             <wc-money
               .amount=${parseLineNumber(item.unitAmount) ?? 0}
               .currency=${this.currency}
@@ -388,7 +481,7 @@ export class WcLineItems extends LitElement {
               align="end"
             ></wc-money>
           </td>
-          <td class="end">
+          <td class="end numeric">
             <wc-money
               .amount=${amount ?? 0}
               .currency=${this.currency}
@@ -401,57 +494,59 @@ export class WcLineItems extends LitElement {
     }
 
     return html`
-      <tr data-row=${index}>
+      <tr data-row=${index} class="editing">
         <td class="description">
-          <input
+          <wa-textarea
             data-description
-            type="text"
+            size="s"
+            rows="1"
+            resize="auto"
             autocomplete="off"
-            aria-label=${`Description, line ${index + 1}`}
+            label=${`Description, line ${index + 1}`}
             .value=${item.description}
             ?disabled=${this.disabled}
-            @input=${this.handleField(index, 'description')}
-          />
+            @keydown=${this.handleDescriptionKeydown}
+            @input=${this.handleDescription(index)}
+          ></wa-textarea>
           ${errors.description
             ? html`<p class="error" role="alert">${errors.description}</p>`
             : nothing}
         </td>
-        <td class="figure end">
-          <input
+        <td class="figure end numeric qty">
+          <wa-input
             data-quantity
-            type="text"
+            size="s"
             inputmode="decimal"
             autocomplete="off"
             spellcheck="false"
-            aria-label=${`Quantity, line ${index + 1}`}
+            label=${`Quantity, line ${index + 1}`}
             .value=${item.quantity}
             ?disabled=${this.disabled}
             @input=${this.handleField(index, 'quantity')}
-          />
+          ></wa-input>
           ${errors.quantity
             ? html`<p class="error" role="alert">${errors.quantity}</p>`
             : nothing}
         </td>
-        <td class="figure end">
-          <div class="money-input">
-            <span class="prefix" aria-hidden="true">$</span>
-            <input
-              data-unit
-              type="text"
-              inputmode="decimal"
-              autocomplete="off"
-              spellcheck="false"
-              aria-label=${`Unit amount, line ${index + 1}`}
-              .value=${item.unitAmount}
-              ?disabled=${this.disabled}
-              @input=${this.handleField(index, 'unitAmount')}
-            />
-          </div>
+        <td class="figure end numeric unit">
+          <wa-input
+            data-unit
+            size="s"
+            inputmode="decimal"
+            autocomplete="off"
+            spellcheck="false"
+            label=${`Unit amount, line ${index + 1}`}
+            .value=${item.unitAmount}
+            ?disabled=${this.disabled}
+            @input=${this.handleField(index, 'unitAmount')}
+          >
+            <span slot="start" class="prefix" data-prefix aria-hidden="true">$</span>
+          </wa-input>
           ${errors.unitAmount
             ? html`<p class="error" role="alert">${errors.unitAmount}</p>`
             : nothing}
         </td>
-        <td class="end">
+        <td class="end numeric amount">
           ${amount === null
             ? html`<span class="prefix">—</span>`
             : html`<wc-money
@@ -461,7 +556,7 @@ export class WcLineItems extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td>
+        <td class="numeric">
           <div class="row-actions">
             <wa-button
               data-up

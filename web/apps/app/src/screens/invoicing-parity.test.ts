@@ -86,9 +86,9 @@ function money(amount: number): string {
 }
 
 /**
- * Money rendered on screen, skipping the aging strip.
+ * Money rendered on screen, skipping the Outstanding card.
  *
- * The strip is a second view of the aging report sitting above the invoice
+ * The card is a second view of the aging report sitting above the invoice
  * list — the same figures the aging report itself shows, not a second set of
  * the list's numbers. Counting it here would compare the list against the
  * aging fixture. `reports-parity.test.ts` skips `wc-bar-chart` for exactly
@@ -184,9 +184,12 @@ describe('invoicing figure parity with the CLI', () => {
 
     const el = await mount('nigel-invoices-screen', client, `number=${detail.number}`);
 
-    // The detail's line-item table carries its own Subtotal and Total rows,
-    // where `format_invoice_show` prints the total once in its header.
-    const extras = [money(detail.subtotal), money(detail.total)];
+    // The total appears twice on screen — under the balance ("of $3,200.00")
+    // and as the line-item table's Total row — where `format_invoice_show`
+    // prints it once in its header. The table's Subtotal row is hidden while
+    // it equals the Total.
+    expect(detail.subtotal).toBe(detail.total);
+    const extras = [money(detail.total)];
 
     const fromText = moneyTokens(viewText('invoice-1250'));
     expect(fromText.length, 'the fixture has no figures to compare').toBe(7);
@@ -203,6 +206,51 @@ describe('invoicing figure parity with the CLI', () => {
     const fromText = moneyTokens(viewText('aging'));
     expect(fromText.length, 'the fixture has no figures to compare').toBe(9);
     expect(screenMoney(el)).toEqual(fromText);
+  });
+
+  it('puts the totals `nigel invoice aging` prints on the invoice list’s Outstanding card', async () => {
+    // The card is the aging report's summary: five bucket totals and the
+    // outstanding total, which must be the figures the CLI's summary table
+    // prints for the same books — not a re-derivation from the list.
+    const report = viewJson<AgingReport>('aging');
+    const client = seeded();
+    client.aging = report;
+    client.invoices = viewJson<InvoiceListRow[]>('invoices');
+
+    const el = await mount('nigel-invoices-screen', client);
+    const card = el.shadowRoot?.querySelector('wc-aging-bars');
+    expect(card, 'the list rendered no Outstanding card').toBeTruthy();
+
+    // The CLI's Summary table, one row per bucket plus Total Outstanding:
+    // `| current | 2 | $3,050.00 |`.
+    const summary = viewText('aging').split('Open Invoices')[0];
+    const cliRows = new Map(
+      [...summary.matchAll(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*(\$[\d,]+\.\d{2})\s*\|$/gm)].map(
+        (match) => [match[1], { count: Number(match[2]), amount: match[3] }],
+      ),
+    );
+    expect(cliRows.size, 'the summary has no rows to compare').toBe(6);
+
+    const root = card?.shadowRoot;
+    // Each bucket's legend entry against the CLI's row of the same name. The
+    // card's legend prints amounts only, so a bucket's count is the one the
+    // card was rendered from — the payload `nigel invoice aging` also printed.
+    for (const bucket of report.buckets) {
+      const row = cliRows.get(bucket.label);
+      expect(row, `the CLI has no ${bucket.label} row`).toBeDefined();
+      const legend = root?.querySelector(`[data-legend="${bucket.label}"] wc-money`) as
+        | (HTMLElement & { formatted: string })
+        | null;
+      expect(legend?.formatted, `${bucket.label} amount`).toBe(row?.amount);
+      expect(bucket.count, `${bucket.label} count`).toBe(row?.count);
+    }
+
+    const total = cliRows.get('Total Outstanding');
+    const shownTotal = root?.querySelector('[data-total]') as (HTMLElement & { formatted: string }) | null;
+    expect(shownTotal?.formatted).toBe(total?.amount);
+    expect(root?.querySelector('[data-meta]')?.textContent).toContain(
+      `across ${total?.count} open invoices`,
+    );
   });
 
   it('shows every figure `nigel client list` prints — which is none', async () => {

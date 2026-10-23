@@ -41,6 +41,32 @@ describe('parseHash', () => {
     expect([...parseHash('#/register').params]).toEqual([]);
   });
 
+  it('reads an invoice number from the path, the way the breadcrumb spells it', () => {
+    const route = parseHash('#/invoices/1254');
+    expect(route.screen).toBe('invoices');
+    expect(route.params.get('number')).toBe('1254');
+
+    const edit = parseHash('#/invoices/1254?edit=1&shell=native');
+    expect(edit.params.get('number')).toBe('1254');
+    expect(edit.params.get('edit')).toBe('1');
+    expect(edit.params.has('shell')).toBe(false);
+  });
+
+  it('still opens an invoice from the query form', () => {
+    expect(parseHash('#/invoices?number=1254').params.get('number')).toBe('1254');
+  });
+
+  it('refuses a path segment on a screen that takes none', () => {
+    expect(parseHash('#/register/1254').screen).toBe('dashboard');
+    expect(parseHash('#/invoices/1254/extra').screen).toBe('dashboard');
+  });
+
+  it('falls back to the dashboard for a segment that is not valid percent-encoding', () => {
+    expect(() => parseHash('#/invoices/%')).not.toThrow();
+    expect(parseHash('#/invoices/%').screen).toBe('dashboard');
+    expect(parseHash('#/invoices/%E0').screen).toBe('dashboard');
+  });
+
   it('does not treat a param-only hash as a screen', () => {
     expect(parseHash('#/?year=2025').screen).toBe('dashboard');
   });
@@ -57,6 +83,29 @@ describe('routeToHash', () => {
     expect(
       routeToHash({ screen: 'register', params: new URLSearchParams({ year: '2025' }) }),
     ).toBe('#/register?year=2025');
+  });
+
+  it('writes an invoice number into the path', () => {
+    expect(
+      routeToHash({ screen: 'invoices', params: new URLSearchParams('number=1254') }),
+    ).toBe('#/invoices/1254');
+    expect(
+      routeToHash({ screen: 'invoices', params: new URLSearchParams('number=1254&edit=1') }),
+    ).toBe('#/invoices/1254?edit=1');
+    expect(
+      routeToHash({ screen: 'invoices', params: new URLSearchParams('status=paid') }),
+    ).toBe('#/invoices?status=paid');
+  });
+
+  it('keeps a number that is not one in the query, where the screen refuses it', () => {
+    expect(
+      routeToHash({ screen: 'invoices', params: new URLSearchParams('number=abc') }),
+    ).toBe('#/invoices?number=abc');
+  });
+
+  it('round-trips an invoice route', () => {
+    const hash = '#/invoices/1254?edit=1';
+    expect(routeToHash(parseHash(hash))).toBe(hash);
   });
 
   it('round-trips', () => {
