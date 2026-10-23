@@ -151,6 +151,16 @@ describe('settings screen', () => {
       );
     }
 
+    it('tells the user the logo limits in plain words', async () => {
+      const { el } = await mount();
+      const field = el.shadowRoot?.querySelector('wc-logo-field') as HTMLElement & {
+        help: string;
+        prompt: string;
+      };
+      expect(field.prompt).toContain('PNG or JPEG');
+      expect(field.help).toBe('Up to 128 KB. Shown at the top of your invoices.');
+    });
+
     it('seeds all five fields once and does not clobber typing', async () => {
       const client = new FakeApiClient();
       client.company = {

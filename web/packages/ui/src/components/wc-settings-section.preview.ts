@@ -17,7 +17,7 @@ const preview: Preview = {
       render: () =>
         html`<wc-settings-section
           heading="Letterhead"
-          description="What the invoice page and the PDF say about you."
+          description="Your name and details as they appear on invoices."
           >${body()}</wc-settings-section
         >`,
     },
@@ -26,7 +26,7 @@ const preview: Preview = {
       render: () =>
         html`<wc-settings-section
           heading="Letterhead"
-          description="What the invoice page and the PDF say about you."
+          description="Your name and details as they appear on invoices."
           saved
           >${body()}</wc-settings-section
         >`,

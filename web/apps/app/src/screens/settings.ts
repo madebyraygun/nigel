@@ -34,8 +34,7 @@ import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@ni
  */
 const MAX_LOGO_BYTES = 128 * 1024;
 
-const LOGO_HELP =
-  'Up to 128 KiB. It is embedded in the PDF and inlined in the page; Gmail readers see your name in the email body and the logo on the attachment.';
+const LOGO_HELP = 'Up to 128 KB. Shown at the top of your invoices.';
 
 /** How long "✓ Saved" stays beside the Letterhead title. */
 const SAVED_FLASH_MS = 2200;
@@ -386,7 +385,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   private handleLogoFile = async (event: CustomEvent<NcLogoFileDetail>) => {
     const file = event.detail.file;
     if (file.size > MAX_LOGO_BYTES) {
-      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KiB; the limit is ${MAX_LOGO_BYTES / 1024} KiB.`;
+      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KB. The limit is ${MAX_LOGO_BYTES / 1024} KB.`;
       return;
     }
     try {
@@ -545,8 +544,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     if (detail.mode === 'remove') {
       const confirmed = await confirmDialog({
         heading: 'Remove the database password?',
-        message:
-          'The database will be decrypted and readable by anyone with access to the file.',
+        message: 'Anyone who can open the file will be able to read your books.',
         confirmLabel: 'Remove password',
         variant: 'danger',
       });
@@ -669,8 +667,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
             @input=${this.companyInput.paymentInstructions}
           ></wa-textarea>
           <p class="note">
-            Printed on both the invoice page and the PDF, or on neither. Leave it
-            empty if you do not take bank transfers.
+            Tells clients how to pay you, such as your bank details. Shown on every
+            invoice. Leave it empty to show nothing.
           </p>
         </div>
         <wc-logo-field
@@ -749,7 +747,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         ${this.appSettings
           ? html`<wc-switch-row
               label="Check for updates automatically"
-              description="Checks GitHub for a newer version once a day when Nigel starts."
+              description="Once a day, when Nigel starts, see if a new version is out."
               ?checked=${this.appSettings.updateCheck}
               ?disabled=${this.busy === 'update'}
               @nc-switch-change=${this.toggleUpdateCheck}
@@ -811,7 +809,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="letterhead"
             heading="Letterhead"
-            description="What the invoice page and the PDF say about you. The name also appears in the breadcrumb, on reports and in the window title."
+            description="Your name and details as they appear on invoices. The name also shows at the top of Nigel and on reports."
             ?saved=${this.savedFlash}
           >
             ${this.renderCompanyBody(nameLabel)}
@@ -824,7 +822,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="location"
             heading="Location"
-            description="Where this set of books lives. Each set is a folder with a nigel.db inside; switching reloads Nigel onto the other database."
+            description="The folder these books are kept in. Switch to another folder to open a different set of books."
           >
             ${this.renderLocation(status?.dataDirDisplay || status?.dataDir || '')}
           </wc-settings-section>
@@ -839,7 +837,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="appearance"
             heading="Appearance"
-            description="Light, dark, or whatever this device is set to. Kept on this device only, so a laptop and a desktop on the same books can differ."
+            description="How Nigel looks and works on this device. Other devices keep their own choices."
           >
             <wc-appearance-picker
               .mode=${this.colorMode}

@@ -3,7 +3,7 @@ import './wc-logo-field.js';
 import type { Preview } from '../../preview/types.js';
 
 const HELP =
-  'Up to 128 KiB. It is embedded in the PDF and inlined in the page; Gmail readers see your name in the email body and the logo on the attachment.';
+  'Up to 128 KB. Shown at the top of your invoices.';
 
 /** A 1×1 lavender PNG, so the filled state needs no asset. */
 const LOGO =
