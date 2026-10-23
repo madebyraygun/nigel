@@ -21,6 +21,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::OwnedRwLockWriteGuard;
 
 use crate::db;
 use crate::password;
@@ -212,37 +213,41 @@ async fn post_data_dir(
     }
 
     {
-        let _gate = state.db_gate.write().await;
+        let gate = state.db_gate.clone().write_owned().await;
         let mut stored = settings::try_load_settings()?;
 
-        // Everything that can fail happens before anything is committed. A
-        // target this build cannot open must leave the switch un-made: rebinding
-        // first and discovering the problem afterwards would strand the server
-        // on a database it cannot serve, and settings.json would send it back
-        // there on the next start.
-        if !db::is_encrypted(&db_path)? {
-            // Opened with no password explicitly rather than through
-            // `get_connection`: the process global still holds the *current*
-            // database's key at this point, and applying it to a plaintext file
-            // would fail.
-            let path = db_path.clone();
-            tokio::task::spawn_blocking(move || -> ApiResult<()> {
-                // The same pre-flight `nigel serve` runs at startup, so a target
-                // written by an older version is migrated before the first read.
-                // An encrypted one is skipped; unlocking migrates it.
-                let conn = db::open_connection(&path, None)?;
-                db::init_db(&conn).map_err(ApiError::internal)
-            })
-            .await
-            .map_err(ApiError::internal)??;
-        }
+        // The migration and the rebind run in one task that owns the guard, so
+        // a request cancelled partway cannot release the gate while the target
+        // is open, nor leave the switch half made.
+        let switch = state.clone();
+        let (_gate, switched) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
+            // Everything that can fail happens before anything is committed. A
+            // target this build cannot open must leave the switch un-made:
+            // rebinding first and discovering the problem afterwards would
+            // strand the server on a database it cannot serve, and settings.json
+            // would send it back there on the next start.
+            if !db::is_encrypted(&db_path)? {
+                // Opened with no password explicitly rather than through
+                // `get_connection`: the process global still holds the
+                // *current* database's key at this point, and applying it to a
+                // plaintext file would fail. The same pre-flight `nigel serve`
+                // runs at startup, so a target written by an older version is
+                // migrated before the first read. An encrypted one is skipped;
+                // unlocking migrates it.
+                let conn = db::open_connection(&db_path, None)?;
+                db::init_db(&conn).map_err(ApiError::internal)?;
+            }
 
-        stored.data_dir = resolved.to_string_lossy().to_string();
-        settings::save_settings(&stored)?;
+            stored.data_dir = resolved.to_string_lossy().to_string();
+            settings::save_settings(&stored)?;
 
-        db::set_db_password(None);
-        state.set_db_path(db_path);
-        state.unlock.reset();
+            db::set_db_password(None);
+            switch.set_db_path(db_path);
+            switch.unlock.reset();
+            Ok(())
+        })
+        .await?;
+        switched?;
     }
 
     Ok(Json(current_status(&state).await?))
@@ -299,20 +304,20 @@ async fn post_password_set(
 
     // Taken before the path is read, so a data-directory switch that lands
     // between the two cannot leave this encrypting the database it replaced.
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if db::is_encrypted(&db_path)? {
         return Err(already_encrypted());
     }
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, encrypted) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::encrypt_database(&db_path, &new_password)?;
         // Only after the file is genuinely encrypted: the reverse order leaves
         // this process holding a key for a database that is still plaintext.
         db::set_db_password(Some(new_password));
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    encrypted?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: true,
@@ -332,20 +337,20 @@ async fn post_password_change(
     let new_password = trimmed_new_password(&request.new_password)?;
     let current = request.current_password.expose().trim().to_string();
 
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if !db::is_encrypted(&db_path)? {
         return Err(not_encrypted());
     }
-    verify_current_password(&state, &db_path, &current).await?;
+    let gate = verify_current_password(&state, gate, &db_path, &current).await?;
 
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, rekeyed) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::rekey_database(&db_path, &current, &new_password)?;
         db::set_db_password(Some(new_password));
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    rekeyed?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: true,
@@ -361,20 +366,20 @@ async fn post_password_remove(
     let request = password_body(body, "{\"currentPassword\": \"...\"}")?;
     let current = request.current_password.expose().trim().to_string();
 
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if !db::is_encrypted(&db_path)? {
         return Err(not_encrypted());
     }
-    verify_current_password(&state, &db_path, &current).await?;
+    let gate = verify_current_password(&state, gate, &db_path, &current).await?;
 
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, decrypted) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::decrypt_database(&db_path, &current)?;
         db::set_db_password(None);
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    decrypted?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: false,
@@ -391,26 +396,30 @@ async fn post_password_remove(
 /// clean `401` instead of the `NotADatabase` failure `rekey_database` would
 /// raise a moment later.
 ///
-/// **The caller holds `db_gate`.** Both callers go on to rewrite the database
-/// file, so they hold the write side across the check and the rewrite together
-/// — taking a read guard here would deadlock against it, and releasing between
-/// the two would let a data-directory switch land in the middle.
+/// **The caller hands over its `db_gate` write guard and gets it back.** Both
+/// callers go on to rewrite the database file, so they hold the write side
+/// across the check and the rewrite together — taking a read guard here would
+/// deadlock against it, and releasing between the two would let a
+/// data-directory switch land in the middle. The check's own task holds the
+/// guard while its connection is open.
 async fn verify_current_password(
     state: &AppState,
+    gate: OwnedRwLockWriteGuard<()>,
     db_path: &std::path::Path,
     current: &str,
-) -> ApiResult<()> {
+) -> ApiResult<OwnedRwLockWriteGuard<()>> {
     let path = db_path.to_path_buf();
     let candidate = current.to_string();
-    let valid = tokio::task::spawn_blocking(move || db::validate_password(&path, &candidate))
-        .await
-        .map_err(ApiError::internal)?
-        // The error text is dropped: the key is applied as literal SQL in a
-        // `PRAGMA key` statement, which rusqlite prints back in its message.
+    let (gate, valid) =
+        super::spawn_blocking_holding(gate, move || db::validate_password(&path, &candidate))
+            .await?;
+    // The error text is dropped: the key is applied as literal SQL in a
+    // `PRAGMA key` statement, which rusqlite prints back in its message.
+    let valid = valid
         .map_err(|_| ApiError::internal("Couldn't open the database to check the password."))?;
     if valid {
         state.unlock.reset();
-        return Ok(());
+        return Ok(gate);
     }
 
     let (attempts_remaining, delay) = state.unlock.record_failure();

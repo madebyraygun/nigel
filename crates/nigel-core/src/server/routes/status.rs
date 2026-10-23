@@ -108,7 +108,7 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
     // Everything below describes one database, so the guard is taken before the
     // path is read: a data-directory switch landing partway through would
     // otherwise report one database's name under another's path.
-    let _gate = state.db_gate.read().await;
+    let gate = state.db_gate.clone().read_owned().await;
     // A settings.json that cannot be parsed is an error rather than an
     // unconfigured install: answering with the defaults would put the setup
     // screen in front of somebody whose configuration is one typo away.
@@ -120,19 +120,22 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
 
     // Reading the company name (and profile) means reading the database,
     // which needs the key.
-    let (company_name, profile) = if initialized && !locked {
+    let (_gate, (company_name, profile)) = if initialized && !locked {
         let path = db_path.clone();
-        tokio::task::spawn_blocking(move || -> ApiResult<(Option<String>, db::Profile)> {
-            let conn = db::get_connection(&path)?;
-            Ok((
-                db::get_metadata(&conn, "company_name"),
-                db::get_profile(&conn),
-            ))
-        })
-        .await
-        .map_err(ApiError::internal)??
+        let (gate, read) = super::spawn_blocking_holding(
+            gate,
+            move || -> ApiResult<(Option<String>, db::Profile)> {
+                let conn = db::get_connection(&path)?;
+                Ok((
+                    db::get_metadata(&conn, "company_name"),
+                    db::get_profile(&conn),
+                ))
+            },
+        )
+        .await?;
+        (gate, read?)
     } else {
-        (None, db::Profile::default())
+        (gate, (None, db::Profile::default()))
     };
 
     Ok(StatusResponse {
@@ -209,11 +212,13 @@ async fn unlock(
     // out from under it, and the path is read under the guard so the key is
     // never applied to a database the switch has already moved on from.
     let unlocked = {
-        let _gate = state.db_gate.read().await;
+        let gate = state.db_gate.clone().read_owned().await;
         let db_path = state.db_path();
-        tokio::task::spawn_blocking(move || try_unlock(&db_path, request.password.expose()))
-            .await
-            .map_err(ApiError::internal)??
+        let (_gate, unlocked) = super::spawn_blocking_holding(gate, move || {
+            try_unlock(&db_path, request.password.expose())
+        })
+        .await?;
+        unlocked?
     };
 
     if unlocked {
