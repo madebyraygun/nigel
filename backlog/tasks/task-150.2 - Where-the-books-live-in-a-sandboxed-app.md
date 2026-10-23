@@ -4,6 +4,7 @@ title: Where the books live in a sandboxed app
 status: To Do
 assignee: []
 created_date: '2026-10-07 18:46'
+updated_date: '2026-10-23 23:04'
 labels:
   - swift
   - macos
@@ -33,3 +34,9 @@ The shell owns the location instead. First run offers a folder, pre-pointed at ~
 - [ ] #4 No store-build code path creates a database the user did not choose
 - [ ] #5 Settings shows where the books are, with Show in Finder
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+From TASK-144.1 (PR #72): NigelHost::new(data_dir, config_dir) takes both folders explicitly. Two sandbox gaps remain for this task: (1) with a fresh config folder and no settings.json, settings.data_dir still defaults to $HOME/Documents/nigel, which in the sandbox is inside the app container — seed data_dir from the folder the host opened; (2) onboarding's Demo action (demo::setup_demo_dir) creates <settings.data_dir>/demo, which could create a folder the user never chose — build the demo under the folder actually being served.
+<!-- SECTION:NOTES:END -->
