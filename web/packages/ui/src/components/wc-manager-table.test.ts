@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import './wc-manager-table.js';
-import type { WcManagerTable, NcManagerActionDetail } from './wc-manager-table.js';
+import type { CSSResult, CSSResultGroup } from 'lit';
+import { WcManagerTable } from './wc-manager-table.js';
+import type { NcManagerActionDetail } from './wc-manager-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-manager-table.preview.js';
 
@@ -46,6 +47,33 @@ describe('wc-manager-table', () => {
 
     const plain = await mount({ plain: true });
     expect(plain.hasAttribute('plain')).toBe(true);
+  });
+
+  it('labels every cell but the first with its column, for the stacked layout', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="1"]');
+    const labels = [...(row?.querySelectorAll('td') ?? [])].map((td) =>
+      td.getAttribute('data-label'),
+    );
+    expect(labels).toEqual([null, 'Type', 'Hits', null]);
+  });
+
+  it('keeps table roles on its elements, which the stacked layout sets to block', async () => {
+    const el = await mount();
+    const root = el.shadowRoot;
+    expect(root?.querySelector('table')?.getAttribute('role')).toBe('table');
+    expect(root?.querySelector('tbody tr')?.getAttribute('role')).toBe('row');
+    expect(root?.querySelector('tbody td')?.getAttribute('role')).toBe('cell');
+    expect(root?.querySelector('th')?.getAttribute('role')).toBe('columnheader');
+  });
+
+  it('stacks its rows from the width of its own frame rather than scrolling', () => {
+    const text = (WcManagerTable.styles as CSSResultGroup[])
+      .flat()
+      .map((sheet) => String((sheet as CSSResult).cssText))
+      .join('\n');
+    expect(text).toMatch(/\.frame\s*\{[^}]*container-type:\s*inline-size/);
+    expect(text).toMatch(/@container \(max-width: 720px\)/);
   });
 
   it('renders a header per column plus one for the actions', async () => {

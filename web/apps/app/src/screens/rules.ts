@@ -107,6 +107,8 @@ export class NigelRulesScreen extends LitElement {
   @state() private error: string | null = null;
   @state() private retryable = false;
   @state() private editor: Editor | null = null;
+  /** The editor whose dialog is animating closed. */
+  @state() private closingEditor: Editor | null = null;
   @state() private formErrors: RuleFormErrors = {};
   @state() private saving = false;
   @state() private dialogError: string | null = null;
@@ -194,7 +196,12 @@ export class NigelRulesScreen extends LitElement {
     this.clearRuleTest();
   };
 
+  /**
+   * Closing keeps what the dialog showed until its hide animation has run;
+   * `nc-manager-closed` clears it.
+   */
   private closeEditor = (): void => {
+    if (this.editor) this.closingEditor = this.editor;
     this.editor = null;
     this.formErrors = {};
     this.dialogError = null;
@@ -439,8 +446,12 @@ export class NigelRulesScreen extends LitElement {
     `;
   }
 
+  private handleDialogClosed = (): void => {
+    this.closingEditor = null;
+  };
+
   private renderEditor(): TemplateResult | typeof nothing {
-    const editor = this.editor;
+    const editor = this.editor ?? this.closingEditor;
     if (!editor) return nothing;
 
     const creating = editor.id === undefined;
@@ -448,13 +459,14 @@ export class NigelRulesScreen extends LitElement {
     return html`
       <wc-manager-dialog
         slot="overlay"
-        open
+        ?open=${this.editor !== null}
         heading=${creating ? 'Add rule' : 'Edit rule'}
         confirm-label=${creating ? 'Add rule' : 'Save'}
         ?busy=${this.saving}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
+        @nc-manager-closed=${this.handleDialogClosed}
       >
         <wc-rule-form
           .value=${editor.value}

@@ -98,7 +98,7 @@ function table(el: NigelRulesScreen): WcManagerTable {
 }
 
 function dialog(el: NigelRulesScreen): WcManagerDialog | null {
-  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog') ?? null;
+  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog[open]') ?? null;
 }
 
 function form(el: NigelRulesScreen): WcRuleForm {

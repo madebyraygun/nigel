@@ -106,7 +106,7 @@ export class WcClientForm extends LitElement {
       .fields {
         display: grid;
         gap: var(--wa-space-m);
-        min-width: 20rem;
+        min-width: 0;
       }
 
       .error {
@@ -151,7 +151,10 @@ export class WcClientForm extends LitElement {
         resize: vertical;
       }
 
+      /* A fieldset's minimum width is its content's by default, which is
+         what let a contact row push the dialog wider than itself. */
       fieldset.contacts {
+        min-inline-size: 0;
         display: grid;
         gap: var(--wa-space-s);
         margin: 0;
@@ -162,24 +165,52 @@ export class WcClientForm extends LitElement {
         justify-items: start;
       }
 
+      /* One contact: the billing choice and the row's buttons on a line,
+         then its email across the card, then name and title side by side
+         while each keeps 9rem and stacked below that. */
       .contact {
         display: grid;
-        grid-template-columns: auto 1fr 1fr 1fr auto;
-        gap: var(--wa-space-xs);
-        align-items: end;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          'billing actions'
+          'fields fields';
+        gap: var(--wa-space-2xs) var(--wa-space-xs);
+        align-items: center;
         width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px 10px;
+        border: 1px solid var(--wa-color-border-soft);
+        border-radius: var(--wa-radius-md);
+        background: var(--wa-color-surface);
       }
 
       .contact .billing {
-        display: grid;
-        justify-items: center;
+        grid-area: billing;
+        display: flex;
+        align-items: center;
         gap: var(--wa-space-2xs);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
+        color: var(--wa-color-muted);
       }
 
       .contact .row-actions {
+        grid-area: actions;
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         gap: var(--wa-space-2xs);
+      }
+
+      .contact .contact-fields {
+        grid-area: fields;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+        gap: var(--wa-space-xs);
+        min-width: 0;
+      }
+
+      .contact .contact-fields [data-contact-email] {
+        grid-column: 1 / -1;
       }
     `,
   ];
@@ -263,7 +294,7 @@ export class WcClientForm extends LitElement {
 
     return html`
       <div class="contact" data-contact=${index}>
-        <span class="billing">
+        <label class="billing">
           <input
             type="radio"
             name="billing-contact"
@@ -273,35 +304,38 @@ export class WcClientForm extends LitElement {
             ?disabled=${this.disabled}
             @change=${this.chooseBilling(index)}
           />
-        </span>
-        <wa-input
-          data-contact-email
-          label="Email"
-          type="email"
-          autocomplete="off"
-          spellcheck="false"
-          value=${contact.email}
-          ?disabled=${this.disabled}
-          @input=${this.handleContactField(index, 'email')}
-        ></wa-input>
-        <wa-input
-          data-contact-name
-          label="Name"
-          autocomplete="off"
-          spellcheck="false"
-          value=${contact.name}
-          ?disabled=${this.disabled}
-          @input=${this.handleContactField(index, 'name')}
-        ></wa-input>
-        <wa-input
-          data-contact-title
-          label="Title"
-          autocomplete="off"
-          spellcheck="false"
-          value=${contact.title}
-          ?disabled=${this.disabled}
-          @input=${this.handleContactField(index, 'title')}
-        ></wa-input>
+          <span aria-hidden="true">Billing</span>
+        </label>
+        <div class="contact-fields">
+          <wa-input
+            data-contact-email
+            label="Email"
+            type="email"
+            autocomplete="off"
+            spellcheck="false"
+            value=${contact.email}
+            ?disabled=${this.disabled}
+            @input=${this.handleContactField(index, 'email')}
+          ></wa-input>
+          <wa-input
+            data-contact-name
+            label="Name"
+            autocomplete="off"
+            spellcheck="false"
+            value=${contact.name}
+            ?disabled=${this.disabled}
+            @input=${this.handleContactField(index, 'name')}
+          ></wa-input>
+          <wa-input
+            data-contact-title
+            label="Title"
+            autocomplete="off"
+            spellcheck="false"
+            value=${contact.title}
+            ?disabled=${this.disabled}
+            @input=${this.handleContactField(index, 'title')}
+          ></wa-input>
+        </div>
         <span class="row-actions">
           <wa-button
             data-move-up

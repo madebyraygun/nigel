@@ -123,6 +123,8 @@ export class NigelClientsScreen extends LitElement {
   @state() private error: string | null = null;
   @state() private errorAction: { label: string; run: () => void } | null = null;
   @state() private editor: Editor | null = null;
+  /** The editor whose dialog is animating closed. */
+  @state() private closingEditor: Editor | null = null;
   @state() private formErrors: ClientFormErrors = {};
   @state() private saving = false;
   @state() private dialogError: string | null = null;
@@ -219,7 +221,12 @@ export class NigelClientsScreen extends LitElement {
     if (this.editor?.id !== undefined) void this.loadEditor(this.editor.id);
   };
 
+  /**
+   * Closing keeps what the dialog showed until its hide animation has run;
+   * `nc-manager-closed` clears it.
+   */
   private closeEditor = (): void => {
+    if (this.editor) this.closingEditor = this.editor;
     this.editor = null;
     this.formErrors = {};
     this.dialogError = null;
@@ -407,8 +414,12 @@ export class NigelClientsScreen extends LitElement {
     `;
   }
 
+  private handleDialogClosed = (): void => {
+    this.closingEditor = null;
+  };
+
   private renderEditor(): TemplateResult | typeof nothing {
-    const editor = this.editor;
+    const editor = this.editor ?? this.closingEditor;
     if (!editor) return nothing;
 
     const creating = editor.mode === 'create';
@@ -416,13 +427,14 @@ export class NigelClientsScreen extends LitElement {
     return html`
       <wc-manager-dialog
         slot="overlay"
-        open
+        ?open=${this.editor !== null}
         heading=${creating ? 'Add client' : 'Edit client'}
         confirm-label=${creating ? 'Add client' : 'Save'}
         ?busy=${this.saving || editor.loading === true || editor.loadFailed === true}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
+        @nc-manager-closed=${this.handleDialogClosed}
       >
         ${editor.loadFailed
           ? html`<wa-button data-retry-editor @click=${this.retryEditor}>Try again</wa-button>`

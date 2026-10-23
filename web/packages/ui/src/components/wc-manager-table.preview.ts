@@ -126,6 +126,61 @@ const preview: Preview = {
       `,
     },
     {
+      // A phone's width: each row is a card with its column headings beside
+      // the values and its buttons last, and nothing scrolls sideways. The
+      // box stands in for the content area of a 390px window.
+      name: 'stacked-at-phone-width',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-manager-table
+            caption="Categorization rules"
+            .columns=${ruleColumns}
+            .rows=${ruleRows}
+            .actions=${editDelete}
+          ></wc-manager-table>
+        </div>
+      `,
+    },
+    {
+      // Per-row actions and a badge, as the clients list has them, stacked.
+      name: 'stacked-with-row-actions',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-manager-table
+            caption="Clients"
+            .columns=${[
+              { key: 'name', label: 'Name' },
+              { key: 'email', label: 'Email' },
+              { key: 'billingAddress', label: 'Billing address' },
+            ]}
+            .rows=${[
+              {
+                id: 1,
+                label: 'Cedar Systems',
+                cells: ['Cedar Systems', 'ap@cedarsystems.test', '88 Cedar Way, Bend OR 97701'],
+                actions: [
+                  { name: 'invoices', label: 'Invoices' },
+                  { name: 'edit', label: 'Edit', icon: 'wc-icon-edit' },
+                  { name: 'archive', label: 'Archive' },
+                  { name: 'delete', label: 'Delete', icon: 'wc-icon-trash', variant: 'danger' },
+                ],
+              },
+              {
+                id: 2,
+                label: 'Globex',
+                badge: 'Archived',
+                cells: ['Globex', null, '1 Globex Plaza'],
+                actions: [
+                  { name: 'invoices', label: 'Invoices' },
+                  { name: 'unarchive', label: 'Unarchive' },
+                ],
+              },
+            ] satisfies ManagerRow[]}
+          ></wc-manager-table>
+        </div>
+      `,
+    },
+    {
       // Inside a card of its own, the table drops its card so the two do not
       // nest: Documents' inactive kinds sit in a wc-panel.
       name: 'plain-inside-a-panel',

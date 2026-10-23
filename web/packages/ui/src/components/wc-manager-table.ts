@@ -174,6 +174,104 @@ export class WcManagerTable extends LitElement {
       th.actions-header {
         text-align: end;
       }
+
+      /* The card's own width picks the layout (the stacked rules below). */
+      .frame {
+        container-type: inline-size;
+      }
+
+      /* -- the stacked layout --
+
+         Below 720px the columns and the row's buttons no longer fit side by
+         side, so each row becomes a card in the table's own width, as the
+         register's rows do: the first column as the row's title, every other
+         column as a labelled line under it, the buttons last. Nothing
+         scrolls sideways.
+
+         The elements keep their table roles explicitly, so the cells are
+         still announced as cells of their columns; the header row is there
+         for assistive technology and takes no room. */
+      @container (max-width: 720px) {
+        table,
+        tbody,
+        tr,
+        td {
+          display: block;
+        }
+
+        thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip-path: inset(50%);
+          white-space: nowrap;
+        }
+
+        tbody tr {
+          display: grid;
+          gap: 4px;
+          padding: 12px 16px;
+          border-bottom: 1px solid var(--wa-color-border-soft);
+        }
+
+        tbody tr:last-child {
+          border-bottom: 0;
+        }
+
+        tbody tr:hover {
+          background: var(--wa-color-surface-alt);
+        }
+
+        tbody tr:hover td {
+          background: none;
+        }
+
+        td,
+        td:first-child,
+        td:last-child {
+          height: auto;
+          padding: 0;
+          border-bottom: 0;
+          min-width: 0;
+        }
+
+        td.end {
+          text-align: start;
+        }
+
+        /* The first column is what the list keys its rows by: the card's
+           title. */
+        td:first-child {
+          font-weight: var(--wa-font-weight-medium);
+        }
+
+        /* Every other column is a line of its own, its heading beside it. */
+        td[data-label] {
+          display: grid;
+          grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+          gap: 12px;
+          font-size: var(--nc-font-size-control);
+          overflow-wrap: anywhere;
+        }
+
+        td[data-label]::before {
+          content: attr(data-label);
+          color: var(--wa-color-muted);
+          font-size: var(--nc-font-size-meta);
+          font-weight: var(--nc-font-weight-table-heading);
+          line-height: inherit;
+        }
+
+        td.actions-cell {
+          padding-top: 6px;
+        }
+
+        .actions {
+          flex-wrap: wrap;
+          justify-content: flex-start;
+        }
+      }
     `,
   ];
 
@@ -215,27 +313,36 @@ export class WcManagerTable extends LitElement {
     const hasActions =
       this.actions.length > 0 || this.rows.some((row) => (row.actions?.length ?? 0) > 0);
 
+    // The roles are stated because the stacked layout sets the table's
+    // elements to display: block, which some engines take as leaving the
+    // table: the rows have to stay rows of cells for a screen reader.
     return html`
-      <table>
-        ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
-        <thead>
-          <tr>
-            ${this.columns.map(
-              (column) => html`
-                <th scope="col" class=${column.align === 'end' ? 'end' : ''}>
-                  ${column.label}
-                </th>
-              `,
-            )}
-            ${hasActions
-              ? html`<th scope="col" class="actions-header">Actions</th>`
-              : nothing}
-          </tr>
-        </thead>
-        <tbody>
-          ${this.rows.map((row) => this.renderRow(row, hasActions))}
-        </tbody>
-      </table>
+      <div class="frame">
+        <table role="table">
+          ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
+          <thead role="rowgroup">
+            <tr role="row">
+              ${this.columns.map(
+                (column) => html`
+                  <th
+                    scope="col"
+                    role="columnheader"
+                    class=${column.align === 'end' ? 'end' : ''}
+                  >
+                    ${column.label}
+                  </th>
+                `,
+              )}
+              ${hasActions
+                ? html`<th scope="col" role="columnheader" class="actions-header">Actions</th>`
+                : nothing}
+            </tr>
+          </thead>
+          <tbody role="rowgroup">
+            ${this.rows.map((row) => this.renderRow(row, hasActions))}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -244,7 +351,7 @@ export class WcManagerTable extends LitElement {
     const actions = row.actions ?? this.actions;
 
     return html`
-      <tr data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
+      <tr role="row" data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
         ${this.columns.map((column, index) => {
           const value = row.cells[index] ?? null;
           const classes = [
@@ -254,7 +361,13 @@ export class WcManagerTable extends LitElement {
           ]
             .filter(Boolean)
             .join(' ');
-          return html`<td class=${classes}>
+          // Every column but the first carries its heading, which the
+          // stacked layout shows beside the value.
+          return html`<td
+            role="cell"
+            class=${classes}
+            data-label=${index === 0 ? nothing : column.label}
+          >
             ${value === null ? '—' : value}
             ${index === 0 && row.badge
               ? html`<wc-row-badge label=${row.badge}></wc-row-badge>`
@@ -263,7 +376,7 @@ export class WcManagerTable extends LitElement {
         })}
         ${hasActions
           ? html`
-              <td>
+              <td role="cell" class="actions-cell">
                 <div class="actions">
                   ${actions.map(
                     (action) => html`

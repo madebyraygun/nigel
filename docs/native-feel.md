@@ -266,6 +266,13 @@ chips, a switch, or a `wa-select`, which `controlsCss` lays out with its
 label inline to its left in the muted control type rather than stacked
 above it. No screen sets its own margin between a filter row and a table.
 
+A list never scrolls sideways at a phone's width. The register stacks each
+row into two lines below 860px of card width; `wc-manager-table` (Clients,
+Accounts, Categories, Rules, Documents' inactive kinds) stacks each row into
+a card below 720px, with the column headings beside the values and the row's
+buttons last. Both decide from the table's own width through a container
+query, so a narrow window, the sidebar or a split view all count.
+
 Every table heading — column and row headings alike, in the manager,
 invoice, document, register, report, line-item and the other tables — is
 set at `--nc-font-weight-table-heading` (700, Plex Mono's own bold face,

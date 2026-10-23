@@ -65,7 +65,7 @@ function table(el: NigelAccountsScreen): WcManagerTable {
 }
 
 function dialog(el: NigelAccountsScreen): WcManagerDialog | null {
-  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog') ?? null;
+  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog[open]') ?? null;
 }
 
 function form(el: NigelAccountsScreen): WcAccountForm {
