@@ -1,9 +1,10 @@
 ---
 id: TASK-154.14
 title: Edit a transaction in a dialog instead of inline in the register
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-22 16:50'
+updated_date: '2026-10-23 23:18'
 labels:
   - web
   - design

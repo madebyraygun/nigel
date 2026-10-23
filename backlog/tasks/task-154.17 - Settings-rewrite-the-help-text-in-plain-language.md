@@ -1,9 +1,10 @@
 ---
 id: TASK-154.17
 title: 'Settings: rewrite the help text in plain language'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-23 16:25'
+updated_date: '2026-10-23 23:18'
 labels:
   - web
   - copy
