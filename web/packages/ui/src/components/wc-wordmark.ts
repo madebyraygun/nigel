@@ -81,9 +81,9 @@ export class WcWordmark extends LitElement {
       margin: 0;
       font-family: var(--wa-font-family-mono);
       font-size: var(--nc-wordmark-size, var(--wa-font-size-s));
-      line-height: 1.05;
+      line-height: var(--nc-wordmark-leading, 1.05);
       white-space: pre;
-      font-weight: var(--wa-font-weight-bold);
+      font-weight: var(--nc-wordmark-weight, var(--wa-font-weight-bold));
     }
 
     .char {
@@ -126,11 +126,31 @@ export class WcWordmark extends LitElement {
         animation: none;
       }
     }
+
+    /* One diagonal ramp across the whole mark instead of one per character.
+       The gradient is painted on the block and clipped to the glyphs, so the
+       characters carry none of their own. */
+    :host([diagonal]) .art {
+      background-image: var(--nc-grad-wordmark);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    :host([diagonal]) .char {
+      background-image: none;
+      animation: none;
+    }
   `;
 
   /** Whether the gradient drifts along the mark. */
   @property({ type: Boolean, reflect: true })
   animated = false;
+
+  /** Paints `--nc-grad-wordmark` across the whole mark at its own angle, without drifting. */
+  @property({ type: Boolean, reflect: true })
+  diagonal = false;
 
   /** How much of the mark is drawn, 0 to 1. Characters appear in a shuffled order. */
   @property({ type: Number })

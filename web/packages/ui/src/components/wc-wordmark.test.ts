@@ -37,7 +37,11 @@ function reachesChar(el: WcWordmark, selector: string): boolean {
  * query, so `getComputedStyle` answers nothing here and the cascade is walked
  * over the component's own rules instead.
  */
-function winningAnimation(el: WcWordmark, systemReducedMotion = false): string {
+function winningDeclaration(
+  el: WcWordmark,
+  property: string,
+  systemReducedMotion = false,
+): string {
   const probe = document.createElement('style');
   probe.textContent = el.shadowRoot?.querySelector('style')?.textContent ?? '';
   document.head.appendChild(probe);
@@ -58,15 +62,18 @@ function winningAnimation(el: WcWordmark, systemReducedMotion = false): string {
   let winner = '';
   let best = -1;
   rules.forEach((rule, order) => {
-    if (!rule.style.animation || !reachesChar(el, rule.selectorText)) return;
+    if (!rule.style.getPropertyValue(property) || !reachesChar(el, rule.selectorText)) return;
     const weight = specificity(rule.selectorText) * 1000 + order;
     if (weight >= best) {
       best = weight;
-      winner = rule.style.animation;
+      winner = rule.style.getPropertyValue(property);
     }
   });
   return winner;
 }
+
+const winningAnimation = (el: WcWordmark, systemReducedMotion = false) =>
+  winningDeclaration(el, 'animation', systemReducedMotion);
 
 describe('wc-wordmark', () => {
   afterEach(() => {
@@ -155,6 +162,11 @@ describe('wc-wordmark', () => {
     const el = await mount({ animated: true, reducedMotion: true });
     expect(el.hasAttribute('reduced-motion')).toBe(true);
     expect(winningAnimation(el)).toBe('none');
+  });
+
+  it('keeps the diagonal ramp off the characters when motion is unwelcome', async () => {
+    const el = await mount({ diagonal: true, animated: true, reducedMotion: true });
+    expect(winningDeclaration(el, 'background-image')).toBe('none');
   });
 
   it('stands the animation down for a system that asked for less motion', async () => {

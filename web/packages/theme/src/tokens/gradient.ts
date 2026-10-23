@@ -57,6 +57,28 @@ const CLOSED_RAMP = [...NIGEL_PALETTE, NIGEL_PALETTE[0]].map((hex) => [
   parseInt(hex.slice(5, 7), 16),
 ]);
 
+/**
+ * The setup wordmark's six-stop ramp, peach through mint. Dark mode keeps the
+ * pastels; light mode takes each stop to an ink that holds on a pale surface.
+ */
+export const WORDMARK_RAMP_DARK = [
+  '#ffc8a2',
+  '#ffb3ba',
+  '#ffb3de',
+  '#c4b7ff',
+  '#bae1ff',
+  '#c9ffcb',
+] as const;
+
+export const WORDMARK_RAMP_LIGHT = [
+  '#9b5524',
+  '#c22e3b',
+  '#ba2c7c',
+  '#6951d6',
+  '#266ba1',
+  '#1c781f',
+] as const;
+
 const hex2 = (n: number) => n.toString(16).padStart(2, '0');
 
 /**
@@ -88,6 +110,11 @@ export function gradientColor(t: number): string {
 // reaches it — so there is nothing here for a stylesheet injection to ride in on.
 const ramp = unsafeCSS(NIGEL_PALETTE.join(', '));
 const inkRamp = unsafeCSS(NIGEL_PALETTE_INK.join(', '));
+
+/** The setup wordmark's light ramp as one diagonal gradient. */
+export const wordmarkRampLight = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_LIGHT.join(', '))})`;
+/** The setup wordmark's dark ramp as one diagonal gradient. */
+export const wordmarkRampDark = css`linear-gradient(160deg, ${unsafeCSS(WORDMARK_RAMP_DARK.join(', '))})`;
 
 /**
  * The plain ramp, drawn once across whatever it fills.
@@ -142,7 +169,9 @@ const cycleSize = unsafeCSS(`${((IMAGE_STEPS / GAPS) * 100).toFixed(4)}% 100%`);
  * wordmark keeps the pastels. Both ramps have seven stops, so one
  * `--nc-grad-brand-size` serves either.
  */
-export const brandCycle = css`${cycle}`;
+export const brandCycle = css`
+  ${cycle}
+`;
 
 const pastelStops = unsafeCSS(
   NIGEL_PALETTE.map((hex, i) => `    --nc-color-pastel-${i + 1}: ${hex};`).join('\n'),
@@ -174,6 +203,15 @@ export const gradientCss = css`
        pastel ramp in dark mode, where the pastels are the legible choice. */
     --nc-grad-brand-text: linear-gradient(90deg, ${inkRamp});
 
+    /* The setup wordmark: one diagonal ramp across the whole mark, and the
+       soft wash behind it. */
+    --nc-grad-wordmark: ${wordmarkRampLight};
+    --nc-glow-wordmark: radial-gradient(
+      ellipse 55% 45% at 50% 32%,
+      rgb(196 183 255 / 35%),
+      transparent 70%
+    );
+
     /* The same ramp made periodic, for the wordmark's drift. Sized by
        --nc-grad-brand-size like every other periodic image here. */
     --nc-grad-brand-text-cycle: ${inkCycle};
@@ -187,6 +225,6 @@ export const gradientCss = css`
     /* The seven pastels one at a time, for a tile that takes one colour from
        the ramp — a book's monogram. Not mode-dependent, and always carrying
        --nc-color-on-gradient. */
-${pastelStops}
+    ${pastelStops}
   }
 `;

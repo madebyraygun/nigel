@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { nigelTheme } from '../src/themes/nigel.js';
-import { NIGEL_PALETTE, NIGEL_PALETTE_INK } from '../src/tokens/gradient.js';
+import {
+  NIGEL_PALETTE,
+  NIGEL_PALETTE_INK,
+  WORDMARK_RAMP_DARK,
+  WORDMARK_RAMP_LIGHT,
+} from '../src/tokens/gradient.js';
 import { contrast, resolveToken, type Mode } from './token-resolution.js';
 
 /**
@@ -252,6 +257,14 @@ describe('the wordmark ramp is legible on the surface it is drawn on', () => {
 
   it.each(NIGEL_PALETTE)('dark: %s clears AA on the sidebar', (stop) => {
     expect(contrast(stop, dark('--nc-color-sidebar-bg'))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each(WORDMARK_RAMP_LIGHT)('light: setup wordmark stop %s clears AA on the canvas', (stop) => {
+    expect(contrast(stop, light('--wa-color-bg'))).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it.each(WORDMARK_RAMP_DARK)('dark: setup wordmark stop %s clears AA on the canvas', (stop) => {
+    expect(contrast(stop, dark('--wa-color-bg'))).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
   it('keeps the two ramps the same length, one hue per stop', () => {

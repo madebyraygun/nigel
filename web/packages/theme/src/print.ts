@@ -72,6 +72,8 @@ export const printCss = css`
       --nc-grad-brand-text: none;
       --nc-grad-brand-text-cycle: none;
       --nc-grad-pastel: none;
+      --nc-grad-wordmark: none;
+      --nc-glow-wordmark: none;
 
       --wa-shadow-s: none;
       --wa-shadow-m: none;

@@ -337,6 +337,8 @@ export { WcModeSwitcher, type NcColorModeChangeDetail } from './wc-mode-switcher
 export { WcSnake } from './wc-snake.js';
 export { WcParticleField } from './wc-particle-field.js';
 export { seedParticleField, prefersReducedMotion, type FieldParticle } from './particle-field.js';
+export { WcChoiceCard } from './wc-choice-card.js';
+export { WcStepIndicator } from './wc-step-indicator.js';
 export { WcWordmark, WORDMARK_ART } from './wc-wordmark.js';
 export {
   BOARD_HEIGHT,
