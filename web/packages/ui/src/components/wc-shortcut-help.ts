@@ -212,9 +212,9 @@ export class WcShortcutHelp extends LitElement {
   /**
    * Escape closes the panel wherever it was pressed, but only *consumes* it —
    * and only takes focus back — when the key was ours to begin with. An
-   * Escape typed into the register's inline editor has to reach that editor
-   * and cancel the edit; a legend that swallowed it would leave the edit open
-   * and pull the caret out of the field.
+   * Escape typed into a field elsewhere on the page has to reach that field's
+   * own handler; a legend that swallowed it would leave the field's dialog
+   * open and pull the caret out of it.
    */
   private handleDocumentKeydown = (event: KeyboardEvent): void => {
     if (!this.open || event.key !== 'Escape') return;

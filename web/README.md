@@ -484,7 +484,7 @@ in it drives a debounced `POST /api/rules/test` whose answer lands in
 decision applicable, because a bad preview is not a bad decision.
 
 `wc-category-picker` is the searchable chart-of-accounts combobox, sharing
-`categoryLabel` with the register's inline editor. It is hand-built because
+`categoryLabel` with the transaction dialog. It is hand-built because
 this Web Awesome build ships no searchable select, and the ARIA wiring
 (`aria-activedescendant` into the option list) needs a real input underneath.
 Options are grouped income then expense, the order `/api/categories` returns.
@@ -798,7 +798,7 @@ because every dialog in this app is inside one — `wc-confirm` renders a
 `wa-dialog`, which renders a native `dialog`, two boundaries down — and a flat
 query would find none of them and read as protection while being dead code.
 `deepActiveElement` walks down for the same reason: `document.activeElement`
-answers `nigel-app` for a caret sitting in the register's inline editor.
+answers `nigel-app` for a caret sitting in a dialog's text field.
 
 `snakeAllowedOnBoot` is an exhaustive switch over `BootPhase`. Only `ready`
 renders a dashboard there is any point covering; `failed` draws the shell

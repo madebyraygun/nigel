@@ -25,7 +25,6 @@ import type { AppSettings, Company } from '../api/types.js';
 import type { ScreenContext } from './context.js';
 import { activeSection, scrolledToBottom, scrollingAncestor } from './settings-spy.js';
 import { setUnsavedChanges, type UnsavedChanges } from '../state/unsaved.js';
-import { readRegisterInlineEdit, writeRegisterInlineEdit } from '../shell-preferences.js';
 import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@nigel/theme';
 
 /**
@@ -153,11 +152,6 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         margin-top: var(--wa-space-s);
       }
 
-      .register-edit {
-        display: block;
-        margin-top: var(--wa-space-m);
-      }
-
       @media (max-width: 48rem) {
         .layout {
           grid-template-columns: minmax(0, 1fr);
@@ -197,7 +191,6 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private securityPanel: SecurityPanel = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
-  @state() private registerInlineEdit = false;
   @state() private active = 'letterhead';
 
   private store: AppStore = getAppStore();
@@ -224,7 +217,6 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     void this.loadAppSettings();
     void this.loadCompany();
     this.colorMode = readMode();
-    this.registerInlineEdit = readRegisterInlineEdit();
   }
 
   firstUpdated(): void {
@@ -523,12 +515,6 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     writeMode(mode);
     applyMode(mode);
   }
-
-  /** Per device, like the colour mode: the register reads it when it opens. */
-  private toggleRegisterInlineEdit = (event: CustomEvent<NcSwitchChangeDetail>) => {
-    this.registerInlineEdit = event.detail.checked;
-    writeRegisterInlineEdit(event.detail.checked);
-  };
 
   // -- password -------------------------------------------------------------
 
@@ -837,19 +823,12 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="appearance"
             heading="Appearance"
-            description="How Nigel looks and works on this device. Other devices keep their own choices."
+            description="How Nigel looks on this device. Other devices keep their own choices."
           >
             <wc-appearance-picker
               .mode=${this.colorMode}
               @nc-color-mode-change=${this.handleColorMode}
             ></wc-appearance-picker>
-            <wc-switch-row
-              class="register-edit"
-              label="Edit register rows in place"
-              description="Change a row's category and vendor right in the list, instead of in a window."
-              ?checked=${this.registerInlineEdit}
-              @nc-switch-change=${this.toggleRegisterInlineEdit}
-            ></wc-switch-row>
           </wc-settings-section>
 
           ${showUpdates

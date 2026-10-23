@@ -65,35 +65,6 @@ export function writeSidebarCollapsed(
   }
 }
 
-/**
- * Where the register's editing style lives. Per device, like the colour mode:
- * set, a row is edited in place in the list; unset, in a dialog.
- */
-export const REGISTER_INLINE_EDIT_KEY = 'nigel.register-inline-edit';
-
-/** Whether this device edits register rows in place rather than in a dialog. */
-export function readRegisterInlineEdit(
-  storage?: PreferenceStorage,
-): boolean {
-  try {
-    return (storage ?? defaultStorage())?.getItem(REGISTER_INLINE_EDIT_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-/** Remember the editing style. A refusal is silent: it still holds for this page. */
-export function writeRegisterInlineEdit(
-  inline: boolean,
-  storage?: PreferenceStorage,
-): void {
-  try {
-    (storage ?? defaultStorage())?.setItem(REGISTER_INLINE_EDIT_KEY, String(inline));
-  } catch {
-    // Storage disabled; the choice lasts until a reload.
-  }
-}
-
 /** The query parameter a native host opens the page with. */
 export const HOSTED_PARAM = 'shell';
 

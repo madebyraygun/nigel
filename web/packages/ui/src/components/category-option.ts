@@ -1,4 +1,4 @@
-/** A choice in any category picker — the register's inline editor or review. */
+/** A choice in any category picker — the edit dialog or review. */
 export interface CategoryOption {
   id: number;
   name: string;

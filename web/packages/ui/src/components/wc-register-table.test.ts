@@ -3,8 +3,6 @@ import './wc-register-table.js';
 import {
   REGISTER_SHORTCUTS,
   WcRegisterTable,
-  type CategoryOption,
-  type NcEditCommitDetail,
   type NcFlagToggleDetail,
   type NcRowEventDetail,
   type RegisterTableRow,
@@ -22,12 +20,6 @@ import preview from './wc-register-table.preview.js';
     of layout available under jsdom, which has no layout engine. */
 const text = styleText(WcRegisterTable);
 
-const categories: CategoryOption[] = [
-  { id: 3, name: 'Consulting income', categoryType: 'income' },
-  { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
-  { id: 21, name: 'Bank fees', categoryType: 'expense' },
-];
-
 function fixture(count = 4): RegisterTableRow[] {
   return Array.from({ length: count }, (_, index) => ({
     id: 100 + index,
@@ -44,7 +36,7 @@ function fixture(count = 4): RegisterTableRow[] {
 
 async function mount(props: Partial<WcRegisterTable> = {}): Promise<WcRegisterTable> {
   const el = document.createElement('wc-register-table');
-  Object.assign(el, { rows: fixture(), categories, ...props });
+  Object.assign(el, { rows: fixture(), ...props });
   document.body.appendChild(el);
   await el.updateComplete;
   return el;
@@ -159,7 +151,7 @@ describe('wc-register-table', () => {
     expect(cells).toBe(6);
   });
 
-  it('renders no wa-* component while nothing is being edited', async () => {
+  it('renders no wa-* component', async () => {
     const el = await mount();
     const tags = [...(el.shadowRoot?.querySelectorAll('*') ?? [])].map((node) =>
       node.tagName.toLowerCase(),
@@ -287,33 +279,12 @@ describe('wc-register-table', () => {
     ]);
   });
 
-  it('commits an open inline edit rather than dropping it when another row is tapped', async () => {
-    const el = await mount({ selectedId: 101, editingId: 101 });
-    const activated = listen<NcRowEventDetail>(el, 'nc-row-activate');
-    const committed = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
-
-    rowEls(el)[3]?.dispatchEvent(
-      new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType: 'touch' }),
-    );
-    rowEls(el)[3]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await el.updateComplete;
-
-    expect(committed.map((detail) => detail.id)).toEqual([101]);
-    expect(activated).toEqual([]);
-  });
-
   it('asks the toolbar for focus on slash', async () => {
     const el = await mount();
     let asked = 0;
     el.addEventListener('nc-search-focus', () => (asked += 1));
     await press(el, '/');
     expect(asked).toBe(1);
-  });
-
-  it('leaves the keyboard alone while a row is being edited', async () => {
-    const el = await mount({ selectedId: 100, editingId: 100 });
-    await press(el, 'ArrowDown');
-    expect(selectedId(el)).toBe(100);
   });
 
   // -- flagging --------------------------------------------------------------
@@ -336,108 +307,6 @@ describe('wc-register-table', () => {
     const button = rowEls(el)[0]?.querySelector('button');
     expect(button?.hasAttribute('disabled')).toBe(true);
     expect(rowEls(el)[0]?.getAttribute('aria-busy')).toBe('true');
-  });
-
-  // -- inline editing --------------------------------------------------------
-
-  it('swaps only the category and vendor cells into editors', async () => {
-    const el = await mount({ editingId: 101 });
-    const editing = rowEls(el)[1];
-    expect(editing?.querySelector('input[role="combobox"]')).not.toBeNull();
-    expect(editing?.querySelector('wa-input')).not.toBeNull();
-    expect(rowEls(el)[0]?.querySelector('input')).toBeNull();
-  });
-
-  it('seeds the editors from the row', async () => {
-    const el = await mount({ editingId: 101 });
-    const input = el.shadowRoot?.querySelector<HTMLInputElement>('.category-input');
-    const vendor = el.shadowRoot?.querySelector('wa-input');
-    expect(input?.value).toBe('Bank fees');
-    expect(vendor?.getAttribute('value')).toBe('Someone');
-  });
-
-  it('filters categories case-insensitively over the labelled name', async () => {
-    const el = await mount({ editingId: 101 });
-    const input = el.shadowRoot?.querySelector<HTMLInputElement>('.category-input');
-    if (!input) throw new Error('no category input');
-
-    input.value = 'consult';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await el.updateComplete;
-
-    const options = [...(el.shadowRoot?.querySelectorAll('[role="option"]') ?? [])];
-    expect(options.map((o) => o.textContent?.trim())).toEqual([
-      'Consulting income (inc)',
-    ]);
-  });
-
-  it('commits the chosen category and typed vendor', async () => {
-    const el = await mount({ editingId: 101 });
-    const seen = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
-    const input = el.shadowRoot?.querySelector<HTMLInputElement>('.category-input');
-    if (!input) throw new Error('no category input');
-
-    input.value = 'consult';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await el.updateComplete;
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await el.updateComplete;
-
-    const vendor = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
-      '.vendor-input',
-    );
-    if (!vendor) throw new Error('no vendor input');
-    vendor.value = 'Northwind';
-    vendor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await el.updateComplete;
-
-    expect(seen).toEqual([{ id: 101, categoryId: 3, vendor: 'Northwind' }]);
-  });
-
-  it('reports an emptied vendor as a clear, not as an untouched field', async () => {
-    const el = await mount({ editingId: 101 });
-    const seen = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
-    const vendor = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
-      '.vendor-input',
-    );
-    if (!vendor) throw new Error('no vendor input');
-
-    vendor.value = '   ';
-    vendor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await el.updateComplete;
-
-    expect(seen).toEqual([{ id: 101, categoryId: 21, vendor: null }]);
-  });
-
-  it('cancels from either editor without committing', async () => {
-    const el = await mount({ editingId: 101 });
-    const commits = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
-    const cancels = listen<NcRowEventDetail>(el, 'nc-edit-cancel');
-
-    el.shadowRoot
-      ?.querySelector('.category-input')
-      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await el.updateComplete;
-
-    expect(cancels).toEqual([{ id: 101 }]);
-    expect(commits).toEqual([]);
-  });
-
-  it('offers Save and Cancel for a pointer', async () => {
-    const el = await mount({ editingId: 101 });
-    const commits = listen<NcEditCommitDetail>(el, 'nc-edit-commit');
-    const cancels = listen<NcRowEventDetail>(el, 'nc-edit-cancel');
-    const buttons = [
-      ...(rowEls(el)[1]?.querySelectorAll<HTMLButtonElement>('.edit-actions button') ??
-        []),
-    ];
-
-    buttons[0]?.click();
-    buttons[1]?.click();
-    await el.updateComplete;
-
-    expect(commits.length).toBe(1);
-    expect(cancels.length).toBe(1);
   });
 
   // -- scrolling -------------------------------------------------------------
@@ -576,20 +445,10 @@ describe('the documented shortcuts', () => {
       await pressOnRow(el, 'Enter');
       expect(seen).toEqual([{ id: 101, touch: false }]);
     },
-    // Two jobs, as the legend says: the editors' cancel while one is open, and
-    // the TUI's clear-the-cursor when none is.
     Escape: async () => {
-      const editing = await mount({ selectedId: 101, editingId: 101 });
-      const seen = listen<NcRowEventDetail>(editing, 'nc-edit-cancel');
-      editing.shadowRoot
-        ?.querySelector('.category-input')
-        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await editing.updateComplete;
-      expect(seen).toEqual([{ id: 101 }]);
-
-      const browsing = await mount({ selectedId: 101 });
-      await pressOnRow(browsing, 'Escape');
-      expect(selectedId(browsing)).toBeNull();
+      const el = await mount({ selectedId: 101 });
+      await pressOnRow(el, 'Escape');
+      expect(selectedId(el)).toBeNull();
     },
     f: async () => {
       const el = await mount({ selectedId: 100 });
@@ -995,17 +854,6 @@ describe('a register too big to put in the DOM', () => {
     expect(renderedIds(el)).toContain(1600);
   });
 
-  it('opens the editors on a row the window had left out', async () => {
-    const el = await mount({ rows: fixture(BIG), categories });
-    el.editingId = 1700;
-    await el.updateComplete;
-
-    const editing = dataRows(el).find((tr) => Number(tr.dataset.id) === 1700);
-    expect(editing).toBeDefined();
-    expect(editing?.querySelector('input[role="combobox"]')).not.toBeNull();
-    expect(editing?.querySelector('wa-input')).not.toBeNull();
-  });
-
   it('flags a row that scrolled into the window', async () => {
     const el = await mount({ rows: fixture(BIG) });
     stubLayout(el);
@@ -1071,30 +919,6 @@ describe('a register too big to put in the DOM', () => {
     expect(dataRows(tall).length).toBeGreaterThan(dataRows(short).length);
     // Still bounded: what grew is the viewport, not the register.
     expect(dataRows(tall).length).toBeLessThan(80);
-  });
-
-  it('keeps the editor in the DOM when the window scrolls past it', async () => {
-    // Losing the row loses the typed text with it: the input is destroyed
-    // mid-edit and the vendor the user was halfway through is gone.
-    const el = await mount({ rows: fixture(BIG), categories });
-    stubLayout(el);
-    el.editingId = 1000;
-    await el.updateComplete;
-
-    const input = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
-      '.vendor-input',
-    );
-    if (!input) throw new Error('no vendor input');
-    input.value = 'Northwind';
-
-    await scrollTo(el, 33 * 1500);
-
-    const after = el.shadowRoot?.querySelector<HTMLElement & { value: string }>(
-      '.vendor-input',
-    );
-    expect(after).not.toBeNull();
-    expect(after?.value).toBe('Northwind');
-    expect(dataRows(el).length).toBeLessThan(60);
   });
 
   it('leaves a selection that scrolled out of the window selected', async () => {
@@ -1311,7 +1135,7 @@ describe('wc-register-table stacked layout', () => {
 
   it('labels every header cell as a column header, which a stacked row keeps by role', async () => {
     const el = document.createElement('wc-register-table');
-    Object.assign(el, { rows: fixture(), categories });
+    Object.assign(el, { rows: fixture() });
     document.body.appendChild(el);
     await el.updateComplete;
     const roles = [...(el.shadowRoot?.querySelectorAll('thead th') ?? [])].map((th) =>
