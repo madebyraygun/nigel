@@ -179,19 +179,125 @@ pub fn delete_blocker(conn: &Connection, id: i64) -> Result<Option<DeleteBlock>>
     Ok(None)
 }
 
+/// Delete an account with no transactions, its reconciliations with it.
+///
+/// One `BEGIN IMMEDIATE` transaction holds the blocker check and all three
+/// writes: an import landing in this account partway through either waits for
+/// the write lock or fails the final delete, and a failure anywhere rolls the
+/// reconciliations and imports back with it.
 pub fn delete_account(conn: &Connection, id: i64) -> Result<()> {
-    if let Some(block) = delete_blocker(conn, id)? {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    if let Some(block) = delete_blocker(&tx, id)? {
         return Err(NigelError::Blocked(block));
     }
     // Clean up reconciliations; null out imports to preserve checksums for duplicate detection
-    conn.execute("DELETE FROM reconciliations WHERE account_id = ?1", [id])?;
-    conn.execute(
+    tx.execute("DELETE FROM reconciliations WHERE account_id = ?1", [id])?;
+    tx.execute(
         "UPDATE imports SET account_id = NULL WHERE account_id = ?1",
         [id],
     )?;
-    let deleted = conn.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
+    let deleted = tx.execute("DELETE FROM accounts WHERE id = ?1", [id])?;
     if deleted == 0 {
         return Err(NigelError::NotFound(format!("Account not found: id {id}")));
     }
+    tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> (tempfile::TempDir, Connection) {
+        crate::db::set_db_password(None);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conn = crate::db::open_connection(&dir.path().join("nigel.db"), None).expect("open");
+        crate::db::init_db(&conn).expect("init");
+        (dir, conn)
+    }
+
+    /// The account's reconciliations, and the imports still linked to it.
+    fn history(conn: &Connection, id: i64) -> (i64, i64) {
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [id], |r| r.get(0)).unwrap() };
+        (
+            count("SELECT COUNT(*) FROM reconciliations WHERE account_id = ?1"),
+            count("SELECT COUNT(*) FROM imports WHERE account_id = ?1"),
+        )
+    }
+
+    fn account_with_history(conn: &Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO accounts (name, account_type) VALUES ('Acme Checking', 'checking')",
+            [],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO reconciliations (account_id, month, statement_balance)
+             VALUES (?1, '2026-01', 100.0)",
+            [id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO imports (filename, account_id, checksum) VALUES ('acme.csv', ?1, 'abc')",
+            [id],
+        )
+        .unwrap();
+        id
+    }
+
+    /// The final delete fails after the blocker passed — what a transaction
+    /// imported into the account between the two does through the foreign key.
+    /// The reconciliations and the imports' account links come back with it.
+    #[test]
+    fn a_delete_that_fails_at_the_final_statement_leaves_the_history_alone() {
+        let (_dir, conn) = test_db();
+        let id = account_with_history(&conn);
+        conn.execute_batch(
+            "CREATE TEMP TRIGGER refuse_account_delete BEFORE DELETE ON accounts
+             BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END;",
+        )
+        .unwrap();
+
+        let err = delete_account(&conn, id).expect_err("the final delete fails");
+        assert!(matches!(err, NigelError::Db(_)), "{err:?}");
+
+        assert_eq!(history(&conn, id), (1, 1), "history was not rolled back");
+        assert!(conn.is_autocommit(), "the transaction was left open");
+    }
+
+    #[test]
+    fn a_blocked_delete_leaves_the_history_alone() {
+        let (_dir, conn) = test_db();
+        let id = account_with_history(&conn);
+        conn.execute(
+            "INSERT INTO transactions (account_id, date, description, amount)
+             VALUES (?1, '2026-01-02', 'Globex', -10.0)",
+            [id],
+        )
+        .unwrap();
+
+        let err = delete_account(&conn, id).expect_err("blocked");
+        assert!(matches!(err, NigelError::Blocked(_)), "{err:?}");
+        assert_eq!(history(&conn, id), (1, 1));
+        assert!(conn.is_autocommit());
+    }
+
+    #[test]
+    fn a_clean_delete_commits_all_three_statements() {
+        let (_dir, conn) = test_db();
+        let id = account_with_history(&conn);
+
+        delete_account(&conn, id).expect("deleted");
+
+        assert_eq!(history(&conn, id), (0, 0));
+        let unlinked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM imports WHERE checksum = 'abc' AND account_id IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(unlinked, 1, "the checksum is kept for duplicate detection");
+    }
 }
