@@ -13,6 +13,7 @@ import {
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
   type NcPeriod,
+  type NcRowActivateDetail,
   type NcRowEventDetail,
   type NcSearchChangeDetail,
   type WcRegisterTable,
@@ -32,6 +33,7 @@ import {
 } from './register-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
+import { readRegisterInlineEdit } from '../shell-preferences.js';
 import { controlsCss } from '@nigel/theme';
 
 /**
@@ -47,6 +49,11 @@ import { controlsCss } from '@nigel/theme';
  * is the exception: it is read from `?q=` on load but not written back on
  * every keystroke, because that would put one history entry per character
  * between the user and the previous screen.
+ *
+ * A row opens for editing in `wc-transaction-dialog`, unless this device has
+ * Settings > Appearance > "Edit register rows in place" on, which keeps the
+ * table's inline editor instead. Either way the edit is saved through
+ * `persist`; the dialog stays open while it saves and shows a refusal itself.
  */
 @customElement('nigel-register-screen')
 export class NigelRegisterScreen extends LitElement {
@@ -101,6 +108,18 @@ export class NigelRegisterScreen extends LitElement {
   @state() private selectedId: number | null = null;
   @state() private editingId: number | null = null;
   @state() private busyId: number | null = null;
+  /** Whether rows are edited in place in the table rather than in the dialog. */
+  @state() private inlineEdit = false;
+  /**
+   * The row in the dialog. Kept after the dialog closes, so the panel still
+   * has its row while it animates out.
+   */
+  @state() private dialogId: number | null = null;
+  @state() private dialogOpen = false;
+  /** A row opened by a tap starts with no text field focused, so no soft keyboard. */
+  @state() private dialogFocus: 'category' | 'dialog' = 'category';
+  @state() private dialogBusy = false;
+  @state() private dialogError: string | null = null;
 
   @query('wc-register-table') private table?: WcRegisterTable;
   @query('wc-register-toolbar') private toolbar?: WcRegisterToolbar;
@@ -111,6 +130,11 @@ export class NigelRegisterScreen extends LitElement {
   /** Drops a register response whose request is no longer the current one. */
   private loadSeq = 0;
   private seededSearch = false;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.inlineEdit = readRegisterInlineEdit();
+  }
 
   willUpdate(changed: PropertyValues<this>): void {
     if (!changed.has('params')) return;
@@ -289,8 +313,58 @@ export class NigelRegisterScreen extends LitElement {
     this.selectedId = event.detail.id;
   };
 
-  private handleRowActivate = (event: CustomEvent<NcRowEventDetail>): void => {
-    this.editingId = event.detail.id;
+  private handleRowActivate = (event: CustomEvent<NcRowActivateDetail>): void => {
+    if (this.inlineEdit) {
+      this.editingId = event.detail.id;
+      return;
+    }
+    this.selectedId = event.detail.id;
+    this.dialogFocus = event.detail.touch ? 'dialog' : 'category';
+    this.dialogError = null;
+    this.dialogId = event.detail.id;
+    this.dialogOpen = true;
+  };
+
+  private get dialogRow(): RegisterRow | null {
+    if (this.dialogId === null) return null;
+    return this.rows.find((row) => row.id === this.dialogId) ?? null;
+  }
+
+  private closeDialog(): void {
+    this.dialogOpen = false;
+    this.dialogError = null;
+  }
+
+  private handleDialogCancel = (): void => {
+    if (this.dialogBusy) return;
+    this.closeDialog();
+  };
+
+  private handleDialogCommit = async (
+    event: CustomEvent<NcEditCommitDetail>,
+  ): Promise<void> => {
+    const row = this.rows.find((candidate) => candidate.id === event.detail.id);
+    if (!row || this.dialogBusy) return;
+
+    const patch = buildPatch(row, event.detail);
+    if (!patch) {
+      this.closeDialog();
+      return;
+    }
+
+    this.dialogBusy = true;
+    this.dialogError = null;
+    const failure = await this.persist(row, patch, 'Could not save the transaction.', {
+      toast: false,
+    });
+    this.dialogBusy = false;
+    if (failure) this.dialogError = failure;
+    else this.closeDialog();
+  };
+
+  /** The dialog has finished closing: the keyboard goes back to the row it edited. */
+  private handleDialogClosed = (): void => {
+    this.table?.focusSelectedRow({ reveal: true });
   };
 
   private handleEditCancel = (): void => {
@@ -328,22 +402,26 @@ export class NigelRegisterScreen extends LitElement {
    * optimistic copy — the response is the authority on what the row now is,
    * including any field this screen did not touch. A failure puts the original
    * row back, so the table never keeps showing an edit the database refused.
+   *
+   * Answers the failure's message, or null on success. The message is toasted
+   * unless the caller has somewhere better to show it, as the dialog does.
    */
   private async persist(
     row: RegisterRow,
     patch: Parameters<ApiClient['patchTransaction']>[1],
     fallbackMessage: string,
-  ): Promise<void> {
+    { toast = true }: { toast?: boolean } = {},
+  ): Promise<string | null> {
     this.busyId = row.id;
     try {
       const updated = await this.client.patchTransaction(row.id, patch);
       this.rows = replaceRow(this.rows, updated);
+      return null;
     } catch (error) {
       this.rows = replaceRow(this.rows, row);
-      dispatchNcToast(this, {
-        message: error instanceof ApiError ? error.message : fallbackMessage,
-        variant: 'danger',
-      });
+      const message = error instanceof ApiError ? error.message : fallbackMessage;
+      if (toast) dispatchNcToast(this, { message, variant: 'danger' });
+      return message;
     } finally {
       this.busyId = null;
     }
@@ -405,7 +483,7 @@ export class NigelRegisterScreen extends LitElement {
               .rows=${visible}
               .categories=${this.categoryOptions}
               .selectedId=${this.selectedId}
-              .editingId=${this.editingId}
+              .editingId=${this.inlineEdit ? this.editingId : null}
               .busyId=${this.busyId}
               .total=${searching ? sumAmounts(visible) : this.total}
               .showAccount=${!this.params.get('account')}
@@ -423,6 +501,22 @@ export class NigelRegisterScreen extends LitElement {
               @nc-flag-toggle=${this.handleFlagToggle}
               @nc-search-focus=${this.handleSearchFocus}
             ></wc-register-table>
+          `}
+      ${this.inlineEdit
+        ? nothing
+        : html`
+            <wc-transaction-dialog
+              ?open=${this.dialogOpen}
+              initial-focus=${this.dialogFocus}
+              .row=${this.dialogRow}
+              .categories=${this.categoryOptions}
+              .showAccount=${!this.params.get('account')}
+              ?busy=${this.dialogBusy}
+              .error=${this.dialogError}
+              @nc-edit-commit=${this.handleDialogCommit}
+              @nc-edit-cancel=${this.handleDialogCancel}
+              @nc-dialog-closed=${this.handleDialogClosed}
+            ></wc-transaction-dialog>
           `}
     `;
   }

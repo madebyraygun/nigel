@@ -90,10 +90,15 @@ export {
   REGISTER_SHORTCUTS,
   type NcEditCommitDetail,
   type NcFlagToggleDetail,
+  type NcRowActivateDetail,
   type NcRowEventDetail,
   type RegisterTableRow,
 } from './wc-register-table.js';
 export { WcShortcutHelp, type ShortcutHint } from './wc-shortcut-help.js';
+export {
+  WcTransactionDialog,
+  CHOOSE_CATEGORY_MESSAGE,
+} from './wc-transaction-dialog.js';
 export {
   WcCategoryPicker,
   type NcCategoryChangeDetail,

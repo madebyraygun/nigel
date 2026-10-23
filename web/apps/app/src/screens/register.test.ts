@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './register.js';
 import type { NigelRegisterScreen } from './register.js';
-import { REGISTER_SHORTCUTS, type WcRegisterTable, type WcShortcutHelp } from '@nigel/ui';
+import {
+  REGISTER_SHORTCUTS,
+  type WcRegisterTable,
+  type WcShortcutHelp,
+  type WcTransactionDialog,
+} from '@nigel/ui';
+import { REGISTER_INLINE_EDIT_KEY } from '../shell-preferences.js';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
@@ -131,6 +137,16 @@ function emitOnTable(el: NigelRegisterScreen, type: string, detail: unknown): vo
   );
 }
 
+function dialog(el: NigelRegisterScreen): WcTransactionDialog {
+  const found = el.shadowRoot?.querySelector('wc-transaction-dialog');
+  if (!found) throw new Error('no edit dialog rendered');
+  return found;
+}
+
+function emitOnDialog(el: NigelRegisterScreen, type: string, detail: unknown): void {
+  dialog(el).dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+}
+
 function registerCalls(fake: FakeApiClient): string[] {
   return fake.calls.filter((call) => call.startsWith('getRegister'));
 }
@@ -143,6 +159,7 @@ describe('register screen', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+    localStorage.removeItem(REGISTER_INLINE_EDIT_KEY);
     vi.restoreAllMocks();
   });
 
@@ -449,7 +466,113 @@ describe('register screen', () => {
     expect(toasts).toEqual(['no category 999']);
   });
 
-  it('opens an edit only when the table asks for one', async () => {
+  // -- the edit dialog ---------------------------------------------------------
+
+  it('opens the activated row in the dialog, not in the table', async () => {
+    const { el } = await mount();
+    expect(dialog(el).open).toBe(false);
+
+    emitOnTable(el, 'nc-row-activate', { id: 2 });
+    await settle(el);
+
+    expect(dialog(el).open).toBe(true);
+    expect(dialog(el).row?.id).toBe(2);
+    expect(table(el).editingId).toBeNull();
+    expect(table(el).selectedId).toBe(2);
+  });
+
+  it('opens a tapped row with focus on the dialog rather than a text field', async () => {
+    const { el } = await mount();
+    emitOnTable(el, 'nc-row-activate', { id: 2, touch: true });
+    await settle(el);
+    expect(dialog(el).initialFocus).toBe('dialog');
+
+    emitOnDialog(el, 'nc-edit-cancel', { id: 2 });
+    emitOnTable(el, 'nc-row-activate', { id: 3, touch: false });
+    await settle(el);
+    expect(dialog(el).initialFocus).toBe('category');
+  });
+
+  it('saves from the dialog, closes it and keeps the row selected', async () => {
+    const { el, fake } = await mount();
+    emitOnTable(el, 'nc-row-activate', { id: 1 });
+    await settle(el);
+
+    emitOnDialog(el, 'nc-edit-commit', { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
+    await settle(el);
+
+    expect(fake.calls).toContain('patchTransaction:1:{"categoryId":3}');
+    expect(dialog(el).open).toBe(false);
+    expect(table(el).selectedId).toBe(1);
+    expect(table(el).rows.find((r) => r.id === 1)?.categoryId).toBe(3);
+  });
+
+  it('closes without a request when the dialog changed nothing', async () => {
+    const { el, fake } = await mount();
+    emitOnTable(el, 'nc-row-activate', { id: 1 });
+    await settle(el);
+
+    emitOnDialog(el, 'nc-edit-commit', { id: 1, categoryId: 12, vendor: 'Adobe Inc' });
+    await settle(el);
+
+    expect(fake.calls.some((call) => call.startsWith('patchTransaction'))).toBe(false);
+    expect(dialog(el).open).toBe(false);
+  });
+
+  it('keeps the dialog open with the refusal in it when the write fails', async () => {
+    const { el, fake } = await mount();
+    const toasts: string[] = [];
+    window.addEventListener('nc-toast', (event) =>
+      toasts.push((event as CustomEvent<{ message: string }>).detail.message),
+    );
+    fake.patchError = new ApiError({
+      code: 'not_found',
+      rawCode: 'not_found',
+      message: 'no category 999',
+      status: 404,
+    });
+
+    emitOnTable(el, 'nc-row-activate', { id: 1 });
+    await settle(el);
+    emitOnDialog(el, 'nc-edit-commit', { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
+    await settle(el);
+
+    expect(dialog(el).open).toBe(true);
+    expect(dialog(el).busy).toBe(false);
+    expect(dialog(el).error).toBe('no category 999');
+    expect(toasts).toEqual([]);
+    expect(table(el).rows.find((r) => r.id === 1)?.categoryId).toBe(12);
+  });
+
+  it('closes on Cancel and hands the keyboard back to the row', async () => {
+    const { el } = await mount();
+    emitOnTable(el, 'nc-row-activate', { id: 2 });
+    await settle(el);
+
+    emitOnDialog(el, 'nc-edit-cancel', { id: 2 });
+    await settle(el);
+    expect(dialog(el).open).toBe(false);
+
+    emitOnDialog(el, 'nc-dialog-closed', undefined);
+    await settle(el);
+    const focused = table(el).shadowRoot?.activeElement as HTMLElement | null;
+    expect(focused?.dataset.id).toBe('2');
+  });
+
+  // -- inline editing, behind the per-device switch ----------------------------
+
+  it('edits in the table when this device has asked for inline editing', async () => {
+    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
+    const { el } = await mount();
+    expect(el.shadowRoot?.querySelector('wc-transaction-dialog')).toBeNull();
+
+    emitOnTable(el, 'nc-row-activate', { id: 3 });
+    await settle(el);
+    expect(table(el).editingId).toBe(3);
+  });
+
+  it('opens an inline edit only when the table asks for one', async () => {
+    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
     const { el } = await mount();
     expect(table(el).editingId).toBeNull();
 
@@ -483,6 +606,7 @@ describe('register screen', () => {
     // Keyboard only: open the legend, open an editor, press Escape in it. A
     // legend listening on the document in capture would eat the key and leave
     // the edit open with focus yanked to its own trigger.
+    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
     const { el } = await mount();
     const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
     help?.show();

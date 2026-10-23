@@ -312,15 +312,15 @@ Reference: Nigel App, screen `settings`. Replaces `screens/settings.ts`.
 
 ### Letterhead
 
-- **Description:** "What the invoice page and the PDF say about you. The name also appears in the breadcrumb, on reports and in the window title."
+- **Description:** "Your name and details as they appear on invoices. The name also shows at the top of Nigel and on reports."
 - **Fields:**
   - Two columns: Business name (personal books: "Household name") and Phone.
   - Address: textarea, 3 rows.
-  - Payment instructions: textarea, 3 rows. Help text: "Printed on both the invoice page and the PDF, or on neither. Leave it empty if you do not take bank transfers."
+  - Payment instructions: textarea, 3 rows. Help text: "Tells clients how to pay you, such as your bank details. Shown on every invoice. Leave it empty to show nothing."
   - Inputs are 36px tall, padding `0 11px`, radius 8px, `1px --bd`, background `--field`. Labels are 12.5px/500.
 - **Logo dropzone:**
   - `1px dashed --bd`, radius 10px, background `--sa`, padding 12px.
-  - Contents: a 120 × 48 preview on white, then "Drop a PNG or JPEG here" with the help text "Up to 128 KiB. It is embedded in the PDF and inlined in the page; Gmail readers see your name in the email body and the logo on the attachment.", and a "Choose…" button.
+  - Contents: a 120 × 48 preview on white, then "Drop a PNG or JPEG here" with the help text "Up to 128 KB. Shown at the top of your invoices.", and a "Choose…" button.
 - **Saving:** there is no per-section Save button. While any letterhead field differs from the saved value, a **sticky save bar** appears at the bottom of main:
   - Pill shape (radius 999px), background `--sf`, `--sh` shadow, aligned to the content column.
   - Contents: a `--flag` dot, "Unsaved changes to the letterhead", **Discard** (outline) and **Save** (filled `--br`).
@@ -331,18 +331,18 @@ Reference: Nigel App, screen `settings`. Replaces `screens/settings.ts`.
 
 - **Status card** (padding `14px 16px`, radius 12px, background `--sf`):
   - A 36 × 36 icon tile, radius 10px.
-  - **Encrypted:** tile background `--hl` with a `--br` lock; title "Encrypted"; description "This database is encrypted with a password. Lose the password and the books cannot be opened."
-  - **Not encrypted:** the card border is `--flag`, and the tile shows an open lock in `--flag`; title "Not encrypted"; description "Anyone with access to the file can read it. Set a password and store it somewhere safe."
+  - **Encrypted:** tile background `--hl` with a `--br` lock; title "Encrypted"; description "Nigel asks for the password whenever it opens these books. If you lose it, the books cannot be opened."
+  - **Not encrypted:** the card border is `--flag`, and the tile shows an open lock in `--flag`; title "Not encrypted"; description "Anyone who can open the file can read your books. Set a password to lock them, and keep it somewhere safe."
 - **When encrypted**, one card with two rows:
-  - **Change password:** the row reads "Change password" with the sub-line "You will need the current one." and a **Change…** button. It expands inline into a 3-column form: Current password · New password · Type it again, with a filled `--br` "Change password" button. The button label toggles to **Cancel** while open.
-  - **Remove password:** the sub-line is "Decrypts the database file." The **Remove…** button is outlined in `--exp`. It expands into a Current password field, a filled `--exp` "Remove password" button, and the warning "The database will be decrypted and readable by anyone with access to the file." in `--exp`.
+  - **Change password:** the row reads "Change password" with the sub-line "You need the current password to change it." and a **Change…** button. It expands inline into a 3-column form: Current password · New password · Type it again, with a filled `--br` "Change password" button. The button label toggles to **Cancel** while open.
+  - **Remove password:** the sub-line is "Open these books without a password." The **Remove…** button is outlined in `--exp`. It expands into a Current password field, a filled `--exp` "Remove password" button, and the warning "Anyone who can open the file will be able to read your books." in `--exp`.
   - Only one panel is open at a time.
 - **When not encrypted:** one card with New password · Type it again and a filled "Encrypt database" button.
 - Keep the existing validation and error handling from `settings.ts`.
 
 ### Location
 
-- **Description:** "Where this set of books lives. Each set is a folder with a nigel.db inside; switching reloads Nigel onto the other database."
+- **Description:** "The folder these books are kept in. Switch to another folder to open a different set of books."
 - The path appears in a `code` box (background `--sa`, `1px --bs`, radius 8px, selectable).
 - Buttons: **Reveal in Finder** (Tauri: open the folder; hide this in the browser) and **Switch books…** (opens the palette scoped to Books).
 - This replaces the old data-directory field.
@@ -355,11 +355,13 @@ Reference: Nigel App, screen `settings`. Replaces `screens/settings.ts`.
   - Holds a 78px mini-window preview: a sidebar block, lines and a card, drawn in that theme's colours. The System card is split diagonally between light and dark.
   - Below the preview, a radio dot and the label.
 - **Selected card:** a 1.5px rainbow border (the same padding-box/border-box gradient as the active nav item) and a filled radio dot in `--br`.
+- **Description:** "How Nigel looks and works on this device. Other devices keep their own choices."
 - Applies immediately. Stored per device (`localStorage` or Tauri store), not in the book.
+- Below the cards, a switch card: "Edit register rows in place", with the sub-line "Change a row's category and vendor right in the list, instead of in a window." Off by default, so the register edits a row in a dialog.
 
 ### Updates
 
-- A card with "Check for updates automatically", the sub-line "Checks GitHub for a newer version once a day when Nigel starts." and a toggle switch.
+- A card with "Check for updates automatically", the sub-line "Once a day, when Nigel starts, see if a new version is out." and a toggle switch.
 - **Switch:** 38 × 22, radius 999px, track `--br` when on and `--bd` when off; 16px white knob; 150ms transition.
 - Below the card: "You're on v1.0, the latest version." (12px `--mu`).
 

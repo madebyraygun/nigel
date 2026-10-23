@@ -44,7 +44,7 @@ const DESCRIPTIONS: Record<WcPasswordMode, string> = {
 const INLINE_NOTES: Record<WcPasswordMode, string> = {
   set: '',
   change: '',
-  remove: 'The database will be decrypted and readable by anyone with access to the file.',
+  remove: 'Anyone who can open the file will be able to read your books.',
 };
 
 /**

@@ -4,7 +4,7 @@ import type { Preview } from '../../preview/types.js';
 
 const width = 'width:min(720px, calc(100vw - 32px));';
 const label = 'Check for updates automatically';
-const description = 'Checks GitHub for a newer version once a day when Nigel starts.';
+const description = 'Once a day, when Nigel starts, see if a new version is out.';
 
 const preview: Preview = {
   id: 'wc-switch-row',

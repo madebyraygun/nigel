@@ -65,6 +65,39 @@ describe('wc-category-picker', () => {
     expect(el.shadowRoot?.querySelector('[role="listbox"]')).toBeNull();
   });
 
+  it('opens the list on focus, unless asked to focus quietly', async () => {
+    const quiet = await mount();
+    quiet.focus({ openList: false });
+    await quiet.updateComplete;
+    expect(quiet.shadowRoot?.activeElement).toBe(input(quiet));
+    expect(quiet.listOpen).toBe(false);
+
+    input(quiet).click();
+    await quiet.updateComplete;
+    expect(quiet.listOpen).toBe(true);
+
+    document.body.innerHTML = '';
+    const loud = await mount();
+    loud.focus();
+    await loud.updateComplete;
+    expect(loud.listOpen).toBe(true);
+  });
+
+  it('leaves Enter and Escape to the form while the list is shut', async () => {
+    const el = await mount();
+    el.focus({ openList: false });
+    await el.updateComplete;
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true });
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    input(el).dispatchEvent(enter);
+    input(el).dispatchEvent(escape);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(escape.defaultPrevented).toBe(false);
+
+    await press(el, 'ArrowDown');
+    expect(el.listOpen).toBe(true);
+  });
+
   it('groups options income first, then expense', async () => {
     const el = await mount({ listOpen: true });
     const groups = [...(el.shadowRoot?.querySelectorAll('[role="group"]') ?? [])];

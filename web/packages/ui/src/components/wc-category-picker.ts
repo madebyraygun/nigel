@@ -171,10 +171,23 @@ export class WcCategoryPicker extends LitElement {
     );
   }
 
-  /** Put the cursor in the filter box — what the screen calls on a new transaction. */
-  override focus(): void {
-    this.input?.focus();
+  /**
+   * Put the cursor in the filter box — what the screen calls on a new
+   * transaction. `openList: false` leaves the list shut, so Enter and Esc
+   * still reach the form around the picker until the user types, presses
+   * ArrowDown or clicks the box.
+   */
+  override focus(options?: FocusOptions & { openList?: boolean }): void {
+    this.quietFocus = options?.openList === false;
+    try {
+      this.input?.focus(options);
+    } finally {
+      this.quietFocus = false;
+    }
   }
+
+  /** Set for the length of a `focus({ openList: false })` call. */
+  private quietFocus = false;
 
   /** Clear the selection and the typed filter. */
   reset(): void {
@@ -263,6 +276,11 @@ export class WcCategoryPicker extends LitElement {
   };
 
   private handleFocus = (): void => {
+    if (!this.disabled && !this.quietFocus) this.listOpen = true;
+  };
+
+  /** A click in a box that already has focus fires no focus event. */
+  private handleClick = (): void => {
     if (!this.disabled) this.listOpen = true;
   };
 
@@ -321,6 +339,7 @@ export class WcCategoryPicker extends LitElement {
         @input=${this.handleInput}
         @keydown=${this.handleKeydown}
         @focus=${this.handleFocus}
+        @click=${this.handleClick}
         @blur=${this.handleBlur}
       />
       ${this.listOpen ? this.renderList(listId, ordered) : nothing}

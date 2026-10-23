@@ -199,8 +199,8 @@ export class WcSecurityCard extends LitElement {
           <div>
             <p class="title" tabindex="-1">Encrypted</p>
             <p class="sub">
-              This database is encrypted with a password. Lose the password and the books
-              cannot be opened.
+              Nigel asks for the password whenever it opens these books. If you lose it,
+              the books cannot be opened.
             </p>
           </div>
         </div>`
@@ -209,8 +209,8 @@ export class WcSecurityCard extends LitElement {
           <div>
             <p class="title" tabindex="-1">Not encrypted</p>
             <p class="sub">
-              Anyone with access to the file can read it. Set a password and store it
-              somewhere safe.
+              Anyone who can open the file can read your books. Set a password to lock
+              them, and keep it somewhere safe.
             </p>
           </div>
         </div>`;
@@ -259,10 +259,10 @@ export class WcSecurityCard extends LitElement {
             ${this.renderRow(
               'change',
               'Change password',
-              'You will need the current one.',
+              'You need the current password to change it.',
               'Change…',
             )}
-            ${this.renderRow('remove', 'Remove password', 'Decrypts the database file.', 'Remove…')}
+            ${this.renderRow('remove', 'Remove password', 'Open these books without a password.', 'Remove…')}
           </div>`
         : html`<div class="card set"><slot name="set"></slot></div>`}
     `;

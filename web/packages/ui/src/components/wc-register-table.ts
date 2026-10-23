@@ -50,6 +50,14 @@ export interface NcRowEventDetail {
   id: number;
 }
 
+export interface NcRowActivateDetail extends NcRowEventDetail {
+  /** Opened by a tap (touch or pen), where a soft keyboard is not wanted yet. */
+  touch: boolean;
+}
+
+/** The pointers a press from is a tap: no double-click to spare, no Enter key. */
+const TAP_POINTERS = new Set(['touch', 'pen']);
+
 export interface NcEditCommitDetail {
   id: number;
   /** The chosen category, or null when the row is left uncategorized. */
@@ -809,6 +817,9 @@ export class WcRegisterTable extends LitElement {
 
   private viewportObserver?: ResizeObserver;
 
+  /** The pointer behind the last press, for a browser whose clicks do not say. */
+  private lastPointerType = '';
+
   connectedCallback(): void {
     super.connectedCallback();
     this.watchViewport();
@@ -827,6 +838,9 @@ export class WcRegisterTable extends LitElement {
     // or the scroller itself — and a listener on one of those hears only its
     // own subtree.
     this.addEventListener('keydown', this.handleKeydown);
+    this.addEventListener('pointerdown', (event) => {
+      this.lastPointerType = event.pointerType;
+    });
   }
 
   willUpdate(changed: PropertyValues<this>): void {
@@ -1095,10 +1109,19 @@ export class WcRegisterTable extends LitElement {
    * decision about which transaction is current. Nor does it scroll: the
    * caller has already put the view where it wants it, and the fallback stop
    * can sit just above the rows on screen.
+   *
+   * `reveal` scrolls just far enough to show the row, for a caller handing
+   * the keyboard back to a row it already chose, such as after an edit.
    */
-  focusSelectedRow(): boolean {
+  focusSelectedRow(options: { reveal?: boolean } = {}): boolean {
     const id = this.tabStopId;
     if (id === null) return false;
+    if (options.reveal) {
+      this.scrollToRowIndex(
+        this.rows.findIndex((candidate) => candidate.id === id),
+        'nearest',
+      );
+    }
     const row = this.rowElement(id);
     if (!row) return false;
     row.focus({ preventScroll: true });
@@ -1318,6 +1341,8 @@ export class WcRegisterTable extends LitElement {
         // Editing and flagging act on the selection, never on a row the user
         // has not chosen.
         if (current === -1) return;
+        // A held key repeats, and an IME uses Enter to confirm what it composed.
+        if (event.repeat || event.isComposing) return;
         this.activateRow(this.rows[from]);
         break;
       case 'Escape':
@@ -1344,18 +1369,34 @@ export class WcRegisterTable extends LitElement {
     event.preventDefault();
   };
 
-  private activateRow(row: RegisterTableRow | undefined): void {
+  private activateRow(row: RegisterTableRow | undefined, touch = false): void {
     if (!row) return;
     this.setActive(row.id);
     // A read-only table still moves its cursor; it just never asks to edit.
     if (this.readonly) return;
+    // Another row open in the inline editor keeps what was typed into it:
+    // it is committed, and this row is only selected.
+    if (this.editingId !== null && this.editingId !== row.id) {
+      this.commitEdit();
+      return;
+    }
     this.dispatchEvent(
-      new CustomEvent<NcRowEventDetail>('nc-row-activate', {
-        detail: { id: row.id },
+      new CustomEvent<NcRowActivateDetail>('nc-row-activate', {
+        detail: { id: row.id, touch },
         bubbles: true,
         composed: true,
       }),
     );
+  }
+
+  /**
+   * A click selects; a tap also opens the row, because a touch screen has no
+   * double-click to spare and no Enter key to press.
+   */
+  private handleRowClick(row: RegisterTableRow, event: MouseEvent): void {
+    const pointerType = 'pointerType' in event ? (event as PointerEvent).pointerType : '';
+    if (TAP_POINTERS.has(pointerType || this.lastPointerType)) this.activateRow(row, true);
+    else this.setActive(row.id);
   }
 
   private requestFlag(row: RegisterTableRow | undefined): void {
@@ -1680,7 +1721,7 @@ export class WcRegisterTable extends LitElement {
         aria-rowindex=${index + 2}
         tabindex=${row.id === tabStopId ? '0' : '-1'}
         @focusin=${(event: FocusEvent) => this.handleRowFocusIn(row, event)}
-        @click=${() => this.setActive(row.id)}
+        @click=${(event: MouseEvent) => this.handleRowClick(row, event)}
         @dblclick=${() => this.activateRow(row)}
       >
         <td role="gridcell" class="flag">
@@ -1791,7 +1832,7 @@ declare global {
 
   interface HTMLElementEventMap {
     'nc-row-select': CustomEvent<NcRowEventDetail>;
-    'nc-row-activate': CustomEvent<NcRowEventDetail>;
+    'nc-row-activate': CustomEvent<NcRowActivateDetail>;
     'nc-edit-commit': CustomEvent<NcEditCommitDetail>;
     'nc-edit-cancel': CustomEvent<NcRowEventDetail>;
     'nc-flag-toggle': CustomEvent<NcFlagToggleDetail>;

@@ -25,6 +25,7 @@ import type { AppSettings, Company } from '../api/types.js';
 import type { ScreenContext } from './context.js';
 import { activeSection, scrolledToBottom, scrollingAncestor } from './settings-spy.js';
 import { setUnsavedChanges, type UnsavedChanges } from '../state/unsaved.js';
+import { readRegisterInlineEdit, writeRegisterInlineEdit } from '../shell-preferences.js';
 import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@nigel/theme';
 
 /**
@@ -33,8 +34,7 @@ import { applyMode, controlsCss, readMode, writeMode, type ColorMode } from '@ni
  */
 const MAX_LOGO_BYTES = 128 * 1024;
 
-const LOGO_HELP =
-  'Up to 128 KiB. It is embedded in the PDF and inlined in the page; Gmail readers see your name in the email body and the logo on the attachment.';
+const LOGO_HELP = 'Up to 128 KB. Shown at the top of your invoices.';
 
 /** How long "✓ Saved" stays beside the Letterhead title. */
 const SAVED_FLASH_MS = 2200;
@@ -76,8 +76,8 @@ const PASSWORD_FAILURE: Record<WcPasswordMode, string> = {
  * Settings, in two groups under a sticky index that follows the scroll
  * position. **This book** is what is stored with the books: the letterhead,
  * the database password, and the folder they live in. **This device** is
- * what this browser or window keeps for itself: the colour mode, and the
- * update check.
+ * what this browser or window keeps for itself: the colour mode, how the
+ * register edits a row, and the update check.
  *
  * The letterhead is a draft against the stored values. While the two differ a
  * save bar holds Discard and Save; saving refreshes `/api/status`, which is
@@ -153,6 +153,11 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         margin-top: var(--wa-space-s);
       }
 
+      .register-edit {
+        display: block;
+        margin-top: var(--wa-space-m);
+      }
+
       @media (max-width: 48rem) {
         .layout {
           grid-template-columns: minmax(0, 1fr);
@@ -192,6 +197,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private securityPanel: SecurityPanel = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
+  @state() private registerInlineEdit = false;
   @state() private active = 'letterhead';
 
   private store: AppStore = getAppStore();
@@ -218,6 +224,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     void this.loadAppSettings();
     void this.loadCompany();
     this.colorMode = readMode();
+    this.registerInlineEdit = readRegisterInlineEdit();
   }
 
   firstUpdated(): void {
@@ -378,7 +385,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   private handleLogoFile = async (event: CustomEvent<NcLogoFileDetail>) => {
     const file = event.detail.file;
     if (file.size > MAX_LOGO_BYTES) {
-      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KiB; the limit is ${MAX_LOGO_BYTES / 1024} KiB.`;
+      this.companyError = `${file.name} is ${Math.ceil(file.size / 1024)} KB. The limit is ${MAX_LOGO_BYTES / 1024} KB.`;
       return;
     }
     try {
@@ -517,6 +524,12 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     applyMode(mode);
   }
 
+  /** Per device, like the colour mode: the register reads it when it opens. */
+  private toggleRegisterInlineEdit = (event: CustomEvent<NcSwitchChangeDetail>) => {
+    this.registerInlineEdit = event.detail.checked;
+    writeRegisterInlineEdit(event.detail.checked);
+  };
+
   // -- password -------------------------------------------------------------
 
   private handleSecurityPanel = (event: CustomEvent<NcSecurityPanelDetail>) => {
@@ -531,8 +544,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     if (detail.mode === 'remove') {
       const confirmed = await confirmDialog({
         heading: 'Remove the database password?',
-        message:
-          'The database will be decrypted and readable by anyone with access to the file.',
+        message: 'Anyone who can open the file will be able to read your books.',
         confirmLabel: 'Remove password',
         variant: 'danger',
       });
@@ -655,8 +667,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
             @input=${this.companyInput.paymentInstructions}
           ></wa-textarea>
           <p class="note">
-            Printed on both the invoice page and the PDF, or on neither. Leave it
-            empty if you do not take bank transfers.
+            Tells clients how to pay you, such as your bank details. Shown on every
+            invoice. Leave it empty to show nothing.
           </p>
         </div>
         <wc-logo-field
@@ -735,7 +747,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         ${this.appSettings
           ? html`<wc-switch-row
               label="Check for updates automatically"
-              description="Checks GitHub for a newer version once a day when Nigel starts."
+              description="Once a day, when Nigel starts, see if a new version is out."
               ?checked=${this.appSettings.updateCheck}
               ?disabled=${this.busy === 'update'}
               @nc-switch-change=${this.toggleUpdateCheck}
@@ -797,7 +809,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="letterhead"
             heading="Letterhead"
-            description="What the invoice page and the PDF say about you. The name also appears in the breadcrumb, on reports and in the window title."
+            description="Your name and details as they appear on invoices. The name also shows at the top of Nigel and on reports."
             ?saved=${this.savedFlash}
           >
             ${this.renderCompanyBody(nameLabel)}
@@ -810,7 +822,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="location"
             heading="Location"
-            description="Where this set of books lives. Each set is a folder with a nigel.db inside; switching reloads Nigel onto the other database."
+            description="The folder these books are kept in. Switch to another folder to open a different set of books."
           >
             ${this.renderLocation(status?.dataDirDisplay || status?.dataDir || '')}
           </wc-settings-section>
@@ -825,12 +837,19 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <wc-settings-section
             id="appearance"
             heading="Appearance"
-            description="Light, dark, or whatever this device is set to. Kept on this device only, so a laptop and a desktop on the same books can differ."
+            description="How Nigel looks and works on this device. Other devices keep their own choices."
           >
             <wc-appearance-picker
               .mode=${this.colorMode}
               @nc-color-mode-change=${this.handleColorMode}
             ></wc-appearance-picker>
+            <wc-switch-row
+              class="register-edit"
+              label="Edit register rows in place"
+              description="Change a row's category and vendor right in the list, instead of in a window."
+              ?checked=${this.registerInlineEdit}
+              @nc-switch-change=${this.toggleRegisterInlineEdit}
+            ></wc-switch-row>
           </wc-settings-section>
 
           ${showUpdates
