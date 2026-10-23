@@ -15,6 +15,9 @@ import type { Preview } from './types.js';
  */
 export const AXE_TIMEOUT_MS = 60_000;
 
+/** An axe run slower than this is logged, so a slow regression shows up well before it times out. */
+export const AXE_SLOW_WARNING_MS = 15_000;
+
 /**
  * Assert zero axe violations for **every** state a preview declares.
  *
@@ -46,7 +49,15 @@ export function describePreviewA11y(preview: Preview): void {
         // Let the custom elements in the template finish their first update.
         await new Promise((resolve) => setTimeout(resolve, 0));
 
+        const started = performance.now();
         const { violations } = await runA11y(host);
+        const elapsed = performance.now() - started;
+        if (elapsed > AXE_SLOW_WARNING_MS) {
+          console.warn(
+            `slow axe run: "${preview.id}" state "${state.name}" took ${Math.round(elapsed)}ms ` +
+              `(warning above ${AXE_SLOW_WARNING_MS}ms, timeout ${AXE_TIMEOUT_MS}ms)`,
+          );
+        }
         expect(
           violations.map((v) => `${v.id}: ${v.help}`),
           `axe violations in "${preview.id}" state "${state.name}"`,

@@ -15,37 +15,10 @@ static DB_PASSWORD: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
 
 /// Set the global database password. Call before `get_connection()`.
 pub fn set_db_password(password: Option<Zeroizing<String>>) {
+    #[cfg(any(test, feature = "testutil"))]
+    test_globals::hold_exclusive_on_test_thread();
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     *DB_PASSWORD.lock().unwrap() = password;
-}
-
-/// Serializes the tests that touch process-global state: the database password
-/// above and the config directory override in `settings`.
-#[cfg(any(test, feature = "testutil"))]
-static PROCESS_GLOBALS: Mutex<()> = Mutex::new(());
-
-#[cfg(any(test, feature = "testutil"))]
-thread_local! {
-    static PROCESS_GLOBALS_HELD: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Take the process-globals lock for the rest of the calling test's thread.
-///
-/// Those globals are a single database password and a single config directory,
-/// so two tests that set them at once read each other's values. The lock is
-/// held until the test thread exits (and is a no-op when the thread already
-/// holds it), which makes every test that calls this run alone against the
-/// globals while the rest of the suite stays parallel. It must be called from
-/// the test's own thread, never from a worker the test is waiting on.
-#[cfg(any(test, feature = "testutil"))]
-pub fn hold_process_globals_for_tests() {
-    PROCESS_GLOBALS_HELD.with(|held| {
-        let mut held = held.borrow_mut();
-        if held.is_none() {
-            *held = Some(PROCESS_GLOBALS.lock().unwrap_or_else(|e| e.into_inner()));
-        }
-    });
 }
 
 /// [`set_db_password`] for a test: takes the process-globals lock first.
@@ -57,8 +30,127 @@ pub fn set_db_password_for_tests(password: Option<Zeroizing<String>>) {
 
 /// Read the current global database password.
 pub fn get_db_password() -> Option<Zeroizing<String>> {
+    #[cfg(any(test, feature = "testutil"))]
+    test_globals::enter_shared();
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     DB_PASSWORD.lock().unwrap().clone()
+}
+
+/// Take the process-globals lock exclusively for the rest of the calling
+/// test's thread. See [`test_globals`].
+#[cfg(any(test, feature = "testutil"))]
+pub fn hold_process_globals_for_tests() {
+    test_globals::hold_exclusive();
+}
+
+/// Note that the calling test thread reads the process-global state, for the
+/// rest of the thread. See [`test_globals`].
+#[cfg(any(test, feature = "testutil"))]
+pub fn read_process_globals_for_tests() {
+    test_globals::enter_shared();
+}
+
+/// Isolation for the two pieces of process-global state tests touch: the
+/// database password above and the config directory override in `settings`.
+///
+/// A test is either a reader, which only looks at the globals (every test that
+/// opens a connection or loads settings), or a holder, which changes them. The
+/// two are separated by one read-write lock taken per test thread and kept
+/// until the thread exits:
+///
+/// - the first read of a global on a test thread takes the lock shared, so any
+///   number of reading tests run together;
+/// - a test that writes a global (`hold_process_globals_for_tests`,
+///   `set_db_password`) takes it exclusively, waiting for every reading test
+///   to finish and keeping later ones out until it is done, then puts the
+///   password back to unset;
+/// - a thread that holds the lock exclusively reads freely, and a thread with
+///   no name or a tokio worker (the threads a test's code spawns while the
+///   test thread waits on them) never takes the lock, so a holder's own
+///   workers are never locked out of the state the holder set up.
+///
+/// A holder therefore never runs alongside any other test that reads the
+/// globals, which is what lets a test put a password on the process without
+/// breaking a plain-database test running next to it.
+#[cfg(any(test, feature = "testutil"))]
+mod test_globals {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    static LOCK: RwLock<()> = RwLock::new(());
+    static EXCLUSIVE_HOLDERS: AtomicUsize = AtomicUsize::new(0);
+
+    enum Held {
+        None,
+        Shared(#[allow(dead_code)] RwLockReadGuard<'static, ()>),
+        Exclusive(#[allow(dead_code)] Exclusive),
+    }
+
+    struct Exclusive(#[allow(dead_code)] RwLockWriteGuard<'static, ()>);
+
+    impl Drop for Exclusive {
+        fn drop(&mut self) {
+            *super::DB_PASSWORD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            EXCLUSIVE_HOLDERS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static HELD: RefCell<Held> = const { RefCell::new(Held::None) };
+    }
+
+    /// Threads a test's own code spawns are unnamed or tokio workers.
+    fn is_test_thread() -> bool {
+        std::thread::current()
+            .name()
+            .is_some_and(|name| !name.starts_with("tokio"))
+    }
+
+    pub(super) fn enter_shared() {
+        if !is_test_thread() {
+            return;
+        }
+        let needs_lock = HELD.with(|held| matches!(*held.borrow(), Held::None));
+        if needs_lock {
+            let guard = LOCK.read().unwrap_or_else(|e| e.into_inner());
+            HELD.with(|held| *held.borrow_mut() = Held::Shared(guard));
+        }
+    }
+
+    /// A setter on a test thread takes the lock itself; one on a worker thread
+    /// can only be acting for a test that already holds it.
+    pub(super) fn hold_exclusive_on_test_thread() {
+        if is_test_thread() {
+            hold_exclusive();
+        } else {
+            #[cfg(test)]
+            assert!(
+                EXCLUSIVE_HOLDERS.load(Ordering::SeqCst) > 0,
+                "the database password was set from a worker thread by a test that never took \
+                 hold_process_globals_for_tests()"
+            );
+        }
+    }
+
+    pub(super) fn hold_exclusive() {
+        let already = HELD.with(|held| {
+            let mut held = held.borrow_mut();
+            match *held {
+                Held::Exclusive(_) => true,
+                Held::Shared(_) => {
+                    *held = Held::None;
+                    false
+                }
+                Held::None => false,
+            }
+        });
+        if !already {
+            let guard = LOCK.write().unwrap_or_else(|e| e.into_inner());
+            EXCLUSIVE_HOLDERS.fetch_add(1, Ordering::SeqCst);
+            HELD.with(|held| *held.borrow_mut() = Held::Exclusive(Exclusive(guard)));
+        }
+    }
 }
 
 pub const SCHEMA: &str = "

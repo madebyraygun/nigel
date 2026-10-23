@@ -426,6 +426,7 @@ mod tests {
 
     #[test]
     fn try_password_succeeds_with_correct_password() {
+        nigel_core::db::hold_process_globals_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
         create_encrypted_test_db(&db_path, "secret");

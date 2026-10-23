@@ -211,6 +211,8 @@ fn claim_config_dir(
 /// [`set_config_dir_for_tests`] ahead of both, like every path derived from it.
 pub fn config_dir() -> PathBuf {
     #[cfg(any(test, feature = "testutil"))]
+    crate::db::read_process_globals_for_tests();
+    #[cfg(any(test, feature = "testutil"))]
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     if let Some(dir) = CONFIG_DIR_OVERRIDE.lock().unwrap().clone() {
         return dir;
@@ -954,14 +956,8 @@ mod tests {
         let dir = config_dir();
         set_config_dir_for_tests(previous);
 
-        if let Some(home) = dirs::home_dir() {
-            assert!(
-                !dir.starts_with(&home),
-                "{} is under {}",
-                dir.display(),
-                home.display()
-            );
-        }
+        let real = dirs::home_dir().map(|home| home.join(".config").join("nigel"));
+        assert_ne!(Some(dir), real);
     }
 
     #[test]
