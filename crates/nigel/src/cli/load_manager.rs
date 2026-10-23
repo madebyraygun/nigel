@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
-use nigel_core::settings::{get_data_dir, load_settings, save_settings, shellexpand_path};
+use nigel_core::settings::{load_settings, save_settings, shellexpand_path, try_data_dir};
 
 pub enum LoadAction {
     Continue,
@@ -29,11 +29,14 @@ pub struct LoadScreen {
 
 impl LoadScreen {
     pub fn new(greeting: &str) -> Self {
-        let current = get_data_dir();
+        let (current_dir, status_message) = match try_data_dir() {
+            Ok(current) => (current.to_string_lossy().to_string(), None),
+            Err(e) => (String::new(), Some((e.to_string(), true))),
+        };
         Self {
-            current_dir: current.to_string_lossy().to_string(),
+            current_dir,
             path: String::new(),
-            status_message: None,
+            status_message,
             greeting: greeting.to_string(),
             done: false,
         }

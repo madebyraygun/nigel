@@ -18,7 +18,7 @@ use nigel_core::db::AccountClass;
 use nigel_core::error::Result;
 use nigel_core::fmt::money;
 use nigel_core::reports::{self, DateGranularity, ReportKind};
-use nigel_core::settings::get_data_dir;
+use nigel_core::settings::try_data_dir;
 
 /// Whether the view is currently showing a month or a full year.
 #[derive(Clone, Copy, PartialEq)]
@@ -377,7 +377,7 @@ pub(crate) fn build_pnl(
     from_date: Option<String>,
     to_date: Option<String>,
 ) -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let data = reports::get_pnl(
         &conn,
@@ -442,7 +442,7 @@ pub(crate) fn build_expenses(
     month: Option<String>,
     year: Option<i32>,
 ) -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let data = reports::get_expense_breakdown(&conn, year.or(my), mm)?;
 
@@ -509,7 +509,7 @@ pub(crate) fn build_expenses(
 }
 
 pub(crate) fn build_tax(year: Option<i32>) -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let data = reports::get_tax_summary(&conn, year)?;
     Ok(Box::new(tax_view(&data, year)))
 }
@@ -556,7 +556,7 @@ pub(crate) fn build_cashflow(
     month: Option<String>,
     year: Option<i32>,
 ) -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let data = reports::get_cashflow(&conn, year.or(my), mm)?;
 
@@ -596,7 +596,7 @@ pub(crate) fn build_cashflow(
 }
 
 pub(crate) fn build_flagged() -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let data = reports::get_flagged(&conn)?;
 
     let widths = vec![
@@ -649,7 +649,7 @@ pub(crate) fn build_flagged() -> Result<Box<dyn ReportView>> {
 }
 
 pub(crate) fn build_balance() -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let data = reports::get_balance(&conn)?;
     Ok(Box::new(balance_view(&data)))
 }
@@ -712,7 +712,7 @@ fn balance_view(data: &reports::BalanceReport) -> TableReportView {
 }
 
 pub(crate) fn build_k1(year: Option<i32>) -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let data = reports::get_k1_prep(&conn, year)?;
 
     let widths = vec![
@@ -908,7 +908,7 @@ pub(crate) fn build_k1(year: Option<i32>) -> Result<Box<dyn ReportView>> {
 }
 
 pub(crate) fn build_aging() -> Result<Box<dyn ReportView>> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let data = nigel_core::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     Ok(Box::new(aging_view(&data)))
 }
@@ -1004,7 +1004,7 @@ fn register_standalone(cmd: ReportCommands) -> Result<()> {
         return Ok(());
     };
 
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
     let filters = filters.resolve(&conn)?;

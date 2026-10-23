@@ -27,7 +27,7 @@ use nigel_core::invoicing::render_html::{load_template, Branding};
 use nigel_core::invoicing::send::{send_invoice, SendOutcome};
 use nigel_core::invoicing::void::{has_teardown_work, void_invoice_with_teardown};
 use nigel_core::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
-use nigel_core::settings::{get_data_dir, invoicing_config, InvoicingConfig};
+use nigel_core::settings::{try_data_dir, try_invoicing_config, InvoicingConfig};
 
 pub enum InvoiceAction {
     Continue,
@@ -1183,12 +1183,15 @@ impl InvoiceManager {
     /// after painting S7 or its void counterpart, because the work blocks the
     /// whole loop.
     pub fn perform_pending(&mut self, conn: &Connection) {
-        self.perform_pending_with(
-            conn,
-            &crate::cli::today(),
-            invoicing_config(),
-            &get_data_dir(),
-        );
+        match send_settings() {
+            Ok((cfg, data_dir)) => {
+                self.perform_pending_with(conn, &crate::cli::today(), cfg, &data_dir)
+            }
+            Err(e) => {
+                self.screen = Screen::Detail;
+                self.set_status(e.to_string());
+            }
+        }
         drain_buffered_input();
     }
 
@@ -1741,9 +1744,10 @@ impl InvoiceManager {
             KeyCode::Char('v') => self.open_void_confirmation(conn),
             KeyCode::Char('c') => self.open_confirmation(Screen::ConfirmDuplicate),
             KeyCode::Char('d') => self.open_delete_confirmation(conn),
-            KeyCode::Char('s') => {
-                return self.begin_send(conn, invoicing_config(), &get_data_dir())
-            }
+            KeyCode::Char('s') => match send_settings() {
+                Ok((cfg, data_dir)) => return self.begin_send(conn, cfg, &data_dir),
+                Err(e) => self.set_status(e.to_string()),
+            },
             KeyCode::Esc => self.close_detail(),
             KeyCode::Char('q') => return InvoiceAction::Close,
             _ => {}
@@ -1896,6 +1900,13 @@ impl InvoiceManager {
 
 /// Throw away keys pressed while the terminal was unresponsive, so a user who
 /// mashed Enter during a send does not dismiss the result before reading it.
+/// What a send, void or republish reads from settings.json, read again at the
+/// moment it runs. An unreadable file is an error on the status line, never
+/// the default data directory and an empty configuration standing in for it.
+fn send_settings() -> nigel_core::error::Result<(InvoicingConfig, std::path::PathBuf)> {
+    Ok((try_invoicing_config()?, try_data_dir()?))
+}
+
 fn drain_buffered_input() {
     while crossterm::event::poll(std::time::Duration::ZERO).unwrap_or(false) {
         let _ = crossterm::event::read();
@@ -3377,6 +3388,40 @@ mod tests {
     ) -> InvoiceAction {
         mgr.handle_key(KeyCode::Enter, conn);
         mgr.begin_send(conn, cfg, data_dir)
+    }
+
+    /// settings.json broken mid-session: the send reads it again when `s` is
+    /// pressed and when the confirmed work runs, and both say why on the status
+    /// line rather than sending from the default data directory.
+    #[test]
+    fn a_send_with_an_unreadable_settings_file_names_it_and_sends_nothing() {
+        let _config = nigel_core::settings::TempConfigDir::new();
+        std::fs::create_dir_all(nigel_core::settings::config_dir()).unwrap();
+        let settings = nigel_core::settings::config_dir().join("settings.json");
+        std::fs::write(&settings, "{\"data_dir\": \"/books/acme\",,}\n").unwrap();
+
+        let (_dir, conn) = test_conn();
+        seed_invoice(&conn, "Cedar Systems", 100.0);
+        let mut mgr = manager(&conn);
+        mgr.handle_key(KeyCode::Enter, &conn);
+
+        mgr.handle_key(KeyCode::Char('s'), &conn);
+        assert!(matches!(mgr.screen, Screen::Detail));
+        let status = mgr.status_message.clone().unwrap_or_default();
+        assert!(
+            status.contains("settings.json could not be read"),
+            "{status}"
+        );
+
+        mgr.screen = Screen::Sending;
+        mgr.status_message = None;
+        mgr.perform_pending(&conn);
+        assert!(matches!(mgr.screen, Screen::Detail));
+        let status = mgr.status_message.clone().unwrap_or_default();
+        assert!(
+            status.contains("settings.json could not be read"),
+            "{status}"
+        );
     }
 
     #[test]

@@ -28,7 +28,7 @@ use nigel_core::error::Result;
 use nigel_core::fmt::number;
 use nigel_core::reports;
 use nigel_core::reviewer::{get_categories, get_flagged_transactions};
-use nigel_core::settings::{get_data_dir, load_settings, settings_file_exists};
+use nigel_core::settings::{settings_file_exists, try_data_dir, try_load_settings};
 
 const GREETINGS: &[&str] = &[
     "Kettle's on.",
@@ -1049,7 +1049,7 @@ fn do_text_export(
     if idx == REPORT_SLUGS.len() {
         // "All Reports" text export
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let dir = nigel_core::settings::get_data_dir().join("exports");
+        let dir = nigel_core::settings::try_data_dir()?.join("exports");
         std::fs::create_dir_all(&dir)?;
         let mut count = 0;
         let mut reports: Vec<(&str, Result<String>)> = vec![
@@ -1101,7 +1101,7 @@ fn do_text_export(
     };
 
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let dir = nigel_core::settings::get_data_dir().join("exports");
+    let dir = nigel_core::settings::try_data_dir()?.join("exports");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{name}-{date}.txt"));
     std::fs::write(&path, &content)?;
@@ -1137,7 +1137,7 @@ fn prepare_books(
         return Ok(None);
     }
 
-    let stored = load_settings();
+    let stored = try_load_settings()?;
     let mut plan = nigel_core::setup::SetupPlan {
         user_name: stored.user_name.clone(),
         company_name: String::new(),
@@ -1163,10 +1163,15 @@ fn prepare_books(
 }
 
 pub fn run() -> Result<()> {
+    // Every screen from here on owns the terminal, so a settings.json that
+    // breaks mid-session is reported through `try_data_dir`'s error on a
+    // status line, never printed into the alternate screen.
+    nigel_core::settings::silence_unreadable_warning();
+
     // Returning users: show splash screen before dashboard
     let is_first_run = !settings_file_exists();
     if !is_first_run {
-        let settings = load_settings();
+        let settings = try_load_settings()?;
         let db_path = std::path::PathBuf::from(&settings.data_dir).join("nigel.db");
         let needs_password = db_path.exists() && nigel_core::db::is_encrypted(&db_path)?;
         if needs_password {
@@ -1215,7 +1220,7 @@ pub fn run() -> Result<()> {
 
     drop(conn);
 
-    let settings = load_settings();
+    let settings = try_load_settings()?;
 
     // Handle post-setup action from onboarding
     if let Some(action) = post_setup_action {
@@ -1227,7 +1232,7 @@ pub fn run() -> Result<()> {
                 // User chose "Load existing" during onboarding — prompt for path
                 print!(
                     "Current data directory: {}\nPath to data directory: ",
-                    get_data_dir().display()
+                    try_data_dir()?.display()
                 );
                 std::io::Write::flush(&mut std::io::stdout())?;
                 let mut input = String::new();
@@ -1253,7 +1258,7 @@ pub fn run() -> Result<()> {
     let update_notification = super::update::check_and_notify();
 
     loop {
-        let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+        let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
         let mut dashboard = Dashboard::new(user_name.clone(), update_notification.clone());
         dashboard.load_data(&conn)?;
         if let Some(notice) = profile_notice.take() {
@@ -2076,7 +2081,7 @@ mod tests {
     }
 
     /// An isolated data directory the view builders and export helpers (which
-    /// open their own connections through `get_data_dir`) resolve to, instead
+    /// open their own connections through `try_data_dir`) resolve to, instead
     /// of the developer's real books.
     fn temp_books() -> (
         nigel_core::settings::TempConfigDir,
@@ -2092,6 +2097,25 @@ mod tests {
         nigel_core::db::init_db(&conn).unwrap();
         nigel_core::migrations::run_migrations(&conn).unwrap();
         (guard, data, conn)
+    }
+
+    /// settings.json broken while the dashboard is open: an export says why
+    /// rather than reading and writing under the default data directory.
+    #[test]
+    fn an_export_after_settings_json_breaks_names_the_file() {
+        let (_guard, data, _conn) = temp_books();
+        let settings = nigel_core::settings::config_dir().join("settings.json");
+        std::fs::write(&settings, "{\"data_dir\": \"/books/acme\",,}\n").unwrap();
+
+        for idx in [0, REPORT_SLUGS.len()] {
+            let err = do_text_export(idx, Some(2026), None, nigel_core::db::Profile::Business)
+                .expect_err("an unreadable settings.json is an error");
+            assert!(
+                err.to_string().contains("settings.json could not be read"),
+                "{err}"
+            );
+        }
+        assert!(!data.path().join("exports").exists());
     }
 
     /// The canonical idx → screen dispatch, end to end. `current_report_idx`

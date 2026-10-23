@@ -72,7 +72,7 @@ fn read_error(path: &Path, error: &std::io::Error) -> String {
 pub async fn stage_import(path: String) -> Result<StagedUpload, String> {
     stage_file(
         Path::new(&path),
-        &uploads::uploads_dir(&db::database_path()),
+        &uploads::uploads_dir(&db::database_path().map_err(|e| e.to_string())?),
     )
 }
 
@@ -95,7 +95,8 @@ pub async fn pick_import_file(app: tauri::AppHandle) -> Result<Option<StagedUplo
         return Ok(None);
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;
-    stage_file(&path, &uploads::uploads_dir(&db::database_path())).map(Some)
+    let db_path = db::database_path().map_err(|e| e.to_string())?;
+    stage_file(&path, &uploads::uploads_dir(&db_path)).map(Some)
 }
 
 #[cfg(test)]

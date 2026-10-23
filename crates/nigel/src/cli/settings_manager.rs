@@ -12,7 +12,7 @@ use crate::cli::password_manager::{PasswordAction, PasswordManager};
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
 use nigel_core::db;
 use nigel_core::error::Result;
-use nigel_core::settings::{get_data_dir, load_settings, save_settings};
+use nigel_core::settings::{load_settings, save_settings, try_data_dir};
 
 pub enum SettingsAction {
     Continue,
@@ -112,7 +112,7 @@ pub struct SettingsManager {
 impl SettingsManager {
     pub fn new(conn: &Connection, greeting: &str) -> Result<Self> {
         let company_name = db::get_metadata(conn, "company_name").unwrap_or_default();
-        let db_path = get_data_dir().join("nigel.db");
+        let db_path = try_data_dir()?.join("nigel.db");
         let encrypted = db::is_encrypted(&db_path)?;
         let settings = load_settings();
         let name_label = match db::get_profile(conn) {
@@ -371,8 +371,9 @@ impl SettingsManager {
                 match mgr.handle_key(code) {
                     PasswordAction::Close => {
                         // Refresh encrypted status when returning from password manager
-                        let db_path = get_data_dir().join("nigel.db");
-                        match db::is_encrypted(&db_path) {
+                        let encrypted =
+                            try_data_dir().and_then(|dir| db::is_encrypted(&dir.join("nigel.db")));
+                        match encrypted {
                             Ok(enc) => self.encrypted = enc,
                             Err(e) => {
                                 // Preserve previous state rather than defaulting to false

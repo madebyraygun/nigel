@@ -4,7 +4,7 @@ use nigel_core::db::get_connection;
 use nigel_core::error::Result;
 use nigel_core::reports;
 use nigel_core::reviewer::get_categories;
-use nigel_core::settings::get_data_dir;
+use nigel_core::settings::try_data_dir;
 
 pub fn register(
     month: Option<String>,
@@ -13,7 +13,7 @@ pub fn register(
     to_date: Option<String>,
     filters: &RegisterFilterArgs,
 ) -> Result<()> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
     let filters = filters.resolve(&conn)?;

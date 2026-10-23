@@ -253,6 +253,14 @@ fn report_unreadable_once(err: &NigelError) -> bool {
     first
 }
 
+/// Stop [`load_settings`] writing its warning to stderr for the rest of the
+/// process. A full-screen terminal UI calls this before it takes the screen:
+/// a line printed there would land inside the alternate screen, and the TUI
+/// reports an unreadable file through [`try_data_dir`]'s error instead.
+pub fn silence_unreadable_warning() {
+    UNREADABLE_REPORTED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Write `settings` over settings.json.
 ///
 /// Refuses with [`NigelError::SettingsUnreadable`] when the file already there
@@ -468,6 +476,12 @@ pub fn invoicing_config() -> InvoicingConfig {
     invoicing_config_from(&load_settings())
 }
 
+/// [`invoicing_config`], or the reason settings.json cannot be read rather
+/// than an installation that looks unconfigured.
+pub fn try_invoicing_config() -> Result<InvoicingConfig> {
+    Ok(invoicing_config_from(&try_load_settings()?))
+}
+
 /// Everything the documents feature reads: the invoicing keys it shares with
 /// invoices plus the three it adds. Stripe is carried but never required.
 #[derive(Default)]
@@ -607,11 +621,21 @@ pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
     }
 }
 
-/// The directory the books live in, from [`load_settings`]. Callers that must
-/// not fall back to the default directory resolve it through
-/// [`try_load_settings`] instead.
+/// The directory the books live in, from [`load_settings`]: the default
+/// directory when settings.json cannot be parsed. Only a short-lived process
+/// that has already checked the file with [`try_load_settings`] — every CLI
+/// subcommand, which `main` checks before dispatch — may use it. Anything that
+/// lives long enough for the file to break underneath it uses
+/// [`try_data_dir`].
 pub fn get_data_dir() -> PathBuf {
     PathBuf::from(&load_settings().data_dir)
+}
+
+/// The directory the books live in, or [`NigelError::SettingsUnreadable`]
+/// when settings.json cannot be parsed — never the default directory standing
+/// in for a configured one.
+pub fn try_data_dir() -> Result<PathBuf> {
+    Ok(PathBuf::from(try_load_settings()?.data_dir))
 }
 
 pub fn shellexpand_path(path: &str) -> String {
@@ -1322,6 +1346,32 @@ mod tests {
         UNREADABLE_REPORTED.store(false, std::sync::atomic::Ordering::Relaxed);
         assert!(report_unreadable_once(&err));
         assert!(!report_unreadable_once(&err));
+
+        UNREADABLE_REPORTED.store(false, std::sync::atomic::Ordering::Relaxed);
+        silence_unreadable_warning();
+        assert!(
+            !report_unreadable_once(&err),
+            "a silenced process prints nothing"
+        );
+    }
+
+    #[test]
+    fn the_data_dir_is_an_error_never_the_default_when_settings_json_is_unreadable() {
+        let _config = TempConfigDir::new();
+        save_settings(&Settings {
+            data_dir: "/books/acme".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        assert_eq!(try_data_dir().unwrap(), PathBuf::from("/books/acme"));
+
+        write_malformed_settings();
+        let err = try_data_dir().expect_err("unreadable");
+        assert!(
+            matches!(err, NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        assert!(try_invoicing_config().is_err());
     }
 
     #[test]

@@ -11,7 +11,7 @@ use zeroize::Zeroize;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE, SELECTED_STYLE};
 use nigel_core::db;
 use nigel_core::error::Result;
-use nigel_core::settings::get_data_dir;
+use nigel_core::settings::try_data_dir;
 
 #[derive(Clone, Copy)]
 enum Action {
@@ -56,7 +56,7 @@ pub enum PasswordAction {
 
 impl PasswordManager {
     pub fn new(greeting: &str) -> Result<Self> {
-        let db_path = get_data_dir().join("nigel.db");
+        let db_path = try_data_dir()?.join("nigel.db");
         let encrypted = db::is_encrypted(&db_path)?;
         Ok(Self {
             encrypted,
@@ -89,7 +89,13 @@ impl PasswordManager {
     }
 
     fn execute(&mut self) {
-        let db_path = get_data_dir().join("nigel.db");
+        let db_path = match try_data_dir() {
+            Ok(dir) => dir.join("nigel.db"),
+            Err(e) => {
+                self.phase = Phase::Result(e.to_string(), false);
+                return;
+            }
+        };
         let result = match self.chosen_action {
             Some(Action::Set) => {
                 if self.new_pw.trim() != self.confirm_pw.trim() {

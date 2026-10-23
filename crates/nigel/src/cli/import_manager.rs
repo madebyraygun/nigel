@@ -14,7 +14,7 @@ use crate::cli::accounts;
 use crate::tui::{FOOTER_STYLE, HEADER_STYLE};
 use nigel_core::error::Result;
 use nigel_core::importer::{import_and_categorize, ImportRequest};
-use nigel_core::settings::{get_data_dir, shellexpand_path};
+use nigel_core::settings::{shellexpand_path, try_data_dir};
 
 pub enum ImportAction {
     Continue,
@@ -285,7 +285,15 @@ impl ImportScreen {
 
 fn run_import(conn: &Connection, file_path: &Path, account_name: &str) -> ImportResult {
     // Snapshot before import
-    let data_dir = get_data_dir();
+    let data_dir = match try_data_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            return ImportResult {
+                message: e.to_string(),
+                is_error: true,
+            }
+        }
+    };
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let snap_path = data_dir.join(format!("snapshots/pre-import-{stamp}.db"));
     if let Err(e) = crate::cli::backup::snapshot(conn, &snap_path) {
