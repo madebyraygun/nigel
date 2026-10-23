@@ -1,10 +1,10 @@
 ---
 id: TASK-141
 title: Line item descriptions truncate while Qty and Unit waste half the row
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-11 16:41'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 00:54'
 labels:
   - invoicing
   - web
@@ -28,10 +28,16 @@ Pairs with TASK-137, which is the other thing wrong with this component.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A long line item description wraps to multiple lines in the editor rather than truncating
-- [ ] #2 A long description wraps in the read-only rendering on the invoice detail
-- [ ] #3 Qty and Unit are sized for the figures they carry, not given equal share with the description
-- [ ] #4 Row height follows the tallest cell, and the Amount, reorder and delete controls stay aligned with it
-- [ ] #5 The preview covers a short description and one long enough to wrap to three lines
-- [ ] #6 describePreviewA11y still passes
+- [x] #1 A long line item description wraps to multiple lines in the editor rather than truncating
+- [x] #2 A long description wraps in the read-only rendering on the invoice detail
+- [x] #3 Qty and Unit are sized for the figures they carry, not given equal share with the description
+- [x] #4 Row height follows the tallest cell, and the Amount, reorder and delete controls stay aligned with it
+- [x] #5 The preview covers a short description and one long enough to wrap to three lines
+- [x] #6 describePreviewA11y still passes
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #67 (Invoices refresh, with TASK-148 and TASK-141 folded in).
+<!-- SECTION:FINAL_SUMMARY:END -->
