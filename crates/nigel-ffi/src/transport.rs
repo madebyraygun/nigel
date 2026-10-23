@@ -1,10 +1,10 @@
 //! The scheme request and response as plain records the foreign side can
 //! build and read, and their conversion to and from `http`.
 //!
-//! Nothing here knows the request will be answered in process: the records
-//! are an HTTP exchange with nothing local-specific in them, so a transport
-//! that answers the same `nigel://` request from a remote `nigel serve` speaks
-//! the same shapes.
+//! The records are a plain HTTP exchange, so a transport that sends the same
+//! request to a remote `nigel serve` can reuse them — after rewriting `Host`
+//! and `Origin` for that server's guard and attaching its session credential,
+//! neither of which the in-process router asks for.
 
 use axum::body::Body;
 use axum::http::{HeaderName, HeaderValue, Method, Request, Response, Uri};

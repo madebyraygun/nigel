@@ -65,6 +65,11 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            crates/nigel-desktop -> target
+            crates/nigel-ffi -> target
 
       # The web UI is built before any cargo step so rust-embed bakes in the
       # freshly built SPA rather than the placeholder build.rs seeds.
@@ -146,8 +151,8 @@ jobs:
         working-directory: crates/nigel-desktop
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test -- --test-threads=1
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked -- --test-threads=1
 
       - name: Build and test the Swift shell's bridge
         # Its own workspace for the same reason as the desktop shell. On
@@ -156,6 +161,31 @@ jobs:
         working-directory: crates/nigel-ffi
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test -- --test-threads=1
-          cargo build --lib
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked -- --test-threads=1
+          cargo build --locked --lib
+
+      - name: Check the bridge's OpenSSL is SQLCipher's vendored copy alone
+        # The staticlib must not ask for a system OpenSSL: SQLCipher's is
+        # vendored and linked statically, and reqwest goes through native-tls
+        # to Security.framework, so no `openssl` crate belongs in the tree.
+        if: runner.os == 'macOS'
+        working-directory: crates/nigel-ffi
+        run: |
+          set -euo pipefail
+          target=aarch64-apple-darwin
+          cargo tree --locked --target "$target" -e features -i openssl-sys \
+            | grep -q 'openssl-sys feature "vendored"' \
+            || { echo "openssl-sys is not vendored for $target"; exit 1; }
+          cargo tree --locked --target "$target" -e normal,build --prefix none \
+            | grep -q '^openssl-src ' \
+            || { echo "openssl-src is missing for $target"; exit 1; }
+          if cargo tree --locked --target "$target" -e normal --prefix none \
+              | grep -q '^openssl '; then
+            echo "the openssl crate is in the $target tree"
+            cargo tree --locked --target "$target" -e normal -i openssl
+            exit 1
+          fi
+          cargo tree --locked --target "$target" -e normal -i security-framework \
+            | grep -q '^security-framework ' \
+            || { echo "native-tls is not on Security.framework for $target"; exit 1; }

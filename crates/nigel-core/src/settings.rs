@@ -174,13 +174,49 @@ impl Drop for TempConfigDir {
     }
 }
 
-/// The directory nigel's machine-local configuration lives in. Honors
-/// [`set_config_dir_for_tests`] like every path derived from it.
+/// The config directory an embedding host chose for this process.
+///
+/// A host whose home directory is not the user's — the sandboxed Swift shell,
+/// whose `$HOME` is its app container — names the directory itself through
+/// [`set_config_dir`] before it serves anything. The CLI and `nigel serve`
+/// never set it and resolve from the home directory.
+static HOST_CONFIG_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Fix this process's config directory, once.
+///
+/// Every path derived from [`config_dir`] — `settings.json`, the invoicing
+/// and documents config, window state — then resolves under `dir`. Setting
+/// the same directory again is a no-op; a different one is refused with the
+/// directory already in force, because settings read from one place and
+/// written to another is how a process loses its configuration.
+pub fn set_config_dir(dir: PathBuf) -> std::result::Result<(), PathBuf> {
+    claim_config_dir(&HOST_CONFIG_DIR, dir)
+}
+
+fn claim_config_dir(
+    cell: &std::sync::OnceLock<PathBuf>,
+    dir: PathBuf,
+) -> std::result::Result<(), PathBuf> {
+    let held = cell.get_or_init(|| dir.clone());
+    if *held == dir {
+        Ok(())
+    } else {
+        Err(held.clone())
+    }
+}
+
+/// The directory nigel's machine-local configuration lives in: the one a
+/// host fixed with [`set_config_dir`], else `~/.config/nigel`. Honors
+/// [`set_config_dir_for_tests`] ahead of both, like every path derived from it.
 pub fn config_dir() -> PathBuf {
     #[cfg(any(test, feature = "testutil"))]
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     if let Some(dir) = CONFIG_DIR_OVERRIDE.lock().unwrap().clone() {
         return dir;
+    }
+
+    if let Some(dir) = HOST_CONFIG_DIR.get() {
+        return dir.clone();
     }
 
     dirs::home_dir()
@@ -604,6 +640,20 @@ pub fn restrict_dir_permissions(path: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_host_config_dir_is_fixed_once_and_a_different_one_is_refused() {
+        let cell = std::sync::OnceLock::new();
+        let first = PathBuf::from("/books/config");
+
+        assert_eq!(claim_config_dir(&cell, first.clone()), Ok(()));
+        assert_eq!(claim_config_dir(&cell, first.clone()), Ok(()));
+        assert_eq!(
+            claim_config_dir(&cell, PathBuf::from("/elsewhere")),
+            Err(first.clone())
+        );
+        assert_eq!(cell.get(), Some(&first));
+    }
 
     fn fully_configured() -> InvoicingConfig {
         InvoicingConfig {

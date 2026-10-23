@@ -7,9 +7,10 @@
 //! costs the shell nothing. The SPA is embedded in this library the way it is
 //! in every build: `nigel-core`'s rust-embed over `web/dist`.
 //!
-//! The host knows nothing about where the folder it is given came from. In
-//! the sandboxed app the shell resolves a security-scoped bookmark and starts
-//! access before calling [`NigelHost::new`]; that is the shell's business.
+//! The host knows nothing about where the folders it is given came from. In
+//! the sandboxed app `$HOME` is the app container, so the shell owns both the
+//! books folder (a security-scoped bookmark it starts access to) and the
+//! config folder, and passes them to [`NigelHost::new`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,6 +35,13 @@ pub enum FfiError {
     /// the user again, not a reason to start empty books somewhere new.
     #[error("The books folder {path} isn't there.")]
     BooksFolderMissing { path: String },
+    /// The config folder the shell named is not a directory on this machine.
+    #[error("The config folder {path} isn't there.")]
+    ConfigFolderMissing { path: String },
+    /// This process already resolves its configuration from another folder;
+    /// the config folder is fixed for the life of the process.
+    #[error("Configuration already lives in {current}, not {requested}.")]
+    ConfigFolderConflict { current: String, requested: String },
     /// The async runtime that serves requests could not start.
     #[error("Couldn't start the request runtime: {message}")]
     Runtime { message: String },
@@ -77,25 +85,38 @@ pub struct NigelHost {
 
 #[uniffi::export]
 impl NigelHost {
-    /// Open the books in `data_dir`, or — given none — the folder the CLI's
-    /// settings name, so the shell and the terminal share one set of books.
+    /// Open the books in `data_dir`, with this process's configuration
+    /// (`settings.json`, the invoicing and documents config) under
+    /// `config_dir`.
     ///
-    /// A named folder must already exist. The database inside it is created
-    /// on first use, as the CLI creates it in a folder the user chose.
+    /// Both are explicit because the shell owns them: in the sandbox the home
+    /// directory is the app container, so nothing here may derive a location
+    /// from it. Both folders must already exist — the host never creates a
+    /// books folder, so a moved or deleted one is an error the shell answers
+    /// by asking again rather than empty books somewhere new. The database
+    /// inside an existing folder is created on first use, as the CLI creates
+    /// it in a folder the user chose. The config folder is fixed for the life
+    /// of the process; a second host naming a different one is refused.
     #[uniffi::constructor]
-    pub fn new(data_dir: Option<String>) -> Result<Arc<Self>, FfiError> {
-        let data_dir = match data_dir {
-            Some(dir) => {
-                let dir = PathBuf::from(dir);
-                if !dir.is_dir() {
-                    return Err(FfiError::BooksFolderMissing {
-                        path: dir.display().to_string(),
-                    });
-                }
-                dir
+    pub fn new(data_dir: String, config_dir: String) -> Result<Arc<Self>, FfiError> {
+        let data_dir = PathBuf::from(data_dir);
+        if !data_dir.is_dir() {
+            return Err(FfiError::BooksFolderMissing {
+                path: data_dir.display().to_string(),
+            });
+        }
+        let config_dir = PathBuf::from(config_dir);
+        if !config_dir.is_dir() {
+            return Err(FfiError::ConfigFolderMissing {
+                path: config_dir.display().to_string(),
+            });
+        }
+        nigel_core::settings::set_config_dir(config_dir.clone()).map_err(|current| {
+            FfiError::ConfigFolderConflict {
+                current: current.display().to_string(),
+                requested: config_dir.display().to_string(),
             }
-            None => nigel_core::settings::get_data_dir(),
-        };
+        })?;
         Self::open(&data_dir.join(DATABASE_FILE)).map(Arc::new)
     }
 
@@ -134,7 +155,7 @@ impl NigelHost {
 
 impl NigelHost {
     /// The host over a database at an explicit path.
-    pub fn open(db_path: &Path) -> Result<Self, FfiError> {
+    fn open(db_path: &Path) -> Result<Self, FfiError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .thread_name("nigel-host")

@@ -3,15 +3,25 @@
 //! temporary databases, with no webview and no port.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use nigel_core::server::{testutil, uploads};
 use nigel_ffi::{FfiError, NigelHost, SchemeHeader, SchemeRequest, SchemeResponse};
 
+/// The config folder every host in this test process names. The config
+/// folder is fixed for the life of a process, as it is in the shell, so the
+/// tests share one rather than each making its own.
+static CONFIG: LazyLock<tempfile::TempDir> =
+    LazyLock::new(|| tempfile::tempdir().expect("config dir"));
+
+fn config_dir() -> String {
+    CONFIG.path().display().to_string()
+}
+
 /// The books folder `seeded_db` made, opened the way the shell opens it.
 fn host_over(db_path: &Path) -> Arc<NigelHost> {
     let folder = db_path.parent().expect("a books folder");
-    NigelHost::new(Some(folder.display().to_string())).expect("open the books")
+    NigelHost::new(folder.display().to_string(), config_dir()).expect("open the books")
 }
 
 fn header(name: &str, value: &str) -> SchemeHeader {
@@ -331,7 +341,7 @@ fn a_books_folder_that_is_not_there_is_refused_rather_than_created() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("moved-away");
 
-    let error = NigelHost::new(Some(missing.display().to_string()))
+    let error = NigelHost::new(missing.display().to_string(), config_dir())
         .err()
         .expect("refused");
 
@@ -340,6 +350,89 @@ fn a_books_folder_that_is_not_there_is_refused_rather_than_created() {
         "{error:?}"
     );
     assert!(!missing.exists(), "the host created the folder it refused");
+}
+
+#[test]
+fn a_missing_books_folder_is_refused_before_the_config_folder_is_looked_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("moved-away");
+
+    // Neither folder exists: the books folder is the one reported, and
+    // nothing is created for either.
+    let error = NigelHost::new(
+        missing.display().to_string(),
+        dir.path().join("no-config").display().to_string(),
+    )
+    .err()
+    .expect("refused");
+
+    assert!(
+        matches!(error, FfiError::BooksFolderMissing { .. }),
+        "{error:?}"
+    );
+    assert!(!missing.exists());
+}
+
+#[test]
+fn a_config_folder_that_is_not_there_is_refused() {
+    let (_dir, db_path) = testutil::seeded_db();
+    let books = db_path.parent().unwrap().display().to_string();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let missing = elsewhere.path().join("no-config");
+
+    let error = NigelHost::new(books, missing.display().to_string())
+        .err()
+        .expect("refused");
+
+    assert!(
+        matches!(error, FfiError::ConfigFolderMissing { .. }),
+        "{error:?}"
+    );
+    assert!(!missing.exists(), "the host created the folder it refused");
+}
+
+#[test]
+fn a_second_config_folder_in_one_process_is_refused() {
+    let (_dir, db_path) = testutil::seeded_db();
+    let _first = host_over(&db_path);
+    let other = tempfile::tempdir().unwrap();
+
+    let error = NigelHost::new(
+        db_path.parent().unwrap().display().to_string(),
+        other.path().display().to_string(),
+    )
+    .err()
+    .expect("refused");
+
+    assert!(
+        matches!(error, FfiError::ConfigFolderConflict { .. }),
+        "{error:?}"
+    );
+    assert_eq!(nigel_core::settings::config_dir(), CONFIG.path());
+}
+
+#[test]
+fn settings_written_through_the_router_land_in_the_config_folder() {
+    let (_dir, db_path) = testutil::seeded_db();
+    let host = host_over(&db_path);
+
+    let mut request = scheme_request("PUT", "/api/settings/app");
+    request
+        .headers
+        .push(header("content-type", "application/json"));
+    request.body = br#"{"updateCheck":false}"#.to_vec();
+    let response = send(&host, request);
+
+    assert_eq!(
+        response.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&response.body)
+    );
+    let written = std::fs::read_to_string(CONFIG.path().join("settings.json"))
+        .expect("settings.json in the config folder the host was given");
+    let written: serde_json::Value = serde_json::from_str(&written).expect("json");
+    assert_eq!(written["update_check"], false, "{written}");
 }
 
 #[test]

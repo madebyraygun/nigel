@@ -280,7 +280,7 @@ with UniFFI's proc macros, exporting one object.
 
 | `NigelHost` | What it does |
 |---|---|
-| `new(data_dir)` | Opens `<data_dir>/nigel.db` behind `build_desktop_router` and `trusted_origins()`, on its own multi-threaded tokio runtime. With no folder it opens the one the CLI's settings name. A named folder that does not exist is refused (`BooksFolderMissing`) rather than created |
+| `new(data_dir, config_dir)` | Opens `<data_dir>/nigel.db` behind `build_desktop_router` and `trusted_origins()`, on its own multi-threaded tokio runtime, and fixes the process's config directory (`settings.json`, the invoicing and documents config) at `config_dir` through `settings::set_config_dir`. Both folders must exist: a missing books folder is `BooksFolderMissing` and a missing config folder `ConfigFolderMissing`, and neither is created. The config folder is fixed for the life of the process; a second host naming another is `ConfigFolderConflict` |
 | `async request(SchemeRequest)` | Method, whole URL, headers and body in; status, headers and body out, through `scheme::answer`. A request the `http` crate cannot represent is answered 400 without reaching the router |
 | `stage_file(path)` | `uploads::stage_file` into the open books' spool, answering the same `StagedUpload` the Tauri shell's commands do |
 | `data_dir()` | The folder the open books live in, following a switch made in Settings |
@@ -292,14 +292,18 @@ rust-embed over `web/dist`. `request` runs the router on the host's runtime,
 so Swift may await it from any executor; releasing the host shuts the runtime
 down without blocking.
 
-`SchemeRequest` and `SchemeResponse` are a plain HTTP exchange with nothing
-in-process about them, so a transport that answers the same `nigel://`
-request from a remote `nigel serve` speaks the same shapes, and the shell's
-scheme handler does not care which one answered.
+`SchemeRequest` and `SchemeResponse` are a plain HTTP exchange, so a
+transport that sends the same request to a remote `nigel serve` can reuse the
+shapes. It is not a drop-in, though: `nigel serve`'s router has a session
+guard and trusts its own host, not `nigel://localhost`. A remote transport
+must rewrite `Host` and `Origin` to the server's before sending, and attach
+the session credential itself, natively, so the page never holds it.
 
-The host knows nothing about where its folder came from. In the sandboxed
-app the shell resolves the security-scoped bookmark to the books folder and
-starts access before `NigelHost::new`; `nigel-core` sees only a path.
+The host knows nothing about where its folders came from. In the sandboxed
+app `$HOME` is the app container, so the shell owns both locations: it
+resolves the security-scoped bookmark to the books folder, starts access, and
+passes that folder and its config folder to `NigelHost::new`. `nigel-core`
+sees only paths and derives neither from the home directory.
 
 ```bash
 cd crates/nigel-ffi && cargo test -- --test-threads=1
