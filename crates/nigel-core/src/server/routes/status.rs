@@ -245,7 +245,7 @@ fn try_unlock(db_path: &Path, password: &str) -> ApiResult<bool> {
         return Ok(false);
     }
 
-    db::set_db_password(Some(password.to_string()));
+    db::set_db_password(Some(zeroize::Zeroizing::new(password.to_string())));
     let conn = match db::get_connection(db_path) {
         Ok(conn) => conn,
         Err(_) => {

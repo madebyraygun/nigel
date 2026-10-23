@@ -82,7 +82,7 @@ async fn post_setup(
                 "The password cannot contain control characters.",
             ))
         }
-        Some(value) => Some(value.to_string()),
+        Some(value) => Some(zeroize::Zeroizing::new(value.to_string())),
     };
 
     let action = request.action;

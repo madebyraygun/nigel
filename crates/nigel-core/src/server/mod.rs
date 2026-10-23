@@ -66,7 +66,7 @@ async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
     let url = format!(
         "http://127.0.0.1:{}/auth?token={}",
         addr.port(),
-        state.session_token
+        state.session_token.expose()
     );
 
     println!("Nigel is serving on http://127.0.0.1:{}", addr.port());

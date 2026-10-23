@@ -129,7 +129,7 @@ impl PasswordManager {
         let pw = self.new_pw.trim();
         let trimmed = pw.len() != self.new_pw.len();
         super::password::encrypt_database(db_path, pw).map_err(|e| e.to_string())?;
-        db::set_db_password(Some(pw.to_string()));
+        db::set_db_password(Some(zeroize::Zeroizing::new(pw.to_string())));
         let mut msg = "Database encrypted successfully.".to_string();
         if trimmed {
             msg.push_str(" Note: leading/trailing spaces were removed from password.");
@@ -142,7 +142,7 @@ impl PasswordManager {
         let trimmed = new_pw.len() != self.new_pw.len();
         super::password::rekey_database(db_path, self.current_pw.trim(), new_pw)
             .map_err(|e| e.to_string())?;
-        db::set_db_password(Some(new_pw.to_string()));
+        db::set_db_password(Some(zeroize::Zeroizing::new(new_pw.to_string())));
         let mut msg = "Password changed successfully.".to_string();
         if trimmed {
             msg.push_str(" Note: leading/trailing spaces were removed from password.");

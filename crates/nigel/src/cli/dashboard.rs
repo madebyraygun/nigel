@@ -1150,7 +1150,7 @@ fn prepare_books(
         plan.user_name = result.user_name;
         plan.company_name = result.company_name;
         plan.profile = result.profile;
-        plan.password = result.password;
+        plan.password = result.password.map(zeroize::Zeroizing::new);
         post_setup_action = Some(result.action);
     }
 

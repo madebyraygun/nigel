@@ -22,7 +22,7 @@ pub struct SetupPlan {
     /// Which chart of accounts. Only takes effect on a fresh database.
     pub profile: db::Profile,
     /// `Some` encrypts the database; `None` leaves the current key alone.
-    pub password: Option<String>,
+    pub password: Option<zeroize::Zeroizing<String>>,
     /// Where the books go.
     ///
     /// The caller's value rather than `settings.json`'s, because a caller may
@@ -91,7 +91,7 @@ mod tests {
             user_name: "Marta".to_string(),
             company_name: "Cedar Systems".to_string(),
             profile: crate::db::Profile::Business,
-            password: password.map(str::to_string),
+            password: password.map(|p| zeroize::Zeroizing::new(p.to_string())),
             data_dir: PathBuf::from(crate::settings::load_settings().data_dir),
         }
     }

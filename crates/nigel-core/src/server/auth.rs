@@ -216,7 +216,7 @@ pub async fn session_guard(State(state): State<AppState>, req: Request, next: Ne
         .iter()
         .filter_map(|value| value.to_str().ok())
         .filter_map(|cookies| cookie_value(cookies, SESSION_COOKIE))
-        .any(|token| tokens_match(token, &state.session_token));
+        .any(|token| tokens_match(token, state.session_token.expose()));
 
     if authorized {
         next.run(req).await
@@ -238,7 +238,7 @@ pub async fn auth_redirect(
     Query(query): Query<AuthQuery>,
 ) -> Response {
     let token = query.token.unwrap_or_default();
-    if !tokens_match(&token, &state.session_token) {
+    if !tokens_match(&token, state.session_token.expose()) {
         return ApiError::unauthorized().into_response();
     }
 

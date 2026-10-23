@@ -22,6 +22,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OwnedRwLockWriteGuard;
+use zeroize::Zeroizing;
 
 use crate::db;
 use crate::password;
@@ -335,7 +336,7 @@ async fn post_password_change(
         "{\"currentPassword\": \"...\", \"newPassword\": \"...\"}",
     )?;
     let new_password = trimmed_new_password(&request.new_password)?;
-    let current = request.current_password.expose().trim().to_string();
+    let current = Zeroizing::new(request.current_password.expose().trim().to_string());
 
     let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
@@ -364,7 +365,7 @@ async fn post_password_remove(
     body: Result<Json<RemovePasswordRequest>, JsonRejection>,
 ) -> ApiResult<Json<PasswordStateResponse>> {
     let request = password_body(body, "{\"currentPassword\": \"...\"}")?;
-    let current = request.current_password.expose().trim().to_string();
+    let current = Zeroizing::new(request.current_password.expose().trim().to_string());
 
     let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
@@ -409,7 +410,7 @@ async fn verify_current_password(
     current: &str,
 ) -> ApiResult<OwnedRwLockWriteGuard<()>> {
     let path = db_path.to_path_buf();
-    let candidate = current.to_string();
+    let candidate = Zeroizing::new(current.to_string());
     let (gate, valid) =
         super::spawn_blocking_holding(gate, move || db::validate_password(&path, &candidate))
             .await?;
@@ -439,7 +440,7 @@ async fn verify_current_password(
 /// embedded NUL. A password containing one encrypts the database and then locks
 /// its owner out permanently: it cannot be typed at a terminal prompt, and it
 /// cannot survive `NIGEL_DB_PASSWORD` either, since a NUL terminates the value.
-fn trimmed_new_password(secret: &Secret) -> ApiResult<String> {
+fn trimmed_new_password(secret: &Secret) -> ApiResult<Zeroizing<String>> {
     let trimmed = secret.expose().trim();
     if trimmed.is_empty() {
         return Err(ApiError::bad_request(
@@ -451,7 +452,7 @@ fn trimmed_new_password(secret: &Secret) -> ApiResult<String> {
             "The password cannot contain control characters.",
         ));
     }
-    Ok(trimmed.to_string())
+    Ok(Zeroizing::new(trimmed.to_string()))
 }
 
 fn already_encrypted() -> ApiError {
@@ -936,7 +937,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -997,7 +998,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1018,7 +1019,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1044,7 +1045,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1127,6 +1128,23 @@ mod tests {
         .await;
         assert!(!body.to_string().contains("swordfish"), "leaked in {body}");
 
+        crate::db::set_db_password(None);
+    }
+
+    /// The trimmed copy of a new password is what crosses await points, moves
+    /// into the blocking task and lands in the process global, so it carries
+    /// `Secret`'s zeroize-on-drop all the way there. The annotations are the
+    /// assertion: a plain `String` anywhere on that path does not compile.
+    #[test]
+    fn a_password_derived_from_a_secret_is_zeroized_on_drop() {
+        let secret = crate::server::secret::Secret::from("  swordfish  ".to_string());
+        let password: zeroize::Zeroizing<String> =
+            super::trimmed_new_password(&secret).expect("valid");
+        assert_eq!(password.as_str(), "swordfish");
+
+        crate::db::set_db_password(Some(password));
+        let held: Option<zeroize::Zeroizing<String>> = crate::db::get_db_password();
+        assert_eq!(held.as_deref().map(String::as_str), Some("swordfish"));
         crate::db::set_db_password(None);
     }
 }

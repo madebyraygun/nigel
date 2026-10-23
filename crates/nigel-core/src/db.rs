@@ -3,21 +3,24 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::Result;
 use crate::migrations;
 
-static DB_PASSWORD: Mutex<Option<String>> = Mutex::new(None);
+/// The password lives for the process, and is replaced and cleared from more
+/// than one thread; [`Zeroizing`] wipes every copy as it goes, so a replaced or
+/// cleared password does not linger in freed heap.
+static DB_PASSWORD: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
 
 /// Set the global database password. Call before `get_connection()`.
-pub fn set_db_password(password: Option<String>) {
+pub fn set_db_password(password: Option<Zeroizing<String>>) {
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     *DB_PASSWORD.lock().unwrap() = password;
 }
 
 /// Read the current global database password.
-pub fn get_db_password() -> Option<String> {
+pub fn get_db_password() -> Option<Zeroizing<String>> {
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     DB_PASSWORD.lock().unwrap().clone()
 }
@@ -778,7 +781,7 @@ const PERSONAL_CATEGORIES: &[CategoryDef] = &[
 
 pub fn get_connection(db_path: &Path) -> Result<Connection> {
     let password = get_db_password();
-    open_connection(db_path, password.as_deref())
+    open_connection(db_path, password.as_ref().map(|p| p.as_str()))
 }
 
 /// Open a connection with an explicit password (bypasses global state).
@@ -1109,7 +1112,7 @@ mod tests {
         let db_path = dir.path().join("encrypted.db");
 
         // Create encrypted DB
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -1125,13 +1128,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
 
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
 
         // Reopen with same password
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         let result: i64 = conn
             .query_row("SELECT count(*) FROM categories", [], |r| r.get(0))
@@ -1172,7 +1175,7 @@ mod tests {
     fn test_is_encrypted_returns_true_for_encrypted_db() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -1204,7 +1207,7 @@ mod tests {
     fn test_validate_password_correct() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -1216,7 +1219,7 @@ mod tests {
     fn test_validate_password_wrong() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some("secret".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);

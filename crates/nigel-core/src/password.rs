@@ -104,7 +104,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
 
         // Create encrypted DB
-        set_db_password(Some("old".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("old".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -133,7 +133,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        set_db_password(Some("correct".into()));
+        set_db_password(Some(zeroize::Zeroizing::new("correct".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);

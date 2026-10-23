@@ -41,9 +41,47 @@ impl Drop for Secret {
     }
 }
 
+/// The session token: the whole of this server's authentication, shared by
+/// every clone of `AppState`.
+///
+/// `Debug` is redacted for [`Secret`]'s reason, so a derived `Debug` on
+/// anything holding the state cannot print it. Cheap to clone, which is why it
+/// is not a [`Secret`]: the token lives as long as the server does.
+#[derive(Clone)]
+pub struct SessionToken(std::sync::Arc<str>);
+
+impl SessionToken {
+    /// Read the token. As loud as [`Secret::expose`], for the same reason.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SessionToken {
+    fn from(mut value: String) -> Self {
+        let token = Self(std::sync::Arc::from(value.as_str()));
+        value.zeroize();
+        token
+    }
+}
+
+impl fmt::Debug for SessionToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SessionToken(<redacted>)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_token_never_shows_itself() {
+        let token = SessionToken::from("0123456789abcdef".to_string());
+        let rendered = format!("{token:?}");
+        assert_eq!(rendered, "SessionToken(<redacted>)");
+        assert_eq!(token.clone().expose(), "0123456789abcdef");
+    }
 
     #[derive(Debug, Deserialize)]
     struct Holder {
