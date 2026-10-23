@@ -4,6 +4,7 @@ title: 'Books as a package, and single-file backups'
 status: To Do
 assignee: []
 created_date: '2026-10-23 16:45'
+updated_date: '2026-10-23 19:48'
 labels:
   - storage
   - backup
@@ -34,4 +35,5 @@ Settles where TASK-161's key file lives, and is what book switching (TASK-154.12
 - [ ] #4 nigel backup writes a single compressed file containing the database snapshot, key file and documents with a manifest; restore verifies checksums and unpacks it, refusing a damaged or partial archive without touching the current books
 - [ ] #5 Old .db + .documents backups still restore; automated backups (launchd/cron examples) and docs use the new format
 - [ ] #6 Tests cover create, convert, open, backup, restore, a corrupt archive and an encrypted package
+- [ ] #7 Each set of books has a stable identity (a UUID in the package) and the layout reserves a place for a sync log beside the database, per decision-12, so 3.0's end-to-end sync can adopt the package without a format change
 <!-- AC:END -->

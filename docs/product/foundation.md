@@ -105,10 +105,19 @@ in this repository and its service half in the private repository are both real.
   device-to-device sync of the SQLCipher database: ciphertext only, the key never
   leaves the operator. Conflicts are surfaced, not silently merged.
 
-Explicitly **not** on this roadmap: multi-tenant hosted live books (a nigel.works web
-app holding decryption keys and serving everyone's books). If a hosted
-instance is ever offered it is a single-tenant deployment of the same standalone server
-an operator could run themselves.
+**Nigel never has access to an operator's books** (decision-12). No Nigel service holds a
+key to the books or a readable copy of them, in storage, in memory or in transit. Nigel
+Cloud may hold **published items** — what the operator has chosen to send to a third
+party: a sent or scheduled invoice and its page, PDF, payment link and status, a document
+out for signature — and acts on those alone: it delivers scheduled invoices on time,
+marks an invoice page paid when Stripe reports a payment, sends reminders, and seals
+incoming events for the operator's devices to record.
+
+Shared books reachable from anywhere — a bookkeeper in a browser without a self-hosted
+server — are **end-to-end encrypted sync**, targeted at 3.0: the books live on their
+members' devices and travel through Nigel Cloud as ciphertext, and sharing wraps the
+books' key to each member. Multi-tenant hosted live books, with Nigel holding keys, are
+not on any roadmap.
 
 ## Multi-user and the bookkeeper view
 
@@ -118,10 +127,14 @@ trail, and admin / bookkeeper / read-only roles. That is epic 32 (multiuser leve
 and it is assigned to the 2.0 milestone — it ships before the public launch, because the
 first question a working consultancy asks is "can my accountant see this?"
 
+In 2.0 the bookkeeper logs in to the operator's own server (TASK-164). From 3.0 the
+end-to-end model lets them log in through Nigel Cloud with no self-hosted server, and
+Nigel still never reads the books.
+
 ## Non-goals
 
 - No feature-gated or crippled open-source build, ever.
-- No custody of decryption keys or plaintext books on our infrastructure.
+- No access to an operator's books: no custody of keys or readable books on our infrastructure, ever (decision-12).
 - In-app purchases. Minimal callouts to the website when appropriate, only offering convenience, never gating features.
 - No in-app payment processing — payments remain the operator's Stripe relationship.
 - No e-signature product claims; hosted acceptance is recorded assent, witnessed.

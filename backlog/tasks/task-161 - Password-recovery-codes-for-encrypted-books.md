@@ -4,7 +4,7 @@ title: Password recovery codes for encrypted books
 status: To Do
 assignee: []
 created_date: '2026-10-23 16:43'
-updated_date: '2026-10-23 16:45'
+updated_date: '2026-10-23 19:48'
 labels:
   - security
   - encryption
@@ -40,4 +40,5 @@ The spec decides: KDF and parameters, key-file format and versioning, where the 
 - [ ] #5 Backups and restores carry the key file; a missing or corrupt key file is reported clearly and never results in a new or unencrypted database
 - [ ] #6 Existing encrypted books migrate with a backup first; tests cover wrap/unwrap, recovery, password change, code regeneration, migration and the failure cases
 - [ ] #7 Settings > Security and docs (design-constraints, README) explain the code is as powerful as the password and how to store it
+- [ ] #8 The key file format holds a list of wrapped copies of the data key (password, recovery code, and room for one per future member's public key), per decision-12, so 3.0 sharing adds wraps without a format change
 <!-- AC:END -->

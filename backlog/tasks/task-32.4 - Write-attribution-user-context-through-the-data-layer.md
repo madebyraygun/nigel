@@ -4,7 +4,7 @@ title: 'Write attribution: user context through the data layer'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - multiuser
   - backend
@@ -28,3 +28,9 @@ Thread an explicit user context from authenticated handlers into every data-laye
 - [ ] #3 Register and list responses expose attribution fields
 - [ ] #4 CLI and TUI writes still work, recording a defined local identity or null
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Direction (decision-12): route attribution through the data-layer write functions as discrete operations (who, when, what entity, what change), the shape a 3.0 end-to-end sync log needs. Do not bury writes in ad-hoc SQL that bypasses this path.
+<!-- SECTION:NOTES:END -->

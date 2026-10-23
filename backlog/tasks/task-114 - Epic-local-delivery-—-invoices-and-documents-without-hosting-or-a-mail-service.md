@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-17 13:27'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - epic
   - invoicing
@@ -48,3 +48,9 @@ Config and the publisher first, then the compose mailer and attested sent, then 
 - [ ] #5 Nothing business-specific is committed, fixtures use the fictional cast, and ./scripts/check-no-real-data.sh passes on every commit in the push
 - [ ] #6 IMPORTANT: Any PRs created from this epic must be created as DRAFTS until manually reviewed by the user
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Direction (decision-12): local delivery builds the same delivery package as Nigel Cloud delivery (only the published item), so the two are interchangeable behind one interface.
+<!-- SECTION:NOTES:END -->

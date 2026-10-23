@@ -4,7 +4,7 @@ title: 'Epic: invoice payment reminders'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:20'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - epic
   - invoicing
@@ -33,3 +33,9 @@ Recurring schedules shipped their engine and CLI with no web UI and the gap went
 - [ ] #1 Reminders are off until switched on, and an upgrade never turns them on by itself
 - [ ] #2 Every child below is closed before this epic is
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Direction (decision-12): reminders need only published-item data (recipient, amount, due date, paid status), so in 3.0 Nigel Cloud can send them with no device online. Do not make the reminder engine depend on reading books data at send time.
+<!-- SECTION:NOTES:END -->

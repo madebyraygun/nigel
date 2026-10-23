@@ -46,8 +46,7 @@ web, invoices and contracts, specs and docs) and the operator owning the Mac tra
   soon as 32.2 and 32.9 land, ahead of the native-chrome phases.
 - Alongside, without migrations: the rest of the refresh (154.11 in a few PRs, 154.14,
   154.17, 154.10, 124), small safety fixes (155, 53, 54, 55), test reliability (42, 56,
-  121, 127, 156), and specs for the books package (163), recovery codes (161) and
-  bookkeeper sharing through Nigel Cloud (164).
+  121, 127, 156), and specs for the books package (163) and recovery codes (161).
 
 **Phase 2, mid-November to early December — money and the TUI's retirement.**
 - Integer money (TASK-59), alone on the data layer.
@@ -62,7 +61,8 @@ web, invoices and contracts, specs and docs) and the operator owning the Mac tra
 - Storage and secrets in order: books package (163), recovery codes (161), service keys
   in the keychain (160); the Mac app's books location (150.2) after 163.
 - Contracts drafting (109.9, 109.10) and 109.14, 109.15, 109.8; local delivery
-  (114.1–114.5); Nigel Cloud delivery (115.3), with bookkeeper sharing per 164's spec.
+  (114.1–114.5); Nigel Cloud delivery (115.3); bookkeeper access to a self-hosted server
+  (164). Nigel Cloud's role in bookkeeper sharing is 3.0 (decision-12).
 - Swift shell third phase, and store work 150.4–150.7.
 
 **Phase 4, January 2027 — launch.** The accessibility pass (58), the first-run guide

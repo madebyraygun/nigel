@@ -4,7 +4,7 @@ title: 'Audit log: table, hooks, and admin viewer'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - multiuser
   - backend
@@ -28,3 +28,9 @@ An append-only audit_log table (timestamp, user, action, entity type and id, sum
 - [ ] #3 No API exists to modify or delete audit entries
 - [ ] #4 Login successes and failures are recorded
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Direction (decision-12): the audit log is the record of discrete write operations from TASK-32.4; keep it append-only and keyed to stable entity ids so it can grow into a sync log in 3.0.
+<!-- SECTION:NOTES:END -->

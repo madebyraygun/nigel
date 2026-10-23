@@ -4,7 +4,7 @@ title: 'Nigel Cloud: hosted email and invoice delivery'
 status: To Do
 assignee: []
 created_date: '2026-08-17 15:27'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - product
   - invoicing
@@ -40,4 +40,6 @@ The third delivery mode, invoicing first: `delivery = "nigel"` replaces the R2 +
 
 <!-- SECTION:NOTES:BEGIN -->
 2.0 scope (decision-9): the Mac App Store build signs in to an existing nigel.works account only — no pricing, purchase or subscribe links inside the app (guideline 3.1.3(b), multiplatform services). The subscription is sold on nigel.works only. If App Review requires in-app purchase, that submission compiles Cloud out of the store build and keeps local delivery (epic 114).
+
+Direction (decision-12): Nigel Cloud delivery receives a delivery package containing only the published item (page, PDF, payment link, recipient, due date, send time), never books data. Design the API so a package can carry a future send time, which 3.0 uses for scheduled delivery with no device online.
 <!-- SECTION:NOTES:END -->

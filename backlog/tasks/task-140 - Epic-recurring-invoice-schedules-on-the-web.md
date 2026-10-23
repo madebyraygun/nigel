@@ -4,7 +4,7 @@ title: 'Epic: recurring invoice schedules on the web'
 status: To Do
 assignee: []
 created_date: '2026-09-11 16:28'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 19:48'
 labels:
   - epic
   - invoicing
@@ -37,3 +37,9 @@ Blocked on TASK-125: the screen needs an End button and a sentence saying what E
 - [ ] #2 A schedule generates its due invoices for an operator who has never configured cron
 - [ ] #3 Opening the app never sends email to a client
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Direction (decision-12): keep 'what the next period will send' as a value a device can compute and prepare ahead of the send date (number, items, amounts, due date), so 3.0 can pre-generate invoices a window ahead for delivery with no device online.
+<!-- SECTION:NOTES:END -->
