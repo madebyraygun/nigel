@@ -8,7 +8,7 @@ const preview: Preview = {
   title: 'Invoice status',
   group: 'Invoicing',
   description:
-    'The six derived statuses as an icon and a word. Colour is a third cue, never the only one. The icons are SVGs at 1em: IBM Plex Mono has a glyph for none of the six shapes.',
+    'The six derived statuses as a pill: a 1px border, a 6px dot and the word, all in the status colour. The word carries the meaning; colour is never the only cue. `size="l"` is the 24px pill beside a page title.',
   states: [
     ...INVOICE_STATUS_WORDS.map((status) => ({
       name: status,
@@ -29,6 +29,17 @@ const preview: Preview = {
       `,
     },
     {
+      name: 'large',
+      render: () => html`
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${INVOICE_STATUS_WORDS.map(
+            (status) =>
+              html`<wc-invoice-status status=${status} size="l"></wc-invoice-status>`,
+          )}
+        </div>
+      `,
+    },
+    {
       name: 'in-a-line-of-text',
       render: () => html`
         <p style="max-width:52ch;">
@@ -36,7 +47,7 @@ const preview: Preview = {
           <wc-invoice-status status="overdue"></wc-invoice-status>
           and #1249 is
           <wc-invoice-status status="paid"></wc-invoice-status>
-          — the marks are sized against the text they sit in.
+          — the pill sits on the text's centre line.
         </p>
       `,
     },

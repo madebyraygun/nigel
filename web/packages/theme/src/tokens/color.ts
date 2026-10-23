@@ -101,6 +101,16 @@ export const colorCss = css`
     --nc-color-income-fill: #5a9473;
     --nc-color-expense-fill: #cb6b7b;
 
+    /* The five A/R aging buckets, current through over 90, warming from the
+       income green toward the expense rose as money gets older. Fills for a
+       stacked bar, never text: every bucket is also labelled and printed
+       beside its swatch. */
+    --nc-color-aging-1: #5a9473;
+    --nc-color-aging-2: #c9a13b;
+    --nc-color-aging-3: #d98b4a;
+    --nc-color-aging-4: #cb6b7b;
+    --nc-color-aging-5: #a33b5a;
+
     /* The Snake board is a terminal, not a document, and these three do not
        flip with the colour mode. The pastels the snake is drawn in only read
        on a dark ground — on a light one the whole snake is seven near-white
@@ -110,6 +120,21 @@ export const colorCss = css`
     --nc-color-arcade-bg: #17171d;
     --nc-color-arcade-ink: #ece9f5;
     --nc-color-arcade-food: #50dc64;
+
+    /* The Appearance picker's miniature windows. Each draws one mode while
+       the app is in either, so neither flips with the colour mode: the light
+       set is the light canvas, sidebar, card, border and brand, the dark set
+       the same roles in dark. */
+    --nc-color-preview-light-bg: #f3f2f7;
+    --nc-color-preview-light-panel: #fbfafe;
+    --nc-color-preview-light-card: #ffffff;
+    --nc-color-preview-light-line: #dedaeb;
+    --nc-color-preview-light-accent: #5a3fd6;
+    --nc-color-preview-dark-bg: #17171d;
+    --nc-color-preview-dark-panel: #22222b;
+    --nc-color-preview-dark-card: #1f1f28;
+    --nc-color-preview-dark-line: #2e2e3c;
+    --nc-color-preview-dark-accent: #c4b7ff;
   }
 `;
 
@@ -144,6 +169,11 @@ const darkTokens = css`
 
   --nc-color-income-fill: #6fcf92;
   --nc-color-expense-fill: #f0919c;
+  --nc-color-aging-1: #6fcf92;
+  --nc-color-aging-2: #ffe0a3;
+  --nc-color-aging-3: #ffc8a2;
+  --nc-color-aging-4: #ff9fa8;
+  --nc-color-aging-5: #ffb3de;
 
   ${shadowDarkTokens}
 

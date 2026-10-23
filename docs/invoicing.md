@@ -810,18 +810,26 @@ to Stripe, two to R2, one to Mailgun — so the slowest possible send is about
 
 `nigel serve` covers the whole of the above. **Clients** in the sidebar is the
 client manager: add, edit, delete (refused while any invoice bills them, of any
-status), and a jump to each client's invoices. **Invoices** is the list, with
-an A/R aging strip above it and status filters that are links, so a filtered
-list is an address you can keep or bookmark.
+status), and a jump to each client's invoices. **Invoices** is the list: an
+Outstanding card above it — the total owed, how many open invoices it is
+across, and a bar split into the five aging buckets with their totals, the
+same figures `nigel invoice aging` prints — then status chips with a count on
+each, and the table. The chips are links, so a filtered list is an address you
+can keep or bookmark. An invoice opens at `#/invoices/1254`.
 
 Opening an invoice gives you its totals, its line items, its payment history,
 the addresses it was published to, and a collapsed preview of the page a client
 opens — rendered by the same code `invoice send` publishes, so it is the real
 document rather than an impression of it. The actions on that screen are the
-CLI's: **Send…**, **Record payment…**, **Edit**, **Void…** and **Delete…**, each
-enabled by the server's own guards rather than by a status the browser reasoned
-about. Delete is offered only for a draft nobody has seen; deleting one returns
-to the list with a toast, since there is no longer an invoice to return to.
+CLI's: **Send…** (**Resend…** once published), **Record payment…**, **Edit**,
+**Duplicate**, and **Delete…** for a draft or **Void…** for anything else. Each
+is on only when the status allows it — Send for anything not paid or void,
+Record payment once the invoice has gone out, Edit for a draft — *and* the
+server's own guards agree, and a disabled one says why underneath. A draft a
+recurring schedule generated cannot be deleted, because the schedule keeps it as
+the record of what that period billed; its Delete… says so and Void… sits
+beside it. Deleting a draft returns to the list with a toast, since there is no
+longer an invoice to return to.
 
 Sending asks first, and the confirmation names every consequence — the payment
 link and its amount, the host the page will be published to, and the address

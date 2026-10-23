@@ -1,9 +1,10 @@
 ---
 id: TASK-154.8
 title: 'Settings refresh: This book and This device'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-23 01:13'
 labels:
   - web
   - design
@@ -23,8 +24,14 @@ Spec section 7, replacing screens/settings.ts. A sticky index with scroll-spy ov
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every setting the current screen edits is still editable, with its existing validation and errors
-- [ ] #2 Unsaved letterhead changes show the save bar; Discard restores the saved values; Save updates breadcrumb, status line and window title
-- [ ] #3 Appearance applies immediately and persists per device, not in the book
-- [ ] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 Every setting the current screen edits is still editable, with its existing validation and errors
+- [x] #2 Unsaved letterhead changes show the save bar; Discard restores the saved values; Save updates breadcrumb, status line and window title
+- [x] #3 Appearance applies immediately and persists per device, not in the book
+- [x] #4 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #65.
+<!-- SECTION:FINAL_SUMMARY:END -->

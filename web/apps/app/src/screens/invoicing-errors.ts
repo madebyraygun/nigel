@@ -53,6 +53,15 @@ export function invoicingGuardrailMessage(
     : 'Could not save that invoice.';
 }
 
+/**
+ * Our sentence for a refusal the server has already described, or null for a
+ * reason this table does not know. The detail view uses it to say why Delete…
+ * is off before anyone clicks it, in the words the refusal itself would get.
+ */
+export function refusalSentence(details: ConflictDetails): string | null {
+  return sentenceFor(details);
+}
+
 function sentenceFor(details: ConflictDetails): string | null {
   const count = details.count ?? 0;
 
@@ -89,6 +98,13 @@ function sentenceFor(details: ConflictDetails): string | null {
       }
       return rule;
     }
+    // A generated draft passes every other delete check; the schedule's run
+    // row is the record of what that period billed, and void is the one way to
+    // cancel it.
+    case 'from_schedule':
+      return details.canVoid === false
+        ? 'A recurring schedule generated this invoice and keeps it as the record of what that period billed.'
+        : 'A recurring schedule generated this invoice and keeps it as the record of what that period billed. Void it instead.';
     case 'has_invoices':
       return `${plural(count, 'invoice')} ${count === 1 ? 'bills' : 'bill'} this client. Nigel will not delete a client that has been billed.`;
     case 'has_documents':

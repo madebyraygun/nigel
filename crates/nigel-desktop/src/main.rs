@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-use nigel_desktop::{chrome, db, imports, save, scheme_url, transport, window_state, SCHEME};
+use nigel_desktop::{
+    chrome, db, imports, reveal, save, scheme_url, transport, window_state, SCHEME,
+};
 
 fn main() {
     let state = nigel_core::server::state::AppState::new(
@@ -29,7 +31,8 @@ fn main() {
             imports::stage_import,
             imports::pick_import_file,
             chrome::frontend_ready,
-            chrome::set_chrome_background
+            chrome::set_chrome_background,
+            reveal::reveal_data_dir
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |_ctx, request, responder| {
             let router = router.clone();

@@ -38,11 +38,43 @@ describe('wc-invoice-summary', () => {
 
   it('leads with the number, the status and the client', async () => {
     const el = await mount();
-    expect(el.shadowRoot?.querySelector('h2')?.textContent).toContain('#1250');
+    expect(el.shadowRoot?.querySelector('h1')?.textContent).toBe('Invoice #1250');
     expect(el.shadowRoot?.querySelector('wc-invoice-status')?.getAttribute('status')).toBe(
       'partial',
     );
-    expect(el.shadowRoot?.querySelector('.client')?.textContent?.trim()).toBe('Acme Co');
+    expect(el.shadowRoot?.querySelector('[data-client]')?.textContent?.trim()).toBe('Acme Co');
+  });
+
+  it('prints the client’s email under its name, and the dates as words', async () => {
+    const el = await mount({ clientEmail: 'billing@acme.test' });
+    expect(el.shadowRoot?.querySelector('[data-client-email]')?.textContent).toBe(
+      'billing@acme.test',
+    );
+    expect(el.shadowRoot?.querySelector('[data-issued]')?.textContent?.trim()).toBe(
+      'Feb 20, 2026',
+    );
+    expect(el.shadowRoot?.querySelector('[data-due]')?.textContent?.trim()).toBe(
+      'Mar 20, 2026',
+    );
+  });
+
+  it('marks an overdue due date and prints the note it is given', async () => {
+    const el = await mount({ status: 'overdue', dueNote: '19 days overdue' });
+    expect(el.shadowRoot?.querySelector('[data-due]')?.hasAttribute('data-overdue')).toBe(true);
+    expect(el.shadowRoot?.querySelector('[data-due-note]')?.textContent).toBe(
+      '19 days overdue',
+    );
+
+    const current = await mount({ dueNote: '' });
+    expect(current.shadowRoot?.querySelector('[data-due]')?.hasAttribute('data-overdue')).toBe(
+      false,
+    );
+    expect(current.shadowRoot?.querySelector('[data-due-note]')).toBeNull();
+  });
+
+  it('puts slotted actions in the title row', async () => {
+    const el = await mount();
+    expect(el.shadowRoot?.querySelector('.title slot[name="actions"]')).toBeTruthy();
   });
 
   it('shows the total and what is still outstanding, not one of them', async () => {
@@ -51,14 +83,14 @@ describe('wc-invoice-summary', () => {
     expect(amountOf(el, '[data-balance]')).toBe(1200);
   });
 
-  it('renders an em dash for an invoice with no due date', async () => {
+  it('says an invoice with no due date is due on receipt', async () => {
     const el = await mount({ dueDate: null });
-    expect(el.shadowRoot?.querySelector('[data-due]')?.textContent?.trim()).toBe('—');
+    expect(el.shadowRoot?.querySelector('[data-due]')?.textContent?.trim()).toBe('On receipt');
   });
 
   it('renders an em dash for an invoice whose client row is gone', async () => {
     const el = await mount({ clientName: null });
-    expect(el.shadowRoot?.querySelector('.client')?.textContent?.trim()).toBe('—');
+    expect(el.shadowRoot?.querySelector('[data-client]')?.textContent?.trim()).toBe('—');
   });
 
   it('passes the currency down to the figures', async () => {
@@ -71,7 +103,7 @@ describe('wc-invoice-summary', () => {
 
   it('renders a null balance as an em dash, not as a figure', async () => {
     // A void invoice owes nothing and never will; its total under
-    // "Outstanding" would report a receivable the aging report excludes.
+    // "Balance" would report a receivable the aging report excludes.
     const el = await mount({ status: 'void', total: 500, balance: null });
     const balance = el.shadowRoot?.querySelector('[data-balance]');
     expect(balance?.textContent?.trim()).toBe('\u2014');

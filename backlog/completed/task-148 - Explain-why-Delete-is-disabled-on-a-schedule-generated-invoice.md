@@ -1,10 +1,10 @@
 ---
 id: TASK-148
 title: Explain why Delete is disabled on a schedule-generated invoice
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-07 18:32'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 00:54'
 labels:
   - invoicing
   - web
@@ -27,8 +27,14 @@ Repro: create a schedule, run nigel invoice schedule run, open a generated invoi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Disabled Delete… on a schedule-generated invoice explains why and points at void
-- [ ] #2 The explanation follows the Send… unavailable pattern on the same screen
-- [ ] #3 The invoice detail API exposes why delete is blocked, documented in docs/api.md
-- [ ] #4 Tests cover the new field and the note; lint and typecheck pass
+- [x] #1 Disabled Delete… on a schedule-generated invoice explains why and points at void
+- [x] #2 The explanation follows the Send… unavailable pattern on the same screen
+- [x] #3 The invoice detail API exposes why delete is blocked, documented in docs/api.md
+- [x] #4 Tests cover the new field and the note; lint and typecheck pass
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #67 (Invoices refresh, with TASK-148 and TASK-141 folded in).
+<!-- SECTION:FINAL_SUMMARY:END -->

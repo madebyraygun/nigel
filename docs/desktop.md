@@ -234,6 +234,24 @@ decided. It answers `{kind: 'native', …}`; the web client answers
 shell they are in. A desktop client attached to a remote server will answer
 `browser` from here too, since a server on another machine cannot see this disk.
 
+## Showing the books folder
+
+Settings > Location shows the folder the open books live in, and in the shell
+a button opens it in the platform's file manager: `reveal_data_dir`
+(`crates/nigel-desktop/src/reveal.rs`) runs `open` on macOS, `explorer` on
+Windows and `xdg-open` elsewhere. The command takes no argument — it reads the
+folder from settings itself — so the page cannot point it anywhere else.
+A Windows path loses its `\\?\` verbatim prefix first (`\\?\UNC\` goes back to
+`\\`), which Explorer does not understand, and the child is reaped on a thread
+so `open` and `xdg-open` leave no zombies.
+`DesktopApiClient.dataDirReveal()` answers the command and the platform's name
+for it ("Reveal in Finder", "Show in Explorer", "Open folder"); the web client
+answers `null` and the button is not drawn.
+
+The logo field on the same screen says "Choose a PNG or JPEG" rather than
+"Drop a PNG or JPEG here" when `importSource()` is `native`, because Tauri
+intercepts the HTML5 drop that field listens for.
+
 ## Not a deep link
 
 The scheme is an in-process transport, not a URL another application on the

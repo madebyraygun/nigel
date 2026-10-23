@@ -56,7 +56,7 @@ describe('wc-payment-list', () => {
     const dates = [...(el.shadowRoot?.querySelectorAll('tbody tr') ?? [])].map(
       (tr) => tr.querySelector('td')?.textContent?.trim(),
     );
-    expect(dates).toEqual(['2026-03-02', '2026-03-09']);
+    expect(dates).toEqual(['Mar 2, 2026', 'Mar 9, 2026']);
   });
 
   it('marks a payment that came in through sync', async () => {

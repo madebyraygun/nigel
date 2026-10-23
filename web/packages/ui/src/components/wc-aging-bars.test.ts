@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import './wc-aging-bars.js';
 import {
-  agingBarHeights,
+  agingBucketLabel,
+  agingShares,
+  WcAgingBars,
   type AgingBucketView,
-  type WcAgingBars,
 } from './wc-aging-bars.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-aging-bars.preview.js';
@@ -24,15 +25,31 @@ async function mount(props: Partial<WcAgingBars> = {}): Promise<WcAgingBars> {
   return el;
 }
 
-describe('agingBarHeights', () => {
-  it('scales against the largest bucket, not the total', () => {
-    expect(agingBarHeights(BUCKETS)).toEqual([100, 44, 0, 23, 0]);
+describe('agingShares', () => {
+  it('splits the bar by each bucket’s share of the whole', () => {
+    const shares = agingShares(BUCKETS);
+    expect(shares.map((share) => Math.round(share * 1000))).toEqual([599, 264, 0, 137, 0]);
+    expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
   });
 
   it('draws nothing when every bucket is zero', () => {
-    expect(agingBarHeights(BUCKETS.map((b) => ({ ...b, total: 0 })))).toEqual([
-      0, 0, 0, 0, 0,
+    expect(agingShares(BUCKETS.map((b) => ({ ...b, total: 0 })))).toEqual([0, 0, 0, 0, 0]);
+  });
+});
+
+describe('agingBucketLabel', () => {
+  it('names the five buckets the way the legend prints them', () => {
+    expect(BUCKETS.map((bucket) => agingBucketLabel(bucket.label))).toEqual([
+      'Current',
+      '1–30 days',
+      '31–60 days',
+      '61–90 days',
+      'Over 90',
     ]);
+  });
+
+  it('prints a bucket it does not know as written', () => {
+    expect(agingBucketLabel('120+')).toBe('120+');
   });
 });
 
@@ -41,51 +58,41 @@ describe('wc-aging-bars', () => {
     document.body.innerHTML = '';
   });
 
-  it('puts every figure in a table, with the total last', async () => {
+  it('prints the outstanding total and every bucket, in that order', async () => {
     const el = await mount();
-    const headers = [...(el.shadowRoot?.querySelectorAll('th') ?? [])].map((th) =>
-      th.textContent?.trim(),
-    );
-    expect(headers).toEqual(['current', '1-30', '31-60', '61-90', '90+', 'Total']);
-
     const amounts = [...(el.shadowRoot?.querySelectorAll('wc-money') ?? [])].map(
       (money) => (money as HTMLElement & { amount: number }).amount,
     );
-    expect(amounts).toEqual([4200, 1850, 0, 960, 0, 7010]);
+    expect(amounts).toEqual([7010, 4200, 1850, 0, 960, 0]);
   });
 
-  it('hides the bars from assistive tech — the table carries the values', async () => {
+  it('counts the open invoices across the buckets and says what day it is about', async () => {
     const el = await mount();
-    expect(el.shadowRoot?.querySelector('.bars')?.getAttribute('aria-hidden')).toBe(
-      'true',
+    expect(el.shadowRoot?.querySelector('[data-meta]')?.textContent).toBe(
+      'across 4 open invoices · as of Aug 7, 2026',
     );
-    expect(el.shadowRoot?.querySelectorAll('.bar')).toHaveLength(5);
   });
 
-  it('gives each bar the column of the bucket it measures', async () => {
+  it('draws a segment per non-empty bucket, hidden from assistive tech', async () => {
     const el = await mount();
-    const root = el.shadowRoot;
-    const headers = [...(root?.querySelectorAll('thead th') ?? [])].map((th) =>
-      th.textContent?.trim(),
-    );
-    const barCells = [...(root?.querySelectorAll('tr.bars > td') ?? [])];
+    const bar = el.shadowRoot?.querySelector('.bar');
+    expect(bar?.getAttribute('aria-hidden')).toBe('true');
+    expect(
+      [...(bar?.querySelectorAll('.segment') ?? [])].map((s) => s.getAttribute('data-bucket')),
+    ).toEqual(['0', '1', '3']);
+  });
 
-    // A bar aligns with its label only because they share a table column, so the
-    // rows have to stay the same width — a 5-cell bar row under a 6-column table
-    // slides every bar one bucket to the right.
-    expect(barCells).toHaveLength(headers.length);
+  it('paints the five buckets from the theme’s aging fills', () => {
+    const css = [WcAgingBars.styles].flat().map(String).join('\n');
+    for (const n of [1, 2, 3, 4, 5]) expect(css).toContain(`var(--nc-color-aging-${n})`);
+  });
 
-    barCells.forEach((cell, index) => {
-      const bar = cell.querySelector('.bar');
-      // The last column is Total, which has no bar of its own.
-      if (index === headers.length - 1) {
-        expect(headers[index]).toBe('Total');
-        expect(bar).toBeNull();
-        return;
-      }
-      expect(bar).not.toBeNull();
-      expect(headers[index]).toBe(BUCKETS[index]?.label);
-    });
+  it('mutes an empty bucket’s amount', async () => {
+    const el = await mount();
+    const zero = el.shadowRoot?.querySelector('[data-legend="31-60"] dd');
+    expect(zero?.hasAttribute('data-zero')).toBe(true);
+    const full = el.shadowRoot?.querySelector('[data-legend="current"] dd');
+    expect(full?.hasAttribute('data-zero')).toBe(false);
   });
 
   it('links to the full report only when given somewhere to go', async () => {
@@ -98,7 +105,7 @@ describe('wc-aging-bars', () => {
     );
   });
 
-  it('says so rather than drawing an empty frame when there are no buckets', async () => {
+  it('says so rather than drawing an empty card when there are no buckets', async () => {
     const el = await mount({ buckets: [] });
     expect(el.shadowRoot?.querySelector('.empty')?.textContent).toContain(
       'No open receivables',
