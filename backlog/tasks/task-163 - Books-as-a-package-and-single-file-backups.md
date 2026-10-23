@@ -1,5 +1,5 @@
 ---
-id: TASK-162
+id: TASK-163
 title: 'Books as a package, and single-file backups'
 status: To Do
 assignee: []
@@ -10,8 +10,7 @@ labels:
   - desktop
   - macos
 milestone: m-3
-dependencies:
-  - TASK-161
+dependencies: []
 priority: high
 ---
 

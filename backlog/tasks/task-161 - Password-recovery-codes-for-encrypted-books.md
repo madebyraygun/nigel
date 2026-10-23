@@ -4,12 +4,14 @@ title: Password recovery codes for encrypted books
 status: To Do
 assignee: []
 created_date: '2026-10-23 16:43'
+updated_date: '2026-10-23 16:45'
 labels:
   - security
   - encryption
   - settings
 milestone: m-3
-dependencies: []
+dependencies:
+  - TASK-163
 priority: high
 ---
 
