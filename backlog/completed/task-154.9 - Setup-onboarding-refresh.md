@@ -1,9 +1,10 @@
 ---
 id: TASK-154.9
 title: Setup (onboarding) refresh
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-20 22:57'
+updated_date: '2026-10-23 16:53'
 labels:
   - web
   - design
@@ -23,6 +24,12 @@ Spec section 8: keep the particle field and ASCII wordmark with the new gradient
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All four steps match the spec in light and dark and the existing onboarding flows still pass their tests
-- [ ] #2 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
+- [x] #1 All four steps match the spec in light and dark and the existing onboarding flows still pass their tests
+- [x] #2 Every new or changed @nigel/ui component has a preview covering its states in light and dark, and describePreviewA11y passes with zero violations
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #63 (with a Back button on the profile step).
+<!-- SECTION:FINAL_SUMMARY:END -->
