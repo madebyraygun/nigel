@@ -76,7 +76,7 @@ The workspace has two members, and the line between them is what a client needs 
 `nigel-core` (`crates/nigel-core/`) is the `nigel_core` library: the SQLite data layer, importers,
 the rules engine, reports, invoicing, and the web server (`server`, feature-gated behind `serve`).
 It links without clap, ratatui or crossterm, so any client — the `nigel` binary, the desktop
-shell (`crates/nigel-desktop`, its own workspace — see `docs/desktop.md`), a test — can depend
+shells (`crates/nigel-desktop` for Tauri and `crates/nigel-ffi` for the Swift macOS shell, each its own workspace — see `docs/desktop.md`), a test — can depend
 on it without pulling in a terminal UI.
 
 `nigel` (`crates/nigel/`) is the binary: the clap CLI (`cli/`), the shared ratatui/TUI helpers
@@ -169,7 +169,8 @@ crates/
         extract.rs             # ApiJson/ApiPath: axum extractors whose rejections use the error envelope
         state.rs               # AppState (db path, session token, build features, unlock gate, db file gate)
         secret.rs              # Secret: redacted-Debug, zeroize-on-drop password wrapper
-        uploads.rs             # Spooled browser uploads: sanitize, store 0600/0700, resolve by id, purge
+        uploads.rs             # Spooled uploads: sanitize, store 0600/0700, resolve by id, purge; stage_file for a desktop shell's on-disk file
+        scheme.rs              # The desktop shells' nigel:// scheme: URL, origin, trusted host, and answer() over the router
         static_files.rs        # rust-embed hosting of web/dist with SPA index fallback
         testutil.rs            # Test-only: temp/seeded databases, session router, JSON request helpers — behind the `testutil` feature dependents' tests enable
         routes/
@@ -246,6 +247,11 @@ crates/
         status.rs              # nigel status (show active DB + stats)
         update.rs              # nigel update — a printing wrapper over nigel_core::updater (version check + self-replace from GitHub Releases)
         fixture_capture.rs     # cfg(test) only — captures the web UI's report and invoicing fixtures, rendering through this crate's own CLI formatters
+  nigel-desktop/            # Tauri shell (own workspace): the SPA and API over nigel:// — see docs/desktop.md
+  nigel-ffi/                # UniFFI staticlib for the Swift macOS shell (own workspace) — see docs/desktop.md
+    src/lib.rs               # NigelHost: new(data_dir), async request(), stage_file(), data_dir()
+    src/transport.rs         # SchemeRequest/SchemeResponse records and their conversion to and from http
+    tests/host.rs            # GET, JSON POST, multipart and staging driven against seeded databases
 workers/
   document-response/       # Cloudflare Worker: POST /d/respond, the one writable surface of the documents feature
     wrangler.toml          # Route, the PRIVATE bucket binding, the per-recipient rate limit

@@ -1,0 +1,29 @@
+# Its own workspace, like nigel-desktop. A member of the root workspace would
+# unify features with it, switching nigel-core's `desktop` feature on for
+# every build in the tree — including the one that produces the `nigel`
+# binary, which must never contain a router built without a session guard.
+[workspace]
+
+[package]
+name = "nigel-ffi"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+# `staticlib` is what the xcframework wraps; `lib` is what the tests and
+# uniffi-bindgen's library mode link.
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "pdf", "gusto"] }
+uniffi = "0.32"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1.53", features = ["rt-multi-thread"] }
+thiserror = "1"
+
+[dev-dependencies]
+nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "pdf", "gusto", "testutil"] }
+pollster = "0.4"
+serde_json = "1"
+tempfile = "3"

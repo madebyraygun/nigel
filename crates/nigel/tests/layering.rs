@@ -152,8 +152,9 @@ fn check_dependency_tables(table: &toml::Table, path: &str, hits: &mut Vec<Strin
 /// for it compiles that router into the `nigel-core` the `nigel` binary links —
 /// and the binary stays clean only because nothing references it and the linker
 /// drops it. The gate is meant to be structural, not a bet on dead-code
-/// elimination, so the desktop crate lives outside this workspace entirely and
-/// this test is what notices if it is ever pulled back in.
+/// elimination, so the shells' crates (`nigel-desktop`, `nigel-ffi`) live
+/// outside this workspace entirely and this test is what notices if either is
+/// ever pulled back in.
 #[test]
 fn no_workspace_member_enables_the_desktop_feature() {
     let root: toml::Table = fs::read_to_string("../../Cargo.toml")

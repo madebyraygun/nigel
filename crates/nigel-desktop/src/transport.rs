@@ -1,63 +1,19 @@
 //! The custom scheme's request path: Tauri's request in, the router's out.
 
 use axum::body::Body;
-use tower::ServiceExt;
-
-/// No response this router builds is larger than a PDF export.
-const MAX_RESPONSE: usize = 64 * 1024 * 1024;
-
-/// Give the request the `Host` header the router's guard reads.
-///
-/// A custom scheme is not HTTP, so the webview sends no `Host` — WebKitGTK and
-/// WKWebView have nothing to put there, and the guard refuses a request that
-/// carries none. The authority is still in the URI (`nigel://localhost/`), so
-/// it moves to the header where the guard can see it. This narrows nothing: a
-/// request for another authority arrives with that authority as its `Host` and
-/// is refused, exactly as it would be over HTTP. Windows needs none of this —
-/// its `http://nigel.localhost/` form is a real HTTP URL and carries a `Host`
-/// already, which is left alone.
-fn carry_the_authority_as_host(parts: &mut axum::http::request::Parts) {
-    if parts.headers.contains_key(axum::http::header::HOST) {
-        return;
-    }
-    let Some(authority) = parts.uri.authority().map(|a| a.as_str().to_string()) else {
-        return;
-    };
-    if let Ok(value) = axum::http::HeaderValue::from_str(&authority) {
-        parts.headers.insert(axum::http::header::HOST, value);
-    }
-}
 
 /// Answer one scheme request from the router.
 ///
-/// The router is a `tower::Service`, so serving it needs no listener and no
-/// port — which is the point: the page and its API are the same origin, so
-/// there is nothing for another process on the machine to connect to.
+/// Tauri's request types are the `http` crate's, so this only moves the body
+/// into axum's; the request path itself is `nigel_core::server::scheme::answer`,
+/// which the Swift shell's `nigel-ffi` shares.
 pub async fn answer(
     router: axum::Router,
     request: tauri::http::Request<Vec<u8>>,
 ) -> tauri::http::Response<Vec<u8>> {
-    let (mut parts, body) = request.into_parts();
-    carry_the_authority_as_host(&mut parts);
+    let (parts, body) = request.into_parts();
     let request = axum::http::Request::from_parts(parts, Body::from(body));
-
-    let response = match router.oneshot(request).await {
-        Ok(response) => response,
-        Err(never) => match never {},
-    };
-
-    let (parts, body) = response.into_parts();
-    let bytes = match axum::body::to_bytes(body, MAX_RESPONSE).await {
-        Ok(collected) => collected.to_vec(),
-        Err(e) => {
-            return tauri::http::Response::builder()
-                .status(500)
-                .body(format!("response body: {e}").into_bytes())
-                .expect("build error response");
-        }
-    };
-
-    tauri::http::Response::from_parts(parts, bytes)
+    nigel_core::server::scheme::answer(router, request).await
 }
 
 #[cfg(test)]
