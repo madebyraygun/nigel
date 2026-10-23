@@ -95,6 +95,10 @@ export {
 } from './wc-register-table.js';
 export { WcShortcutHelp, type ShortcutHint } from './wc-shortcut-help.js';
 export {
+  WcTransactionDialog,
+  CHOOSE_CATEGORY_MESSAGE,
+} from './wc-transaction-dialog.js';
+export {
   WcCategoryPicker,
   type NcCategoryChangeDetail,
 } from './wc-category-picker.js';

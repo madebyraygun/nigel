@@ -34,7 +34,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **SQLite storage** — single portable database, no server required
 - **Database encryption** — optional SQLCipher encryption; set a password during onboarding or manage via the Settings screen (`p` from dashboard) or `nigel password set`; returning users enter their password inline on the splash screen, or in the browser when using `nigel serve`; backups preserve encryption state
 - **Auto-updater** — checks GitHub Releases for new versions on launch (once per 24 hours); run `nigel update` to download and install the latest binary in-place; opt out via the Settings screen or `update_check: false` in settings.json
-- **Settings screen** — edit business name, manage database password, and toggle auto-update checks from the dashboard (`p` key); in the web UI, Settings also sets the letterhead, shows the books folder (with Reveal in Finder in the desktop app) and picks System, Light or Dark for this device
+- **Settings screen** — edit business name, manage database password, and toggle auto-update checks from the dashboard (`p` key); in the web UI, Settings also sets the letterhead, shows the books folder (with Reveal in Finder in the desktop app) picks System, Light or Dark for this device, and chooses whether the register edits a row in a dialog (the default) or in place in the list
 - **Snake** - 🍎 🐍
 
 Importers currently include Bank of America and Gusto, but adding a new importer is straightforward. See [docs/importers.md](docs/importers.md) for more information. The repository also contains a Claude skill that can create an importer from any data file. Contributions for importers for widely used import formats are welcome.

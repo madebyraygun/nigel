@@ -245,6 +245,27 @@ describe('wc-register-table', () => {
     expect(seen).toEqual([{ id: 101 }, { id: 103 }]);
   });
 
+  it('asks the host to edit on a tap, and only selects on a mouse click', async () => {
+    const el = await mount({ selectedId: 101 });
+    const activated = listen<NcRowEventDetail>(el, 'nc-row-activate');
+    const selected = listen<NcRowEventDetail>(el, 'nc-row-select');
+
+    const tapRow = (index: number, pointerType: string) => {
+      rowEls(el)[index]?.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, composed: true, pointerType }),
+      );
+      rowEls(el)[index]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    };
+
+    tapRow(2, 'mouse');
+    await el.updateComplete;
+    tapRow(3, 'touch');
+    await el.updateComplete;
+
+    expect(selected).toEqual([{ id: 102 }, { id: 103 }]);
+    expect(activated).toEqual([{ id: 103 }]);
+  });
+
   it('asks the toolbar for focus on slash', async () => {
     const el = await mount();
     let asked = 0;

@@ -5,6 +5,7 @@ import { ApiError, appLocked } from '../api/index.js';
 import { getAppStore, initializeAppStore, resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
 import { setUnsavedChanges, unsavedChanges } from '../state/unsaved.js';
+import { REGISTER_INLINE_EDIT_KEY } from '../shell-preferences.js';
 
 /**
  * The settings screen driven entirely by FakeApiClient — no network, no server,
@@ -396,7 +397,9 @@ describe('settings screen', () => {
 
   describe('update check', () => {
     const row = (el: NigelSettingsScreen) =>
-      el.shadowRoot?.querySelector('wc-switch-row') as HTMLElement & { checked: boolean };
+      el.shadowRoot?.querySelector('#updates wc-switch-row') as HTMLElement & {
+        checked: boolean;
+      };
 
     function flip(el: NigelSettingsScreen, checked: boolean): void {
       row(el).dispatchEvent(
@@ -827,6 +830,51 @@ describe('settings screen', () => {
 
       expect(document.documentElement.classList.contains('light-mode')).toBe(true);
       expect(picker(el).mode).toBe('light');
+    });
+
+    describe('register editing', () => {
+      const toggle = (el: NigelSettingsScreen) =>
+        el.shadowRoot?.querySelector('#appearance wc-switch-row') as HTMLElement & {
+          checked: boolean;
+          label: string;
+        };
+
+      function flip(el: NigelSettingsScreen, checked: boolean) {
+        toggle(el).dispatchEvent(
+          new CustomEvent('nc-switch-change', {
+            detail: { checked },
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      }
+
+      it('offers the switch under Appearance, off by default', async () => {
+        const { el } = await mount();
+        expect(toggle(el).label).toBe('Edit register rows in place');
+        expect(toggle(el).checked).toBe(false);
+      });
+
+      it('shows what this device chose', async () => {
+        localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
+        const { el } = await mount();
+        expect(toggle(el).checked).toBe(true);
+      });
+
+      it('remembers a choice on this device and sends nothing to the server', async () => {
+        const { el, client } = await mount();
+        const before = client.calls.length;
+        flip(el, true);
+        await el.updateComplete;
+
+        expect(localStorage.getItem(REGISTER_INLINE_EDIT_KEY)).toBe('true');
+        expect(toggle(el).checked).toBe(true);
+        expect(client.calls.length).toBe(before);
+
+        flip(el, false);
+        await el.updateComplete;
+        expect(localStorage.getItem(REGISTER_INLINE_EDIT_KEY)).toBe('false');
+      });
     });
 
     it('sends nothing to the server — the preference is per-device', async () => {

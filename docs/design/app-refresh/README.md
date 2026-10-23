@@ -356,6 +356,7 @@ Reference: Nigel App, screen `settings`. Replaces `screens/settings.ts`.
   - Below the preview, a radio dot and the label.
 - **Selected card:** a 1.5px rainbow border (the same padding-box/border-box gradient as the active nav item) and a filled radio dot in `--br`.
 - Applies immediately. Stored per device (`localStorage` or Tauri store), not in the book.
+- Below the cards, a switch card: "Edit register rows in place", with the sub-line "Change a row's category and vendor right in the list, instead of in a window." Off by default, so the register edits a row in a dialog.
 
 ### Updates
 
