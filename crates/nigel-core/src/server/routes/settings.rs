@@ -825,7 +825,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -933,7 +933,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
 
         assert!(crate::db::validate_password(&db_path, "hunter2").expect("validate"));
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -941,7 +941,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -953,7 +953,7 @@ mod tests {
 
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(body["error"]["details"]["reason"], "already_encrypted");
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -1002,7 +1002,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1015,7 +1015,7 @@ mod tests {
 
         assert!(crate::db::validate_password(&db_path, "a new one").expect("validate"));
         assert!(!crate::db::validate_password(&db_path, PASSWORD).expect("validate"));
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -1023,7 +1023,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1041,7 +1041,7 @@ mod tests {
         );
         // The old password still opens the database: nothing was rekeyed.
         assert!(crate::db::validate_password(&db_path, PASSWORD).expect("validate"));
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     /// A wrong current password is held back by the unlock backoff, and the
@@ -1051,7 +1051,7 @@ mod tests {
     async fn the_backoff_for_a_wrong_password_does_not_hold_the_database_gate() {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
-        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
         let token = crate::server::auth::generate_token();
         let state = crate::server::state::AppState::new(db_path.clone(), token.clone());
         let app = crate::server::build_router(state.clone());
@@ -1092,7 +1092,7 @@ mod tests {
 
         let (status, _) = change.await.expect("change task");
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -1100,7 +1100,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1183,7 +1183,7 @@ mod tests {
         .await;
         assert!(!body.to_string().contains("swordfish"), "leaked in {body}");
 
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     /// The trimmed copy of a new password is what crosses await points, moves
@@ -1197,9 +1197,9 @@ mod tests {
             super::trimmed_new_password(&secret).expect("valid");
         assert_eq!(password.as_str(), "swordfish");
 
-        crate::db::set_db_password(Some(password));
+        crate::db::set_db_password_for_tests(Some(password));
         let held: Option<zeroize::Zeroizing<String>> = crate::db::get_db_password();
         assert_eq!(held.as_deref().map(String::as_str), Some("swordfish"));
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 }

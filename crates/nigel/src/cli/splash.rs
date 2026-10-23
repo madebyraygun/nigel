@@ -435,7 +435,7 @@ mod tests {
         assert!(splash.try_password().unwrap());
         assert_eq!(splash.attempts, 0);
         // try_password sets the global password on success; clean up immediately
-        nigel_core::db::set_db_password(None);
+        nigel_core::db::set_db_password_for_tests(None);
     }
 
     #[test]

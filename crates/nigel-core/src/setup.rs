@@ -77,7 +77,7 @@ mod tests {
     /// Every test here writes settings.json and creates the data directory it
     /// names, so every one needs the redirect.
     fn fixture() -> (crate::settings::TempConfigDir, tempfile::TempDir) {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let config = crate::settings::TempConfigDir::new();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut settings = crate::settings::load_settings();
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn it_refuses_a_malformed_settings_file_before_creating_anything() {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let _config = crate::settings::TempConfigDir::new();
         let bytes = crate::settings::write_malformed_settings();
         let dir = tempfile::tempdir().expect("tempdir");
@@ -192,7 +192,7 @@ mod tests {
             crate::db::is_encrypted(&db_path).expect("probe"),
             "not encrypted"
         );
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         assert!(
             crate::db::open_connection(&db_path, None).is_err(),
             "opened without the key"

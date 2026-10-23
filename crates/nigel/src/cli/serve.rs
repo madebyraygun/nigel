@@ -41,7 +41,7 @@ mod tests {
     fn preflight_leaves_an_absent_database_absent() {
         // A web-first user must reach setup rather than silently getting
         // default books nobody asked for.
-        nigel_core::db::set_db_password(None);
+        nigel_core::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("nigel.db");
 
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn preflight_migrates_an_existing_plaintext_database() {
-        nigel_core::db::set_db_password(None);
+        nigel_core::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("nigel.db");
         let conn = nigel_core::db::open_connection(&db_path, None).expect("open");

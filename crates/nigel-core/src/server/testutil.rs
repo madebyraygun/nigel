@@ -76,7 +76,7 @@ pub async fn json_body(response: Response) -> serde_json::Value {
 
 /// A data directory holding an initialized, unencrypted database.
 pub fn temp_db() -> (tempfile::TempDir, PathBuf) {
-    crate::db::set_db_password(None);
+    crate::db::set_db_password_for_tests(None);
     let dir = tempfile::tempdir().expect("tempdir");
     let db_path = dir.path().join("nigel.db");
     let conn = crate::db::open_connection(&db_path, None).expect("open db");

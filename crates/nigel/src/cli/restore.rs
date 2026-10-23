@@ -125,11 +125,11 @@ pub fn run(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nigel_core::db::{init_db, set_db_password};
+    use nigel_core::db::{init_db, set_db_password_for_tests};
 
     #[test]
     fn test_restore_replaces_database() {
-        set_db_password(None);
+        set_db_password_for_tests(None);
 
         // Create a "current" database
         let data_dir = tempfile::tempdir().unwrap();
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_non_nigel_db() {
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let dir = tempfile::tempdir().unwrap();
         let fake_path = dir.path().join("fake.db");
 
