@@ -40,6 +40,14 @@ describe('wc-manager-table', () => {
     document.body.innerHTML = '';
   });
 
+  it('reflects plain, which drops the card for a table inside a card', async () => {
+    const card = await mount();
+    expect(card.hasAttribute('plain')).toBe(false);
+
+    const plain = await mount({ plain: true });
+    expect(plain.hasAttribute('plain')).toBe(true);
+  });
+
   it('renders a header per column plus one for the actions', async () => {
     const el = await mount();
     const headers = [...(el.shadowRoot?.querySelectorAll('th') ?? [])].map((th) =>

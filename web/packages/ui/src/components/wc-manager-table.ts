@@ -74,6 +74,14 @@ export class WcManagerTable extends LitElement {
         border-radius: var(--wa-radius-lg);
       }
 
+      /* Inside a container that is already a card, such as a wc-panel, the
+         table drops its own card so the two do not nest. */
+      :host([plain]) {
+        background: none;
+        border: 0;
+        border-radius: 0;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -181,6 +189,10 @@ export class WcManagerTable extends LitElement {
   /** The row with a request in flight: its buttons go inert. */
   @property({ type: Number, attribute: false })
   busyId: number | null = null;
+
+  /** Drop the table card, for a list placed inside a card of its own. */
+  @property({ type: Boolean, reflect: true })
+  plain = false;
 
   /** Visually hidden table caption — what this list is. */
   @property({ type: String })

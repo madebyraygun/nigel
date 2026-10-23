@@ -109,10 +109,6 @@ export class WcManagerLayout extends LitElement {
         display: none;
       }
 
-      ::slotted(.label) {
-        color: var(--wa-color-muted);
-      }
-
       .busy {
         display: flex;
         justify-content: center;

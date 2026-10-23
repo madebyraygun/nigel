@@ -477,6 +477,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         These kinds are not offered for new documents. Reactivate one to offer it again.
       </p>
       <wc-manager-table
+        plain
         caption="Inactive document kinds"
         .columns=${KIND_COLUMNS}
         .rows=${this.inactiveKindRows}

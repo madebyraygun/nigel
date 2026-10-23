@@ -1,5 +1,6 @@
 import { html } from 'lit';
 import './wc-manager-table.js';
+import './wc-panel.js';
 import type { Preview } from '../../preview/types.js';
 import type { ManagerAction, ManagerColumn, ManagerRow } from './wc-manager-table.js';
 
@@ -122,6 +123,25 @@ const preview: Preview = {
           .columns=${accountColumns}
           .rows=${accountRows}
         ></wc-manager-table>
+      `,
+    },
+    {
+      // Inside a card of its own, the table drops its card so the two do not
+      // nest: Documents' inactive kinds sit in a wc-panel.
+      name: 'plain-inside-a-panel',
+      render: () => html`
+        <wc-panel heading="Inactive kinds">
+          <wc-manager-table
+            plain
+            caption="Inactive document kinds"
+            .columns=${[{ key: 'name', label: 'Name' }]}
+            .rows=${[
+              { id: 1, label: 'Statement of work', cells: ['Statement of work'] },
+              { id: 2, label: 'Change order', cells: ['Change order'] },
+            ]}
+            .actions=${[{ name: 'reactivate', label: 'Reactivate' }]}
+          ></wc-manager-table>
+        </wc-panel>
       `,
     },
   ],
