@@ -361,6 +361,11 @@ export class NigelSetupScreen extends SignalWatcher(LitElement) {
             This decides your chart of accounts, and can't be changed later. You can always create a
             new profile to manage another set of books.
           </p>
+          <div class="actions">
+            <wa-button size="l" appearance="outlined" @click=${() => (this.step = 'arrival')}
+              >Back</wa-button
+            >
+          </div>
         `;
       case 'identity':
         return this.renderIdentity();

@@ -400,4 +400,17 @@ describe('setup screen', () => {
 
     expect(field(el, 'Your name')!.value).toBe('Marta');
   });
+
+  it('goes back from the profile step to the arrival', async () => {
+    const { el } = await mount();
+    await landIntro(el);
+    await el.updateComplete;
+    button(el, 'Set up my books')?.click();
+    await el.updateComplete;
+
+    button(el, 'Back')?.click();
+    await el.updateComplete;
+
+    expect(el.shadowRoot?.querySelector('h1')?.textContent).toContain("Hello. I'm Nigel.");
+  });
 });
