@@ -4,7 +4,7 @@ title: Network exposure and deployment guide
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-23 17:18'
 labels:
   - multiuser
   - backend
@@ -29,3 +29,9 @@ Serving beyond loopback is an explicit opt-in: a --bind flag that refuses non-lo
 - [ ] #3 Deployment docs cover Tailscale, reverse proxy TLS, and VPS setups
 - [ ] #4 Backup, restore, systemd, and update guidance for server operators is written
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+First deployment (decision-11, phase 1): the operator's server on bee, reachable at a public HTTPS address so a second household user can log in from anywhere. The guide covers a public address in front of nigel serve (reverse proxy with TLS, or a tunnel such as Cloudflare Tunnel or Tailscale Funnel), the trusted-host and origin settings that replace today's loopback-only rule, and that the server is never exposed before per-user login (32.2) is live.
+<!-- SECTION:NOTES:END -->
