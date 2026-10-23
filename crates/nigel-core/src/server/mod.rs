@@ -34,7 +34,7 @@ use state::AppState;
 pub fn run(port: u16, no_open: bool) -> Result<()> {
     disable_ansi_output();
 
-    let db_path = crate::settings::get_data_dir().join("nigel.db");
+    let db_path = PathBuf::from(crate::settings::try_load_settings()?.data_dir).join("nigel.db");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

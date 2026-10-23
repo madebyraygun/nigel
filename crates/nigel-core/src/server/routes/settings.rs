@@ -72,8 +72,8 @@ impl From<Settings> for AppSettings {
     }
 }
 
-async fn get_app() -> Json<AppSettings> {
-    Json(settings::load_settings().into())
+async fn get_app() -> ApiResult<Json<AppSettings>> {
+    Ok(Json(settings::try_load_settings()?.into()))
 }
 
 /// `updateCheck` is the only field the web UI may write. The user name is set
@@ -86,7 +86,7 @@ pub struct AppSettingsPatch {
 }
 
 async fn put_app(ApiJson(patch): ApiJson<AppSettingsPatch>) -> ApiResult<Json<AppSettings>> {
-    let mut settings = settings::load_settings();
+    let mut settings = settings::try_load_settings()?;
     settings.update_check = patch.update_check;
     settings::save_settings(&settings)?;
     Ok(Json(settings.into()))
@@ -213,6 +213,7 @@ async fn post_data_dir(
 
     {
         let _gate = state.db_gate.write().await;
+        let mut stored = settings::try_load_settings()?;
 
         // Everything that can fail happens before anything is committed. A
         // target this build cannot open must leave the switch un-made: rebinding
@@ -236,7 +237,6 @@ async fn post_data_dir(
             .map_err(ApiError::internal)??;
         }
 
-        let mut stored = settings::load_settings();
         stored.data_dir = resolved.to_string_lossy().to_string();
         settings::save_settings(&stored)?;
 
@@ -674,6 +674,56 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["userName"], "", "userName is not web-editable");
+    }
+
+    /// A settings.json that does not parse is an error on every surface the
+    /// SPA reads it through, and every route that writes it refuses.
+    #[tokio::test]
+    async fn a_malformed_settings_file_is_an_error_and_is_never_written() {
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+        let bytes = crate::settings::write_malformed_settings();
+
+        for uri in ["/api/status", "/api/settings/app"] {
+            let (status, body) = get_json(&app, uri, &token).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}: {body}");
+            assert_eq!(
+                body["error"]["details"]["reason"], "settings_unreadable",
+                "{uri}: {body}"
+            );
+            assert!(
+                body["error"]["message"]
+                    .as_str()
+                    .expect("message")
+                    .contains("settings.json"),
+                "{uri}: {body}"
+            );
+        }
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/app",
+            &token,
+            &json!({ "updateCheck": false }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+
+        let (_other_dir, other_db) = temp_db();
+        let (status, body) = post_json(
+            &app,
+            "/api/settings/data-dir",
+            &token,
+            &json!({ "path": other_db.parent().unwrap().to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "settings_unreadable",
+            "{body}"
+        );
+
+        crate::settings::assert_settings_untouched(&bytes);
     }
 
     // -- data directory -----------------------------------------------------

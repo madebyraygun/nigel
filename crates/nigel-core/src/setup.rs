@@ -39,7 +39,7 @@ pub struct SetupPlan {
 /// idempotent, `init_db_with_profile` migrates rather than reseeds, and an
 /// empty name or company writes nothing.
 pub fn run(plan: &SetupPlan) -> Result<PathBuf> {
-    let mut stored = settings::load_settings();
+    let mut stored = settings::try_load_settings()?;
     if !plan.user_name.is_empty() {
         stored.user_name = plan.user_name.clone();
     }
@@ -94,6 +94,27 @@ mod tests {
             password: password.map(str::to_string),
             data_dir: PathBuf::from(crate::settings::load_settings().data_dir),
         }
+    }
+
+    #[test]
+    fn it_refuses_a_malformed_settings_file_before_creating_anything() {
+        crate::db::set_db_password(None);
+        let _config = crate::settings::TempConfigDir::new();
+        let bytes = crate::settings::write_malformed_settings();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let books = dir.path().join("books");
+
+        let err = run(&SetupPlan {
+            data_dir: books.clone(),
+            ..plan(None)
+        })
+        .expect_err("refused");
+        assert!(
+            matches!(err, crate::error::NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        assert!(!books.exists(), "the data directory was created");
+        crate::settings::assert_settings_untouched(&bytes);
     }
 
     #[test]

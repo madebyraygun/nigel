@@ -109,6 +109,10 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
     // path is read: a data-directory switch landing partway through would
     // otherwise report one database's name under another's path.
     let _gate = state.db_gate.read().await;
+    // A settings.json that cannot be parsed is an error rather than an
+    // unconfigured install: answering with the defaults would put the setup
+    // screen in front of somebody whose configuration is one typo away.
+    crate::settings::try_load_settings()?;
     let db_path = state.db_path();
     let initialized = initialized(&db_path);
     let encrypted = db::is_encrypted(&db_path)?;

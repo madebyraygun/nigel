@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use nigel_core::error::{NigelError, Result};
-use nigel_core::settings::{load_settings, save_settings, shellexpand_path};
+use nigel_core::settings::{save_settings, shellexpand_path, try_load_settings};
 
 pub fn run(path: &str) -> Result<()> {
     let resolved = PathBuf::from(shellexpand_path(path));
@@ -15,7 +15,7 @@ pub fn run(path: &str) -> Result<()> {
         )));
     }
 
-    let mut settings = load_settings();
+    let mut settings = try_load_settings()?;
     settings.data_dir = resolved.to_string_lossy().to_string();
     save_settings(&settings)?;
 

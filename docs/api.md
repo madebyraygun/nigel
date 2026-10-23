@@ -142,6 +142,12 @@ uninitialized, so the SPA can decide which screen to show before it has data.
 }
 ```
 
+A `settings.json` that cannot be read or parsed is `500 internal` with
+`details.reason` = `settings_unreadable` and a message naming the file and the
+parse error, here and on every `/api/settings/*` route — never the answer of an
+unconfigured install. Routes that write settings refuse the same way and leave
+the file untouched.
+
 `initialized` is whether there are books here — the database file exists **and**
 has been written to. A zero-byte file, which is what a stray connection leaves
 behind, reads as uninitialized, and a client that sees `false` shows the setup

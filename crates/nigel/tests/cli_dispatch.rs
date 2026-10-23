@@ -4976,3 +4976,58 @@ fn a_document_command_runs_with_no_document_configuration() {
         .success()
         .stderr(predicate::str::contains("document sync").not());
 }
+
+/// One stray character in a hand edit. Every command that opens the books, or
+/// writes settings, stops with a sentence naming the file and the parse error,
+/// and the file is left byte for byte.
+#[test]
+fn a_malformed_settings_file_stops_every_command_and_survives_it() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let path = env.home.path().join(".config/nigel/settings.json");
+    let malformed = format!(
+        "{{\n  \"data_dir\": \"{}\",\n  \"mailgun_domain\": \"mg.example.com\",,\n}}\n",
+        env.data_dir().display()
+    );
+    std::fs::write(&path, &malformed).unwrap();
+    let data_dir = env.data_dir().to_string_lossy().to_string();
+
+    let commands: [&[&str]; 6] = [
+        &[],
+        &["status"],
+        &["init", "--data-dir", &data_dir],
+        &["load", &data_dir],
+        &["demo"],
+        &["serve", "--no-open"],
+    ];
+    for args in commands {
+        env.cmd()
+            .args(args)
+            .timeout(TEST_TIMEOUT)
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains(path.to_string_lossy().as_ref())
+                    .and(predicate::str::contains("line 3"))
+                    .and(predicate::str::contains("Nothing has been written to it")),
+            );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            malformed,
+            "`nigel {}` rewrote settings.json",
+            args.join(" ")
+        );
+    }
+
+    // `completions` reads settings without opening the books, so it carries on
+    // with the defaults and reports the broken file exactly once, however many
+    // times it reads settings.
+    let output = env.cmd().args(["completions", "bash"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("could not be read").count(),
+        1,
+        "reported once: {stderr}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
+}
