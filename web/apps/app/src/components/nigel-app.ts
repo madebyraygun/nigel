@@ -182,8 +182,8 @@ export class NigelApp extends SignalWatcher(LitElement) {
    * A selection from the shell's menu bar.
    *
    * Navigation validates the screen id here rather than in the api layer,
-   * which does not know the registry; an id this build has never heard of is
-   * dropped, so a newer shell degrades to inert items rather than a blank
+   * which does not know the registry; an id this build has never heard of, or
+   * a screen the sidebar does not list, is dropped, so a newer shell degrades to inert items rather than a blank
    * screen. `find` (on the register only) and `import` reach their screens as
    * one-shot intents the screen consumes — a route parameter could not re-fire
    * on a repeated chord.
@@ -202,7 +202,11 @@ export class NigelApp extends SignalWatcher(LitElement) {
 
     switch (command.kind) {
       case 'navigate':
-        if (isScreenId(command.screen)) this.navigate(command.screen);
+        // Only what the sidebar offers: setup and unlock are gates the boot
+        // phase routes to, never destinations a menu item may pick.
+        if (isScreenId(command.screen) && screenDef(command.screen).inNav) {
+          this.navigate(command.screen);
+        }
         return;
       case 'new-invoice':
         this.navigate('invoices', new URLSearchParams({ new: '1' }));

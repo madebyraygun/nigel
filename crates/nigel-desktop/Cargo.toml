@@ -27,3 +27,4 @@ serde_json = "1"
 nigel-core = { path = "../nigel-core", default-features = false, features = ["desktop", "pdf", "gusto", "testutil"] }
 tokio = { version = "1.53", features = ["macros"] }
 tempfile = "3"
+muda = { version = "0.19", default-features = false }

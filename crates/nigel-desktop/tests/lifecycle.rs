@@ -86,19 +86,18 @@ fn the_dock_reopens_the_window() {
         "the Reopen arm is not confined to macOS"
     );
 
+    // The reveal's own order (unminimize before show and focus) is pinned by
+    // `chrome::reveal`'s unit test.
     let reopen = &main[main.find("tauri::RunEvent::Reopen").expect("reopen arm")..];
-    let unminimize_at = reopen
-        .find("window.unminimize()")
-        .expect("reopen deminiaturizes: show and focus no-op on a minimized window");
     let show_at = reopen
-        .find("window.show()")
-        .expect("reopen shows the hidden window");
+        .find("chrome::reveal(&window")
+        .expect("reopen reveals the hidden or minimized window");
     let rebuild_at = reopen
         .find("build_main_window(app)")
         .expect("reopen rebuilds a destroyed window");
     assert!(
-        unminimize_at < show_at && show_at < rebuild_at,
-        "expected unminimize, then show, with rebuild as the fallback"
+        show_at < rebuild_at,
+        "expected the reveal, with rebuild as the fallback"
     );
     assert!(
         reopen.contains("app.exit(1)"),

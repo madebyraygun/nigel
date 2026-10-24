@@ -50,17 +50,32 @@ function isMenuCommandId(value: string): value is MenuCommandId {
 }
 
 /**
+ * The id a `menu-command` payload carries. The bare string is canonical — it
+ * is what the Tauri shell emits — and `{id}` is accepted too, the shape the
+ * Swift shell's bridge describes.
+ */
+function menuIdOf(payload: unknown): string | null {
+  if (typeof payload === 'string') return payload;
+  if (typeof payload === 'object' && payload !== null) {
+    const id = (payload as { id?: unknown }).id;
+    if (typeof id === 'string') return id;
+  }
+  return null;
+}
+
+/**
  * The command a payload carries, or `null` for one this build does not know —
  * dropped rather than thrown, so a newer shell can add items before the SPA
  * learns them.
  */
 function menuCommandOf(payload: unknown): MenuCommand | null {
-  if (typeof payload !== 'string') return null;
-  if (payload.startsWith('navigate:')) {
-    const screen = payload.slice('navigate:'.length);
+  const id = menuIdOf(payload);
+  if (id === null) return null;
+  if (id.startsWith('navigate:')) {
+    const screen = id.slice('navigate:'.length);
     return screen ? { kind: 'navigate', screen } : null;
   }
-  return isMenuCommandId(payload) ? { kind: payload } : null;
+  return isMenuCommandId(id) ? { kind: id } : null;
 }
 
 /**

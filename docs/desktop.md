@@ -312,9 +312,17 @@ registry screen (Settings… is `navigate:settings`), or one of `import`,
 `menu::COMMANDS` in the crate and `MENU_COMMAND_IDS` in
 `apps/app/src/api/client.ts`; `tests/menu_bar.rs` fails the build when they
 disagree. Nothing in it is Tauri-specific: `DesktopApiClient.menuSource()`
-subscribes through the client's injected `listen`, so any shell that delivers
-`menu-command` with these ids through that bridge — the Swift shell's menu bar
-included — drives the same behaviour.
+subscribes through the client's injected `listen` and accepts the payload as
+the bare id (canonical) or as `{id}`. The Swift shell's menu bar drives the
+same behaviour once `createApiClient` recognises its `__NIGEL_SHELL__` bridge,
+which the Swift shell design plans; today `createApiClient` builds a
+`DesktopApiClient` only under Tauri.
+
+The shell emits `menu-command` to the `main` window only, and before it does
+it reveals that window the way Dock reopen does (unminimize, record the show,
+show, focus; `chrome::reveal`). On macOS the bar outlives a closed (hidden) or
+minimized window, and a command acting on a page nobody can see would look
+dead — a file picker opened from it would have no parent window.
 
 `menuSource()` answers `{kind: 'native', onCommand}` in the shell and
 `{kind: 'none'}` in a browser, and the root container binds it once — screens
@@ -328,9 +336,9 @@ as a sidebar click.
 
 | Id | What the SPA does |
 |---|---|
-| `navigate:<screen>` | Navigates to that screen |
+| `navigate:<screen>` | Navigates to that screen if the sidebar lists it; the setup and unlock gates are refused |
 | `new-invoice` | Opens the Invoices screen's new-invoice view (`#/invoices?new=1`) |
-| `import` | Navigates to Import and opens its file picker (`pick_import_file`) |
+| `import` | Navigates to Import and opens its file picker (`pick_import_file`); a second press while the picker is open is dropped |
 | `find` | Focuses the register's search box; nothing on any other screen, since navigating away could discard that screen's state |
 | `toggle-sidebar` | Folds or unfolds the sidebar and remembers it, as the rail's own button does; nothing when a native window hosts the page and draws its own sidebar |
 

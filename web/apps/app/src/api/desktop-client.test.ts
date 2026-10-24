@@ -414,9 +414,27 @@ describe('the menu source', () => {
     }
     bus.emit('menu-command', 'navigate:');
     bus.emit('menu-command', 'a-menu-item-from-the-future');
-    bus.emit('menu-command', { id: 'find' });
+    bus.emit('menu-command', { id: 'a-menu-item-from-the-future' });
+    bus.emit('menu-command', { id: 7 });
+    bus.emit('menu-command', null);
+    bus.emit('menu-command', 42);
 
     expect(seen).toEqual(MENU_COMMAND_IDS.map((kind) => ({ kind })));
+  });
+
+  it('accepts the {id} payload as well as the bare string', async () => {
+    const { bus, client } = menuClient();
+    const source = client.menuSource();
+    if (source.kind !== 'native') throw new Error('expected a native menu');
+
+    const seen: unknown[] = [];
+    source.onCommand((command) => seen.push(command));
+    await Promise.resolve();
+
+    bus.emit('menu-command', { id: 'find' });
+    bus.emit('menu-command', { id: 'navigate:invoices' });
+
+    expect(seen).toEqual([{ kind: 'find' }, { kind: 'navigate', screen: 'invoices' }]);
   });
 
   it('stops delivering once unsubscribed', async () => {

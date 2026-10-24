@@ -138,3 +138,28 @@ fn the_shell_installs_the_menu_and_forwards_selections() {
         "src/main.rs does not forward menu selections"
     );
 }
+
+/// A forwarded selection brings the window back before the page acts on it,
+/// through the same reveal Dock reopen uses, and goes to the main window.
+#[test]
+fn forwarded_selections_reveal_the_window_first() {
+    let menu = fs::read_to_string("src/menu.rs").expect("read menu.rs");
+    let forward = menu
+        .split("pub fn forward")
+        .nth(1)
+        .and_then(|after| after.split("\n}\n").next())
+        .expect("menu.rs defines forward");
+    let reveal = forward
+        .find("chrome::reveal(")
+        .expect("forward does not reveal the window");
+    let emit = forward
+        .find("emit_to(\"main\", MENU_EVENT")
+        .expect("forward does not emit to the main window");
+    assert!(reveal < emit, "forward emits before it reveals the window");
+
+    let main = fs::read_to_string("src/main.rs").expect("read main.rs");
+    assert!(
+        main.contains("chrome::reveal(&window"),
+        "Dock reopen no longer goes through chrome::reveal"
+    );
+}

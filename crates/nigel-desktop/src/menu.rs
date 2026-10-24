@@ -8,6 +8,8 @@
 use tauri::menu::{AboutMetadata, Menu, MenuEvent, MenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use crate::chrome;
+
 /// The event a custom menu selection reaches the SPA through; the payload is
 /// the command id as a plain string.
 pub const MENU_EVENT: &str = "menu-command";
@@ -97,11 +99,19 @@ pub fn forward<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
             }
         }
         None => {
-            if let Some(id) = command_id(id) {
-                // A window that is gone has nobody to tell; dropping the
-                // selection is the whole of what can be done with it.
-                let _ = app.emit(MENU_EVENT, id.to_owned());
+            let Some(id) = command_id(id) else { return };
+            // A window that is gone has nobody to tell; dropping the
+            // selection is the whole of what can be done with it.
+            let Some(window) = app.get_webview_window("main") else {
+                return;
+            };
+            // On macOS the bar outlives a closed (hidden) or minimized
+            // window; a command acting on a page nobody can see would look
+            // dead, and a picker opened from it would have no parent.
+            if let Some(shown) = app.try_state::<chrome::Shown>() {
+                chrome::reveal(&window, &shown);
             }
+            let _ = app.emit_to("main", MENU_EVENT, id.to_owned());
         }
     }
 }
@@ -586,6 +596,25 @@ mod tests {
             assert_eq!(window.id, Some(tauri::menu::WINDOW_SUBMENU_ID));
             assert!(accelerator_of(platform, QUIT).is_none());
             assert!(accelerator_of(platform, CLOSE_WINDOW).is_none());
+        }
+    }
+
+    /// tauri parses an accelerator with `.ok()` and drops one it cannot
+    /// read, so a typo would leave the item silently without its chord.
+    #[test]
+    fn every_accelerator_parses() {
+        for platform in PLATFORMS {
+            for (id, accelerator) in commands(platform) {
+                let Some(accelerator) = accelerator else {
+                    continue;
+                };
+                assert!(
+                    accelerator
+                        .parse::<muda::accelerator::Accelerator>()
+                        .is_ok(),
+                    "{platform:?}: '{id}' has an accelerator tauri cannot read: {accelerator}"
+                );
+            }
         }
     }
 

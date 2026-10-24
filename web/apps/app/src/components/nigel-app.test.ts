@@ -1161,6 +1161,16 @@ describe('the menu bar', () => {
     expect(window.location.hash).toBe('#/register');
   });
 
+  it('refuses the gate screens, which are not in the sidebar', async () => {
+    const el = await mount(shellClient());
+
+    send({ kind: 'navigate', screen: 'setup' });
+    send({ kind: 'navigate', screen: 'unlock' });
+    await settled(el);
+
+    expect(window.location.hash).toBe('#/dashboard');
+  });
+
   it('remembers a sidebar the menu folded, as a click on the rail would', async () => {
     widescreen();
     const el = await mount(shellClient());

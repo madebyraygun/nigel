@@ -119,13 +119,7 @@ fn main() {
                 } => {
                     match app.get_webview_window("main") {
                         Some(window) => {
-                            // A hidden window shows; a minimized one
-                            // ignores show and focus until it is
-                            // deminiaturized.
-                            let _ = window.unminimize();
-                            app.state::<chrome::Shown>().first();
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            chrome::reveal(&window, &app.state::<chrome::Shown>());
                         }
                         // The window is genuinely gone (a webview
                         // crash), not hidden: rebuild it. A windowless

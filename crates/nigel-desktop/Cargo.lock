@@ -2445,6 +2445,7 @@ name = "nigel-desktop"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "muda",
  "nigel-core",
  "serde",
  "serde_json",
