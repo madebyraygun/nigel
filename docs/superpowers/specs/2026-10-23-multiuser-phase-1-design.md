@@ -22,7 +22,7 @@ A server run is in one of two modes. The mode is **derived, never stored or conf
 |---|---|---|
 | When | The books have no users, **or** they are encrypted and still locked | The books are open and have at least one user |
 | Who gets in | Whoever opens the one-time token link printed at startup | A signed-in user with a session |
-| Hostnames accepted | Loopback only: `localhost`, `127.0.0.1`, `[::1]`, any port | Loopback, plus the host of `server_url` |
+| Hostnames accepted | Loopback only: `localhost`, `127.0.0.1`, `[::1]`, any port | Loopback, plus the host of `server_public_url` |
 | Token link (`/auth?token=`) | Works | Refused; no token is minted or printed |
 | Effective role | Admin (the local owner) | The signed-in user's role |
 
@@ -36,7 +36,7 @@ Rules that follow from it:
   accepted and no per-user login exists.
 - **Non-loopback hostnames are accepted only in shared mode.** The host guard reads the
   mode on every request. In local mode it uses `TrustedOrigins::loopback()` and nothing
-  else, whatever `server_url` says. A set `server_url` in local mode is ignored, and
+  else, whatever `server_public_url` says. A set `server_public_url` in local mode is ignored, and
   `nigel serve` prints a notice saying why.
 - **A locked database is local mode.** The users table is inside the books. While SQLCipher
   has no key, the server cannot tell whether users exist, so it takes the reading that
@@ -45,7 +45,7 @@ Rules that follow from it:
   `403`, and the operator can still reach it on loopback.
 - **Re-evaluation.** The server works out the mode at startup and again after an unlock and
   after any user write through the API. It also re-checks when a request names the
-  `server_url` host while the cached mode is local, so a first user added with the CLI to a running
+  `server_public_url` host while the cached mode is local, so a first user added with the CLI to a running
   server takes effect without a restart. A stale reading can only be "local", which
   accepts less.
 - **There is no way back to local mode in phase 1.** Users are disabled, never deleted,
@@ -203,7 +203,7 @@ is not gated by the locked guard either. Body:
   (the default) or `native` (section 12).
 - Success, `browser`: `200 { "user": {…} }` and `Set-Cookie: nigel_session=<token>;
   HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` (30 days), plus `; Secure` when the request's
-  Host is the `server_url` host (always https, section 11.1). Loopback sessions
+  Host is the `server_public_url` host (always https, section 11.1). Loopback sessions
   are plain http, so they omit `Secure`.
 - Success, `native`: `200 { "user": {…}, "token": "<hex>", "expiresAt": "…" }` and no
   cookie. A `bearer` session row is created.
@@ -310,7 +310,7 @@ because only someone with server access can restart.
   the rightmost entry of `X-Forwarded-For`. The header is trusted only from loopback, so a
   remote client cannot pick its own bucket. If `client_ip_header` is unset behind a local
   proxy, every client shares the proxy's bucket. `nigel serve` warns when it is in shared
-  mode with a `server_url` and no `client_ip_header`.
+  mode with a `server_public_url` and no `client_ip_header`.
 - Unlocking the books keeps its own `UnlockGate`, as it is now.
 
 ### 4.5 Password rules
@@ -338,7 +338,7 @@ The existing layers stay in place. Shared mode adds one rule:
 1. **`SameSite=Strict`** on the session cookie. A cross-site request carries no session.
 2. **Host check.** The `Host` must be a trusted host for the mode (section 1). This is
    what still blocks DNS rebinding.
-3. **Origin check.** In shared mode, the `server_url` origin is compared whole
+3. **Origin check.** In shared mode, the `server_public_url` origin is compared whole
    (`https://books.example.com`, scheme and port included). Loopback keeps "any port", so
    the vite dev server still works.
 4. **New:** in shared mode, a cookie-authenticated request whose method is not
@@ -364,7 +364,7 @@ These are added to `security_headers` as defaults (`or_insert`), alongside `nosn
 - `Referrer-Policy: same-origin` on everything.
 - `Cache-Control: no-store` on every `/api` response, so books data never sits in a
   shared cache or the browser's disk cache.
-- `Strict-Transport-Security: max-age=31536000` on responses to the `server_url` host only.
+- `Strict-Transport-Security: max-age=31536000` on responses to the `server_public_url` host only.
   It is never sent on loopback, where it would pin `localhost` to https.
 
 **Content-Security-Policy is its own phase-1 task**, outside the five PRs in section 17.
@@ -707,10 +707,10 @@ invoicing keys:
 
 | Key | Env | Value | Meaning |
 |---|---|---|---|
-| `server_url` | `NIGEL_SERVER_URL` | One `https://` origin: scheme and host, an optional port, no path. For example `"https://books.example.com"` | This server's own address (below) |
+| `server_public_url` | `NIGEL_SERVER_PUBLIC_URL` | One `https://` origin: scheme and host, an optional port, no path. For example `"https://books.example.com"` | This server's own address (below) |
 | `client_ip_header` | `NIGEL_CLIENT_IP_HEADER` | `"CF-Connecting-IP"` or `"X-Forwarded-For"`, or unset | Which header carries the client IP, trusted only from a loopback peer (section 4.4) |
 
-**`server_url` is the one address this server answers to besides loopback.** In shared mode:
+**`server_public_url` is the one address this server answers to besides loopback.** In shared mode:
 
 - its host is the only non-loopback `Host` the host guard accepts;
 - its origin is the trusted `Origin` for browser requests and for the CSRF rule (section 4.6);
@@ -727,9 +727,12 @@ picks one address per server. Anyone who needs another way in uses loopback over
 which is always accepted. A list can come later if a deployment needs one, without
 changing anything else here.
 
-`server_url` is distinct from invoicing's `public_base_url`. That one is where published
-invoice pages and PDFs live on R2, and it has nothing to do with where `nigel serve`
-answers. `docs/invoicing.md` and the deployment guide each say so in one line.
+`server_public_url` belongs to the same family as the publishing settings `invoice_public_url`
+and `document_public_url`, and is distinct from both. Those two are where published
+invoice and document pages live on R2. They have nothing to do with where `nigel serve`
+answers. (Their old names, `public_base_url` and `documents_base_url`, and the matching
+environment variables, remain accepted.) `docs/invoicing.md` and the deployment guide each
+say so in one line.
 
 ### 11.2 Binding
 
@@ -744,8 +747,8 @@ proxy on another machine is not a supported setup: run the tunnel or proxy on th
 - Local mode: what it prints now, the URL and the token link.
 - Shared mode: `Nigel is serving <company> to signed-in users at https://books.example.com
   (and http://127.0.0.1:5731).` No token is printed, so none ends up in the journal.
-- Notices go to stderr: `server_url` set in local mode; shared mode on unencrypted books
-  (section 3); shared mode with `server_url` but no `client_ip_header`.
+- Notices go to stderr: `server_public_url` set in local mode; shared mode on unencrypted books
+  (section 3); shared mode with `server_public_url` but no `client_ip_header`.
 
 ### 11.4 Unlocking at boot
 
@@ -787,7 +790,7 @@ placeholders. Contents:
    ```
    `cloudflared tunnel create nigel`, `cloudflared tunnel route dns nigel
    books.example.com`, and run it as a service. Then set
-   `server_url: "https://books.example.com"` and `client_ip_header: "CF-Connecting-IP"`.
+   `server_public_url: "https://books.example.com"` and `client_ip_header: "CF-Connecting-IP"`.
    Do not set `httpHostHeader`, because Nigel must see the public name. **Say plainly:**
    Cloudflare terminates TLS, so Cloudflare's edge sees the traffic, books data included.
    That is the operator's choice of provider, outside decision-12's "Nigel never reads
@@ -798,8 +801,8 @@ placeholders. Contents:
    `client_ip_header: "X-Forwarded-For"`. Port 443 open, DNS pointed at the server.
 5. **Tailscale:** `tailscale serve --bg --https=443 http://127.0.0.1:5731` for people on
    your tailnet. Funnel is for the public internet, and there TLS terminates on your own
-   machine. Set `server_url` to the `https://<machine>.<tailnet>.ts.net` name, and verify
-   that the forwarded `Host` is that name. A server has one `server_url`, so Tailscale is
+   machine. Set `server_public_url` to the `https://<machine>.<tailnet>.ts.net` name, and verify
+   that the forwarded `Host` is that name. A server has one `server_public_url`, so Tailscale is
    an alternative to a tunnel, not an addition to one (section 11.1).
 6. **systemd unit:**
    ```ini
@@ -832,7 +835,7 @@ placeholders. Contents:
    WantedBy=multi-user.target
    ```
    `%d` in `Environment=` needs systemd 250 or later. With `HOME=/var/lib/nigel`,
-   `settings.json` (with `data_dir`, `server_url` and `client_ip_header`) lives at
+   `settings.json` (with `data_dir`, `server_public_url` and `client_ip_header`) lives at
    `/var/lib/nigel/.config/nigel/settings.json`, and `server.key` beside it.
    Create the credential with
    `systemd-creds encrypt --name=nigel-db-password - /etc/nigel/nigel-db-password.cred`,
@@ -907,7 +910,7 @@ placeholders. Contents:
 | CSRF / login CSRF | `SameSite=Strict`; Origin required on cookie-authenticated writes and login; JSON content type; GET never writes |
 | DNS rebinding | Exact Host/Origin match against the mode's trusted set |
 | Exposure before per-user login exists | A non-loopback Host is refused unless the mode is shared, and shared mode needs a user. A locked server is local. Covered by an end-to-end test (section 16) |
-| Stolen session cookie or bearer token | `HttpOnly`, `Secure` on the `server_url` host, server-side revocation (logout, sign out everywhere, disable), 30-day idle expiry and a 90-day absolute lifetime |
+| Stolen session cookie or bearer token | `HttpOnly`, `Secure` on the `server_public_url` host, server-side revocation (logout, sign out everywhere, disable), 30-day idle expiry and a 90-day absolute lifetime |
 | XSS in the SPA | Lit escapes by default; the QR is an `<img>`, not markup; the cookie is `HttpOnly`; a Content-Security-Policy lands before public exposure (section 4.7) |
 | Copied database or stolen backup | Hashes only for passwords and sessions; TOTP sealed under a key outside the data directory; SQLCipher when on |
 | Bookkeeper or read-only overreach | Server-side role table with deny-by-default; the letterhead and countersigning are admin-only; shared-mode refusals for books swaps and re-keys |
@@ -932,12 +935,12 @@ placeholders. Contents:
 | `server.key` lost or replaced | TOTP fails for every enrolled user; the log names them | `--clear-totp` per user; they enroll again |
 | Credential missing at boot | The server starts locked, so local mode; the tunnel gets `403` | Fix the credential and restart, or unlock over an SSH tunnel with the token link |
 | Credential wrong at boot | The unit fails with the unlock error | Re-create the credential |
-| `server_url` is `http://` or has a path | Startup fails, naming the value | Use the `https://` origin |
-| A second hostname (a Tailscale name next to the tunnel, say) | `403` on that name | One `server_url` per server; loopback over SSH for anything else (section 11.1) |
+| `server_public_url` is `http://` or has a path | Startup fails, naming the value | Use the `https://` origin |
+| A second hostname (a Tailscale name next to the tunnel, say) | `403` on that name | One `server_public_url` per server; loopback over SSH for anything else (section 11.1) |
 | Host header rewritten by the proxy | `403` through the tunnel | Remove the rewrite; the guide's checklist catches it |
 | `client_ip_header` unset behind a proxy | All clients share one IP bucket, so one attacker can trip it for everyone (accounts still separate) | Set the header; startup warns |
 | A role changed mid-session | The next request is judged on the new role | — |
-| A user added with the CLI to a running local-mode server | The next request naming the `server_url` host re-evaluates the mode (section 1) | — |
+| A user added with the CLI to a running local-mode server | The next request naming the `server_public_url` host re-evaluates the mode (section 1) | — |
 | Two people edit the same row | Last write wins until 32.7 | 32.7 |
 
 ---
@@ -962,10 +965,10 @@ All Rust tests run serially (`--test-threads=1`), because the books password is 
 **Server integration (tower `oneshot`, `server/testutil.rs`):**
 - Mode derivation: no users → local; users → shared; encrypted and locked with users →
   local; unlock → shared, and the token cookie is then refused.
-- Host guard: in local mode the `server_url` host gets `403`; in shared mode it passes and
+- Host guard: in local mode the `server_public_url` host gets `403`; in shared mode it passes and
   any other non-loopback host still gets `403`; the Origin is compared as a whole origin
-  against `server_url`; an invalid `server_url` fails startup.
-- Login, cookie attributes (`Secure` only on the `server_url` host), the `native` bearer token,
+  against `server_public_url`; an invalid `server_public_url` fails startup.
+- Login, cookie attributes (`Secure` only on the `server_public_url` host), the `native` bearer token,
   logout, rolling renewal on an injected clock, idle expiry, the 90-day absolute lifetime
   (renewal never extends past it, and the cookie `Max-Age` shrinks toward it), the must-change-password
   allowlist, TOTP step-up, lockout, and the missing-Origin refusal on cookie writes
@@ -985,7 +988,7 @@ All Rust tests run serially (`--test-threads=1`), because the books password is 
 starts the real binary (`CARGO_BIN_EXE_nigel serve --no-open --port 0`) with a temporary
 `HOME`/`XDG_CONFIG_HOME` and fixture books, reads the printed port, and talks raw HTTP
 over TCP:
-1. No users, `server_url = "https://books.example.com"` → `GET /api/ping` with
+1. No users, `server_public_url = "https://books.example.com"` → `GET /api/ping` with
    `Host: books.example.com` gets **`403 forbidden`**, and with `Host: 127.0.0.1` gets
    `401`. This is the test that the server is not exposed before per-user login exists.
 2. Add a user with `nigel user add … --admin` and restart → the same public-Host request
@@ -1012,10 +1015,10 @@ is about a day, M two to three days, L four to five.
 | # | PR | Tasks | Size | Depends on |
 |---|---|---|---|---|
 | 1 | **Users data layer and CLI.** Migration 17; the `identity` module (users, sessions, Argon2id, password rules, TOTP, sealing and `server.key`); `nigel user add/list/role/disable/enable/reset-password`; `NIGEL_DB_PASSWORD_FILE`; `docs/commands.md` | 32.1 | M | — |
-| 2 | **Auth and modes.** `Principal`; mode derivation and re-evaluation; mode-aware host guard with `server_url` and whole-origin matching; the session layer (cookie and bearer, rolling renewal, must-change allowlist); login/logout/me and the account routes; the rate limiter and `client_ip_header`; boot unlock in `serve`; the new security headers; the CSRF Origin rule; login event lines; the end-to-end exposure test. **Until PR 3, every non-auth route needs admin**, a temporary fail-closed table, so a non-admin user can do nothing while roles are unfinished. `docs/api.md`, `docs/design-constraints.md`, `docs/architecture.md` | 32.2 and the exposure half of 32.9 | L | 1 |
+| 2 | **Auth and modes.** `Principal`; mode derivation and re-evaluation; mode-aware host guard with `server_public_url` and whole-origin matching; the session layer (cookie and bearer, rolling renewal, must-change allowlist); login/logout/me and the account routes; the rate limiter and `client_ip_header`; boot unlock in `serve`; the new security headers; the CSRF Origin rule; login event lines; the end-to-end exposure test. **Until PR 3, every non-auth route needs admin**, a temporary fail-closed table, so a non-admin user can do nothing while roles are unfinished. `docs/api.md`, `docs/design-constraints.md`, `docs/architecture.md` | 32.2 and the exposure half of 32.9 | L | 1 |
 | 3 | **Roles.** `ROUTE_ROLES` and `role_guard` (deny by default); the users admin API; the shared-mode refusals; the test inventory derived from the table, closing today's gaps; the role matrix test; `role-table.json` capture; `docs/api.md` role table | 32.3 | M | 2 |
 | 4 | **Web.** The seven components with previews and a11y; session state and gates; the account menu; Settings › Users, Your account, and the shared-mode variants of Security, Location and Updates; `roles.ts` and its parity test; README | 32.8 | L | 3 (components can start after 2 merges) |
-| 5 | **Deployment guide.** `docs/deployment.md` (section 11.5); README Configuration and links; a one-line note in `docs/invoicing.md` on `server_url` versus `public_base_url`. Verified on the operator's server against the checklist, with placeholders only in the text | 32.9 (docs half) | S–M | 2 (drafting); merges after 4 |
+| 5 | **Deployment guide.** `docs/deployment.md` (section 11.5); README Configuration and links; a one-line note in `docs/invoicing.md` on `server_public_url` versus `invoice_public_url` and `document_public_url`. Verified on the operator's server against the checklist, with placeholders only in the text | 32.9 (docs half) | S–M | 2 (drafting); merges after 4 |
 
 Alongside these, the **Content-Security-Policy** is its own phase-1 task: S–M, after
 PR 2, independent of PRs 3–5 (section 4.7).
@@ -1045,7 +1048,7 @@ These are for the operator to reconcile in the tasks. This spec does not edit `b
   temporary password shown once, and adds "sign out everywhere" and "remove two-step".
 - **32.9 AC #1** asks for a `--bind` flag with acknowledgment. The design has no
   `--bind`: the server always binds loopback behind a same-machine tunnel or proxy, and
-  exposure is gated on the mode. The trusted-host setting is `server_url`, a single
+  exposure is gated on the mode. The trusted-host setting is `server_public_url`, a single
   address. AC #3 adds Cloudflare Tunnel as the worked example.
 - **Content-Security-Policy** is a separate phase-1 task, outside the epic's existing
   subtasks, and it gates public exposure.
