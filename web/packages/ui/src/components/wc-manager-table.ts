@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import { controlsCss } from '@nigel/theme';
 import './wc-row-badge.js';
+import { stackedTableCss } from './stacked-table.js';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
 export interface ManagerColumn {
@@ -175,104 +176,16 @@ export class WcManagerTable extends LitElement {
         text-align: end;
       }
 
-      /* The card's own width picks the layout (the stacked rules below). */
-      .frame {
-        container-type: inline-size;
-      }
-
-      /* -- the stacked layout --
-
-         Below 720px the columns and the row's buttons no longer fit side by
-         side, so each row becomes a card in the table's own width, as the
-         register's rows do: the first column as the row's title, every other
-         column as a labelled line under it, the buttons last. Nothing
-         scrolls sideways.
-
-         The elements keep their table roles explicitly, so the cells are
-         still announced as cells of their columns; the header row is there
-         for assistive technology and takes no room. */
+      /* Below the shared stacking width (stacked-table.ts) the row's
+         buttons start the last line and wrap. */
       @container (max-width: 720px) {
-        table,
-        tbody,
-        tr,
-        td {
-          display: block;
-        }
-
-        thead {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          overflow: hidden;
-          clip-path: inset(50%);
-          white-space: nowrap;
-        }
-
-        tbody tr {
-          display: grid;
-          gap: 4px;
-          padding: 12px 16px;
-          border-bottom: 1px solid var(--wa-color-border-soft);
-        }
-
-        tbody tr:last-child {
-          border-bottom: 0;
-        }
-
-        tbody tr:hover {
-          background: var(--wa-color-surface-alt);
-        }
-
-        tbody tr:hover td {
-          background: none;
-        }
-
-        td,
-        td:first-child,
-        td:last-child {
-          height: auto;
-          padding: 0;
-          border-bottom: 0;
-          min-width: 0;
-        }
-
-        td.end {
-          text-align: start;
-        }
-
-        /* The first column is what the list keys its rows by: the card's
-           title. */
-        td:first-child {
-          font-weight: var(--wa-font-weight-medium);
-        }
-
-        /* Every other column is a line of its own, its heading beside it. */
-        td[data-label] {
-          display: grid;
-          grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
-          gap: 12px;
-          font-size: var(--nc-font-size-control);
-          overflow-wrap: anywhere;
-        }
-
-        td[data-label]::before {
-          content: attr(data-label);
-          color: var(--wa-color-muted);
-          font-size: var(--nc-font-size-meta);
-          font-weight: var(--nc-font-weight-table-heading);
-          line-height: inherit;
-        }
-
-        td.actions-cell {
-          padding-top: 6px;
-        }
-
         .actions {
           flex-wrap: wrap;
           justify-content: flex-start;
         }
       }
     `,
+    stackedTableCss,
   ];
 
   @property({ attribute: false })
@@ -313,11 +226,11 @@ export class WcManagerTable extends LitElement {
     const hasActions =
       this.actions.length > 0 || this.rows.some((row) => (row.actions?.length ?? 0) > 0);
 
-    // The roles are stated because the stacked layout sets the table's
-    // elements to display: block, which some engines take as leaving the
-    // table: the rows have to stay rows of cells for a screen reader.
+    // At a phone's width the rows stack into cards (stacked-table.ts); the
+    // roles are stated because that layout sets the table's elements to
+    // display: block, which some engines take as leaving the table.
     return html`
-      <div class="frame">
+      <div class="frame stack">
         <table role="table">
           ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
           <thead role="rowgroup">
@@ -361,11 +274,12 @@ export class WcManagerTable extends LitElement {
           ]
             .filter(Boolean)
             .join(' ');
-          // Every column but the first carries its heading, which the
-          // stacked layout shows beside the value.
+          // The first column titles the stacked card; every other one
+          // carries its heading, which the card shows beside the value.
           return html`<td
             role="cell"
             class=${classes}
+            data-stack=${index === 0 ? 'title' : nothing}
             data-label=${index === 0 ? nothing : column.label}
           >
             ${value === null ? '—' : value}
@@ -376,7 +290,7 @@ export class WcManagerTable extends LitElement {
         })}
         ${hasActions
           ? html`
-              <td role="cell" class="actions-cell">
+              <td role="cell" class="actions-cell" data-stack="last">
                 <div class="actions">
                   ${actions.map(
                     (action) => html`

@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import type { CSSResult, CSSResultGroup } from 'lit';
-import { WcManagerTable } from './wc-manager-table.js';
-import type { NcManagerActionDetail } from './wc-manager-table.js';
+import './wc-manager-table.js';
+import type { WcManagerTable, NcManagerActionDetail } from './wc-manager-table.js';
 import { describePreviewA11y } from '../../preview/axe-suite.js';
 import preview from './wc-manager-table.preview.js';
 
@@ -67,13 +66,12 @@ describe('wc-manager-table', () => {
     expect(root?.querySelector('th')?.getAttribute('role')).toBe('columnheader');
   });
 
-  it('stacks its rows from the width of its own frame rather than scrolling', () => {
-    const text = (WcManagerTable.styles as CSSResultGroup[])
-      .flat()
-      .map((sheet) => String((sheet as CSSResult).cssText))
-      .join('\n');
-    expect(text).toMatch(/\.frame\s*\{[^}]*container-type:\s*inline-size/);
-    expect(text).toMatch(/@container \(max-width: 720px\)/);
+  it('stacks at phone width through the shared table layout', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="1"]');
+    expect(el.shadowRoot?.querySelector('.stack table')).toBeTruthy();
+    expect(row?.querySelector('td')?.getAttribute('data-stack')).toBe('title');
+    expect(row?.querySelector('td.actions-cell')?.getAttribute('data-stack')).toBe('last');
   });
 
   it('renders a header per column plus one for the actions', async () => {

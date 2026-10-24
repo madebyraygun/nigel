@@ -267,11 +267,17 @@ label inline to its left in the muted control type rather than stacked
 above it. No screen sets its own margin between a filter row and a table.
 
 A list never scrolls sideways at a phone's width. The register stacks each
-row into two lines below 860px of card width; `wc-manager-table` (Clients,
-Accounts, Categories, Rules, Documents' inactive kinds) stacks each row into
-a card below 720px, with the column headings beside the values and the row's
-buttons last. Both decide from the table's own width through a container
-query, so a narrow window, the sidebar or a split view all count.
+row into two lines below 860px of card width. Every other list table —
+`wc-manager-table` (Clients, Accounts, Categories, Rules, Documents' inactive
+kinds), `wc-invoice-table` and `wc-document-table` — stacks each row into a
+card below 720px through one shared sheet, `stackedTableCss` in
+`packages/ui/src/components/stacked-table.ts`: the cell marked
+`data-stack="title"` heads the card, each cell with a `data-label` is a line
+with its column heading beside the value, `data-stack="last"` (a status pill,
+the row's buttons) closes it and `data-stack="hide"` (a chevron) drops out.
+Both layouts decide from the table's own width through a container query, so
+a narrow window, the sidebar or a split view all count, and both keep the
+table's roles on its elements so the cells are still announced as cells.
 
 Every table heading — column and row headings alike, in the manager,
 invoice, document, register, report, line-item and the other tables — is

@@ -87,6 +87,16 @@ const preview: Preview = {
   states: [
     { name: 'list', render: () => html`<wc-document-table .rows=${rows}></wc-document-table>` },
     {
+      // A phone's width: each row is a card — the title heads the card and links to the document, status pill closes it. The box stands in
+      // for the content area of a 390px window.
+      name: 'stacked-at-phone-width',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-document-table .rows=${rows}></wc-document-table>
+        </div>
+      `,
+    },
+    {
       name: 'orphaned-client',
       render: () => html`
         <wc-document-table .rows=${[{ ...rows[1], clientName: null }]}></wc-document-table>
