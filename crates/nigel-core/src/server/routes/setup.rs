@@ -145,7 +145,7 @@ mod tests {
     /// A data directory with no database in it, with settings.json redirected
     /// to a temporary config dir and pointed at that directory.
     fn empty_books() -> (TempConfig, tempfile::TempDir, std::path::PathBuf) {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let config = TempConfig::new();
         let dir = tempfile::tempdir().expect("tempdir");
         let mut settings = crate::settings::load_settings();
@@ -243,7 +243,7 @@ mod tests {
             "setup locked the user straight back out"
         );
         assert!(crate::db::is_encrypted(&db_path).expect("probe"));
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -256,7 +256,7 @@ mod tests {
         let (_status, answer) = post_json(&app, "/api/setup", &token, &body).await;
 
         assert!(!answer.to_string().contains("correct horse"), "{answer}");
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]

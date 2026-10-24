@@ -54,40 +54,54 @@ function reportText(item: ManifestEntry): string {
 }
 
 /**
- * Every money figure in a string, as an absolute value.
- *
- * Absolute because `wc-money` always renders the sign while the text report
- * prints magnitudes and lets a colour carry the direction — a deliberate
- * difference (colour alone cannot be the only cue), and not a difference in the
- * figures.
+ * Reports whose text export prints magnitudes and lets a colour carry the
+ * direction, while `wc-money` renders the sign. Every other report prints its
+ * negatives as `-$x`, so the sign is part of what must match.
  */
-function moneyTokens(source: string): string[] {
-  return [...source.matchAll(/-?\$[\d,]+\.\d{2}/g)]
-    .map((match) => match[0].replace('-', ''))
-    .sort();
+const MAGNITUDE_ONLY_IN_TEXT = new Set<string>(['flagged', 'register']);
+
+/**
+ * Reports whose text export states the total in its heading, ahead of the
+ * rows; the screen shows it after them.
+ */
+const TOTAL_IN_TEXT_HEADING = new Set<string>(['register']);
+
+/**
+ * Every money figure and percentage in a string, in the order it appears.
+ *
+ * Order is kept: a label-to-figure swap between two rows moves figures to
+ * different positions, which a sorted comparison cannot see. A report whose
+ * text prints magnitudes only has its sign dropped from both sides, because a
+ * colour alone cannot be the only cue and the screen deliberately adds one.
+ */
+function figureTokens(source: string, signed: boolean): string[] {
+  return [...source.matchAll(/-?\$[\d,]+\.\d{2}|-?\d+(?:\.\d+)?%/g)].map((match) =>
+    signed ? match[0] : match[0].replace('-', ''),
+  );
 }
 
 /**
- * Money rendered on the screen, skipping the cash-flow chart.
+ * Money and percentages rendered on the screen, skipping the cash-flow chart.
  *
  * The chart's accessible table restates the same months the table below it
  * already lists, so counting both would double every cash-flow figure. It is a
  * second view, not a second set of numbers.
  */
-function screenMoney(el: NigelReportsScreen): string[] {
+function screenFigures(el: NigelReportsScreen, signed: boolean): string[] {
   const collect = (node: ParentNode | null): string => {
     if (!node) return '';
     let out = '';
     for (const child of node.childNodes) {
       const element = child as Element & { shadowRoot?: ShadowRoot | null };
-      if (element.tagName?.toLowerCase() === 'wc-bar-chart') continue;
+      const tag = element.tagName?.toLowerCase();
+      if (tag === 'wc-bar-chart' || tag === 'style') continue;
       if (child.nodeType === Node.TEXT_NODE) out += ` ${child.textContent ?? ''}`;
       if (element.shadowRoot) out += collect(element.shadowRoot);
       if (element.childNodes?.length) out += collect(element as unknown as ParentNode);
     }
     return out;
   };
-  return moneyTokens(collect(el.shadowRoot));
+  return figureTokens(collect(el.shadowRoot), signed);
 }
 
 async function mountReport(slug: ReportSlug, item: ManifestEntry): Promise<NigelReportsScreen> {
@@ -147,8 +161,10 @@ describe('figure parity with the CLI', () => {
     const item = entry(slug);
     const el = await mountReport(slug, item);
 
-    const fromText = moneyTokens(reportText(item));
-    const fromScreen = screenMoney(el);
+    const signed = !MAGNITUDE_ONLY_IN_TEXT.has(slug);
+    const fromText = figureTokens(reportText(item), signed);
+    if (TOTAL_IN_TEXT_HEADING.has(slug)) fromText.push(...fromText.splice(0, 1));
+    const fromScreen = screenFigures(el, signed);
 
     expect(fromText.length, `${slug}: the fixture has no figures to compare`).toBeGreaterThan(
       0,
@@ -161,7 +177,7 @@ describe('figure parity with the CLI', () => {
     // some of the figures on the page, so it is worth its own comparison.
     const item = entry('k1-needs-mapping');
     const el = await mountReport('k1', item);
-    expect(screenMoney(el)).toEqual(moneyTokens(reportText(item)));
+    expect(screenFigures(el, true)).toEqual(figureTokens(reportText(item), true));
   });
 
   it('reads the same company out of every capture', () => {

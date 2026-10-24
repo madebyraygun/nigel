@@ -457,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_reports_a_personal_database_profile() {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("nigel.db");
         let conn = crate::db::open_connection(&db_path, None).unwrap();
@@ -508,7 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_reports_a_missing_database_as_uninitialized() {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().unwrap();
         let (app, token) = app_for(&dir.path().join("nigel.db"));
         let json = status_json(&app, &token).await;
@@ -660,7 +660,7 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{uri} after unlock: {body}");
         }
 
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -751,7 +751,7 @@ mod tests {
             .unwrap();
         assert_eq!(again.status(), StatusCode::OK);
 
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]
@@ -777,7 +777,7 @@ mod tests {
         assert_eq!(ok.status(), StatusCode::OK);
 
         // Simulate a fresh lock so the counter is observable again.
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let response = app
             .oneshot(session_post("/api/unlock", &token, &unlock_body("nope")))
             .await
@@ -831,7 +831,7 @@ mod tests {
     async fn unlock_runs_the_migrations_serve_had_to_defer() {
         // A 0.1.x-era database: the base schema, no csv_profiles table, and a
         // version stamp from before the migrations that add one.
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("nigel.db");
         let conn = crate::db::open_connection(&db_path, None).unwrap();
@@ -857,7 +857,7 @@ mod tests {
             crate::migrations::LATEST_VERSION
         );
 
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
     }
 
     #[tokio::test]

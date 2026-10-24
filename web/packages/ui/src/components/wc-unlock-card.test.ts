@@ -24,6 +24,27 @@ function submit(el: WcUnlockCard): void {
   );
 }
 
+/**
+ * Everything a reader of the page could reach under `root`: text, attribute
+ * names and values, and form-control values, descending into every shadow
+ * root. `outerHTML` stops at the host and would miss all of it.
+ */
+function reachableText(root: Node): string {
+  const parts: string[] = [];
+  const visit = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) parts.push(node.textContent ?? '');
+    if (node instanceof Element) {
+      for (const attr of node.attributes) parts.push(attr.name, attr.value);
+      const value = (node as Element & { value?: unknown }).value;
+      if (typeof value === 'string') parts.push(value);
+      if (node.shadowRoot) visit(node.shadowRoot);
+    }
+    node.childNodes.forEach(visit);
+  };
+  visit(root);
+  return parts.join('\n');
+}
+
 describe('wc-unlock-card', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -48,11 +69,27 @@ describe('wc-unlock-card', () => {
     expect(passwordField(el).value).toBe('');
   });
 
-  it('never reflects the password to an attribute', async () => {
+  it('can see a password rendered anywhere inside its shadow tree', async () => {
+    const el = await mount();
+    const leak = document.createElement('span');
+    leak.setAttribute('data-leak', 'hunter2');
+    el.shadowRoot?.appendChild(leak);
+    expect(reachableText(el)).toContain('hunter2');
+  });
+
+  it('never renders the password into the DOM', async () => {
     const el = await mount();
     passwordField(el).value = 'hunter2';
+    expect(reachableText(el)).toContain('hunter2');
+
     submit(el);
-    expect(el.outerHTML).not.toContain('hunter2');
+    expect(reachableText(el)).not.toContain('hunter2');
+
+    el.busy = true;
+    el.error = 'Wrong password.';
+    el.attemptsRemaining = 2;
+    await el.updateComplete;
+    expect(reachableText(el)).not.toContain('hunter2');
   });
 
   it('does not submit an empty password', async () => {

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
 /// Every `NIGEL_*` key `settings::invoicing_config()` reads. Env vars win over the
@@ -33,6 +34,49 @@ pub const INVOICING_ENV_VARS: [&str; 15] = [
 /// inheriting a tty fails instead of blocking on `rpassword` forever.
 pub const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The `nigel` binary this test process drives: a private hard link to the one
+/// cargo built for it, made once per process.
+///
+/// Cargo keeps a single `target/debug/nigel` per target directory and replaces
+/// it whenever any build links the binary with different features, such as a
+/// `--no-default-features` build running beside the tests. A test that spawns
+/// the shared path then runs a binary without the features it was compiled to
+/// expect, and fails only for the feature-gated commands (the PDF exports).
+/// A link keeps the original file alive whatever cargo does to the shared
+/// name, and costs no disk. It sits beside the binary so that it shares its
+/// filesystem; links from processes that ended over an hour ago are swept.
+fn private_binary() -> &'static std::path::Path {
+    static BINARY: OnceLock<PathBuf> = OnceLock::new();
+    BINARY.get_or_init(|| {
+        let built: Command = cargo_bin_cmd!("nigel");
+        let built = PathBuf::from(built.get_program());
+        let links = built
+            .parent()
+            .expect("binary directory")
+            .join("nigel-test-links");
+        std::fs::create_dir_all(&links).expect("create link directory");
+
+        let hour = std::time::Duration::from_secs(3600);
+        for entry in std::fs::read_dir(&links).into_iter().flatten().flatten() {
+            let stale = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > hour);
+            if stale {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+
+        let dir = links.join(std::process::id().to_string());
+        std::fs::create_dir_all(&dir).expect("create private binary dir");
+        let link = dir.join(built.file_name().expect("binary file name"));
+        std::fs::hard_link(&built, &link).expect("link the nigel binary");
+        link
+    })
+}
+
 /// Create an isolated environment: a temp HOME so that `~/.config/nigel/settings.json`
 /// and `~/Documents/nigel/` all live inside the temp dir. Returns the TempDir (must be
 /// kept alive for the duration of the test) and a helper to build `nigel` commands that
@@ -57,7 +101,7 @@ impl TestEnv {
     /// invoicing credential cleared from the inherited environment, so no test
     /// can reach Stripe, R2, or Mailgun on a machine where those are exported.
     pub fn cmd(&self) -> Command {
-        let mut cmd: Command = cargo_bin_cmd!("nigel");
+        let mut cmd = Command::new(private_binary());
         cmd.env("HOME", self.home.path());
         for var in INVOICING_ENV_VARS {
             cmd.env_remove(var);

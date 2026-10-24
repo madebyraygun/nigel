@@ -145,6 +145,7 @@ pub struct TempConfigDir {
 #[cfg(any(test, feature = "testutil"))]
 impl TempConfigDir {
     pub fn new() -> Self {
+        crate::db::hold_process_globals_for_tests();
         let dir = tempfile::tempdir().expect("tempdir");
         let previous = set_config_dir_for_tests(Some(dir.path().to_path_buf()));
         let previously_suppressed = suppress_invoicing_env_for_tests(true);
@@ -210,6 +211,8 @@ fn claim_config_dir(
 /// [`set_config_dir_for_tests`] ahead of both, like every path derived from it.
 pub fn config_dir() -> PathBuf {
     #[cfg(any(test, feature = "testutil"))]
+    crate::db::read_process_globals_for_tests();
+    #[cfg(any(test, feature = "testutil"))]
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     if let Some(dir) = CONFIG_DIR_OVERRIDE.lock().unwrap().clone() {
         return dir;
@@ -219,6 +222,12 @@ pub fn config_dir() -> PathBuf {
         return dir.clone();
     }
 
+    // A unit test that never redirected the config directory gets an empty
+    // one of its own rather than the developer's real settings.json.
+    #[cfg(test)]
+    return std::env::temp_dir().join(format!("nigel-test-config-{}", std::process::id()));
+
+    #[cfg(not(test))]
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
@@ -938,6 +947,17 @@ mod tests {
         let json = r#"{"data_dir": "/tmp/test", "user_name": "Bob", "fiscal_year_start": "07"}"#;
         let s: Settings = serde_json::from_str(json).unwrap();
         assert_eq!(s.user_name, "Bob");
+    }
+
+    #[test]
+    fn an_unredirected_config_dir_is_not_the_developers_own() {
+        crate::db::hold_process_globals_for_tests();
+        let previous = set_config_dir_for_tests(None);
+        let dir = config_dir();
+        set_config_dir_for_tests(previous);
+
+        let real = dirs::home_dir().map(|home| home.join(".config").join("nigel"));
+        assert_ne!(Some(dir), real);
     }
 
     #[test]

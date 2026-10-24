@@ -350,6 +350,7 @@ describe('nigel-rules-screen', () => {
 
     it('drops an answer whose pattern is no longer the current one', async () => {
       const fake = client();
+      fake.ruleTest = { total: 3, matches: [{ description: 'RENT MAY', count: 3 }] };
       // Held on an object rather than in a local: a `let` assigned only inside
       // the executor is still narrowed to its initializer at the call site.
       const first: { resolve?: (value: RuleTestResult) => void } = {};
@@ -377,7 +378,10 @@ describe('nigel-rules-screen', () => {
       first.resolve?.({ total: 99, matches: [] });
       await settle(el);
 
-      expect(testPanel(el).result?.total).not.toBe(99);
+      expect(testPanel(el).result).toEqual({
+        total: 3,
+        matches: [{ description: 'RENT MAY', count: 3 }],
+      });
     });
   });
 

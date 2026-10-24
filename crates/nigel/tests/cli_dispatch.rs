@@ -566,7 +566,6 @@ fn report_register_default_pdf_export_encodes_filters() {
     env.init_and_demo();
 
     let year = chrono::Local::now().format("%Y").to_string();
-    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     env.cmd()
         .args([
             "report",
@@ -581,12 +580,22 @@ fn report_register_default_pdf_export_encodes_filters() {
         .assert()
         .success();
 
-    let expected = env
-        .data_dir()
-        .join("exports")
-        .join(format!("register-software-subscriptions-{date}.pdf"));
-    let pdf = std::fs::read(&expected)
-        .unwrap_or_else(|_| panic!("expected filtered pdf at {}", expected.display()));
+    // The command stamps the file with the date it ran on. Reading the clock
+    // here as well would fail across midnight, so the stamp is not predicted.
+    let exports = env.data_dir().join("exports");
+    let written: Vec<PathBuf> = std::fs::read_dir(&exports)
+        .unwrap_or_else(|_| panic!("no exports directory at {}", exports.display()))
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("register-software-subscriptions-") && name.ends_with(".pdf")
+                })
+        })
+        .collect();
+    assert_eq!(written.len(), 1, "expected one filtered pdf in {written:?}");
+    let pdf = std::fs::read(&written[0]).expect("read filtered pdf");
     assert!(pdf.starts_with(b"%PDF"));
 }
 

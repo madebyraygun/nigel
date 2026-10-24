@@ -54,12 +54,12 @@ pub fn rekey_database(db_path: &Path, current_password: &str, new_password: &str
     Ok(())
 }
 
-// Tests mutate the global DB_PASSWORD mutex and must run with --test-threads=1.
+// Tests mutate the global DB_PASSWORD through set_db_password_for_tests, which serializes them.
 // See also: db::tests, cli::backup::tests.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{get_connection, init_db, is_encrypted, set_db_password};
+    use crate::db::{get_connection, init_db, is_encrypted, set_db_password_for_tests};
 
     #[test]
     fn test_encrypt_then_decrypt_roundtrip() {
@@ -67,7 +67,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
 
         // Create plain DB
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -90,7 +90,7 @@ mod tests {
         assert!(!is_encrypted(&db_path).unwrap());
 
         // Verify data survived
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let conn = get_connection(&db_path).unwrap();
         let count: i64 = conn
             .query_row("SELECT count(*) FROM categories", [], |r| r.get(0))
@@ -104,11 +104,11 @@ mod tests {
         let db_path = dir.path().join("test.db");
 
         // Create encrypted DB
-        set_db_password(Some(zeroize::Zeroizing::new("old".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("old".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
-        set_db_password(None);
+        set_db_password_for_tests(None);
 
         // Change password
         rekey_database(&db_path, "old", "new").unwrap();
@@ -133,11 +133,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
 
-        set_db_password(Some(zeroize::Zeroizing::new("correct".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("correct".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
-        set_db_password(None);
+        set_db_password_for_tests(None);
 
         // Try opening with wrong password (use raw connection)
         let conn = rusqlite::Connection::open(&db_path).unwrap();
