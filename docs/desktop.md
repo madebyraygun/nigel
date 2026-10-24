@@ -264,6 +264,88 @@ The logo field on the same screen says "Choose a PNG or JPEG" rather than
 "Drop a PNG or JPEG here" when `importSource()` is `native`, because Tauri
 intercepts the HTML5 drop that field listens for.
 
+## The menu bar
+
+The shell authors a full application menu in `crates/nigel-desktop/src/menu.rs`
+and installs it in `main.rs` with `.menu(menu::build)`. `menu::layout` is the
+bar as data, one shape per platform, and `build` renders it; the unit tests in
+`menu.rs` check every platform's layout without a display server.
+
+- **macOS** — the system bar. The app menu carries the native About panel,
+  Settings… (`Cmd+,`), Services, Hide and Quit. File has Import Statement…
+  (`Cmd+O`), New Invoice (`Cmd+N`) and Close Window (`Cmd+W`, which hides the
+  window as the title-bar button does — see [Window lifecycle](#window-lifecycle));
+  View ends with Enter Full Screen. The Window submenu is handed to AppKit for
+  window management and tiling, and the Help submenu gets the system search
+  field.
+- **Windows** — the same bar in-window, with Settings and Quit in File and
+  About in Help, and Window holding Minimize and Maximize.
+- **Linux** — the Windows shape, adjusted for GTK. muda's GTK backend renders
+  only the Cut, Copy, Paste, Select All, About and separator predefined items
+  and silently skips the rest, so Quit (`Ctrl+Q`) and Close Window (`Ctrl+W`)
+  are the shell's own items, answered in `menu::forward` and never sent to the
+  SPA. Close Window goes through the window's close path, which exits the app
+  as the title-bar button does. Edit has no Undo/Redo (the webview's own
+  `Ctrl+Z` still works) and there is no Window submenu.
+
+Edit is built from the predefined clipboard items, which is load-bearing
+rather than decorative: WKWebView's clipboard chords stop working in text
+fields the moment a custom menu omits them. None of these chords collide with
+the app's own keys: the register table, the transaction dialog and the review
+form all ignore a keystroke carrying Ctrl, Cmd or Alt, and the palette's
+`CmdOrCtrl+K` is not on the bar.
+
+View lists every sidebar screen in the sidebar's order, with
+`CmdOrCtrl+1..9` on the first nine (Dashboard through Invoices; Documents,
+Accounts, Categories, Rules and Settings have no number). `tests/menu_bar.rs`
+reads the SPA's screen registry and fails the build if the two drift. Toggle
+Sidebar is `Ctrl+Cmd+S` on macOS, the HIG's chord, and `Ctrl+Shift+B`
+elsewhere: Windows reads AltGr as `Ctrl+Alt`, so a `Ctrl+Alt` chord would
+swallow characters some keyboard layouts type with AltGr.
+
+### Menu commands reach the SPA through `MenuSource`
+
+Selections the platform cannot answer natively are forwarded as one app event,
+`menu-command`, whose payload is the command id: `navigate:<screen>` for a
+registry screen (Settings… is `navigate:settings`), or one of `import`,
+`new-invoice`, `find` and `toggle-sidebar`. The vocabulary is
+`menu::COMMANDS` in the crate and `MENU_COMMAND_IDS` in
+`apps/app/src/api/client.ts`; `tests/menu_bar.rs` fails the build when they
+disagree. Nothing in it is Tauri-specific: `DesktopApiClient.menuSource()`
+subscribes through the client's injected `listen`, so any shell that delivers
+`menu-command` with these ids through that bridge — the Swift shell's menu bar
+included — drives the same behaviour.
+
+`menuSource()` answers `{kind: 'native', onCommand}` in the shell and
+`{kind: 'none'}` in a browser, and the root container binds it once — screens
+never see the menu, and an id this build does not recognize is dropped, so a
+newer shell degrades to inert items rather than a broken one. The root
+container also drops a selection while the app is starting, locked or in
+setup, and while a dialog holds the top layer (the register's edit dialog, the
+palette, a confirm), since the page behind a modal is inert to the sidebar
+too. A navigation from the menu goes through the same unsaved-changes check
+as a sidebar click.
+
+| Id | What the SPA does |
+|---|---|
+| `navigate:<screen>` | Navigates to that screen |
+| `new-invoice` | Opens the Invoices screen's new-invoice view (`#/invoices?new=1`) |
+| `import` | Navigates to Import and opens its file picker (`pick_import_file`) |
+| `find` | Focuses the register's search box; nothing on any other screen, since navigating away could discard that screen's state |
+| `toggle-sidebar` | Folds or unfolds the sidebar and remembers it, as the rail's own button does; nothing when a native window hosts the page and draws its own sidebar |
+
+Find and Import Statement… are one-shot intents
+(`apps/app/src/state/menu-intent.ts`) that the register and import screens
+consume — an intent rather than a route parameter so the chord pressed twice
+is two deliveries. An intent a screen defers (a pick requested while an import
+is running) is dropped when the route moves to any other screen, or when a
+leave is refused over unsaved edits, so a later visit never opens a dialog
+nobody asked for.
+
+There is no File ▸ Export… item: a native Export… implies a save dialog, and
+until a context-sensitive export exists an item that navigates somewhere under
+that name would lie.
+
 ## Not a deep link
 
 The scheme is an in-process transport, not a URL another application on the

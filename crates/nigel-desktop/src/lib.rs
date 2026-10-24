@@ -5,6 +5,7 @@
 pub mod chrome;
 pub mod db;
 pub mod imports;
+pub mod menu;
 pub mod reveal;
 pub mod save;
 pub mod transport;

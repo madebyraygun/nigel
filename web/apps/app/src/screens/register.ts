@@ -31,6 +31,8 @@ import {
   sumAmounts,
   todayIso,
 } from './register-data.js';
+import { SignalWatcher } from '../mixins/signal-watcher.js';
+import { consumeMenuIntent } from '../state/menu-intent.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 import { controlsCss } from '@nigel/theme';
@@ -53,7 +55,7 @@ import { controlsCss } from '@nigel/theme';
  * `persist`; the dialog stays open while it saves and shows a refusal itself.
  */
 @customElement('nigel-register-screen')
-export class NigelRegisterScreen extends LitElement {
+export class NigelRegisterScreen extends SignalWatcher(LitElement) {
   static styles = [
     controlsCss,
     css`
@@ -126,6 +128,9 @@ export class NigelRegisterScreen extends LitElement {
   private seededSearch = false;
 
   willUpdate(changed: PropertyValues<this>): void {
+    // Consumed here because the tracked read is what subscribes the signal
+    // watcher; a repeated chord is a new intent and re-runs this cycle.
+    if (consumeMenuIntent('find')) void this.focusSearchWhenReady();
     if (!changed.has('params')) return;
 
     if (!this.seededSearch) {
@@ -136,6 +141,22 @@ export class NigelRegisterScreen extends LitElement {
     const request = registerParamsFrom(this.params);
     if (JSON.stringify(request) === this.loadedKey) return;
     void this.load(request);
+  }
+
+  /**
+   * Focus the search box once it exists to be focused.
+   *
+   * Waiting on this element's update only reaches the toolbar *element*; on a
+   * fresh mount the toolbar's own first render — the one that puts the input
+   * in its shadow root — is still queued, so its `updateComplete` is the one
+   * the focus call has to sit behind.
+   */
+  private async focusSearchWhenReady(): Promise<void> {
+    await this.updateComplete;
+    const toolbar = this.toolbar;
+    if (!toolbar) return;
+    await toolbar.updateComplete;
+    toolbar.focusSearch();
   }
 
   // -- loading --------------------------------------------------------------

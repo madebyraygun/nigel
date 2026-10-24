@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use nigel_desktop::{
-    chrome, db, imports, reveal, save, scheme_url, transport, window_state, SCHEME,
+    chrome, db, imports, menu, reveal, save, scheme_url, transport, window_state, SCHEME,
 };
 
 fn main() {
@@ -32,6 +32,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .menu(menu::build)
+        .on_menu_event(menu::forward)
         .invoke_handler(tauri::generate_handler![
             save::save_export,
             imports::stage_import,

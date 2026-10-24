@@ -10,6 +10,8 @@ export {
   type FetchApiClientOptions,
   type FolderReveal,
   type ImportSource,
+  type MenuCommand,
+  type MenuSource,
   type RegisterParams,
   type ReportDateParams,
 } from './client.js';
