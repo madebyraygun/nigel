@@ -64,10 +64,10 @@ pub fn read_process_globals_for_tests() {
 ///   `set_db_password`) takes it exclusively, waiting for every reading test
 ///   to finish and keeping later ones out until it is done, then puts the
 ///   password back to unset;
-/// - a thread that holds the lock exclusively reads freely, and a thread with
-///   no name or a tokio worker (the threads a test's code spawns while the
-///   test thread waits on them) never takes the lock, so a holder's own
-///   workers are never locked out of the state the holder set up.
+/// - a thread that holds the lock exclusively reads freely, and a thread that
+///   is not a test thread (the workers a test's code spawns while the test
+///   thread waits on them, whatever they are named) never takes the lock, so
+///   a holder's own workers are never locked out of the state it set up.
 ///
 /// A holder therefore never runs alongside any other test that reads the
 /// globals, which is what lets a test put a password on the process without
@@ -100,11 +100,15 @@ mod test_globals {
         static HELD: RefCell<Held> = const { RefCell::new(Held::None) };
     }
 
-    /// Threads a test's own code spawns are unnamed or tokio workers.
+    /// libtest names each test thread after the test's module path, and runs
+    /// tests on the thread named `main` when it is told to use one thread.
+    /// Every other thread, a tokio worker or one a library names for itself,
+    /// belongs to the code under test and must never wait on the lock that the
+    /// test waiting on it holds.
     fn is_test_thread() -> bool {
         std::thread::current()
             .name()
-            .is_some_and(|name| !name.starts_with("tokio"))
+            .is_some_and(|name| name == "main" || name.contains("::"))
     }
 
     pub(super) fn enter_shared() {
