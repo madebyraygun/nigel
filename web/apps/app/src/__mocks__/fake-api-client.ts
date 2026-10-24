@@ -6,6 +6,7 @@ import type {
   ExportTarget,
   FolderReveal,
   ImportSource,
+  MenuSource,
   ReconciliationParams,
   RegisterParams,
   ShellChrome,
@@ -526,6 +527,13 @@ export class FakeApiClient implements ApiClient {
 
   shellChrome(): ShellChrome | null {
     return this.shellChromeValue;
+  }
+
+  /** No menu bar by default; the shell-mode tests swap this. */
+  menuSourceValue: MenuSource = { kind: 'none' };
+
+  menuSource(): MenuSource {
+    return this.menuSourceValue;
   }
 
   // -- register -------------------------------------------------------------

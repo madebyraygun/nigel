@@ -96,7 +96,9 @@ subscribes to an in-page emitter the shell drives with `evaluateJavaScript`.
 `createApiClient` learns to look for `__NIGEL_SHELL__` beside `__TAURI__`, and
 `DesktopApiClient` is reused as is. Commands the shell answers: `save_export`,
 `stage_import`, `pick_import_file`, `pick_directory`. Events the shell emits:
-`menu-command {id}`, the four drag events, and `navigate {hash}`.
+`menu-command` with the command id as a bare string (canonical, what the Tauri
+shell emits; an `{id}` object is accepted too), the four drag events, and
+`navigate {hash}`.
 
 **Hosted mode.** With `?shell=native` the SPA hides its sidebar rail and
 nav toggle, and posts its nav registry (`id`, label, order, profile-filtered)
@@ -209,7 +211,7 @@ costs the shell nothing.
 |---|---|---|
 | `nigel://localhost/*` and the host guard | `nigel-core` | Never for a feature |
 | `invoke` commands: `save_export`, `stage_import`, `pick_import_file`, `pick_directory` | shell | A new native affordance |
-| `listen` events: `menu-command`, drag events, `navigate` | shell | A new menu item |
+| `listen` events: `menu-command` (payload: the id as a bare string; `{id}` accepted), drag events, `navigate` | shell | A new menu item |
 | `nav` and `navigated` messages | SPA | Never for a feature; a new screen flows through `registry.ts` as today |
 | `?shell=native` hosted mode | SPA | Never |
 
