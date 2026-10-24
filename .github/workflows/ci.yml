@@ -71,6 +71,16 @@ jobs:
             crates/nigel-desktop -> target
             crates/nigel-ffi -> target
 
+      # `testutil` swaps in test-only globals and must only ever come from a
+      # dev-dependency; a normal build that enables it would ship them.
+      - name: testutil stays out of non-dev builds
+        run: |
+          if cargo tree --workspace -e features,no-dev | grep -q testutil; then
+            echo "::error::the testutil feature is enabled in a non-dev build"
+            cargo tree --workspace -e features,no-dev -i nigel-core
+            exit 1
+          fi
+
       # The web UI is built before any cargo step so rust-embed bakes in the
       # freshly built SPA rather than the placeholder build.rs seeds.
       - uses: actions/setup-node@v4

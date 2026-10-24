@@ -15,14 +15,146 @@ static DB_PASSWORD: Mutex<Option<Zeroizing<String>>> = Mutex::new(None);
 
 /// Set the global database password. Call before `get_connection()`.
 pub fn set_db_password(password: Option<Zeroizing<String>>) {
+    #[cfg(any(test, feature = "testutil"))]
+    test_globals::hold_exclusive_on_test_thread();
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     *DB_PASSWORD.lock().unwrap() = password;
 }
 
+/// [`set_db_password`] for a test: takes the process-globals lock first.
+#[cfg(any(test, feature = "testutil"))]
+pub fn set_db_password_for_tests(password: Option<Zeroizing<String>>) {
+    hold_process_globals_for_tests();
+    set_db_password(password);
+}
+
 /// Read the current global database password.
 pub fn get_db_password() -> Option<Zeroizing<String>> {
+    #[cfg(any(test, feature = "testutil"))]
+    test_globals::enter_shared();
     // unwrap: poisoned mutex means a thread panicked — unrecoverable
     DB_PASSWORD.lock().unwrap().clone()
+}
+
+/// Take the process-globals lock exclusively for the rest of the calling
+/// test's thread. See [`test_globals`].
+#[cfg(any(test, feature = "testutil"))]
+pub fn hold_process_globals_for_tests() {
+    test_globals::hold_exclusive();
+}
+
+/// Note that the calling test thread reads the process-global state, for the
+/// rest of the thread. See [`test_globals`].
+#[cfg(any(test, feature = "testutil"))]
+pub fn read_process_globals_for_tests() {
+    test_globals::enter_shared();
+}
+
+/// Isolation for the two pieces of process-global state tests touch: the
+/// database password above and the config directory override in `settings`.
+///
+/// A test is either a reader, which only looks at the globals (every test that
+/// opens a connection or loads settings), or a holder, which changes them. The
+/// two are separated by one read-write lock taken per test thread and kept
+/// until the thread exits:
+///
+/// - the first read of a global on a test thread takes the lock shared, so any
+///   number of reading tests run together;
+/// - a test that writes a global (`hold_process_globals_for_tests`,
+///   `set_db_password`) takes it exclusively, waiting for every reading test
+///   to finish and keeping later ones out until it is done, then puts the
+///   password back to unset;
+/// - a thread that holds the lock exclusively reads freely, and a thread that
+///   is not a test thread (the workers a test's code spawns while the test
+///   thread waits on them, whatever they are named) never takes the lock, so
+///   a holder's own workers are never locked out of the state it set up.
+///
+/// A holder therefore never runs alongside any other test that reads the
+/// globals, which is what lets a test put a password on the process without
+/// breaking a plain-database test running next to it.
+#[cfg(any(test, feature = "testutil"))]
+mod test_globals {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    static LOCK: RwLock<()> = RwLock::new(());
+    static EXCLUSIVE_HOLDERS: AtomicUsize = AtomicUsize::new(0);
+
+    enum Held {
+        None,
+        Shared(#[allow(dead_code)] RwLockReadGuard<'static, ()>),
+        Exclusive(#[allow(dead_code)] Exclusive),
+    }
+
+    struct Exclusive(#[allow(dead_code)] RwLockWriteGuard<'static, ()>);
+
+    impl Drop for Exclusive {
+        fn drop(&mut self) {
+            *super::DB_PASSWORD.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            EXCLUSIVE_HOLDERS.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static HELD: RefCell<Held> = const { RefCell::new(Held::None) };
+    }
+
+    /// libtest names each test thread after the test's module path, and runs
+    /// tests on the thread named `main` when it is told to use one thread.
+    /// Every other thread, a tokio worker or one a library names for itself,
+    /// belongs to the code under test and must never wait on the lock that the
+    /// test waiting on it holds.
+    fn is_test_thread() -> bool {
+        std::thread::current()
+            .name()
+            .is_some_and(|name| name == "main" || name.contains("::"))
+    }
+
+    pub(super) fn enter_shared() {
+        if !is_test_thread() {
+            return;
+        }
+        let needs_lock = HELD.with(|held| matches!(*held.borrow(), Held::None));
+        if needs_lock {
+            let guard = LOCK.read().unwrap_or_else(|e| e.into_inner());
+            HELD.with(|held| *held.borrow_mut() = Held::Shared(guard));
+        }
+    }
+
+    /// A setter on a test thread takes the lock itself; one on a worker thread
+    /// can only be acting for a test that already holds it.
+    pub(super) fn hold_exclusive_on_test_thread() {
+        if is_test_thread() {
+            hold_exclusive();
+        } else {
+            #[cfg(test)]
+            assert!(
+                EXCLUSIVE_HOLDERS.load(Ordering::SeqCst) > 0,
+                "the database password was set from a worker thread by a test that never took \
+                 hold_process_globals_for_tests()"
+            );
+        }
+    }
+
+    pub(super) fn hold_exclusive() {
+        let already = HELD.with(|held| {
+            let mut held = held.borrow_mut();
+            match *held {
+                Held::Exclusive(_) => true,
+                Held::Shared(_) => {
+                    *held = Held::None;
+                    false
+                }
+                Held::None => false,
+            }
+        });
+        if !already {
+            let guard = LOCK.write().unwrap_or_else(|e| e.into_inner());
+            EXCLUSIVE_HOLDERS.fetch_add(1, Ordering::SeqCst);
+            HELD.with(|held| *held.borrow_mut() = Held::Exclusive(Exclusive(guard)));
+        }
+    }
 }
 
 pub const SCHEMA: &str = "
@@ -1112,13 +1244,13 @@ mod tests {
         let db_path = dir.path().join("encrypted.db");
 
         // Create encrypted DB
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
 
         // Try opening without password — should fail
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let result = get_connection(&db_path);
         assert!(result.is_err());
     }
@@ -1128,13 +1260,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
 
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
 
         // Reopen with same password
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         let result: i64 = conn
             .query_row("SELECT count(*) FROM categories", [], |r| r.get(0))
@@ -1147,12 +1279,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("plain.db");
 
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
 
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let conn = get_connection(&db_path).unwrap();
         let result: i64 = conn
             .query_row("SELECT count(*) FROM categories", [], |r| r.get(0))
@@ -1164,7 +1296,7 @@ mod tests {
     fn test_is_encrypted_returns_false_for_plain_db() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("plain.db");
-        set_db_password(None);
+        set_db_password_for_tests(None);
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
@@ -1175,11 +1307,11 @@ mod tests {
     fn test_is_encrypted_returns_true_for_encrypted_db() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
-        set_db_password(None);
+        set_db_password_for_tests(None);
         assert!(is_encrypted(&db_path).unwrap());
     }
 
@@ -1207,11 +1339,11 @@ mod tests {
     fn test_validate_password_correct() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
-        set_db_password(None);
+        set_db_password_for_tests(None);
         assert!(validate_password(&db_path, "secret").unwrap());
     }
 
@@ -1219,11 +1351,11 @@ mod tests {
     fn test_validate_password_wrong() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("encrypted.db");
-        set_db_password(Some(zeroize::Zeroizing::new("secret".into())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".into())));
         let conn = get_connection(&db_path).unwrap();
         init_db(&conn).unwrap();
         drop(conn);
-        set_db_password(None);
+        set_db_password_for_tests(None);
         assert!(!validate_password(&db_path, "wrong").unwrap());
     }
 

@@ -209,7 +209,7 @@ mod tests {
     use super::*;
 
     fn test_db() -> (tempfile::TempDir, Connection) {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = crate::db::open_connection(&dir.path().join("nigel.db"), None).expect("open");
         crate::db::init_db(&conn).expect("init");

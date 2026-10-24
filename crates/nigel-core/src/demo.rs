@@ -610,7 +610,7 @@ mod tests {
     use super::*;
 
     fn test_db() -> (tempfile::TempDir, Connection) {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = crate::db::open_connection(&dir.path().join("nigel.db"), None).expect("open");
         crate::db::init_db(&conn).expect("init");
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn setup_demo_dir_builds_its_own_books_and_repoints_settings() {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let _config = crate::settings::TempConfigDir::new();
         let base = tempfile::tempdir().expect("tempdir");
         let mut settings = crate::settings::load_settings();
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn setup_demo_dir_refuses_a_malformed_settings_file_before_building_anything() {
-        crate::db::set_db_password(None);
+        crate::db::set_db_password_for_tests(None);
         let _config = crate::settings::TempConfigDir::new();
         let bytes = crate::settings::write_malformed_settings();
 

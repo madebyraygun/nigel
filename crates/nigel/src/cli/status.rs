@@ -79,7 +79,9 @@ pub fn dropped_rows_line(dropped: &[nigel_core::imports::DroppedRows]) -> String
 
 #[cfg(test)]
 mod tests {
-    use nigel_core::db::{get_connection, init_db, is_encrypted, open_connection, set_db_password};
+    use nigel_core::db::{
+        get_connection, init_db, is_encrypted, open_connection, set_db_password_for_tests,
+    };
     use nigel_core::imports::DroppedRows;
 
     #[test]
@@ -140,7 +142,7 @@ mod tests {
         drop(conn);
 
         // Set global password and verify get_connection works
-        set_db_password(Some(zeroize::Zeroizing::new("secret".to_string())));
+        set_db_password_for_tests(Some(zeroize::Zeroizing::new("secret".to_string())));
         let conn = get_connection(&db_path).unwrap();
         let count: i64 = conn
             .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))
@@ -148,7 +150,7 @@ mod tests {
         assert_eq!(count, 0);
 
         // Clean up global state
-        set_db_password(None);
+        set_db_password_for_tests(None);
     }
 
     #[test]
@@ -162,7 +164,7 @@ mod tests {
         drop(conn);
 
         // Ensure no global password is set
-        set_db_password(None);
+        set_db_password_for_tests(None);
         // get_connection fails with "file is not a database" when password is missing
         let result = get_connection(&db_path);
         assert!(result.is_err());
