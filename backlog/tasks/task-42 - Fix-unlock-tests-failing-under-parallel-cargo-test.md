@@ -1,10 +1,10 @@
 ---
 id: TASK-42
 title: Fix unlock tests failing under parallel cargo test
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 21:08'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:34'
 labels:
   - tech-debt
   - testing

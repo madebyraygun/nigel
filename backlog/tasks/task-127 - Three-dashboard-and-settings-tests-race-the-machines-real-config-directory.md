@@ -1,10 +1,10 @@
 ---
 id: TASK-127
 title: Three dashboard and settings tests race the machine's real config directory
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-22 12:55'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:34'
 labels:
   - tests
 milestone: m-3

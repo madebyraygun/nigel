@@ -3,10 +3,10 @@ id: TASK-121
 title: >-
   report_register_default_pdf_export_encodes_filters is flaky under a full
   serial run
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-19 18:26'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:34'
 labels:
   - bug
 milestone: m-3
