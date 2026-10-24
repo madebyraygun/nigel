@@ -367,7 +367,7 @@ These are added to `security_headers` as defaults (`or_insert`), alongside `nosn
 - `Strict-Transport-Security: max-age=31536000` on responses to the `server_public_url` host only.
   It is never sent on loopback, where it would pin `localhost` to https.
 
-**Content-Security-Policy is its own phase-1 task**, outside the five PRs in section 17.
+**Content-Security-Policy is its own phase-1 task, TASK-32.10**, outside the five PRs in section 17.
 It has to be checked against Web Awesome's and Lit's runtime styles and the invoice and
 document preview iframes, so it is not part of PR 2. It must land before any server is
 exposed publicly (section 17).
@@ -731,7 +731,7 @@ changing anything else here.
 and `document_public_url`, and is distinct from both. Those two are where published
 invoice and document pages live on R2. They have nothing to do with where `nigel serve`
 answers. (Their old names, `public_base_url` and `documents_base_url`, and the matching
-environment variables, remain accepted.) `docs/invoicing.md` and the deployment guide each
+environment variables, remain accepted; TASK-166 does the rename.) `docs/invoicing.md` and the deployment guide each
 say so in one line.
 
 ### 11.2 Binding
@@ -911,7 +911,7 @@ placeholders. Contents:
 | DNS rebinding | Exact Host/Origin match against the mode's trusted set |
 | Exposure before per-user login exists | A non-loopback Host is refused unless the mode is shared, and shared mode needs a user. A locked server is local. Covered by an end-to-end test (section 16) |
 | Stolen session cookie or bearer token | `HttpOnly`, `Secure` on the `server_public_url` host, server-side revocation (logout, sign out everywhere, disable), 30-day idle expiry and a 90-day absolute lifetime |
-| XSS in the SPA | Lit escapes by default; the QR is an `<img>`, not markup; the cookie is `HttpOnly`; a Content-Security-Policy lands before public exposure (section 4.7) |
+| XSS in the SPA | Lit escapes by default; the QR is an `<img>`, not markup; the cookie is `HttpOnly`; a Content-Security-Policy (TASK-32.10) lands before public exposure (section 4.7) |
 | Copied database or stolen backup | Hashes only for passwords and sessions; TOTP sealed under a key outside the data directory; SQLCipher when on |
 | Bookkeeper or read-only overreach | Server-side role table with deny-by-default; the letterhead and countersigning are admin-only; shared-mode refusals for books swaps and re-keys |
 | A bookkeeper's changes are not attributed | Accepted for phase 1 (decision-11): the first deployment is a household with two trusted users. Bookkeeper access waits for 32.4/32.5 in phase 3 |
@@ -1020,13 +1020,13 @@ is about a day, M two to three days, L four to five.
 | 4 | **Web.** The seven components with previews and a11y; session state and gates; the account menu; Settings › Users, Your account, and the shared-mode variants of Security, Location and Updates; `roles.ts` and its parity test; README | 32.8 | L | 3 (components can start after 2 merges) |
 | 5 | **Deployment guide.** `docs/deployment.md` (section 11.5); README Configuration and links; a one-line note in `docs/invoicing.md` on `server_public_url` versus `invoice_public_url` and `document_public_url`. Verified on the operator's server against the checklist, with placeholders only in the text | 32.9 (docs half) | S–M | 2 (drafting); merges after 4 |
 
-Alongside these, the **Content-Security-Policy** is its own phase-1 task: S–M, after
+Alongside these, the **Content-Security-Policy** (TASK-32.10) is its own phase-1 task: S–M, after
 PR 2, independent of PRs 3–5 (section 4.7).
 
 PRs 1–3 each carry a migration or the core auth path, so they run one at a time. Integer
 money (TASK-59) waits for PR 1's migration number, as decision-11 orders. PR 5 can be
 drafted alongside PRs 3 and 4. **The public address goes live only after both PR 3 and
-the Content-Security-Policy task have merged.** PR 2's admin-only stopgap is safe but
+the Content-Security-Policy task (TASK-32.10) have merged.** PR 2's admin-only stopgap is safe but
 useless to a second person who is not an admin, and a CSP is a precondition for public
 exposure.
 
@@ -1050,5 +1050,7 @@ These are for the operator to reconcile in the tasks. This spec does not edit `b
   `--bind`: the server always binds loopback behind a same-machine tunnel or proxy, and
   exposure is gated on the mode. The trusted-host setting is `server_public_url`, a single
   address. AC #3 adds Cloudflare Tunnel as the worked example.
-- **Content-Security-Policy** is a separate phase-1 task, outside the epic's existing
-  subtasks, and it gates public exposure.
+- **Content-Security-Policy** is TASK-32.10, a phase-1 subtask of epic 32 separate from
+  PR 2. It gates public exposure.
+- **The publishing settings rename** (`invoice_public_url`, `document_public_url`, old
+  names still read) is TASK-166.
