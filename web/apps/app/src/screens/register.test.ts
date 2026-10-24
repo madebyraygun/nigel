@@ -7,7 +7,6 @@ import {
   type WcShortcutHelp,
   type WcTransactionDialog,
 } from '@nigel/ui';
-import { REGISTER_INLINE_EDIT_KEY } from '../shell-preferences.js';
 import { ApiError, appLocked } from '../api/index.js';
 import { resetAppStore } from '../state/app-store.js';
 import { FakeApiClient } from '../__mocks__/fake-api-client.js';
@@ -147,6 +146,16 @@ function emitOnDialog(el: NigelRegisterScreen, type: string, detail: unknown): v
   dialog(el).dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
 }
 
+async function commitInDialog(
+  el: NigelRegisterScreen,
+  detail: { id: number; categoryId: number | null; vendor: string | null },
+): Promise<void> {
+  emitOnTable(el, 'nc-row-activate', { id: detail.id });
+  await settle(el);
+  emitOnDialog(el, 'nc-edit-commit', detail);
+  await settle(el);
+}
+
 function registerCalls(fake: FakeApiClient): string[] {
   return fake.calls.filter((call) => call.startsWith('getRegister'));
 }
@@ -159,7 +168,7 @@ describe('register screen', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
-    localStorage.removeItem(REGISTER_INLINE_EDIT_KEY);
+    localStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -399,32 +408,21 @@ describe('register screen', () => {
 
   it('sends only the fields an edit changed', async () => {
     const { el, fake } = await mount();
-    emitOnTable(el, 'nc-edit-commit', { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
-    await settle(el);
+    await commitInDialog(el, { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
 
     expect(fake.calls).toContain('patchTransaction:1:{"categoryId":3}');
   });
 
   it('clears a vendor with an explicit null', async () => {
     const { el, fake } = await mount();
-    emitOnTable(el, 'nc-edit-commit', { id: 1, categoryId: 12, vendor: null });
-    await settle(el);
+    await commitInDialog(el, { id: 1, categoryId: 12, vendor: null });
 
     expect(fake.calls).toContain('patchTransaction:1:{"vendor":null}');
   });
 
-  it('sends nothing when an edit changed nothing', async () => {
-    const { el, fake } = await mount();
-    emitOnTable(el, 'nc-edit-commit', { id: 1, categoryId: 12, vendor: 'Adobe Inc' });
-    await settle(el);
-
-    expect(fake.calls.some((call) => call.startsWith('patchTransaction'))).toBe(false);
-  });
-
   it('swaps in the row the server answered with', async () => {
     const { el } = await mount();
-    emitOnTable(el, 'nc-edit-commit', { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
-    await settle(el);
+    await commitInDialog(el, { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
 
     const updated = table(el).rows.find((r) => r.id === 1);
     expect(updated?.categoryId).toBe(3);
@@ -444,28 +442,6 @@ describe('register screen', () => {
     ]);
   });
 
-  it('puts the row back and says so when the write fails', async () => {
-    const { el, fake } = await mount();
-    const toasts: string[] = [];
-    window.addEventListener('nc-toast', (event) =>
-      toasts.push((event as CustomEvent<{ message: string }>).detail.message),
-    );
-
-    fake.patchError = new ApiError({
-      code: 'not_found',
-      rawCode: 'not_found',
-      message: 'no category 999',
-      status: 404,
-    });
-    emitOnTable(el, 'nc-edit-commit', { id: 1, categoryId: 3, vendor: 'Adobe Inc' });
-    await settle(el);
-
-    const unchanged = table(el).rows.find((r) => r.id === 1);
-    expect(unchanged?.categoryId).toBe(12);
-    expect(unchanged?.category).toBe('Software / Subscriptions');
-    expect(toasts).toEqual(['no category 999']);
-  });
-
   // -- the edit dialog ---------------------------------------------------------
 
   it('opens the activated row in the dialog, not in the table', async () => {
@@ -477,7 +453,6 @@ describe('register screen', () => {
 
     expect(dialog(el).open).toBe(true);
     expect(dialog(el).row?.id).toBe(2);
-    expect(table(el).editingId).toBeNull();
     expect(table(el).selectedId).toBe(2);
   });
 
@@ -559,30 +534,13 @@ describe('register screen', () => {
     expect(focused?.dataset.id).toBe('2');
   });
 
-  // -- inline editing, behind the per-device switch ----------------------------
-
-  it('edits in the table when this device has asked for inline editing', async () => {
-    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
+  it('ignores a stored inline-editing preference', async () => {
+    localStorage.setItem('nigel.register-inline-edit', 'true');
     const { el } = await mount();
-    expect(el.shadowRoot?.querySelector('wc-transaction-dialog')).toBeNull();
 
     emitOnTable(el, 'nc-row-activate', { id: 3 });
     await settle(el);
-    expect(table(el).editingId).toBe(3);
-  });
-
-  it('opens an inline edit only when the table asks for one', async () => {
-    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
-    const { el } = await mount();
-    expect(table(el).editingId).toBeNull();
-
-    emitOnTable(el, 'nc-row-activate', { id: 3 });
-    await settle(el);
-    expect(table(el).editingId).toBe(3);
-
-    emitOnTable(el, 'nc-edit-cancel', { id: 3 });
-    await settle(el);
-    expect(table(el).editingId).toBeNull();
+    expect(dialog(el).open).toBe(true);
   });
 
   it('hides the account column when the register is filtered to one account', async () => {
@@ -600,30 +558,6 @@ describe('register screen', () => {
     expect(help).not.toBeNull();
     expect(help?.open).toBe(false);
     expect(help?.shortcuts).toEqual([...REGISTER_SHORTCUTS]);
-  });
-
-  it('lets Escape reach the inline editor while the legend is open', async () => {
-    // Keyboard only: open the legend, open an editor, press Escape in it. A
-    // legend listening on the document in capture would eat the key and leave
-    // the edit open with focus yanked to its own trigger.
-    localStorage.setItem(REGISTER_INLINE_EDIT_KEY, 'true');
-    const { el } = await mount();
-    const help = el.shadowRoot?.querySelector<WcShortcutHelp>('wc-shortcut-help');
-    help?.show();
-    await help?.updateComplete;
-
-    emitOnTable(el, 'nc-row-activate', { id: 3 });
-    await settle(el);
-    expect(table(el).editingId).toBe(3);
-
-    const input = table(el).shadowRoot?.querySelector('.category-input');
-    input?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }),
-    );
-    await settle(el);
-
-    expect(table(el).editingId).toBeNull();
-    expect(help?.open).toBe(false);
   });
 
   it('hands the table the height left under the toolbar', async () => {

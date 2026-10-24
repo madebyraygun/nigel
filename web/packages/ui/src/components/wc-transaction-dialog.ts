@@ -22,11 +22,9 @@ export const CHOOSE_CATEGORY_MESSAGE = 'Choose a category from the list.';
  * One register transaction in a dialog: the date, description, amount and
  * account to say which one it is, and the category and vendor to change.
  *
- * It edits what the register's inline editor edits and answers with the same
- * events, `nc-edit-commit` and `nc-edit-cancel`, so the screen saves both
- * through one path. Unlike the inline editor it stays open while the save is
- * in flight and shows a refusal beside the fields, since the fields are still
- * there to correct.
+ * It answers with `nc-edit-commit` and `nc-edit-cancel`. It stays open while
+ * the save is in flight and shows a refusal beside the fields, since the
+ * fields are still there to correct.
  *
  * The one check made before saving is that the category box names a category:
  * typing past a choice clears it, and saving then would keep the old category
@@ -299,5 +297,7 @@ declare global {
   }
   interface HTMLElementEventMap {
     'nc-dialog-closed': CustomEvent<void>;
+    'nc-edit-commit': CustomEvent<NcEditCommitDetail>;
+    'nc-edit-cancel': CustomEvent<NcRowEventDetail>;
   }
 }

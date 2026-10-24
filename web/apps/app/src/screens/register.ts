@@ -33,7 +33,6 @@ import {
 } from './register-data.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
-import { readRegisterInlineEdit } from '../shell-preferences.js';
 import { controlsCss } from '@nigel/theme';
 
 /**
@@ -50,9 +49,7 @@ import { controlsCss } from '@nigel/theme';
  * every keystroke, because that would put one history entry per character
  * between the user and the previous screen.
  *
- * A row opens for editing in `wc-transaction-dialog`, unless this device has
- * Settings > Appearance > "Edit register rows in place" on, which keeps the
- * table's inline editor instead. Either way the edit is saved through
+ * A row opens for editing in `wc-transaction-dialog`. The edit is saved through
  * `persist`; the dialog stays open while it saves and shows a refusal itself.
  */
 @customElement('nigel-register-screen')
@@ -106,10 +103,7 @@ export class NigelRegisterScreen extends LitElement {
   @state() private loading = true;
   @state() private error: string | null = null;
   @state() private selectedId: number | null = null;
-  @state() private editingId: number | null = null;
   @state() private busyId: number | null = null;
-  /** Whether rows are edited in place in the table rather than in the dialog. */
-  @state() private inlineEdit = false;
   /**
    * The row in the dialog. Kept after the dialog closes, so the panel still
    * has its row while it animates out.
@@ -130,11 +124,6 @@ export class NigelRegisterScreen extends LitElement {
   /** Drops a register response whose request is no longer the current one. */
   private loadSeq = 0;
   private seededSearch = false;
-
-  connectedCallback(): void {
-    super.connectedCallback();
-    this.inlineEdit = readRegisterInlineEdit();
-  }
 
   willUpdate(changed: PropertyValues<this>): void {
     if (!changed.has('params')) return;
@@ -314,10 +303,6 @@ export class NigelRegisterScreen extends LitElement {
   };
 
   private handleRowActivate = (event: CustomEvent<NcRowActivateDetail>): void => {
-    if (this.inlineEdit) {
-      this.editingId = event.detail.id;
-      return;
-    }
     this.selectedId = event.detail.id;
     this.dialogFocus = event.detail.touch ? 'dialog' : 'category';
     this.dialogError = null;
@@ -365,25 +350,6 @@ export class NigelRegisterScreen extends LitElement {
   /** The dialog has finished closing: the keyboard goes back to the row it edited. */
   private handleDialogClosed = (): void => {
     this.table?.focusSelectedRow({ reveal: true });
-  };
-
-  private handleEditCancel = (): void => {
-    this.editingId = null;
-  };
-
-  private handleEditCommit = async (
-    event: CustomEvent<NcEditCommitDetail>,
-  ): Promise<void> => {
-    const row = this.rows.find((candidate) => candidate.id === event.detail.id);
-    if (!row) return;
-
-    this.editingId = null;
-
-    const patch = buildPatch(row, event.detail);
-    // Nothing changed, so there is nothing to send: an empty PATCH is a 400.
-    if (!patch) return;
-
-    await this.persist(row, patch, 'Could not save the transaction.');
   };
 
   private handleFlagToggle = async (
@@ -483,7 +449,6 @@ export class NigelRegisterScreen extends LitElement {
               .rows=${visible}
               .categories=${this.categoryOptions}
               .selectedId=${this.selectedId}
-              .editingId=${this.inlineEdit ? this.editingId : null}
               .busyId=${this.busyId}
               .total=${searching ? sumAmounts(visible) : this.total}
               .showAccount=${!this.params.get('account')}
@@ -496,28 +461,22 @@ export class NigelRegisterScreen extends LitElement {
                 : 'No transactions in this period.'}
               @nc-row-select=${this.handleRowSelect}
               @nc-row-activate=${this.handleRowActivate}
-              @nc-edit-commit=${this.handleEditCommit}
-              @nc-edit-cancel=${this.handleEditCancel}
               @nc-flag-toggle=${this.handleFlagToggle}
               @nc-search-focus=${this.handleSearchFocus}
             ></wc-register-table>
           `}
-      ${this.inlineEdit
-        ? nothing
-        : html`
-            <wc-transaction-dialog
-              ?open=${this.dialogOpen}
-              initial-focus=${this.dialogFocus}
-              .row=${this.dialogRow}
-              .categories=${this.categoryOptions}
-              .showAccount=${!this.params.get('account')}
-              ?busy=${this.dialogBusy}
-              .error=${this.dialogError}
-              @nc-edit-commit=${this.handleDialogCommit}
-              @nc-edit-cancel=${this.handleDialogCancel}
-              @nc-dialog-closed=${this.handleDialogClosed}
-            ></wc-transaction-dialog>
-          `}
+      <wc-transaction-dialog
+        ?open=${this.dialogOpen}
+        initial-focus=${this.dialogFocus}
+        .row=${this.dialogRow}
+        .categories=${this.categoryOptions}
+        .showAccount=${!this.params.get('account')}
+        ?busy=${this.dialogBusy}
+        .error=${this.dialogError}
+        @nc-edit-commit=${this.handleDialogCommit}
+        @nc-edit-cancel=${this.handleDialogCancel}
+        @nc-dialog-closed=${this.handleDialogClosed}
+      ></wc-transaction-dialog>
     `;
   }
 

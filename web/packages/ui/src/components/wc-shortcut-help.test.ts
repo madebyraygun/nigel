@@ -100,8 +100,8 @@ describe('wc-shortcut-help', () => {
   });
 
   it('closes on an Escape meant for something else without taking the key or the focus', async () => {
-    // The register's inline editor cancels on Escape. An open legend that
-    // stole it would leave the edit open and yank focus to the trigger.
+    // A field elsewhere answers Escape itself. An open legend that stole it
+    // would leave that field's dialog open and yank focus to the trigger.
     const el = await mount({ open: true });
     const elsewhere = document.createElement('input');
     document.body.appendChild(elsewhere);

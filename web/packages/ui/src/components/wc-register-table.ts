@@ -1,11 +1,10 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state, query } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import '@awesome.me/webawesome/dist/components/input/input.js';
 import '../icons/icons.js';
 import { formatMoney } from './wc-money.js';
 import './wc-empty-state.js';
-import { categoryLabel, type CategoryOption } from './category-option.js';
+import type { CategoryOption } from './category-option.js';
 import type { ShortcutHint } from './wc-shortcut-help.js';
 import { controlsCss } from '@nigel/theme';
 
@@ -23,11 +22,7 @@ export const REGISTER_SHORTCUTS: readonly ShortcutHint[] = [
   { keys: ['PageUp', 'PageDown'], display: 'PgUp PgDn', description: 'Move a screenful' },
   { keys: ['Home', 'End'], display: 'Home End', description: 'First or last row' },
   { keys: ['Enter'], display: 'Enter', description: 'Edit the category and vendor' },
-  {
-    keys: ['Escape'],
-    display: 'Esc',
-    description: 'Cancel the edit, or clear the selection',
-  },
+  { keys: ['Escape'], display: 'Esc', description: 'Clear the selection' },
   { keys: ['f'], display: 'f', description: 'Flag or unflag the row' },
   { keys: ['/'], display: '/', description: 'Jump to the search box' },
 ];
@@ -104,17 +99,14 @@ const VIRTUALIZE_ABOVE = 120;
 /**
  * The transaction register — the web counterpart of `browser.rs`.
  *
- * Two constraints shape it. Rows stay cheap: a row that is not being edited
- * renders text, one `wc-money` and one icon button, and no `wa-*` component at
- * all, because an unfiltered register is thousands of rows and every custom
+ * Two constraints shape it. Rows stay cheap: a row renders text, one
+ * `wc-money` and one icon button, and no `wa-*` component at all, because an unfiltered register is thousands of rows and every custom
  * element in a row is paid for thousands of times. And selection follows DOM
  * focus through a roving tabindex, so the keyboard model the TUI has is the
  * same one a screen reader announces.
  *
- * The category editor is a hand-built combobox rather than `wa-select`: this
- * Web Awesome build has no searchable select, and the combobox ARIA wiring
- * (`aria-activedescendant` onto the option list) needs an input this component
- * owns rather than one inside another component's shadow root.
+ * The table never edits a row itself: activating one (Enter, double-click, or
+ * a tap) asks the host, through `nc-row-activate`, to open it.
  */
 @customElement('wc-register-table')
 export class WcRegisterTable extends LitElement {
@@ -256,7 +248,7 @@ export class WcRegisterTable extends LitElement {
 
       /* The transaction data itself — date, description, category, vendor,
          account — is what a person copies out of the register; the flag
-         toggle and the inline editors it sits beside are not. */
+         toggle beside it is not. */
       td.date,
       td.text,
       td.amount {
@@ -461,12 +453,6 @@ export class WcRegisterTable extends LitElement {
           height: 0;
         }
 
-        tbody tr[data-editing] {
-          height: auto;
-          min-height: 60px;
-          padding-bottom: var(--wa-space-xs);
-        }
-
         tbody td {
           display: block;
           border-bottom: none;
@@ -553,33 +539,6 @@ export class WcRegisterTable extends LitElement {
           color: var(--nc-color-flagged);
         }
 
-        /* The editors take the second line between them, Save and Cancel at
-           its end. */
-        tr[data-editing] td.category,
-        tr[data-editing] td.vendor {
-          max-width: none;
-          flex: 1 1 0;
-          height: auto;
-          line-height: normal;
-        }
-
-        tr[data-editing] td.vendor {
-          margin-left: var(--wa-space-xs);
-        }
-
-        tr[data-editing] td.account {
-          max-width: none;
-          flex: none;
-          height: auto;
-          margin-left: var(--wa-space-xs);
-          padding-right: var(--wa-space-s);
-        }
-
-        tr[data-editing] td.vendor::before,
-        tr[data-editing] td.account::before {
-          content: none;
-        }
-
         /* One stripe down the whole row rather than down the flag cell, which
            is only the first line here. */
         tbody tr[data-flagged='true'] td.flag,
@@ -618,61 +577,6 @@ export class WcRegisterTable extends LitElement {
         }
       }
 
-      /* -- the inline editors -- */
-
-      .combobox {
-        position: relative;
-      }
-
-      .combobox input {
-        font: inherit;
-        width: 100%;
-        min-width: 12ch;
-        box-sizing: border-box;
-        color: var(--wa-color-text);
-        background: var(--nc-color-field);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-md);
-        padding: var(--wa-space-2xs) var(--wa-space-xs);
-      }
-
-      .options {
-        position: absolute;
-        z-index: 2;
-        margin: 2px 0 0;
-        padding: 0;
-        list-style: none;
-        max-height: 12rem;
-        overflow: auto;
-        min-width: 100%;
-        background: var(--wa-color-surface);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
-        box-shadow: var(--wa-shadow-m);
-      }
-
-      .options li {
-        padding: var(--wa-space-2xs) var(--wa-space-xs);
-        cursor: default;
-        white-space: nowrap;
-      }
-
-      .options li[aria-selected='true'] {
-        background: var(--wa-color-brand);
-        color: var(--wa-color-on-brand);
-      }
-
-      /* The label names the field for a screen reader; the column header shows
-         a sighted user the same thing, so it does not need the space. */
-      .vendor-input::part(form-control-label) {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
-      }
-
       .sr-only {
         position: absolute;
         width: 1px;
@@ -680,28 +584,6 @@ export class WcRegisterTable extends LitElement {
         overflow: hidden;
         clip-path: inset(50%);
         white-space: nowrap;
-      }
-
-      .edit-actions {
-        display: flex;
-        gap: var(--wa-space-2xs);
-        justify-content: flex-end;
-      }
-
-      .edit-actions button {
-        font: inherit;
-        font-size: var(--wa-font-size-s);
-        color: inherit;
-        background: none;
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-sm);
-        padding: 2px var(--wa-space-xs);
-        cursor: default;
-      }
-
-      .edit-actions button:focus-visible {
-        outline: 2px solid var(--wa-color-focus);
-        outline-offset: 1px;
       }
 
       /* Block flow for the sheets, where a register runs to many pages: a flex
@@ -718,15 +600,8 @@ export class WcRegisterTable extends LitElement {
   @property({ attribute: false })
   rows: RegisterTableRow[] = [];
 
-  @property({ attribute: false })
-  categories: CategoryOption[] = [];
-
   @property({ type: Number, attribute: 'selected-id' })
   selectedId: number | null = null;
-
-  /** The row in edit mode. The host owns this: activation only asks for it. */
-  @property({ type: Number, attribute: 'editing-id' })
-  editingId: number | null = null;
 
   /** A row with a write in flight. */
   @property({ type: Number, attribute: 'busy-id' })
@@ -743,8 +618,8 @@ export class WcRegisterTable extends LitElement {
   fill = false;
 
   /**
-   * Drop every affordance that writes: no flag button, no activation, no edit
-   * mode. Selection and scrolling stay, because reading a long register still
+   * Drop every affordance that writes: no flag button, no activation.
+   * Selection and scrolling stay, because reading a long register still
    * wants a cursor.
    *
    * This is what the reports screen's register view uses. Editing lives at
@@ -790,11 +665,6 @@ export class WcRegisterTable extends LitElement {
    */
   @state() private activeId: number | null = null;
 
-  @state() private editCategoryId: number | null = null;
-  @state() private editCategoryQuery = '';
-  @state() private editOptionIndex = 0;
-  @state() private editListOpen = false;
-
   /** Index of the first row in the DOM. Meaningless while not windowing. */
   @state() private windowStart = 0;
 
@@ -802,7 +672,6 @@ export class WcRegisterTable extends LitElement {
   private rowHeight = ESTIMATED_ROW_HEIGHT;
 
   @query('.scroller') private scroller?: HTMLElement;
-  @query('.vendor-input') private vendorInput?: HTMLElement & { value: string };
 
   private pendingFocusId: number | null = null;
 
@@ -855,8 +724,6 @@ export class WcRegisterTable extends LitElement {
 
       this.resetWindowIfListChanged(changed.get('rows'));
     }
-
-    if (changed.has('editingId')) this.resetEditState();
   }
 
   /**
@@ -878,14 +745,8 @@ export class WcRegisterTable extends LitElement {
     this.pendingScrollTop = 0;
   }
 
-  updated(changed: PropertyValues<this>): void {
+  updated(): void {
     this.applyPendingScroll();
-
-    // An open editor is taller than a row (in the stacked layout it adds a
-    // line of fields), so its bottom may now sit under the total row.
-    if (changed.has('editingId') && this.editingId !== null) {
-      this.keepBottomInView(this.editingId);
-    }
 
     if (this.remeasureRowHeight() && this.windowing) {
       // Spacer heights are computed from the row height, so the first real
@@ -1044,13 +905,10 @@ export class WcRegisterTable extends LitElement {
   /**
    * Read a real row's height back. Answers whether it changed.
    *
-   * The editing row carries two inputs and is taller than the rest, so it is
-   * never the one measured.
    */
   private remeasureRowHeight(): boolean {
     const rows = this.shadowRoot?.querySelectorAll<HTMLElement>('tbody tr[data-id]') ?? [];
     for (const row of rows) {
-      if (Number(row.dataset.id) === this.editingId) continue;
       const height = row.getBoundingClientRect().height;
       if (height <= 0) return false;
       if (height === this.rowHeight) return false;
@@ -1190,11 +1048,6 @@ export class WcRegisterTable extends LitElement {
     if (delta !== null && delta !== 0 && this.scroller) this.scroller.scrollTop += delta;
   }
 
-  private keepBottomInView(id: number): void {
-    const delta = this.overhang(id);
-    if (delta !== null && delta > 0 && this.scroller) this.scroller.scrollTop += delta;
-  }
-
   /**
    * How far a row's bottom edge sits below the band rows show in, negative
    * when it is above. Null when nothing can be measured (jsdom, a first
@@ -1293,7 +1146,7 @@ export class WcRegisterTable extends LitElement {
    * The split at a control inside a cell is the ARIA grid pattern's. The
    * *activation* keys are the control's, so the flag button answers `Enter`
    * and `Space` identically instead of `Enter` cancelling its click and
-   * opening the row editor. The *navigation* keys stay the grid's, so the
+   * opening the edit dialog. The *navigation* keys stay the grid's, so the
    * arrows and the paging keys move between rows from wherever focus is,
    * including from a widget inside a cell.
    */
@@ -1309,7 +1162,6 @@ export class WcRegisterTable extends LitElement {
 
   private handleKeydown = (event: KeyboardEvent): void => {
     if (this.notOurs(event)) return;
-    if (this.editingId !== null) return;
     if (this.rows.length === 0) return;
 
     // With nothing selected the keys start from the tab stop — the row focus
@@ -1347,8 +1199,7 @@ export class WcRegisterTable extends LitElement {
         break;
       case 'Escape':
         // The TUI's clear-the-cursor. Consumed, so it does not also close a
-        // popover or leave fullscreen; cancelling an *edit* is the two inline
-        // editors' own Escape, and this handler never runs while one is open.
+        // popover or leave fullscreen.
         this.activeId = null;
         event.stopPropagation();
         break;
@@ -1374,12 +1225,6 @@ export class WcRegisterTable extends LitElement {
     this.setActive(row.id);
     // A read-only table still moves its cursor; it just never asks to edit.
     if (this.readonly) return;
-    // Another row open in the inline editor keeps what was typed into it:
-    // it is committed, and this row is only selected.
-    if (this.editingId !== null && this.editingId !== row.id) {
-      this.commitEdit();
-      return;
-    }
     this.dispatchEvent(
       new CustomEvent<NcRowActivateDetail>('nc-row-activate', {
         detail: { id: row.id, touch },
@@ -1404,114 +1249,6 @@ export class WcRegisterTable extends LitElement {
     this.dispatchEvent(
       new CustomEvent<NcFlagToggleDetail>('nc-flag-toggle', {
         detail: { id: row.id, flag: !row.isFlagged },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
-  // -- inline editing -------------------------------------------------------
-
-  private get editingRow(): RegisterTableRow | undefined {
-    return this.rows.find((row) => row.id === this.editingId);
-  }
-
-  private resetEditState(): void {
-    const row = this.editingRow;
-    this.editCategoryId = row?.categoryId ?? null;
-    this.editCategoryQuery = row?.category ?? '';
-    this.editOptionIndex = 0;
-    this.editListOpen = false;
-  }
-
-  /** Case-insensitive substring over the "Name (inc)" label, as the TUI does. */
-  private get filteredCategories(): CategoryOption[] {
-    const query = this.editCategoryQuery.trim().toLowerCase();
-    if (query === '') return this.categories;
-    return this.categories.filter((category) =>
-      categoryLabel(category).toLowerCase().includes(query),
-    );
-  }
-
-  private chooseCategory(option: CategoryOption | undefined): void {
-    if (!option) return;
-    this.editCategoryId = option.id;
-    this.editCategoryQuery = option.name;
-    this.editListOpen = false;
-    this.editOptionIndex = 0;
-  }
-
-  private handleCategoryInput(event: Event): void {
-    this.editCategoryQuery = (event.target as HTMLInputElement).value;
-    this.editListOpen = true;
-    this.editOptionIndex = 0;
-  }
-
-  private handleCategoryKeydown(event: KeyboardEvent): void {
-    const options = this.filteredCategories;
-
-    switch (event.key) {
-      case 'ArrowDown':
-        this.editListOpen = true;
-        this.editOptionIndex = Math.min(this.editOptionIndex + 1, options.length - 1);
-        break;
-      case 'ArrowUp':
-        this.editListOpen = true;
-        this.editOptionIndex = Math.max(this.editOptionIndex - 1, 0);
-        break;
-      case 'Enter':
-        // Category then vendor, the order the TUI's two-stage editor uses.
-        this.chooseCategory(options[this.editOptionIndex]);
-        void this.updateComplete.then(() => this.vendorInput?.focus());
-        break;
-      case 'Escape':
-        this.cancelEdit();
-        break;
-      default:
-        return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  private handleVendorKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter') {
-      this.commitEdit();
-    } else if (event.key === 'Escape') {
-      this.cancelEdit();
-    } else {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  private commitEdit(): void {
-    const row = this.editingRow;
-    if (!row) return;
-
-    const vendor = (this.vendorInput?.value ?? '').trim();
-    this.dispatchEvent(
-      new CustomEvent<NcEditCommitDetail>('nc-edit-commit', {
-        detail: {
-          id: row.id,
-          categoryId: this.editCategoryId,
-          vendor: vendor === '' ? null : vendor,
-        },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-  }
-
-  private cancelEdit(): void {
-    const row = this.editingRow;
-    if (!row) return;
-    this.dispatchEvent(
-      new CustomEvent<NcRowEventDetail>('nc-edit-cancel', {
-        detail: { id: row.id },
         bubbles: true,
         composed: true,
       }),
@@ -1602,14 +1339,9 @@ export class WcRegisterTable extends LitElement {
   }
 
   /**
-   * The rows that go in the DOM: the window, plus the row being edited
-   * wherever it is.
-   *
-   * The editor has to survive a scroll. Slicing it out destroys the input and
-   * the half-typed vendor with it, so an editing row outside the window is
-   * drawn in its own place with spacers on both sides of it. Every gap between
-   * drawn rows becomes one spacer carrying the height of what it stands for,
-   * which is what keeps the scrollbar the length of the whole register.
+   * The rows that go in the DOM: the window. Every gap between drawn rows
+   * becomes one spacer carrying the height of what it stands for, which is
+   * what keeps the scrollbar the length of the whole register.
    */
   private renderBody(columns: number, tabStop: number | null) {
     const parts: { key: string; part: unknown }[] = [];
@@ -1640,10 +1372,7 @@ export class WcRegisterTable extends LitElement {
       });
     }
 
-    // Keyed, so a row moving between segments — which is what an editing row
-    // does the moment the window scrolls past it — has its DOM moved rather
-    // than rebuilt. Rebuilding it would replace the inputs and lose whatever
-    // had been typed into them.
+    // Keyed, so a row that stays in the window keeps its DOM across a scroll.
     return repeat(
       parts,
       (item) => item.key,
@@ -1656,12 +1385,6 @@ export class WcRegisterTable extends LitElement {
     const { start, end } = this.windowRange;
     const indices: number[] = [];
     for (let index = start; index < end; index += 1) indices.push(index);
-    if (!this.windowing || this.editingId === null) return indices;
-
-    const editing = this.rows.findIndex((row) => row.id === this.editingId);
-    if (editing < 0 || (editing >= start && editing < end)) return indices;
-    if (editing < start) indices.unshift(editing);
-    else indices.push(editing);
     return indices;
   }
 
@@ -1707,7 +1430,6 @@ export class WcRegisterTable extends LitElement {
 
   private renderRow(row: RegisterTableRow, index: number, tabStopId: number | null) {
     const selected = row.id === this.activeId;
-    const editing = row.id === this.editingId;
 
     return html`
       <tr
@@ -1715,7 +1437,6 @@ export class WcRegisterTable extends LitElement {
         data-id=${row.id}
         data-flagged=${row.isFlagged ? 'true' : 'false'}
         data-uncategorized=${row.categoryId === null ? 'true' : 'false'}
-        ?data-editing=${editing}
         aria-selected=${selected ? 'true' : 'false'}
         aria-busy=${row.id === this.busyId ? 'true' : 'false'}
         aria-rowindex=${index + 2}
@@ -1731,98 +1452,28 @@ export class WcRegisterTable extends LitElement {
         <td role="gridcell" class="text description" title=${row.description}>
           ${row.description}
         </td>
-        ${editing
-          ? this.renderEditCells(row)
-          : html`
-              <td role="gridcell" class="text category" title=${row.category ?? ''}>
-                ${row.category ?? html`<span class="muted uncategorized">Uncategorized</span>`}
-              </td>
-              <td
-                role="gridcell"
-                class=${row.vendor ? 'text vendor' : 'text vendor blank'}
-                title=${row.vendor ?? ''}
-              >
-                ${row.vendor ?? ''}
-              </td>
-            `}
+        <td role="gridcell" class="text category" title=${row.category ?? ''}>
+          ${row.category ?? html`<span class="muted uncategorized">Uncategorized</span>`}
+        </td>
+        <td
+          role="gridcell"
+          class=${row.vendor ? 'text vendor' : 'text vendor blank'}
+          title=${row.vendor ?? ''}
+        >
+          ${row.vendor ?? ''}
+        </td>
         <td role="gridcell" class="amount" title=${formatMoney(row.amount)}>
           <wc-money .amount=${row.amount} align="end"></wc-money>
         </td>
         ${this.showAccount
-          ? html`<td
-              role="gridcell"
-              class=${editing ? 'account' : 'text account'}
-              title=${row.accountName}
-            >
-              ${editing ? this.renderEditActions() : row.accountName}
+          ? html`<td role="gridcell" class="text account" title=${row.accountName}>
+              ${row.accountName}
             </td>`
           : nothing}
       </tr>
     `;
   }
 
-  private renderEditCells(row: RegisterTableRow) {
-    const options = this.filteredCategories;
-    const active = options[this.editOptionIndex];
-
-    return html`
-      <td role="gridcell" class="category">
-        <div class="combobox">
-          <input
-            class="category-input"
-            type="text"
-            role="combobox"
-            aria-label="Category"
-            aria-expanded=${this.editListOpen ? 'true' : 'false'}
-            aria-controls=${this.editListOpen ? 'category-options' : nothing}
-            aria-autocomplete="list"
-            aria-activedescendant=${this.editListOpen && active
-              ? `category-option-${active.id}`
-              : nothing}
-            .value=${this.editCategoryQuery}
-            @input=${this.handleCategoryInput}
-            @keydown=${this.handleCategoryKeydown}
-          />
-          ${this.editListOpen
-            ? html`
-                <ul class="options" id="category-options" role="listbox" aria-label="Categories">
-                  ${options.map(
-                    (option, index) => html`
-                      <li
-                        id=${`category-option-${option.id}`}
-                        role="option"
-                        aria-selected=${index === this.editOptionIndex ? 'true' : 'false'}
-                        @mousedown=${() => this.chooseCategory(option)}
-                      >
-                        ${categoryLabel(option)}
-                      </li>
-                    `,
-                  )}
-                </ul>
-              `
-            : nothing}
-        </div>
-      </td>
-      <td role="gridcell" class="vendor">
-        <wa-input
-          class="vendor-input"
-          label="Vendor"
-          size="s"
-          value=${row.vendor ?? ''}
-          @keydown=${this.handleVendorKeydown}
-        ></wa-input>
-      </td>
-    `;
-  }
-
-  private renderEditActions() {
-    return html`
-      <div class="edit-actions">
-        <button type="button" @click=${() => this.commitEdit()}>Save</button>
-        <button type="button" @click=${() => this.cancelEdit()}>Cancel</button>
-      </div>
-    `;
-  }
 }
 
 declare global {
@@ -1833,8 +1484,6 @@ declare global {
   interface HTMLElementEventMap {
     'nc-row-select': CustomEvent<NcRowEventDetail>;
     'nc-row-activate': CustomEvent<NcRowActivateDetail>;
-    'nc-edit-commit': CustomEvent<NcEditCommitDetail>;
-    'nc-edit-cancel': CustomEvent<NcRowEventDetail>;
     'nc-flag-toggle': CustomEvent<NcFlagToggleDetail>;
     'nc-search-focus': CustomEvent<void>;
   }

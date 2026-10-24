@@ -827,7 +827,7 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 
 ### Transaction edits
 
-`PATCH /api/transactions/:id` is what the register's inline editing sends. All
+`PATCH /api/transactions/:id` is what the register's edit dialog and flag button send. All
 three fields are applied in one database transaction, so a rejected value — an
 unknown `categoryId`, say — leaves the row exactly as it was.
 

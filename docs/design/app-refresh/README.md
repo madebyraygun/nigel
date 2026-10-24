@@ -196,7 +196,7 @@ Reference: Nigel App, screen `dashboard`.
 
 ## 5. Register
 
-Reference: Nigel App, screen `register`. Rebuilds `screens/register.ts`; keep its existing features (inline edit, keyboard shortcuts, flag toggle).
+Reference: Nigel App, screen `register`. Rebuilds `screens/register.ts`; keep its existing features (edit dialog, keyboard shortcuts, flag toggle).
 
 ### Toolbar
 
@@ -355,9 +355,8 @@ Reference: Nigel App, screen `settings`. Replaces `screens/settings.ts`.
   - Holds a 78px mini-window preview: a sidebar block, lines and a card, drawn in that theme's colours. The System card is split diagonally between light and dark.
   - Below the preview, a radio dot and the label.
 - **Selected card:** a 1.5px rainbow border (the same padding-box/border-box gradient as the active nav item) and a filled radio dot in `--br`.
-- **Description:** "How Nigel looks and works on this device. Other devices keep their own choices."
+- **Description:** "How Nigel looks on this device. Other devices keep their own choices."
 - Applies immediately. Stored per device (`localStorage` or Tauri store), not in the book.
-- Below the cards, a switch card: "Edit register rows in place", with the sub-line "Change a row's category and vendor right in the list, instead of in a window." Off by default, so the register edits a row in a dialog.
 
 ### Updates
 

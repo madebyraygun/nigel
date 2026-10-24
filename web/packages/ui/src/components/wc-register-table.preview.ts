@@ -1,6 +1,6 @@
 import { html } from 'lit';
 import './wc-register-table.js';
-import type { CategoryOption, RegisterTableRow } from './wc-register-table.js';
+import type { RegisterTableRow } from './wc-register-table.js';
 import type { Preview } from '../../preview/types.js';
 
 const rows: RegisterTableRow[] = [
@@ -107,27 +107,19 @@ const sevenFigures: RegisterTableRow = {
   isFlagged: false,
 };
 
-const categories: CategoryOption[] = [
-  { id: 3, name: 'Consulting income', categoryType: 'income' },
-  { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
-  { id: 21, name: 'Bank fees', categoryType: 'expense' },
-  { id: 30, name: 'Meals', categoryType: 'expense' },
-];
-
 const preview = {
   id: 'wc-register-table',
   title: 'Register table',
   group: 'Data',
   layout: 'stack',
   description:
-    'The transaction register. Selection follows focus through a roving tabindex; a row not being edited renders no wa-* components, because an unfiltered register is thousands of rows.',
+    'The transaction register. Selection follows focus through a roving tabindex; a row renders no wa-* components, because an unfiltered register is thousands of rows.',
   states: [
     {
       name: 'default',
       render: () => html`
         <wc-register-table
           .rows=${rows}
-          .categories=${categories}
           .selectedId=${102}
           .total=${8281.51}
           footer-label="All accounts"
@@ -145,7 +137,6 @@ const preview = {
         <div style="inline-size: 22rem">
           <wc-register-table
             .rows=${[...rows, sevenFigures]}
-            .categories=${categories}
             .total=${8281.51}
             footer-label="All accounts"
           ></wc-register-table>
@@ -158,7 +149,6 @@ const preview = {
         <div style="inline-size: 22rem">
           <wc-register-table
             .rows=${rows}
-            .categories=${categories}
             .selectedId=${102}
             .total=${8281.51}
             footer-label="BofA Checking"
@@ -174,24 +164,7 @@ const preview = {
         <div style="inline-size: 22rem">
           <wc-register-table
             .rows=${rows.filter((row) => row.isFlagged || row.categoryId === null)}
-            .categories=${categories}
             .total=${-18.5}
-            footer-label="All accounts"
-          ></wc-register-table>
-        </div>
-      `,
-    },
-    {
-      // The editors take the second line, Save and Cancel at its end.
-      name: 'stacked-editing',
-      render: () => html`
-        <div style="inline-size: 22rem">
-          <wc-register-table
-            .rows=${rows}
-            .categories=${categories}
-            .selectedId=${101}
-            .editingId=${101}
-            .total=${8281.51}
             footer-label="All accounts"
           ></wc-register-table>
         </div>
@@ -202,7 +175,6 @@ const preview = {
       render: () => html`
         <wc-register-table
           .rows=${widestRow}
-          .categories=${categories}
           .selectedId=${900}
           .total=${-128450.75}
           footer-note="1 of 1 row"
@@ -216,7 +188,6 @@ const preview = {
           <wc-register-table
             fill
             .rows=${longRegister}
-            .categories=${categories}
             .selectedId=${1000}
             .total=${8281.51}
             footer-label="BofA Checking"
@@ -232,7 +203,6 @@ const preview = {
           <wc-register-table
             fill
             .rows=${wholeYear}
-            .categories=${categories}
             .selectedId=${2000}
             .total=${-12480.19}
             footer-note="1,872 rows"
@@ -243,7 +213,7 @@ const preview = {
     {
       name: 'dense',
       render: () => html`
-        <wc-register-table dense .rows=${rows} .categories=${categories}></wc-register-table>
+        <wc-register-table dense .rows=${rows}></wc-register-table>
       `,
     },
     {
@@ -272,22 +242,10 @@ const preview = {
       `,
     },
     {
-      name: 'editing',
-      render: () => html`
-        <wc-register-table
-          .rows=${rows}
-          .categories=${categories}
-          .selectedId=${103}
-          .editingId=${103}
-        ></wc-register-table>
-      `,
-    },
-    {
       name: 'flagged',
       render: () => html`
         <wc-register-table
           .rows=${rows.filter((row) => row.isFlagged)}
-          .categories=${categories}
         ></wc-register-table>
       `,
     },
@@ -296,7 +254,6 @@ const preview = {
       render: () => html`
         <wc-register-table
           .rows=${rows}
-          .categories=${categories}
           .selectedId=${101}
           .busyId=${101}
         ></wc-register-table>
@@ -307,7 +264,6 @@ const preview = {
       render: () => html`
         <wc-register-table
           .rows=${rows}
-          .categories=${categories}
           .showAccount=${false}
           .total=${-120.99}
         ></wc-register-table>
@@ -320,7 +276,7 @@ const preview = {
           readonly
           .rows=${rows}
           .total=${-120.99}
-          footer-note="Read-only — editing lives in the register browser"
+          footer-note="Read-only — editing lives in the register"
         ></wc-register-table>
       `,
     },
