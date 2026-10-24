@@ -1,9 +1,10 @@
 ---
 id: TASK-155
 title: An unreadable settings.json is replaced by defaults on the next save
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-10-21 14:37'
+updated_date: '2026-10-24 13:55'
 labels:
   - settings
   - bug

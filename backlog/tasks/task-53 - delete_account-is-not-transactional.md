@@ -1,10 +1,10 @@
 ---
 id: TASK-53
 title: delete_account writes three statements with no transaction
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-07 14:12'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 13:55'
 labels:
   - bug
   - data-integrity

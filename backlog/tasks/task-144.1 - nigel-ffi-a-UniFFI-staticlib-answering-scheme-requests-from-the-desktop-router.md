@@ -3,10 +3,10 @@ id: TASK-144.1
 title: >-
   nigel-ffi: a UniFFI staticlib answering scheme requests from the desktop
   router
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 16:06'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 13:55'
 labels:
   - swift
   - rust
