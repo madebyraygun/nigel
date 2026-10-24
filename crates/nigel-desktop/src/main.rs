@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use nigel_desktop::{
-    chrome, db, imports, reveal, save, scheme_url, transport, window_state, SCHEME,
+    chrome, db, imports, menu, reveal, save, scheme_url, transport, window_state, SCHEME,
 };
 
 fn main() {
@@ -32,6 +32,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .menu(menu::build)
+        .on_menu_event(menu::forward)
         .invoke_handler(tauri::generate_handler![
             save::save_export,
             imports::stage_import,
@@ -117,13 +119,7 @@ fn main() {
                 } => {
                     match app.get_webview_window("main") {
                         Some(window) => {
-                            // A hidden window shows; a minimized one
-                            // ignores show and focus until it is
-                            // deminiaturized.
-                            let _ = window.unminimize();
-                            app.state::<chrome::Shown>().first();
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            chrome::reveal(&window, &app.state::<chrome::Shown>());
                         }
                         // The window is genuinely gone (a webview
                         // crash), not hidden: rebuild it. A windowless

@@ -123,14 +123,22 @@ fn a_late_ready_does_not_reshow_a_closed_window() {
         "the show is not behind the first-show guard"
     );
 
+    // Reopen shows through `chrome::reveal`, whose unit test pins that the
+    // show is recorded in `Shown` before it happens.
     let main = main_rs();
     let reopen = &main[main.find("tauri::RunEvent::Reopen").expect("reopen arm")..];
-    let marked_at = reopen.find("app.state::<chrome::Shown>().first()").expect(
-        "a Reopen show is not recorded: a late ready or the fallback could reshow a closed window",
-    );
     assert!(
-        marked_at < reopen.find("window.show()").expect("reopen shows"),
-        "the Reopen show is not recorded before it happens"
+        reopen.contains("chrome::reveal(&window, &app.state::<chrome::Shown>())"),
+        "a Reopen show is not recorded: a late ready or the fallback could reshow a closed window"
+    );
+    let reveal = &chrome[chrome.find("pub fn reveal").expect("the reveal helper")..];
+    let reveal = &reveal[..reveal.find("\n}\n").expect("end of reveal")];
+    assert!(
+        reveal
+            .find("shown.first()")
+            .expect("reveal records the show")
+            < reveal.find("window.show()").expect("reveal shows"),
+        "reveal does not record the show before it happens"
     );
 }
 

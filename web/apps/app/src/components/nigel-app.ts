@@ -14,9 +14,10 @@ import {
 } from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
-import { appUnauthorized, type ApiClient } from '../api/index.js';
+import { appUnauthorized, type ApiClient, type MenuCommand } from '../api/index.js';
 import { createApiClient } from '../api/desktop-client.js';
 import { confirmDiscard, unsavedChanges } from '../state/unsaved.js';
+import { dropMenuIntentUnlessFor, requestMenuIntent } from '../state/menu-intent.js';
 import {
   getAppStore,
   initializeAppStore,
@@ -25,6 +26,7 @@ import {
 import { parseHash, routeToHash, screenToHash, type Route } from '../screens/hash-route.js';
 import {
   DEFAULT_SCREEN,
+  isScreenId,
   navItems,
   screenDef,
   shellHeading,
@@ -147,6 +149,7 @@ export class NigelApp extends SignalWatcher(LitElement) {
   private store: AppStore | null = null;
   private reportedError: string | null = null;
   private focusBeforeSnake: HTMLElement | null = null;
+  private unsubscribeMenu: (() => void) | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -155,6 +158,10 @@ export class NigelApp extends SignalWatcher(LitElement) {
     window.addEventListener('keydown', this.handleGlobalKeydown);
     // On the Mac the native shell draws the palette and owns the chord.
     if (!this.hosted) window.addEventListener('keydown', this.handlePaletteKeydown);
+    const menu = this.client.menuSource();
+    if (menu.kind === 'native') {
+      this.unsubscribeMenu = menu.onCommand(this.handleMenuCommand);
+    }
     this.syncRouteFromHash();
     void this.store.refreshStatus();
   }
@@ -163,11 +170,65 @@ export class NigelApp extends SignalWatcher(LitElement) {
     window.removeEventListener('hashchange', this.handleHashChange);
     window.removeEventListener('keydown', this.handleGlobalKeydown);
     window.removeEventListener('keydown', this.handlePaletteKeydown);
+    this.unsubscribeMenu?.();
+    this.unsubscribeMenu = null;
     super.disconnectedCallback();
   }
 
   /** The hash the screen on show was routed from; where a refused leave goes back to. */
   private routedHash = '';
+
+  /**
+   * A selection from the shell's menu bar.
+   *
+   * Navigation validates the screen id here rather than in the api layer,
+   * which does not know the registry; an id this build has never heard of, or
+   * a screen the sidebar does not list, is dropped, so a newer shell degrades to inert items rather than a blank
+   * screen. `find` (on the register only) and `import` reach their screens as
+   * one-shot intents the screen consumes — a route parameter could not re-fire
+   * on a repeated chord.
+   */
+  private handleMenuCommand = (command: MenuCommand): void => {
+    // The gates and the boot screen render without the shell: no sidebar to
+    // toggle, no screen to receive an intent, and the untouched hash is what
+    // returns the user where they were headed once the app is up. A selection
+    // before then is dropped whole — an intent stored now would fire on
+    // whatever screen mounts after unlock.
+    if ((this.store ?? getAppStore()).boot.get() !== 'ready') return;
+    // A dialog holds the top layer and makes the page behind it inert, which
+    // stops the sidebar; the menu is held to the same rule, so a chord cannot
+    // swap the screen out from under the register's edit dialog or the palette.
+    if (hasOpenModal()) return;
+
+    switch (command.kind) {
+      case 'navigate':
+        // Only what the sidebar offers: setup and unlock are gates the boot
+        // phase routes to, never destinations a menu item may pick.
+        if (isScreenId(command.screen) && screenDef(command.screen).inNav) {
+          this.navigate(command.screen);
+        }
+        return;
+      case 'new-invoice':
+        this.navigate('invoices', new URLSearchParams({ new: '1' }));
+        return;
+      case 'find':
+        // Find searches the screen in front of the user; only the register
+        // has a search box, and navigating there from elsewhere would throw
+        // away whatever that screen held, an unsaved invoice draft included.
+        if (this.route.screen === 'register') requestMenuIntent('find');
+        return;
+      case 'import':
+        this.navigate('import');
+        requestMenuIntent('pick-import');
+        return;
+      case 'toggle-sidebar':
+        // A hosting native window draws its own sidebar and toggles it itself.
+        if (!this.hosted) this.setSidebarCollapsed(!this.sidebarCollapsed);
+        return;
+      default:
+        command satisfies never;
+    }
+  };
 
   private handleHashChange = (): void => {
     const target = window.location.hash;
@@ -180,6 +241,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
       this.refocusAfterRoute = false;
       void confirmDiscard().then((discard) => {
         if (discard) window.location.hash = target;
+        // Staying put: an intent raised for the screen that was refused dies
+        // here, as it would have on the route change.
+        else dropMenuIntentUnlessFor(this.route.screen);
       });
       return;
     }
@@ -193,6 +257,9 @@ export class NigelApp extends SignalWatcher(LitElement) {
       this.settlePaletteFocus();
     }
     void this.loadReviewCount();
+    // An intent belongs to the screen it was raised for; one still parked
+    // when the user leaves for another screen must not fire on a later visit.
+    dropMenuIntentUnlessFor(this.route.screen);
   };
 
   protected updated(): void {
@@ -239,11 +306,15 @@ export class NigelApp extends SignalWatcher(LitElement) {
   };
 
   private handleSidebarToggle = (event: CustomEvent<{ collapsed: boolean }>): void => {
-    this.sidebarCollapsed = event.detail.collapsed;
+    this.setSidebarCollapsed(event.detail.collapsed);
+  };
+
+  private setSidebarCollapsed(collapsed: boolean): void {
+    this.sidebarCollapsed = collapsed;
     // On a phone collapsed means the drawer is shut, which is where it starts
     // anyway; only the rail is a choice worth remembering.
-    if (!narrowViewport()) writeSidebarCollapsed(event.detail.collapsed);
-  };
+    if (!narrowViewport()) writeSidebarCollapsed(collapsed);
+  }
 
   private handleRefresh = async (): Promise<void> => {
     // Refresh remounts the screen, which would drop a draft as surely as

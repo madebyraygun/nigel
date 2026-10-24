@@ -22,6 +22,11 @@ import {
   EMPTY_IMPORT_PREVIEW,
   FakeApiClient,
 } from '../__mocks__/fake-api-client.js';
+import {
+  dropMenuIntentUnlessFor,
+  requestMenuIntent,
+  resetMenuIntent,
+} from '../state/menu-intent.js';
 
 /**
  * 423 and 401 are deliberately untested here. The shell gates both before a
@@ -1073,5 +1078,143 @@ describe('the import screen in native mode', () => {
     await settle(el);
 
     expect(dropzone(el).error).toBe("Couldn't read /home/books/cedar-april-2025.csv");
+  });
+});
+
+describe('the pick-import menu intent', () => {
+  afterEach(() => {
+    resetMenuIntent();
+    // Two mounted import screens would race for one intent; the app never has
+    // two, so neither may a test.
+    document.body.innerHTML = '';
+  });
+
+  it('opens the native dialog when the intent was requested before arriving', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+
+    expect(shell.staged).toHaveLength(1);
+    expect(shell.staged[0].filename).toBe('acme-checking.csv');
+  });
+
+  it('does nothing in a browser, where there is no dialog to open', async () => {
+    requestMenuIntent('pick-import');
+    const { el } = await mount();
+    await settle(el);
+    expect(dropzone(el)).toBeTruthy();
+  });
+
+  it('drops a second request while the dialog is already open', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick(null);
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const pick = source.pick;
+    let picks = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.pick = async () => {
+      picks += 1;
+      await gate;
+      return pick();
+    };
+
+    requestMenuIntent('pick-import');
+    const { el } = await mount(fake);
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+
+    // Cancelling the open dialog must not raise the chord's second press.
+    release();
+    await settle(el);
+    await settle(el);
+    expect(picks).toBe(1);
+  });
+
+  it('parks the intent while a staging is busy and opens the dialog after', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const stagePath = source.stagePath;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.stagePath = async (path) => {
+      await gate;
+      return stagePath(path);
+    };
+
+    // A dropped file holds the screen busy staging; the menu's request
+    // arrives meanwhile and must wait rather than die against the guard.
+    const { el } = await mount(fake);
+    await settle(el);
+    shell.emit({ type: 'drop', paths: ['/statements/juniper-march.csv'] });
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+    expect(shell.staged).toHaveLength(0);
+
+    release();
+    await settle(el);
+    await settle(el);
+    expect(shell.staged.map((upload) => upload.filename)).toEqual([
+      'juniper-march.csv',
+      'acme-checking.csv',
+    ]);
+  });
+
+  it('a parked intent never fires on the removed screen, nor on a later visit', async () => {
+    const fake = client();
+    const shell = nativeSource(fake);
+    shell.willPick('/statements/acme-checking.csv');
+
+    const source = fake.importSourceValue;
+    if (source.kind !== 'native') throw new Error('expected a native source');
+    const stagePath = source.stagePath;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    source.stagePath = async (path) => {
+      await gate;
+      return stagePath(path);
+    };
+
+    const { el } = await mount(fake);
+    await settle(el);
+    shell.emit({ type: 'drop', paths: ['/statements/juniper-march.csv'] });
+    await settle(el);
+    requestMenuIntent('pick-import');
+    await settle(el);
+
+    // Navigating away removes the screen; the in-flight staging then
+    // resolves against the removed element. The parked intent must not fire
+    // there — an OS dialog over whatever screen the user is on now would
+    // stage their pick invisibly.
+    el.remove();
+    release();
+    await settle(el);
+    expect(shell.staged.map((upload) => upload.filename)).toEqual(['juniper-march.csv']);
+
+    // The route change that removed the screen drops the intent in the root
+    // container, so the next visit opens no dialog of its own accord.
+    dropMenuIntentUnlessFor('dashboard');
+    const { el: next } = await mount(fake);
+    await settle(next);
+    expect(shell.staged).toHaveLength(1);
   });
 });

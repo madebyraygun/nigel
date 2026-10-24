@@ -26,6 +26,38 @@ impl Shown {
     }
 }
 
+/// What [`reveal`] needs of a window, so the order can be tested without one.
+pub trait Revealable {
+    fn unminimize(&self);
+    fn show(&self);
+    fn set_focus(&self);
+}
+
+impl<R: tauri::Runtime> Revealable for tauri::WebviewWindow<R> {
+    fn unminimize(&self) {
+        let _ = tauri::WebviewWindow::unminimize(self);
+    }
+    fn show(&self) {
+        let _ = tauri::WebviewWindow::show(self);
+    }
+    fn set_focus(&self) {
+        let _ = tauri::WebviewWindow::set_focus(self);
+    }
+}
+
+/// Bring the main window to the front from wherever the user left it:
+/// hidden by a macOS close, minimized, or behind another app. A minimized
+/// window ignores show and focus until it is deminiaturized, so that comes
+/// first; the show is recorded so the deferred ready signal and fallback
+/// timer do not count it as never shown. Dock reopen and every menu
+/// selection forwarded to the page go through here.
+pub fn reveal(window: &impl Revealable, shown: &Shown) {
+    window.unminimize();
+    shown.first();
+    window.show();
+    window.set_focus();
+}
+
 /// The theme's canvas in light mode, duplicated from
 /// `web/packages/theme/src/tokens/color.ts`; `tests/chrome.rs` fails when
 /// the two drift.
@@ -140,6 +172,30 @@ mod tests {
     fn the_canvas_constants_parse() {
         assert_eq!(rgb(BG_LIGHT), (0xf3, 0xf2, 0xf7));
         assert_eq!(rgb(BG_DARK), (0x17, 0x17, 0x1d));
+    }
+
+    #[derive(Default)]
+    struct Recorder(std::cell::RefCell<Vec<&'static str>>);
+
+    impl Revealable for Recorder {
+        fn unminimize(&self) {
+            self.0.borrow_mut().push("unminimize");
+        }
+        fn show(&self) {
+            self.0.borrow_mut().push("show");
+        }
+        fn set_focus(&self) {
+            self.0.borrow_mut().push("set_focus");
+        }
+    }
+
+    #[test]
+    fn reveal_deminiaturizes_before_showing_and_records_the_show() {
+        let window = Recorder::default();
+        let shown = Shown::default();
+        reveal(&window, &shown);
+        assert_eq!(*window.0.borrow(), ["unminimize", "show", "set_focus"]);
+        assert!(!shown.first(), "the reveal counted as the first show");
     }
 
     #[test]
