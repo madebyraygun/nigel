@@ -154,6 +154,23 @@ describe('wc-app-shell content area', () => {
   it('still scrolls a screen that is taller than the window', () => {
     expect(text).toMatch(/\.content\s*{[^}]*overflow:\s*auto/);
   });
+
+  it('keeps every positioned descendant inside the scroller', () => {
+    // A visually hidden label or a radio under its card is absolutely
+    // positioned. Unless the content area is its containing block, the
+    // window is, the area's clip does not reach it, and one below the fold
+    // makes the document taller than the window — which then scrolls, frame
+    // and all, under wheel, focus and scrollIntoView.
+    expect(text).toMatch(/\.content\s*{[^}]*position:\s*relative/);
+  });
+
+  it('does not hand a scroll that reaches its end on to the page', () => {
+    expect(text).toMatch(/\.content\s*{[^}]*overscroll-behavior:\s*contain/);
+  });
+
+  it('is exactly the visible window, toolbars included', () => {
+    expect(text).toMatch(/:host\s*{[^}]*height:\s*100vh;\s*height:\s*100dvh/);
+  });
 });
 
 describe('wc-app-shell on paper', () => {

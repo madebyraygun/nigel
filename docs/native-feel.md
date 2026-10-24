@@ -23,8 +23,13 @@ HTML attributes, true and harmless in a browser as well as in the shell.
 
 ## Document-level rules
 
-`web/apps/app/index.html` carries three rules on `html, body`:
+`web/apps/app/index.html` carries these rules on `html, body`:
 
+- `height: 100%`, and `overflow: hidden` on `html`: the document is exactly
+  the window and is never a scroller. The shell fills it and the content
+  area inside the shell is the one thing that scrolls — see "One scroller"
+  under the shell. Print lifts both, so a report runs onto as many sheets as
+  it needs.
 - `overscroll-behavior: none` stops the document rubber-banding past its own
   ends. Scrolling stays inside the panel or list that owns it, which is what
   a native window does — a browser tab's own bounce is the tell this removes.
@@ -95,6 +100,22 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   `--nc-color-selected-bg` inside a 1px rainbow hairline: the fill painted to
   the padding box and `--nc-grad-brand-text` to the border box of a
   transparent border.
+- **One scroller.** The document never scrolls. `wc-app-shell` is
+  `100dvh` (with a `100vh` fallback), so it fills the visible window and the
+  sidebar, top bar and status line stay put; only its `main.content` scrolls.
+  That area is `position: relative`, which makes it the containing block for
+  every absolutely positioned descendant — a visually hidden label, a table's
+  screen-reader copy, a radio under its card. Otherwise their containing
+  block is the window, the area's clip misses them, and one below the fold
+  makes the document taller than the window: a second scrollbar, and a frame
+  that wheel, focus and `scrollIntoView` slide up out of the window. It
+  carries `overscroll-behavior: contain`, so a scroll that reaches either end
+  stops there. Phones keep the same arrangement: the drawer, top bar and
+  status line stay fixed and the content area scrolls, so a mobile browser's
+  address bar stays expanded rather than collapsing with the page — the cost
+  of keeping one scroller, and `100dvh` keeps the status line above that
+  bar. The unlock and setup gates `nigel-app` draws outside the shell follow
+  the same rule with their own `100dvh` scroller.
 - **Folded state is per device.** The rail is remembered in `localStorage`
   under `nigel.sidebar-collapsed`, like the colour mode, and only on a wide
   viewport: at phone width collapsed means the drawer is shut, which is where

@@ -62,18 +62,22 @@ export class NigelApp extends SignalWatcher(LitElement) {
     :host {
       display: block;
       height: 100vh;
+      height: 100dvh;
     }
 
     .boot {
       display: grid;
       place-items: center;
       height: 100vh;
+      height: 100dvh;
       background: var(--wa-color-bg);
     }
 
     .gate {
       height: 100vh;
+      height: 100dvh;
       overflow: auto;
+      overscroll-behavior: contain;
     }
 
     .banner {
