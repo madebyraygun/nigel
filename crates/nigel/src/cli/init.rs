@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use nigel_core::db::{get_connection, init_db_with_profile, Profile};
 use nigel_core::error::Result;
 use nigel_core::settings::{
-    load_settings, restrict_dir_permissions, save_settings, shellexpand_path, Settings,
+    restrict_dir_permissions, save_settings, shellexpand_path, try_load_settings, Settings,
 };
 
 pub fn run(data_dir: Option<String>, profile: &str) -> Result<()> {
@@ -13,7 +13,7 @@ pub fn run(data_dir: Option<String>, profile: &str) -> Result<()> {
         )));
     };
 
-    let mut settings = load_settings();
+    let mut settings = try_load_settings()?;
     let defaults = Settings::default();
 
     if let Some(dir) = data_dir {

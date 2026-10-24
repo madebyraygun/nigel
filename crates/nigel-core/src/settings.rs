@@ -236,17 +236,74 @@ fn default_data_dir() -> PathBuf {
         .join("nigel")
 }
 
-pub fn load_settings() -> Settings {
-    let path = settings_path();
-    if path.exists() {
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        Settings::default()
-    }
+/// The settings in effect: the defaults when there is no settings.json, the
+/// file's contents when there is one, and [`NigelError::SettingsUnreadable`]
+/// when there is one that cannot be read or parsed.
+///
+/// Anything that goes on to write settings, or that needs `data_dir` to find
+/// the books, reads through this rather than [`load_settings`]: a default data
+/// directory standing in for an unreadable one would open a different set of
+/// books.
+pub fn try_load_settings() -> Result<Settings> {
+    read_settings_file(&settings_path()).map(Option::unwrap_or_default)
 }
 
+/// The file at `path` parsed, `None` when there is no file, or the reason it
+/// could not be read.
+fn read_settings_file(path: &std::path::Path) -> Result<Option<Settings>> {
+    let unreadable = |reason: String| NigelError::SettingsUnreadable {
+        path: path.display().to_string(),
+        reason,
+    };
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(unreadable(e.to_string())),
+    };
+    serde_json::from_str(&content)
+        .map(Some)
+        .map_err(|e| unreadable(e.to_string()))
+}
+
+/// The settings in effect, or the defaults when settings.json cannot be read —
+/// for callers that only read a setting that has a safe default (the update
+/// toggle, the invoicing credentials). The first unreadable file a process
+/// meets is reported on stderr; [`save_settings`] still refuses to replace it.
+pub fn load_settings() -> Settings {
+    try_load_settings().unwrap_or_else(|err| {
+        report_unreadable_once(&err);
+        Settings::default()
+    })
+}
+
+static UNREADABLE_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Print `err` the first time a process falls back to defaults, so one broken
+/// file is one warning rather than one per read.
+fn report_unreadable_once(err: &NigelError) -> bool {
+    let first = !UNREADABLE_REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed);
+    if first {
+        eprintln!("warning: {err}");
+    }
+    first
+}
+
+/// Stop [`load_settings`] writing its warning to stderr for the rest of the
+/// process. A full-screen terminal UI calls this before it takes the screen:
+/// a line printed there would land inside the alternate screen, and the TUI
+/// reports an unreadable file through [`try_data_dir`]'s error instead.
+pub fn silence_unreadable_warning() {
+    UNREADABLE_REPORTED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Write `settings` over settings.json.
+///
+/// Refuses with [`NigelError::SettingsUnreadable`] when the file already there
+/// cannot be read or parsed: the caller's copy was then built from defaults,
+/// and writing it would erase every key the file holds.
 pub fn save_settings(settings: &Settings) -> Result<()> {
+    read_settings_file(&settings_path())?;
     let dir = config_dir();
     std::fs::create_dir_all(&dir)?;
     restrict_dir_permissions(&dir)?;
@@ -361,9 +418,12 @@ pub fn settings_file_exists() -> bool {
 }
 
 /// Read and remove legacy `company_name` from settings.json if present.
-/// Returns the value so it can be migrated to the DB metadata table.
+/// Returns the value so it can be migrated to the DB metadata table. A file
+/// that does not parse as [`Settings`] is left alone, as [`save_settings`]
+/// leaves it.
 pub fn migrate_company_name() -> Option<String> {
     let path = settings_path();
+    read_settings_file(&path).ok()??;
     let content = std::fs::read_to_string(&path).ok()?;
     let mut raw: serde_json::Value = serde_json::from_str(&content).ok()?;
     let company = raw.as_object_mut()?.remove("company_name")?;
@@ -450,6 +510,12 @@ fn url_setting(
 
 pub fn invoicing_config() -> InvoicingConfig {
     invoicing_config_from(&load_settings())
+}
+
+/// [`invoicing_config`], or the reason settings.json cannot be read rather
+/// than an installation that looks unconfigured.
+pub fn try_invoicing_config() -> Result<InvoicingConfig> {
+    Ok(invoicing_config_from(&try_load_settings()?))
 }
 
 /// Everything the documents feature reads: the invoicing keys it shares with
@@ -591,8 +657,21 @@ pub fn invoicing_status(cfg: &InvoicingConfig) -> InvoicingStatus {
     }
 }
 
+/// The directory the books live in, from [`load_settings`]: the default
+/// directory when settings.json cannot be parsed. Only a short-lived process
+/// that has already checked the file with [`try_load_settings`] — every CLI
+/// subcommand, which `main` checks before dispatch — may use it. Anything that
+/// lives long enough for the file to break underneath it uses
+/// [`try_data_dir`].
 pub fn get_data_dir() -> PathBuf {
     PathBuf::from(&load_settings().data_dir)
+}
+
+/// The directory the books live in, or [`NigelError::SettingsUnreadable`]
+/// when settings.json cannot be parsed — never the default directory standing
+/// in for a configured one.
+pub fn try_data_dir() -> Result<PathBuf> {
+    Ok(PathBuf::from(try_load_settings()?.data_dir))
 }
 
 pub fn shellexpand_path(path: &str) -> String {
@@ -635,6 +714,34 @@ pub fn restrict_dir_permissions(path: &std::path::Path) -> Result<()> {
         let _ = path;
     }
     Ok(())
+}
+
+/// A settings.json one stray comma away from parsing, written into the
+/// current config directory; answers the bytes that must survive.
+#[cfg(test)]
+pub(crate) fn write_malformed_settings() -> Vec<u8> {
+    let bytes =
+        b"{\n  \"data_dir\": \"/books/acme\",\n  \"mailgun_domain\": \"mg.example.com\",,\n}\n"
+            .to_vec();
+    std::fs::create_dir_all(config_dir()).expect("config dir");
+    std::fs::write(settings_path(), &bytes).expect("write settings.json");
+    bytes
+}
+
+/// settings.json still holds exactly `bytes`, and nothing was written beside it.
+#[cfg(test)]
+pub(crate) fn assert_settings_untouched(bytes: &[u8]) {
+    assert_eq!(
+        std::fs::read(settings_path()).expect("settings.json"),
+        bytes,
+        "settings.json was rewritten"
+    );
+    let names: Vec<String> = std::fs::read_dir(config_dir())
+        .expect("config dir")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains("settings"))
+        .collect();
+    assert_eq!(names, ["settings.json"], "a temporary file was left behind");
 }
 
 #[cfg(test)]
@@ -1221,5 +1328,114 @@ mod tests {
         let s: Settings = serde_json::from_str(json).unwrap();
         assert!(s.update_check); // defaults to true
         assert!(s.last_update_check.is_none());
+    }
+
+    /// One stray character in a hand edit. Reading names the file and the
+    /// parse error; every writer refuses and leaves the file byte for byte.
+    #[test]
+    fn a_malformed_settings_file_is_reported_and_never_overwritten() {
+        let _config = TempConfigDir::new();
+        let bytes = write_malformed_settings();
+
+        let err = try_load_settings().expect_err("a malformed file is an error");
+        assert!(
+            matches!(err, NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains(&settings_path().display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("line 3"), "the parse error: {message}");
+
+        assert_eq!(load_settings().data_dir, Settings::default().data_dir);
+
+        let refused = save_settings(&Settings {
+            last_update_check: Some("2026-01-01T00:00:00".into()),
+            ..load_settings()
+        })
+        .expect_err("a save over a malformed file is refused");
+        assert_eq!(refused.to_string(), message);
+
+        assert_eq!(migrate_company_name(), None);
+
+        assert_settings_untouched(&bytes);
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_not_replaced() {
+        let _config = TempConfigDir::new();
+        std::fs::create_dir_all(settings_path()).unwrap();
+
+        let err = save_settings(&Settings::default()).expect_err("refused");
+        assert!(
+            matches!(err, NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        assert!(settings_path().is_dir(), "the directory is still there");
+    }
+
+    #[test]
+    fn a_missing_settings_file_is_the_defaults_and_saves() {
+        let _config = TempConfigDir::new();
+        assert_eq!(
+            try_load_settings().expect("defaults").data_dir,
+            Settings::default().data_dir
+        );
+        save_settings(&Settings::default()).expect("first save");
+        assert!(settings_file_exists());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_reported_once_per_process() {
+        let err = NigelError::SettingsUnreadable {
+            path: "settings.json".into(),
+            reason: "expected value".into(),
+        };
+        UNREADABLE_REPORTED.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(report_unreadable_once(&err));
+        assert!(!report_unreadable_once(&err));
+
+        UNREADABLE_REPORTED.store(false, std::sync::atomic::Ordering::Relaxed);
+        silence_unreadable_warning();
+        assert!(
+            !report_unreadable_once(&err),
+            "a silenced process prints nothing"
+        );
+    }
+
+    #[test]
+    fn the_data_dir_is_an_error_never_the_default_when_settings_json_is_unreadable() {
+        let _config = TempConfigDir::new();
+        save_settings(&Settings {
+            data_dir: "/books/acme".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        assert_eq!(try_data_dir().unwrap(), PathBuf::from("/books/acme"));
+
+        write_malformed_settings();
+        let err = try_data_dir().expect_err("unreadable");
+        assert!(
+            matches!(err, NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        assert!(try_invoicing_config().is_err());
+    }
+
+    #[test]
+    fn a_company_name_migration_still_rewrites_a_readable_file() {
+        let _config = TempConfigDir::new();
+        std::fs::create_dir_all(config_dir()).unwrap();
+        std::fs::write(
+            settings_path(),
+            r#"{"data_dir": "/books/acme", "company_name": "Acme"}"#,
+        )
+        .unwrap();
+        assert_eq!(migrate_company_name().as_deref(), Some("Acme"));
+        let rewritten = std::fs::read_to_string(settings_path()).unwrap();
+        assert!(!rewritten.contains("company_name"), "{rewritten}");
+        assert_eq!(load_settings().data_dir, "/books/acme");
     }
 }

@@ -46,7 +46,7 @@ pub fn reveal_command(dir: &Path) -> Command {
 /// zombies.
 #[tauri::command]
 pub async fn reveal_data_dir() -> Result<(), String> {
-    let dir = nigel_core::settings::get_data_dir();
+    let dir = nigel_core::settings::try_data_dir().map_err(|e| e.to_string())?;
     if !dir.is_dir() {
         return Err(format!("{} is not a folder.", dir.display()));
     }
@@ -82,6 +82,22 @@ mod tests {
             "xdg-open"
         };
         assert_eq!(command.get_program(), expected);
+    }
+
+    /// An unreadable settings.json is reported, never the default folder.
+    #[tokio::test]
+    async fn reveal_refuses_when_settings_json_is_unreadable() {
+        let _config = nigel_core::settings::TempConfigDir::new();
+        let dir = nigel_core::settings::config_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            "{\"data_dir\": \"/books/acme\",,}\n",
+        )
+        .unwrap();
+
+        let err = reveal_data_dir().await.expect_err("refused");
+        assert!(err.contains("settings.json could not be read"), "{err}");
     }
 
     #[test]

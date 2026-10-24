@@ -93,6 +93,15 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // The books are found through settings.json, so a file that cannot be parsed
+    // leaves nothing safe to open: every command that touches them stops here.
+    if !runs_without_settings(cli.command.as_ref()) {
+        if let Err(e) = nigel_core::settings::try_load_settings() {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+
     let result = match cli.command {
         // Dashboard handles missing init via its own onboarding flow
         None => cli::dashboard::run(),
@@ -112,6 +121,15 @@ fn main() {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
+}
+
+/// Commands that never open the books, and so carry on with default settings
+/// when settings.json cannot be parsed.
+fn runs_without_settings(command: Option<&Commands>) -> bool {
+    matches!(
+        command,
+        Some(Commands::Completions { .. } | Commands::Update)
+    )
 }
 
 /// Commands built for cron and launchd, which must never reach a prompt.

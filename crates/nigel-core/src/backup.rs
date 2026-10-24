@@ -9,7 +9,11 @@ use crate::settings::{restrict_dir_permissions, restrict_file_permissions};
 /// Preserves encryption state: encrypted sources produce encrypted backups.
 /// The `password` must match the source database's encryption key (if any).
 pub fn snapshot(conn: &rusqlite::Connection, dest_path: &Path) -> Result<()> {
-    snapshot_with_password(conn, dest_path, crate::db::get_db_password().as_deref())
+    snapshot_with_password(
+        conn,
+        dest_path,
+        crate::db::get_db_password().as_ref().map(|p| p.as_str()),
+    )
 }
 
 /// The folder holding the filed document PDFs that go with the backup at

@@ -235,6 +235,12 @@ pub enum NigelError {
     #[error("Settings error: {0}")]
     Settings(String),
 
+    /// settings.json exists but could not be read or parsed. Every writer
+    /// refuses rather than replacing it with defaults, so the message says the
+    /// file is untouched.
+    #[error("{path} could not be read ({reason}). Nothing has been written to it; fix the file or move it aside, then try again.")]
+    SettingsUnreadable { path: String, reason: String },
+
     /// A record that was addressed by id or name is not there.
     #[error("{0}")]
     NotFound(String),

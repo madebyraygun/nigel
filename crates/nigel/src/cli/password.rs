@@ -20,13 +20,13 @@ pub fn prompt_password_if_needed(db_path: &Path) -> Result<()> {
     }
 
     if let Some(pw) = env_password_if_set(db_path)? {
-        set_db_password(Some(pw));
+        set_db_password(Some(zeroize::Zeroizing::new(pw)));
         return Ok(());
     }
 
     for attempt in 1..=3 {
         let pw = prompt("Database password: ")?;
-        set_db_password(Some(pw));
+        set_db_password(Some(zeroize::Zeroizing::new(pw)));
         // get_connection runs PRAGMAs that read the DB header, so it will fail
         // on a wrong password. Match on the result instead of using ? to avoid
         // short-circuiting the retry loop.
@@ -57,7 +57,7 @@ pub fn unlock_without_prompting(db_path: &Path) -> Result<()> {
     }
     match env_password_if_set(db_path)? {
         Some(pw) => {
-            set_db_password(Some(pw));
+            set_db_password(Some(zeroize::Zeroizing::new(pw)));
             Ok(())
         }
         None => Err(nigel_core::error::NigelError::Other(format!(
@@ -95,7 +95,7 @@ pub fn run_set() -> Result<()> {
         return Ok(());
     }
     encrypt_database(&db_path, &new_pw)?;
-    set_db_password(Some(new_pw));
+    set_db_password(Some(zeroize::Zeroizing::new(new_pw)));
     println!("Database encrypted successfully.");
     Ok(())
 }
@@ -113,7 +113,7 @@ pub fn run_change() -> Result<()> {
         return Ok(());
     }
     rekey_database(&db_path, current_pw.trim(), &new_pw)?;
-    set_db_password(Some(new_pw));
+    set_db_password(Some(zeroize::Zeroizing::new(new_pw)));
     println!("Password changed successfully.");
     Ok(())
 }

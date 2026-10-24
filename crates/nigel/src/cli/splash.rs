@@ -205,7 +205,9 @@ impl Splash {
         if let Some(ref db_path) = self.db_path {
             match nigel_core::db::validate_password(db_path, &self.password) {
                 Ok(true) => {
-                    nigel_core::db::set_db_password(Some(self.password.clone()));
+                    nigel_core::db::set_db_password(Some(zeroize::Zeroizing::new(
+                        self.password.clone(),
+                    )));
                     return Ok(true);
                 }
                 Ok(false) => {

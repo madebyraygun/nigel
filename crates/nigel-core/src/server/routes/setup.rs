@@ -82,7 +82,7 @@ async fn post_setup(
                 "The password cannot contain control characters.",
             ))
         }
-        Some(value) => Some(value.to_string()),
+        Some(value) => Some(zeroize::Zeroizing::new(value.to_string())),
     };
 
     let action = request.action;
@@ -90,7 +90,7 @@ async fn post_setup(
     {
         // The write side, as the data-directory switch takes it: this creates
         // a database file and then rebinds the path every later request reads.
-        let _gate = state.db_gate.write().await;
+        let gate = state.db_gate.clone().write_owned().await;
 
         // One read of the served path, feeding both the guard and the write.
         // Two reads could straddle a settings.json rewritten in between, and
@@ -115,19 +115,22 @@ async fn post_setup(
                 .to_path_buf(),
         };
 
-        let db_path = tokio::task::spawn_blocking(move || -> ApiResult<PathBuf> {
+        // The rebind happens inside the task, so a request cancelled while the
+        // books are being created still leaves the server serving them.
+        let rebind = state.clone();
+        let (_gate, created) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
             let fresh = crate::setup::run(&plan)?;
-            match action {
-                SetupAction::Fresh => Ok(fresh),
+            let db_path: PathBuf = match action {
+                SetupAction::Fresh => fresh,
                 // Its own directory and its own database, so the demo never
                 // sits on top of the books the user is about to keep.
-                SetupAction::Demo => Ok(crate::demo::setup_demo_dir()?),
-            }
+                SetupAction::Demo => crate::demo::setup_demo_dir()?,
+            };
+            rebind.set_db_path(db_path);
+            Ok(())
         })
-        .await
-        .map_err(ApiError::internal)??;
-
-        state.set_db_path(db_path);
+        .await?;
+        created?;
     }
 
     Ok(Json(current_status(&state).await?))

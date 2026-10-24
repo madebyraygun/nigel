@@ -89,9 +89,13 @@ than as part of the root workspace's run.
 ## The database
 
 `src/db.rs::database_path()` opens the same database the CLI does —
-`nigel_core::settings::get_data_dir().join("nigel.db")` — rather than a
+`nigel_core::settings::try_data_dir()?.join("nigel.db")` — rather than a
 database of its own, so a book edited from the terminal shows up in the
-desktop shell and back.
+desktop shell and back. When settings.json cannot be parsed the shell shows
+a native error dialog naming the file and the parse error and exits, as
+`nigel serve` refuses to start; it never serves the default directory in
+its place. Reveal-in-folder and import staging resolve the folder the same
+way and report the same error.
 
 ## Window lifecycle
 

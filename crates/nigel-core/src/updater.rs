@@ -178,6 +178,19 @@ pub fn is_newer(remote: &str, current: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The updater's timestamp write is the save nobody asks for: it runs on
+    /// launch, so it is the one that would erase a hand-edited file first.
+    /// Refused, it also never reaches the network.
+    #[test]
+    fn the_timestamp_write_leaves_a_malformed_settings_file_alone() {
+        let _config = crate::settings::TempConfigDir::new();
+        let bytes = crate::settings::write_malformed_settings();
+
+        assert!(check_with_cooldown().is_none());
+
+        crate::settings::assert_settings_untouched(&bytes);
+    }
+
     #[test]
     fn a_transfer_under_the_floor_is_refused_by_size() {
         let err = refuse_if_truncated(MIN_BINARY_SIZE - 1).expect_err("should refuse");

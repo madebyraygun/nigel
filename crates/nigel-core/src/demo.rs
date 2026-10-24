@@ -15,7 +15,6 @@ use crate::db::{get_connection, init_db};
 use crate::error::Result;
 use crate::invoicing::clients::add_client;
 use crate::invoicing::invoices::{create_invoice, mark_published, record_payment, NewLineItem};
-use crate::settings::load_settings;
 
 pub const ACCOUNT_NAME: &str = "BofA Checking";
 
@@ -587,7 +586,7 @@ pub fn seed_demo(conn: &Connection) -> Result<bool> {
 /// directory is initialized on the business chart whatever profile the caller
 /// keeps next door.
 pub fn setup_demo_dir() -> Result<PathBuf> {
-    let mut settings = load_settings();
+    let mut settings = crate::settings::try_load_settings()?;
     let demo_dir = PathBuf::from(&settings.data_dir).join("demo");
     for dir in [demo_dir.clone(), demo_dir.join("exports")] {
         std::fs::create_dir_all(&dir)?;
@@ -665,6 +664,20 @@ mod tests {
             crate::db::get_metadata(&conn, "company_name").as_deref(),
             Some("Acme Consulting LLC")
         );
+    }
+
+    #[test]
+    fn setup_demo_dir_refuses_a_malformed_settings_file_before_building_anything() {
+        crate::db::set_db_password(None);
+        let _config = crate::settings::TempConfigDir::new();
+        let bytes = crate::settings::write_malformed_settings();
+
+        let err = setup_demo_dir().expect_err("refused");
+        assert!(
+            matches!(err, crate::error::NigelError::SettingsUnreadable { .. }),
+            "{err:?}"
+        );
+        crate::settings::assert_settings_untouched(&bytes);
     }
 
     #[test]

@@ -72,7 +72,7 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
             ..
         } => {
             let conn = nigel_core::db::get_connection(
-                &nigel_core::settings::get_data_dir().join("nigel.db"),
+                &nigel_core::settings::try_data_dir()?.join("nigel.db"),
             )?;
             let resolved = filters.resolve(&conn)?;
             drop(conn);
@@ -115,7 +115,7 @@ fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
 
     let name = cmd.export_basename();
     let s = dispatch_text(&cmd)?;
-    let path = output.unwrap_or_else(|| default_text_path(&name));
+    let path = output.map_or_else(|| default_text_path(&name), Ok)?;
     let p = PathBuf::from(&path);
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent)?;
@@ -127,7 +127,7 @@ fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
 }
 
 fn export_all_text(year: Option<i32>, output_dir: Option<String>) -> Result<()> {
-    let data_dir = nigel_core::settings::get_data_dir();
+    let data_dir = nigel_core::settings::try_data_dir()?;
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     let is_default_dir = output_dir.is_none();
     let dir = output_dir
@@ -189,12 +189,12 @@ fn dispatch_pdf_export(cmd: ReportCommands, output: Option<String>) -> Result<()
     }
 }
 
-fn default_text_path(name: &str) -> String {
-    nigel_core::settings::get_data_dir()
+fn default_text_path(name: &str) -> Result<String> {
+    Ok(nigel_core::settings::try_data_dir()?
         .join("exports")
         .join(format!("{}.txt", export_file_stem(name)))
         .to_string_lossy()
-        .into_owned()
+        .into_owned())
 }
 
 #[cfg(test)]

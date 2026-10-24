@@ -140,7 +140,7 @@ mod tests {
         drop(conn);
 
         // Set global password and verify get_connection works
-        set_db_password(Some("secret".to_string()));
+        set_db_password(Some(zeroize::Zeroizing::new("secret".to_string())));
         let conn = get_connection(&db_path).unwrap();
         let count: i64 = conn
             .query_row("SELECT count(*) FROM accounts", [], |r| r.get(0))

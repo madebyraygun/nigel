@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::sync::RwLock as TokioRwLock;
 
 use super::error::ApiError;
+use super::secret::SessionToken;
 
 /// The failure count at which answers start being held back. The first two
 /// cost nothing but a message; the third and every one after it is delayed.
@@ -35,6 +36,13 @@ pub struct UnlockGate {
 }
 
 impl UnlockGate {
+    /// How many failures have been recorded.
+    #[cfg(test)]
+    pub fn failures(&self) -> u32 {
+        // unwrap: poisoned mutex means a thread panicked — unrecoverable
+        *self.failures.lock().unwrap()
+    }
+
     /// Count a failed attempt and report what to tell the caller: how many free
     /// attempts are left, and how long this answer should be held back.
     pub fn record_failure(&self) -> (u32, Duration) {
@@ -85,7 +93,7 @@ pub struct AppState {
     /// path fixed at startup would leave every later request reading the old
     /// books under the new directory's name.
     db_path: Arc<RwLock<PathBuf>>,
-    pub session_token: Arc<str>,
+    pub session_token: SessionToken,
     pub features: Features,
     pub unlock: Arc<UnlockGate>,
     /// Guards the database *file* rather than its contents.
@@ -110,7 +118,7 @@ impl AppState {
     pub fn new(db_path: PathBuf, session_token: String) -> Self {
         Self {
             db_path: Arc::new(RwLock::new(db_path)),
-            session_token: Arc::from(session_token.as_str()),
+            session_token: SessionToken::from(session_token),
             features: Features::detect(),
             unlock: Arc::new(UnlockGate::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
@@ -174,6 +182,34 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The token is the server's whole authentication; a `dbg!` of the state,
+    /// or of anything that derives `Debug` around it, must not print it.
+    #[test]
+    fn a_derived_debug_of_the_state_carries_no_token() {
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct Holder {
+            state: AppState,
+        }
+
+        let token = super::super::auth::generate_token();
+        let state = AppState::new(PathBuf::from("/books/acme/nigel.db"), token.clone());
+        for rendered in [
+            format!("{state:?}"),
+            format!("{state:#?}"),
+            format!(
+                "{:?}",
+                Holder {
+                    state: state.clone()
+                }
+            ),
+        ] {
+            assert!(!rendered.contains(&token), "token in {rendered}");
+            assert!(rendered.contains("<redacted>"), "got {rendered}");
+        }
+        assert_eq!(state.session_token.expose(), token);
+    }
 
     #[test]
     fn backoff_is_free_then_doubles_up_to_the_cap() {

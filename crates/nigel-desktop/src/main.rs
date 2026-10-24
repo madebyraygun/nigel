@@ -3,14 +3,20 @@
 use std::sync::Arc;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use nigel_desktop::{
     chrome, db, imports, reveal, save, scheme_url, transport, window_state, SCHEME,
 };
 
 fn main() {
+    let context = tauri::generate_context!();
+    let database = match db::database_path() {
+        Ok(path) => path,
+        Err(err) => refuse_to_launch(&err, context),
+    };
     let state = nigel_core::server::state::AppState::new(
-        db::database_path(),
+        database,
         nigel_core::server::auth::generate_token(),
     );
     let router = nigel_core::server::build_desktop_router(state, nigel_desktop::trusted_origins());
@@ -84,7 +90,7 @@ fn main() {
             spawn_show_fallback(app.handle().clone());
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("build nigel desktop")
         .run(move |app, event| {
             #[cfg(not(target_os = "macos"))]
@@ -137,6 +143,30 @@ fn main() {
                 _ => {}
             }
         });
+}
+
+/// settings.json cannot say where the books are: say so in a native dialog
+/// and exit, as `nigel serve` refuses to start. Serving the default directory
+/// instead would show the setup screen over a configured install, and setup
+/// there would create a second set of books.
+fn refuse_to_launch(err: &nigel_core::error::NigelError, context: tauri::Context) -> ! {
+    let message = db::launch_failure_message(err);
+    eprintln!("nigel: {message}");
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            app.dialog()
+                .message(message)
+                .title("Nigel")
+                .kind(MessageDialogKind::Error)
+                .show(move |_| handle.exit(1));
+            Ok(())
+        })
+        .build(context)
+        .expect("build nigel desktop")
+        .run(|_, _| {});
+    std::process::exit(1)
 }
 
 /// A wedged frontend must not leave an invisible process: a window that has

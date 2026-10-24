@@ -6,7 +6,7 @@ use crate::error::Result;
 use crate::fmt::money;
 use crate::reports;
 use crate::reports::{parse_month_opt, register_range_label, register_subtitle, RegisterFilters};
-use crate::settings::get_data_dir;
+use crate::settings::try_data_dir;
 
 /// Prepend company name as a header line if non-empty.
 pub fn with_header(company_name: &str, body: String) -> String {
@@ -36,7 +36,7 @@ pub fn pnl(
     from_date: Option<String>,
     to_date: Option<String>,
 ) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
@@ -45,7 +45,7 @@ pub fn pnl(
 }
 
 pub fn expenses(month: Option<String>, year: Option<i32>) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let (my, mm) = parse_month_opt(&month);
     let data = reports::get_expense_breakdown(&conn, year.or(my), mm)?;
@@ -53,14 +53,14 @@ pub fn expenses(month: Option<String>, year: Option<i32>) -> Result<String> {
 }
 
 pub fn tax(year: Option<i32>) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let data = reports::get_tax_summary(&conn, year)?;
     Ok(with_header(&company, format_tax(&data)))
 }
 
 pub fn cashflow(month: Option<String>, year: Option<i32>) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let (my, mm) = parse_month_opt(&month);
     let data = reports::get_cashflow(&conn, year.or(my), mm)?;
@@ -74,7 +74,7 @@ pub fn register(
     to_date: Option<String>,
     filters: &RegisterFilters,
 ) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
@@ -94,28 +94,28 @@ pub fn register(
 }
 
 pub fn flagged() -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let rows = reports::get_flagged(&conn)?;
     Ok(with_header(&company, format_flagged(&rows)))
 }
 
 pub fn balance() -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let data = reports::get_balance(&conn)?;
     Ok(with_header(&company, format_balance(&data)))
 }
 
 pub fn k1(year: Option<i32>) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let data = reports::get_k1_prep(&conn, year)?;
     Ok(with_header(&company, format_k1(&data)))
 }
 
 pub fn aging(today: &str) -> Result<String> {
-    let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = get_connection(&try_data_dir()?.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let data = crate::invoicing::invoices::ar_aging_detail(&conn, today)?;
     Ok(with_header(&company, format_aging(&data)))

@@ -21,6 +21,8 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tokio::sync::OwnedRwLockWriteGuard;
+use zeroize::Zeroizing;
 
 use crate::db;
 use crate::password;
@@ -72,8 +74,8 @@ impl From<Settings> for AppSettings {
     }
 }
 
-async fn get_app() -> Json<AppSettings> {
-    Json(settings::load_settings().into())
+async fn get_app() -> ApiResult<Json<AppSettings>> {
+    Ok(Json(settings::try_load_settings()?.into()))
 }
 
 /// `updateCheck` is the only field the web UI may write. The user name is set
@@ -86,7 +88,7 @@ pub struct AppSettingsPatch {
 }
 
 async fn put_app(ApiJson(patch): ApiJson<AppSettingsPatch>) -> ApiResult<Json<AppSettings>> {
-    let mut settings = settings::load_settings();
+    let mut settings = settings::try_load_settings()?;
     settings.update_check = patch.update_check;
     settings::save_settings(&settings)?;
     Ok(Json(settings.into()))
@@ -212,37 +214,41 @@ async fn post_data_dir(
     }
 
     {
-        let _gate = state.db_gate.write().await;
+        let gate = state.db_gate.clone().write_owned().await;
+        let mut stored = settings::try_load_settings()?;
 
-        // Everything that can fail happens before anything is committed. A
-        // target this build cannot open must leave the switch un-made: rebinding
-        // first and discovering the problem afterwards would strand the server
-        // on a database it cannot serve, and settings.json would send it back
-        // there on the next start.
-        if !db::is_encrypted(&db_path)? {
-            // Opened with no password explicitly rather than through
-            // `get_connection`: the process global still holds the *current*
-            // database's key at this point, and applying it to a plaintext file
-            // would fail.
-            let path = db_path.clone();
-            tokio::task::spawn_blocking(move || -> ApiResult<()> {
-                // The same pre-flight `nigel serve` runs at startup, so a target
-                // written by an older version is migrated before the first read.
-                // An encrypted one is skipped; unlocking migrates it.
-                let conn = db::open_connection(&path, None)?;
-                db::init_db(&conn).map_err(ApiError::internal)
-            })
-            .await
-            .map_err(ApiError::internal)??;
-        }
+        // The migration and the rebind run in one task that owns the guard, so
+        // a request cancelled partway cannot release the gate while the target
+        // is open, nor leave the switch half made.
+        let switch = state.clone();
+        let (_gate, switched) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
+            // Everything that can fail happens before anything is committed. A
+            // target this build cannot open must leave the switch un-made:
+            // rebinding first and discovering the problem afterwards would
+            // strand the server on a database it cannot serve, and settings.json
+            // would send it back there on the next start.
+            if !db::is_encrypted(&db_path)? {
+                // Opened with no password explicitly rather than through
+                // `get_connection`: the process global still holds the
+                // *current* database's key at this point, and applying it to a
+                // plaintext file would fail. The same pre-flight `nigel serve`
+                // runs at startup, so a target written by an older version is
+                // migrated before the first read. An encrypted one is skipped;
+                // unlocking migrates it.
+                let conn = db::open_connection(&db_path, None)?;
+                db::init_db(&conn).map_err(ApiError::internal)?;
+            }
 
-        let mut stored = settings::load_settings();
-        stored.data_dir = resolved.to_string_lossy().to_string();
-        settings::save_settings(&stored)?;
+            stored.data_dir = resolved.to_string_lossy().to_string();
+            settings::save_settings(&stored)?;
 
-        db::set_db_password(None);
-        state.set_db_path(db_path);
-        state.unlock.reset();
+            db::set_db_password(None);
+            switch.set_db_path(db_path);
+            switch.unlock.reset();
+            Ok(())
+        })
+        .await?;
+        switched?;
     }
 
     Ok(Json(current_status(&state).await?))
@@ -299,20 +305,20 @@ async fn post_password_set(
 
     // Taken before the path is read, so a data-directory switch that lands
     // between the two cannot leave this encrypting the database it replaced.
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if db::is_encrypted(&db_path)? {
         return Err(already_encrypted());
     }
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, encrypted) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::encrypt_database(&db_path, &new_password)?;
         // Only after the file is genuinely encrypted: the reverse order leaves
         // this process holding a key for a database that is still plaintext.
         db::set_db_password(Some(new_password));
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    encrypted?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: true,
@@ -330,22 +336,22 @@ async fn post_password_change(
         "{\"currentPassword\": \"...\", \"newPassword\": \"...\"}",
     )?;
     let new_password = trimmed_new_password(&request.new_password)?;
-    let current = request.current_password.expose().trim().to_string();
+    let current = Zeroizing::new(request.current_password.expose().trim().to_string());
 
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if !db::is_encrypted(&db_path)? {
         return Err(not_encrypted());
     }
-    verify_current_password(&state, &db_path, &current).await?;
+    let gate = verify_current_password(&state, gate, &db_path, &current).await?;
 
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, rekeyed) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::rekey_database(&db_path, &current, &new_password)?;
         db::set_db_password(Some(new_password));
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    rekeyed?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: true,
@@ -359,22 +365,22 @@ async fn post_password_remove(
     body: Result<Json<RemovePasswordRequest>, JsonRejection>,
 ) -> ApiResult<Json<PasswordStateResponse>> {
     let request = password_body(body, "{\"currentPassword\": \"...\"}")?;
-    let current = request.current_password.expose().trim().to_string();
+    let current = Zeroizing::new(request.current_password.expose().trim().to_string());
 
-    let _gate = state.db_gate.write().await;
+    let gate = state.db_gate.clone().write_owned().await;
     let db_path = state.db_path();
     if !db::is_encrypted(&db_path)? {
         return Err(not_encrypted());
     }
-    verify_current_password(&state, &db_path, &current).await?;
+    let gate = verify_current_password(&state, gate, &db_path, &current).await?;
 
-    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+    let (_gate, decrypted) = super::spawn_blocking_holding(gate, move || -> ApiResult<()> {
         password::decrypt_database(&db_path, &current)?;
         db::set_db_password(None);
         Ok(())
     })
-    .await
-    .map_err(ApiError::internal)??;
+    .await?;
+    decrypted?;
 
     Ok(Json(PasswordStateResponse {
         encrypted: false,
@@ -391,28 +397,36 @@ async fn post_password_remove(
 /// clean `401` instead of the `NotADatabase` failure `rekey_database` would
 /// raise a moment later.
 ///
-/// **The caller holds `db_gate`.** Both callers go on to rewrite the database
-/// file, so they hold the write side across the check and the rewrite together
-/// — taking a read guard here would deadlock against it, and releasing between
-/// the two would let a data-directory switch land in the middle.
+/// **The caller hands over its `db_gate` write guard and gets it back.** Both
+/// callers go on to rewrite the database file, so they hold the write side
+/// across the check and the rewrite together — taking a read guard here would
+/// deadlock against it, and releasing between the two would let a
+/// data-directory switch land in the middle. The check's own task holds the
+/// guard while its connection is open.
 async fn verify_current_password(
     state: &AppState,
+    gate: OwnedRwLockWriteGuard<()>,
     db_path: &std::path::Path,
     current: &str,
-) -> ApiResult<()> {
+) -> ApiResult<OwnedRwLockWriteGuard<()>> {
     let path = db_path.to_path_buf();
-    let candidate = current.to_string();
-    let valid = tokio::task::spawn_blocking(move || db::validate_password(&path, &candidate))
-        .await
-        .map_err(ApiError::internal)?
-        // The error text is dropped: the key is applied as literal SQL in a
-        // `PRAGMA key` statement, which rusqlite prints back in its message.
+    let candidate = Zeroizing::new(current.to_string());
+    let (gate, valid) =
+        super::spawn_blocking_holding(gate, move || db::validate_password(&path, &candidate))
+            .await?;
+    // The error text is dropped: the key is applied as literal SQL in a
+    // `PRAGMA key` statement, which rusqlite prints back in its message.
+    let valid = valid
         .map_err(|_| ApiError::internal("Couldn't open the database to check the password."))?;
     if valid {
         state.unlock.reset();
-        return Ok(());
+        return Ok(gate);
     }
 
+    // The gate is released before the backoff: a wrong password rewrites
+    // nothing, and holding the write side through a delay of up to the cap
+    // would stall every other request to the database for the same time.
+    drop(gate);
     let (attempts_remaining, delay) = state.unlock.record_failure();
     tokio::time::sleep(delay).await;
     Err(ApiError::invalid_password(
@@ -430,7 +444,7 @@ async fn verify_current_password(
 /// embedded NUL. A password containing one encrypts the database and then locks
 /// its owner out permanently: it cannot be typed at a terminal prompt, and it
 /// cannot survive `NIGEL_DB_PASSWORD` either, since a NUL terminates the value.
-fn trimmed_new_password(secret: &Secret) -> ApiResult<String> {
+fn trimmed_new_password(secret: &Secret) -> ApiResult<Zeroizing<String>> {
     let trimmed = secret.expose().trim();
     if trimmed.is_empty() {
         return Err(ApiError::bad_request(
@@ -442,7 +456,7 @@ fn trimmed_new_password(secret: &Secret) -> ApiResult<String> {
             "The password cannot contain control characters.",
         ));
     }
-    Ok(trimmed.to_string())
+    Ok(Zeroizing::new(trimmed.to_string()))
 }
 
 fn already_encrypted() -> ApiError {
@@ -676,6 +690,56 @@ mod tests {
         assert_eq!(body["userName"], "", "userName is not web-editable");
     }
 
+    /// A settings.json that does not parse is an error on every surface the
+    /// SPA reads it through, and every route that writes it refuses.
+    #[tokio::test]
+    async fn a_malformed_settings_file_is_an_error_and_is_never_written() {
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+        let bytes = crate::settings::write_malformed_settings();
+
+        for uri in ["/api/status", "/api/settings/app"] {
+            let (status, body) = get_json(&app, uri, &token).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{uri}: {body}");
+            assert_eq!(
+                body["error"]["details"]["reason"], "settings_unreadable",
+                "{uri}: {body}"
+            );
+            assert!(
+                body["error"]["message"]
+                    .as_str()
+                    .expect("message")
+                    .contains("settings.json"),
+                "{uri}: {body}"
+            );
+        }
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/app",
+            &token,
+            &json!({ "updateCheck": false }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+
+        let (_other_dir, other_db) = temp_db();
+        let (status, body) = post_json(
+            &app,
+            "/api/settings/data-dir",
+            &token,
+            &json!({ "path": other_db.parent().unwrap().to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "settings_unreadable",
+            "{body}"
+        );
+
+        crate::settings::assert_settings_untouched(&bytes);
+    }
+
     // -- data directory -----------------------------------------------------
 
     #[tokio::test]
@@ -877,7 +941,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -938,7 +1002,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -959,7 +1023,7 @@ mod tests {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -980,12 +1044,63 @@ mod tests {
         crate::db::set_db_password(None);
     }
 
+    /// A wrong current password is held back by the unlock backoff, and the
+    /// rest of the server goes on answering meanwhile: the database gate is
+    /// released before the delay, not held through it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_backoff_for_a_wrong_password_does_not_hold_the_database_gate() {
+        let (_config, _dir, db_path) = fixture();
+        encrypt(&db_path);
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
+        let token = crate::server::auth::generate_token();
+        let state = crate::server::state::AppState::new(db_path.clone(), token.clone());
+        let app = crate::server::build_router(state.clone());
+        // Past the free attempts, so the next failure waits four seconds.
+        for _ in 0..4 {
+            state.unlock.record_failure();
+        }
+
+        let change = {
+            let (app, token) = (app.clone(), token.clone());
+            tokio::spawn(async move {
+                post_json(
+                    &app,
+                    "/api/settings/password/change",
+                    &token,
+                    &json!({ "currentPassword": "not it", "newPassword": "a new one" }),
+                )
+                .await
+            })
+        };
+        // The fifth failure is recorded just before the delay starts.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while state.unlock.failures() < 5 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the wrong password was never checked");
+
+        let (status, body) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            get_json(&app, "/api/accounts", &token),
+        )
+        .await
+        .expect("a read waited on the backoff");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!change.is_finished(), "the backoff was skipped");
+
+        let (status, _) = change.await.expect("change task");
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        crate::db::set_db_password(None);
+    }
+
     #[tokio::test]
     async fn removing_the_password_decrypts_the_database() {
         let (_config, _dir, db_path) = fixture();
         encrypt(&db_path);
         let (app, token) = app_for(&db_path);
-        crate::db::set_db_password(Some(PASSWORD.to_string()));
+        crate::db::set_db_password(Some(zeroize::Zeroizing::new(PASSWORD.to_string())));
 
         let (status, body) = post_json(
             &app,
@@ -1068,6 +1183,23 @@ mod tests {
         .await;
         assert!(!body.to_string().contains("swordfish"), "leaked in {body}");
 
+        crate::db::set_db_password(None);
+    }
+
+    /// The trimmed copy of a new password is what crosses await points, moves
+    /// into the blocking task and lands in the process global, so it carries
+    /// `Secret`'s zeroize-on-drop all the way there. The annotations are the
+    /// assertion: a plain `String` anywhere on that path does not compile.
+    #[test]
+    fn a_password_derived_from_a_secret_is_zeroized_on_drop() {
+        let secret = crate::server::secret::Secret::from("  swordfish  ".to_string());
+        let password: zeroize::Zeroizing<String> =
+            super::trimmed_new_password(&secret).expect("valid");
+        assert_eq!(password.as_str(), "swordfish");
+
+        crate::db::set_db_password(Some(password));
+        let held: Option<zeroize::Zeroizing<String>> = crate::db::get_db_password();
+        assert_eq!(held.as_deref().map(String::as_str), Some("swordfish"));
         crate::db::set_db_password(None);
     }
 }

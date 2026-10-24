@@ -252,6 +252,8 @@ impl From<NigelError> for ApiError {
                 Self::conflict(err.to_string(), serde_json::json!({ "reason": code }))
             }
             NigelError::Db(_) => Self::internal(redact_key_pragma(err.to_string())),
+            NigelError::SettingsUnreadable { .. } => Self::internal(err)
+                .with_details(serde_json::json!({ "reason": "settings_unreadable" })),
             other => Self::internal(other),
         }
     }

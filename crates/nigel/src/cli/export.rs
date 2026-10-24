@@ -10,17 +10,17 @@ use nigel_core::db::get_metadata;
 #[cfg(feature = "pdf")]
 use nigel_core::error::Result;
 #[cfg(feature = "pdf")]
-use nigel_core::settings::get_data_dir;
+use nigel_core::settings::try_data_dir;
 
 #[cfg(feature = "pdf")]
 use nigel_core::reports::{register_range_label, register_subtitle};
 
 #[cfg(feature = "pdf")]
-fn default_path(name: &str) -> PathBuf {
-    get_data_dir().join("exports").join(format!(
+fn default_path(name: &str) -> Result<PathBuf> {
+    Ok(try_data_dir()?.join("exports").join(format!(
         "{}.pdf",
         crate::cli::report::export_file_stem(name)
-    ))
+    )))
 }
 
 #[cfg(feature = "pdf")]
@@ -86,7 +86,7 @@ pub fn pnl(
     to_date: Option<String>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
     let report =
@@ -96,7 +96,7 @@ pub fn pnl(
     let bytes = nigel_core::pdf::render_pnl(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("pnl"));
+        .map_or_else(|| default_path("pnl"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
@@ -106,7 +106,7 @@ pub fn expenses(
     year: Option<i32>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let report = nigel_core::reports::get_expense_breakdown(&conn, year.or(my), mm)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
@@ -114,20 +114,20 @@ pub fn expenses(
     let bytes = nigel_core::pdf::render_expenses(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("expenses"));
+        .map_or_else(|| default_path("expenses"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn tax(year: Option<i32>, output: Option<String>) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let report = nigel_core::reports::get_tax_summary(&conn, year)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let range = nigel_core::reports::date_range_label(None, year);
     let bytes = nigel_core::pdf::render_tax(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("tax"));
+        .map_or_else(|| default_path("tax"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
@@ -137,7 +137,7 @@ pub fn cashflow(
     year: Option<i32>,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let report = nigel_core::reports::get_cashflow(&conn, year.or(my), mm)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
@@ -145,7 +145,7 @@ pub fn cashflow(
     let bytes = nigel_core::pdf::render_cashflow(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("cashflow"));
+        .map_or_else(|| default_path("cashflow"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
@@ -159,7 +159,7 @@ pub fn register(
     basename: &str,
     output: Option<String>,
 ) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let (my, mm) = parse_month_opt(&month);
     let y = year.or(my);
     let filters = filters.resolve(&conn)?;
@@ -176,62 +176,62 @@ pub fn register(
     let bytes = nigel_core::pdf::render_register(&report, &company, &subtitle)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path(basename));
+        .map_or_else(|| default_path(basename), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn flagged(output: Option<String>) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let rows = nigel_core::reports::get_flagged(&conn)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let bytes = nigel_core::pdf::render_flagged(&rows, &company)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("flagged"));
+        .map_or_else(|| default_path("flagged"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn balance(output: Option<String>) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let report = nigel_core::reports::get_balance(&conn)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let bytes = nigel_core::pdf::render_balance(&report, &company)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("balance"));
+        .map_or_else(|| default_path("balance"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn aging(output: Option<String>) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let report = nigel_core::invoicing::invoices::ar_aging_detail(&conn, &crate::cli::today())?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let bytes = nigel_core::pdf::render_aging(&report, &company)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("aging"));
+        .map_or_else(|| default_path("aging"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn k1(year: Option<i32>, output: Option<String>) -> Result<String> {
-    let conn = nigel_core::db::get_connection(&get_data_dir().join("nigel.db"))?;
+    let conn = nigel_core::db::get_connection(&try_data_dir()?.join("nigel.db"))?;
     let report = nigel_core::reports::get_k1_prep(&conn, year)?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let range = nigel_core::reports::date_range_label(None, year);
     let bytes = nigel_core::pdf::render_k1(&report, &company, &range)?;
     let path = output
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_path("k1-prep"));
+        .map_or_else(|| default_path("k1-prep"), Ok)?;
     write_pdf(&bytes, &path)
 }
 
 #[cfg(feature = "pdf")]
 pub fn all(year: Option<i32>, output_dir: Option<String>) -> Result<String> {
-    let data_dir = get_data_dir();
+    let data_dir = try_data_dir()?;
     let conn = nigel_core::db::get_connection(&data_dir.join("nigel.db"))?;
     let company = get_metadata(&conn, "company_name").unwrap_or_default();
     let range = nigel_core::reports::date_range_label(None, year);

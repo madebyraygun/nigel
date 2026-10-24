@@ -400,11 +400,10 @@ where
     F: FnOnce(PathBuf) -> ApiResult<T> + Send + 'static,
     T: Send + 'static,
 {
-    let _gate = state.db_gate.read().await;
+    let gate = state.db_gate.clone().read_owned().await;
     let db_path = state.db_path();
-    tokio::task::spawn_blocking(move || work(db_path))
-        .await
-        .map_err(ApiError::internal)?
+    let (_gate, result) = super::spawn_blocking_holding(gate, move || work(db_path)).await?;
+    result
 }
 
 /// A format key the caller named that this build cannot honour.
