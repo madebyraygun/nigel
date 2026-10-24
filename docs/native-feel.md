@@ -181,6 +181,16 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   breadcrumb and the pill still reaches the document for the host. The
   flag is read in the app; no `wc-*` component knows which host it is in.
 
+## Keyboard shortcuts
+
+When the platform defines a shortcut for a command, Nigel uses that one and
+never invents its own: on macOS Apple's Human Interface Guidelines and the
+standard menu items (⌘, Settings, ⌘N New, ⌘O Open, ⌘F Find, ⌃⌘S Show/Hide
+Sidebar, ⌘W, ⌘M, ⌘Q), on Windows and Linux the platform's equivalents. A chord
+the platform reserves for something else, such as ⌘S for Save, is not reused
+for a different command. Only a command with no platform convention gets a
+Nigel-specific chord, such as ⌘1–⌘9 for screens and ⌘K for the palette.
+
 ## Focus
 
 Two treatments, both in `controlsCss` so every root that hosts a control

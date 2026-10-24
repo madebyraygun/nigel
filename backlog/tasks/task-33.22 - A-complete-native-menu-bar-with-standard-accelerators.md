@@ -1,11 +1,11 @@
 ---
 id: TASK-33.22
 title: A complete native menu bar with standard accelerators
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-20 23:48'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 18:39'
 labels:
   - tauri
   - ui
