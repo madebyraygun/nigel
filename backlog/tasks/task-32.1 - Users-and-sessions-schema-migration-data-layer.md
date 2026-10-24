@@ -4,7 +4,7 @@ title: 'Users and sessions: schema migration + data layer'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-24 21:38'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - backend
@@ -34,4 +34,8 @@ Foundation only, no HTTP: a migration (append to MIGRATIONS in migrations.rs) ad
 
 <!-- SECTION:NOTES:BEGIN -->
 Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (PR #74). Users sign in by email (unique, case-insensitive), not a username; users are disabled, never deleted; at least one enabled admin always exists.
+
+Spec (docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md) adds uid, TOTP, must-change-password and session fields; 'active flag' is disabled_at.
+
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
 <!-- SECTION:NOTES:END -->

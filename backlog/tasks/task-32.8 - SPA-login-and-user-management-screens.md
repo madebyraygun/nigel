@@ -4,7 +4,7 @@ title: 'SPA: login and user management screens'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - frontend
@@ -28,3 +28,11 @@ Login screen (multiuser mode only), current-user context in the app shell (name,
 - [ ] #3 Navigation and actions are gated by role, matching the server matrix
 - [ ] #4 Current user name and role are visible with a logout control
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Spec (docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md §9): reset password shows a temporary password once; admins also get 'sign out everywhere' and 'remove two-step' for a user.
+
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
+<!-- SECTION:NOTES:END -->

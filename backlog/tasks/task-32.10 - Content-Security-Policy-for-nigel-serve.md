@@ -4,6 +4,7 @@ title: Content-Security-Policy for nigel serve
 status: To Do
 assignee: []
 created_date: '2026-10-24 21:38'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - security
@@ -28,3 +29,9 @@ Before a Nigel server is exposed on a public URL (multiuser phase 1, decision-11
 - [ ] #4 frame-ancestors forbids embedding by other origins; docs/api.md (security model) documents the policy
 - [ ] #5 Lands before any server is exposed publicly (gates the bee deployment in TASK-32.9)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
+<!-- SECTION:NOTES:END -->

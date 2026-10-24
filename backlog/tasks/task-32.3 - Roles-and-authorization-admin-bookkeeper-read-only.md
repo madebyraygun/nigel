@@ -4,7 +4,7 @@ title: 'Roles and authorization: admin, bookkeeper, read-only'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - backend
@@ -28,3 +28,11 @@ Server-side authorization enforced per route, not just hidden in the UI. Read-on
 - [ ] #3 Only admins reach user management, settings mutation, password operations, and unlock
 - [ ] #4 Tests cover the matrix for each role
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Spec (docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md §8): letterhead (logo and payment instructions included) and countersigning are admin-only; shared mode refuses data-folder switching and books-password changes; ROUTE_ROLES denies any route missing from the table.
+
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
+<!-- SECTION:NOTES:END -->

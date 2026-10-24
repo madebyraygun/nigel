@@ -4,7 +4,7 @@ title: Network exposure and deployment guide
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-24 21:40'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - backend
@@ -31,12 +31,12 @@ Serving beyond loopback is an explicit opt-in: a --bind flag that refuses non-lo
 - [ ] #5 nigel serve always binds loopback; a server_public_url setting (scheme + host, env NIGEL_SERVER_PUBLIC_URL) names the one non-loopback host accepted in shared mode, and is refused in local mode
 <!-- AC:END -->
 
-
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 First deployment (decision-11, phase 1): the operator's server on bee, reachable at a public HTTPS address so a second household user can log in from anywhere. The guide covers a public address in front of nigel serve (reverse proxy with TLS, or a tunnel such as Cloudflare Tunnel or Tailscale Funnel), the trusted-host and origin settings that replace today's loopback-only rule, and that the server is never exposed before per-user login (32.2) is live.
 
 Design: multiuser phase 1 spec (PR #74). No --bind flag: tunnels and reverse proxies connect to loopback. Content-Security-Policy is its own task and must land before public exposure.
+
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
 <!-- SECTION:NOTES:END -->

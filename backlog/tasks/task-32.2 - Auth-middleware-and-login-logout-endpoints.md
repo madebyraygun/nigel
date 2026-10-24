@@ -4,7 +4,7 @@ title: Auth middleware and login/logout endpoints
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-24 21:40'
+updated_date: '2026-10-24 21:54'
 labels:
   - multiuser
   - backend
@@ -30,10 +30,12 @@ Session-cookie authentication in front of the API when multiuser mode is enabled
 - [ ] #5 Local single-user mode stays the default with behaviour identical to before; shared mode begins automatically when the first user exists (no setting), and only shared mode accepts the server_public_url host
 <!-- AC:END -->
 
-
-
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Design: multiuser phase 1 spec (PR #74). Shared mode is derived from users existing, not an explicit setting.
+
+Unlock is not admin-only over HTTP: a shared server unlocks at boot from a credential (NIGEL_DB_PASSWORD_FILE) and never over HTTP. Until roles (32.3) land, every non-auth route needs admin.
+
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
 <!-- SECTION:NOTES:END -->
