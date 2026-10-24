@@ -4,7 +4,7 @@ title: 'Users and sessions: schema migration + data layer'
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-07 18:44'
+updated_date: '2026-10-24 21:38'
 labels:
   - multiuser
   - backend
@@ -29,3 +29,9 @@ Foundation only, no HTTP: a migration (append to MIGRATIONS in migrations.rs) ad
 - [ ] #3 Data-layer functions cover create, list, deactivate, and verify with unit tests
 - [ ] #4 No plaintext credential ever touches disk or logs
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (PR #74). Users sign in by email (unique, case-insensitive), not a username; users are disabled, never deleted; at least one enabled admin always exists.
+<!-- SECTION:NOTES:END -->
