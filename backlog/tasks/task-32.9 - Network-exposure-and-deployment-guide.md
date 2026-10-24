@@ -4,7 +4,7 @@ title: Network exposure and deployment guide
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-24 21:38'
+updated_date: '2026-10-24 21:40'
 labels:
   - multiuser
   - backend
@@ -27,9 +27,11 @@ Serving beyond loopback is an explicit opt-in: a --bind flag that refuses non-lo
 - [ ] #1 Security headers are set on all responses
 - [ ] #2 Deployment docs cover Tailscale, reverse proxy TLS, and VPS setups
 - [ ] #3 Backup, restore, systemd, and update guidance for server operators is written
-- [ ] #4 nigel serve always binds loopback; a server_url setting (scheme + host) names the one non-loopback host accepted in shared mode, and is refused in local mode
-- [ ] #5 Shared mode on unencrypted books shows a clear warning recommending encryption in setup and Settings
+- [ ] #4 Shared mode on unencrypted books shows a clear warning recommending encryption in setup and Settings
+- [ ] #5 nigel serve always binds loopback; a server_public_url setting (scheme + host, env NIGEL_SERVER_PUBLIC_URL) names the one non-loopback host accepted in shared mode, and is refused in local mode
 <!-- AC:END -->
+
+
 
 ## Implementation Notes
 
