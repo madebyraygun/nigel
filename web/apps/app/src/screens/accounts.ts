@@ -87,6 +87,8 @@ export class NigelAccountsScreen extends LitElement {
   @state() private error: string | null = null;
   @state() private retryable = false;
   @state() private editor: Editor | null = null;
+  /** The editor whose dialog is animating closed. */
+  @state() private closingEditor: Editor | null = null;
   @state() private formErrors: AccountFormErrors = {};
   @state() private saving = false;
   @state() private dialogError: string | null = null;
@@ -134,7 +136,12 @@ export class NigelAccountsScreen extends LitElement {
     this.dialogError = null;
   };
 
+  /**
+   * Closing keeps what the dialog showed until its hide animation has run;
+   * `nc-manager-closed` clears it.
+   */
   private closeEditor = (): void => {
+    if (this.editor) this.closingEditor = this.editor;
     this.editor = null;
     this.formErrors = {};
     this.dialogError = null;
@@ -284,8 +291,12 @@ export class NigelAccountsScreen extends LitElement {
     `;
   }
 
+  private handleDialogClosed = (): void => {
+    this.closingEditor = null;
+  };
+
   private renderEditor(): TemplateResult | typeof nothing {
-    const editor = this.editor;
+    const editor = this.editor ?? this.closingEditor;
     if (!editor) return nothing;
 
     const creating = editor.mode === 'create';
@@ -293,13 +304,14 @@ export class NigelAccountsScreen extends LitElement {
     return html`
       <wc-manager-dialog
         slot="overlay"
-        open
+        ?open=${this.editor !== null}
         heading=${creating ? 'Add account' : 'Edit account'}
         confirm-label=${creating ? 'Add account' : 'Save'}
         ?busy=${this.saving}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
+        @nc-manager-closed=${this.handleDialogClosed}
       >
         <wc-account-form
           mode=${editor.mode}

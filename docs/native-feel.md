@@ -106,7 +106,9 @@ and the content area, `wc-nav-sidebar` is the sidebar slotted into it, and
   (`title-hidden` on `wc-app-shell`, visually hidden and out of flow), for a
   screen whose toolbar is its first line, such as the register; `'screen'`
   means the screen renders its own `h1` and the shell renders none, such as
-  invoices, whose title row carries its actions and an invoice's status. The
+  invoices, whose title row carries its actions and an invoice's status, and
+  the managers (Clients, Accounts, Categories, Rules), whose
+  `wc-manager-layout` draws the `h1` with the list's count and Add. The
   breadcrumb and the window title read `title` either way, and
   `shellHeading()` in `screens/registry.ts` is the one place the field is
   turned into what the shell draws.
@@ -263,6 +265,19 @@ other, `--nc-filter-row-gap` apart: a `.label` span ("Status") before its
 chips, a switch, or a `wa-select`, which `controlsCss` lays out with its
 label inline to its left in the muted control type rather than stacked
 above it. No screen sets its own margin between a filter row and a table.
+
+A list never scrolls sideways at a phone's width. The register stacks each
+row into two lines below 860px of card width. Every other list table —
+`wc-manager-table` (Clients, Accounts, Categories, Rules, Documents' inactive
+kinds), `wc-invoice-table` and `wc-document-table` — stacks each row into a
+card below 720px through one shared sheet, `stackedTableCss` in
+`packages/ui/src/components/stacked-table.ts`: the cell marked
+`data-stack="title"` heads the card, each cell with a `data-label` is a line
+with its column heading beside the value, `data-stack="last"` (a status pill,
+the row's buttons) closes it and `data-stack="hide"` (a chevron) drops out.
+Both layouts decide from the table's own width through a container query, so
+a narrow window, the sidebar or a split view all count, and both keep the
+table's roles on its elements so the cells are still announced as cells.
 
 Every table heading — column and row headings alike, in the manager,
 invoice, document, register, report, line-item and the other tables — is

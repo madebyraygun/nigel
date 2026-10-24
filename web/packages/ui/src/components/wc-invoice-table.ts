@@ -5,6 +5,7 @@ import './wc-spinner.js';
 import './wc-invoice-status.js';
 import '../icons/icons.js';
 import { shortDate } from './short-date.js';
+import { stackedTableCss } from './stacked-table.js';
 
 /** One invoice as the list shows it. */
 export interface InvoiceTableRow {
@@ -46,7 +47,8 @@ export interface InvoiceTableRow {
  */
 @customElement('wc-invoice-table')
 export class WcInvoiceTable extends LitElement {
-  static styles = css`
+  static styles = [
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -189,7 +191,9 @@ export class WcInvoiceTable extends LitElement {
       font-size: var(--nc-font-size-control);
       text-align: center;
     }
-  `;
+  `,
+    stackedTableCss,
+  ];
 
   @property({ attribute: false })
   rows: InvoiceTableRow[] = [];
@@ -225,8 +229,8 @@ export class WcInvoiceTable extends LitElement {
 
     return html`
       <div class="card">
-        <div class="scroll">
-          <table>
+        <div class="scroll stack">
+          <table role="table">
             <caption>
               ${this.caption}
             </caption>
@@ -240,19 +244,19 @@ export class WcInvoiceTable extends LitElement {
               <col class="money" />
               <col class="chevron" />
             </colgroup>
-            <thead>
-              <tr>
-                <th scope="col">Number</th>
-                <th scope="col">Client</th>
-                <th scope="col">Issued</th>
-                <th scope="col">Due</th>
-                <th scope="col">Status</th>
-                <th scope="col" class="end">Total</th>
-                <th scope="col" class="end">Balance</th>
-                <th scope="col"><span class="sr-only">Open</span></th>
+            <thead role="rowgroup">
+              <tr role="row">
+                <th scope="col" role="columnheader">Number</th>
+                <th scope="col" role="columnheader">Client</th>
+                <th scope="col" role="columnheader">Issued</th>
+                <th scope="col" role="columnheader">Due</th>
+                <th scope="col" role="columnheader">Status</th>
+                <th scope="col" role="columnheader" class="end">Total</th>
+                <th scope="col" role="columnheader" class="end">Balance</th>
+                <th scope="col" role="columnheader"><span class="sr-only">Open</span></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               ${this.rows.map((row) => this.renderRow(row))}
             </tbody>
           </table>
@@ -269,22 +273,25 @@ export class WcInvoiceTable extends LitElement {
 
     return html`
       <tr
+        role="row"
         data-row=${row.number}
         data-href=${row.href || nothing}
         @click=${row.href ? this.handleRowClick : nothing}
       >
-        <td class="number">${number}</td>
-        <td class="client ${row.clientName === null ? 'muted' : ''}">
+        <td role="cell" class="number" data-stack="title">${number}</td>
+        <td role="cell" class="client ${row.clientName === null ? 'muted' : ''}" data-label="Client">
           ${row.clientName ?? '—'}
         </td>
-        <td data-issued class=${row.issueDate ? nothing : 'muted'}>
+        <td role="cell" data-issued data-label="Issued" class=${row.issueDate ? nothing : 'muted'}>
           ${row.issueDate ? shortDate(row.issueDate) : '—'}
         </td>
-        <td data-due ?data-overdue=${row.status === 'overdue'}>
+        <td role="cell" data-due data-label="Due" ?data-overdue=${row.status === 'overdue'}>
           ${row.dueDate === null ? 'On receipt' : shortDate(row.dueDate)}
         </td>
-        <td><wc-invoice-status status=${row.status}></wc-invoice-status></td>
-        <td class="end" ?data-void=${isVoid}>
+        <td role="cell" data-stack="last">
+          <wc-invoice-status status=${row.status}></wc-invoice-status>
+        </td>
+        <td role="cell" class="end" data-label="Total" ?data-void=${isVoid}>
           <wc-money
             .amount=${row.total}
             .currency=${row.currency ?? 'USD'}
@@ -292,7 +299,12 @@ export class WcInvoiceTable extends LitElement {
             align="end"
           ></wc-money>
         </td>
-        <td class="end balance ${outstanding ? '' : 'muted'}" data-balance>
+        <td
+          role="cell"
+          class="end balance ${outstanding ? '' : 'muted'}"
+          data-balance
+          data-label="Balance"
+        >
           ${row.balance === null
             ? '—'
             : html`<wc-money
@@ -302,7 +314,7 @@ export class WcInvoiceTable extends LitElement {
                 align="end"
               ></wc-money>`}
         </td>
-        <td class="chevron" aria-hidden="true">
+        <td role="cell" class="chevron" data-stack="hide" aria-hidden="true">
           ${row.href ? html`<wc-icon-chevron-right inline></wc-icon-chevron-right>` : nothing}
         </td>
       </tr>

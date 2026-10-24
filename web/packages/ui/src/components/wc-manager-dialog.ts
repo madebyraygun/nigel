@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import { controlsCss } from '@nigel/theme';
@@ -19,6 +19,14 @@ import { controlsCss } from '@nigel/theme';
  *
  * The fields themselves are slotted: this component knows nothing about
  * accounts, categories or rules.
+ *
+ * It opens and closes with `wa-dialog`'s own animation, as the register's
+ * `wc-transaction-dialog` does, and the motion tokens zero it under reduced
+ * motion. A dialog mounted already open still animates: `wa-dialog` shows
+ * without animating when it starts open, so the open is handed to it one
+ * update later. A screen that wants the close animated too keeps the dialog
+ * mounted with `open` false and clears its contents on `nc-manager-closed`,
+ * which fires once the hide has finished.
  */
 @customElement('wc-manager-dialog')
 export class WcManagerDialog extends LitElement {
@@ -31,11 +39,17 @@ export class WcManagerDialog extends LitElement {
 
       .error {
         margin: 0 0 var(--wa-space-m);
-        padding: var(--wa-space-xs) var(--wa-space-s);
-        border-radius: var(--wa-radius-m);
+        padding: 8px 12px;
+        border: 1px solid var(--wa-color-danger);
+        border-radius: var(--wa-radius-md);
         background: var(--wa-color-danger-fill-quiet);
         color: var(--wa-color-danger);
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-control);
+      }
+
+      /* The fields wrap to the dialog's width; nothing inside may widen it. */
+      wa-dialog::part(body) {
+        min-width: 0;
       }
 
       .footer {
@@ -66,6 +80,18 @@ export class WcManagerDialog extends LitElement {
   @property({ type: String })
   error: string | null = null;
 
+  /** What `wa-dialog` is told; trails `open` by one update on first mount. */
+  @state()
+  private shown = false;
+
+  protected firstUpdated(): void {
+    if (this.open) this.shown = true;
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>): void {
+    if (changed.has('open') && this.hasUpdated) this.shown = this.open;
+  }
+
   private emit(name: string): void {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
   }
@@ -84,9 +110,19 @@ export class WcManagerDialog extends LitElement {
     if (this.open) this.emit('nc-manager-cancel');
   };
 
+  private handleAfterHide = (event: Event) => {
+    if (event.target !== event.currentTarget) return;
+    this.emit('nc-manager-closed');
+  };
+
   render() {
     return html`
-      <wa-dialog label=${this.heading} ?open=${this.open} @wa-hide=${this.handleHide}>
+      <wa-dialog
+        label=${this.heading}
+        ?open=${this.shown}
+        @wa-hide=${this.handleHide}
+        @wa-after-hide=${this.handleAfterHide}
+      >
         ${this.error
           ? html`<p class="error" role="alert">${this.error}</p>`
           : nothing}

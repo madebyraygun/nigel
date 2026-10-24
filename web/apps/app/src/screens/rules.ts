@@ -1,5 +1,7 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
+import { controlsCss } from '@nigel/theme';
 import '@nigel/ui';
 import {
   confirmDialog,
@@ -64,32 +66,31 @@ interface Editor {
  */
 @customElement('nigel-rules-screen')
 export class NigelRulesScreen extends LitElement {
-  static styles = css`
-    :host {
-      display: flex;
-      flex-direction: column;
-    }
+  static styles = [
+    controlsCss,
+    css`
+      :host {
+        display: flex;
+        flex-direction: column;
+      }
 
-    .filter {
-      margin: 0;
-      display: flex;
-      align-items: center;
-      gap: var(--wa-space-s, 8px);
-      font-family: var(--wa-font-family-sans);
-      font-size: var(--wa-font-size-s, 13px);
-      color: var(--wa-color-text);
-    }
+      .filter {
+        margin: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--nc-filter-row-gap);
+      }
 
-    .filter button {
-      font: inherit;
-      color: var(--wa-color-brand);
-      background: none;
-      border: 0;
-      padding: 0;
-      cursor: pointer;
-      text-decoration: underline;
-    }
-  `;
+      .filter .label {
+        color: var(--wa-color-muted);
+      }
+
+      .filter strong {
+        font-weight: var(--wa-font-weight-medium);
+      }
+    `,
+  ];
 
   @property({ attribute: false })
   client!: ApiClient;
@@ -106,6 +107,8 @@ export class NigelRulesScreen extends LitElement {
   @state() private error: string | null = null;
   @state() private retryable = false;
   @state() private editor: Editor | null = null;
+  /** The editor whose dialog is animating closed. */
+  @state() private closingEditor: Editor | null = null;
   @state() private formErrors: RuleFormErrors = {};
   @state() private saving = false;
   @state() private dialogError: string | null = null;
@@ -193,7 +196,12 @@ export class NigelRulesScreen extends LitElement {
     this.clearRuleTest();
   };
 
+  /**
+   * Closing keeps what the dialog showed until its hide animation has run;
+   * `nc-manager-closed` clears it.
+   */
   private closeEditor = (): void => {
+    if (this.editor) this.closingEditor = this.editor;
     this.editor = null;
     this.formErrors = {};
     this.dialogError = null;
@@ -384,7 +392,7 @@ export class NigelRulesScreen extends LitElement {
 
     return html`
       <wc-manager-layout
-        heading="Categorization Rules"
+        heading="Rules"
         description="Applied top to bottom — the first match wins."
         .count=${this.loading ? null : rows.length}
         add-label="Add rule"
@@ -400,8 +408,10 @@ export class NigelRulesScreen extends LitElement {
           ? nothing
           : html`
               <p class="filter" slot="toolbar" data-filter>
-                <span>Showing rules for ${filterName}</span>
-                <button type="button" @click=${this.clearFilter}>Show all</button>
+                <span class="label">Showing rules for</span> <strong>${filterName}</strong>
+                <wa-button size="s" appearance="outlined" @click=${this.clearFilter}
+                  >Show all</wa-button
+                >
               </p>
             `}
 
@@ -423,8 +433,12 @@ export class NigelRulesScreen extends LitElement {
             : 'Nothing here assigns that category.'}
         >
           ${filterName === null
-            ? html`<a slot="actions" href="#/review">Go to review</a>`
-            : html`<a slot="actions" href="#/rules">Show all rules</a>`}
+            ? html`<wa-button slot="actions" appearance="outlined" href="#/review"
+                >Go to review</wa-button
+              >`
+            : html`<wa-button slot="actions" appearance="outlined" href="#/rules"
+                >Show all rules</wa-button
+              >`}
         </wc-empty-state>
 
         ${this.renderEditor()}
@@ -432,8 +446,12 @@ export class NigelRulesScreen extends LitElement {
     `;
   }
 
+  private handleDialogClosed = (): void => {
+    this.closingEditor = null;
+  };
+
   private renderEditor(): TemplateResult | typeof nothing {
-    const editor = this.editor;
+    const editor = this.editor ?? this.closingEditor;
     if (!editor) return nothing;
 
     const creating = editor.id === undefined;
@@ -441,13 +459,14 @@ export class NigelRulesScreen extends LitElement {
     return html`
       <wc-manager-dialog
         slot="overlay"
-        open
+        ?open=${this.editor !== null}
         heading=${creating ? 'Add rule' : 'Edit rule'}
         confirm-label=${creating ? 'Add rule' : 'Save'}
         ?busy=${this.saving}
         .error=${this.dialogError}
         @nc-manager-save=${this.handleSave}
         @nc-manager-cancel=${this.closeEditor}
+        @nc-manager-closed=${this.handleDialogClosed}
       >
         <wc-rule-form
           .value=${editor.value}

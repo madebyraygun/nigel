@@ -77,6 +77,16 @@ const preview: Preview = {
   states: [
     { name: 'list', render: () => html`<wc-invoice-table .rows=${rows}></wc-invoice-table>` },
     {
+      // A phone's width: each row is a card — the number titles the card, status pill closes it, the chevron is dropped; the whole card still opens the invoice. The box stands in
+      // for the content area of a 390px window.
+      name: 'stacked-at-phone-width',
+      render: () => html`
+        <div style="inline-size: 22rem">
+          <wc-invoice-table .rows=${rows}></wc-invoice-table>
+        </div>
+      `,
+    },
+    {
       name: 'orphaned-client',
       render: () => html`
         <wc-invoice-table

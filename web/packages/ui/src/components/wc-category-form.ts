@@ -96,26 +96,32 @@ export class WcCategoryForm extends LitElement {
       .fields {
         display: grid;
         gap: var(--wa-space-m);
-        min-width: 22rem;
+        min-width: 0;
       }
 
+      /* Label and field drawn from the form-control tokens, as a wa-input
+         is, so the native field sits in the column without a seam. */
       label.field {
         display: block;
-        font-size: var(--wa-font-size-s);
-        font-weight: var(--wa-font-weight-medium);
+        font-size: var(--wa-font-size-base);
+        font-weight: var(--wa-form-control-label-font-weight);
+        color: var(--wa-form-control-label-color);
         margin-bottom: var(--wa-space-2xs);
       }
 
       input.native {
         width: 100%;
         box-sizing: border-box;
+        min-height: var(--wa-form-control-height);
         font: inherit;
         font-family: var(--wa-font-family-mono);
-        color: inherit;
-        background: var(--wa-color-surface);
-        border: 1px solid var(--wa-color-border);
-        border-radius: var(--wa-radius-m);
-        padding: var(--wa-space-xs) var(--wa-space-s);
+        font-size: var(--wa-form-control-value-font-size);
+        color: var(--wa-form-control-value-color);
+        background: var(--wa-form-control-background-color);
+        border: var(--wa-form-control-border-width) var(--wa-form-control-border-style)
+          var(--wa-form-control-border-color);
+        border-radius: var(--wa-form-control-border-radius);
+        padding: 0 var(--wa-form-control-padding-inline);
       }
 
       .error {

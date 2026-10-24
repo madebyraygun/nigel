@@ -2,10 +2,32 @@ import { html } from 'lit';
 import './wc-manager-dialog.js';
 import './wc-account-form.js';
 import './wc-client-form.js';
+import './wc-category-form.js';
+import './wc-rule-form.js';
+import './wc-rule-test-preview.js';
 import './wc-manager-table.js';
 import type { Preview } from '../../preview/types.js';
 import type { ManagerAction, ManagerColumn, ManagerRow } from './wc-manager-table.js';
 import type { ClientFormValue } from './wc-client-form.js';
+import type { CategoryOption } from './category-option.js';
+
+const ruleCategories: CategoryOption[] = [
+  { id: 3, name: 'Consulting income', categoryType: 'income' },
+  { id: 12, name: 'Software / Subscriptions', categoryType: 'expense' },
+];
+
+/** A client with three contacts: the widest form any manager dialog holds. */
+const severalContacts: ClientFormValue = {
+  name: 'Juniper Labs',
+  contacts: [
+    { email: 'accounts-payable@juniperlabs.test', name: 'Avery Juniper', title: 'Controller' },
+    { email: 'ops@juniperlabs.test', name: 'Rowan Field', title: 'Operations lead' },
+    { email: 'cfo@juniperlabs.test', name: 'Sam Okafor', title: 'Chief financial officer' },
+  ],
+  billingIndex: 0,
+  billingAddress: '45 Juniper Rd, Eugene OR 97401',
+  notes: '',
+};
 
 const value = {
   name: 'Chase Business',
@@ -101,6 +123,52 @@ const preview: Preview = {
       render: () => html`
         <wc-manager-dialog open busy heading="Add account" confirm-label="Add">
           <wc-account-form .value=${value} disabled></wc-account-form>
+        </wc-manager-dialog>
+      `,
+    },
+    {
+      name: 'rule-form',
+      render: () => html`
+        <wc-manager-dialog open heading="Add rule" confirm-label="Add rule">
+          <wc-rule-form
+            .value=${{
+              pattern: 'GITHUB',
+              matchType: 'contains',
+              categoryId: 12,
+              vendor: 'GitHub',
+              priority: 10,
+            }}
+            .categories=${ruleCategories}
+          >
+            <wc-rule-test-preview slot="test"></wc-rule-test-preview>
+          </wc-rule-form>
+        </wc-manager-dialog>
+      `,
+    },
+    {
+      name: 'category-form',
+      render: () => html`
+        <wc-manager-dialog open heading="Add category" confirm-label="Add category">
+          <wc-category-form
+            .value=${{
+              name: 'Software / Subscriptions',
+              categoryType: 'expense',
+              class: 'expense',
+              taxLine: 'Other expenses',
+              formLine: '1120S-19',
+            }}
+          ></wc-category-form>
+        </wc-manager-dialog>
+      `,
+    },
+    {
+      // The widest form a manager dialog holds. Each contact's fields sit side
+      // by side while they fit and stack when they do not; nothing scrolls
+      // sideways.
+      name: 'client-with-several-contacts',
+      render: () => html`
+        <wc-manager-dialog open heading="Edit client">
+          <wc-client-form .value=${severalContacts}></wc-client-form>
         </wc-manager-dialog>
       `,
     },

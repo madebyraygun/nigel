@@ -83,12 +83,14 @@ export class WcRuleForm extends LitElement {
       .fields {
         display: grid;
         gap: var(--wa-space-m);
-        min-width: 24rem;
+        min-width: 0;
       }
 
+      /* Two fields side by side while each keeps 12rem, stacked below that:
+         the dialog's width decides, and nothing overflows it. */
       .row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
         gap: var(--wa-space-m);
       }
 

@@ -40,6 +40,40 @@ describe('wc-manager-table', () => {
     document.body.innerHTML = '';
   });
 
+  it('reflects plain, which drops the card for a table inside a card', async () => {
+    const card = await mount();
+    expect(card.hasAttribute('plain')).toBe(false);
+
+    const plain = await mount({ plain: true });
+    expect(plain.hasAttribute('plain')).toBe(true);
+  });
+
+  it('labels every cell but the first with its column, for the stacked layout', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="1"]');
+    const labels = [...(row?.querySelectorAll('td') ?? [])].map((td) =>
+      td.getAttribute('data-label'),
+    );
+    expect(labels).toEqual([null, 'Type', 'Hits', null]);
+  });
+
+  it('keeps table roles on its elements, which the stacked layout sets to block', async () => {
+    const el = await mount();
+    const root = el.shadowRoot;
+    expect(root?.querySelector('table')?.getAttribute('role')).toBe('table');
+    expect(root?.querySelector('tbody tr')?.getAttribute('role')).toBe('row');
+    expect(root?.querySelector('tbody td')?.getAttribute('role')).toBe('cell');
+    expect(root?.querySelector('th')?.getAttribute('role')).toBe('columnheader');
+  });
+
+  it('stacks at phone width through the shared table layout', async () => {
+    const el = await mount();
+    const row = el.shadowRoot?.querySelector('tr[data-row="1"]');
+    expect(el.shadowRoot?.querySelector('.stack table')).toBeTruthy();
+    expect(row?.querySelector('td')?.getAttribute('data-stack')).toBe('title');
+    expect(row?.querySelector('td.actions-cell')?.getAttribute('data-stack')).toBe('last');
+  });
+
   it('renders a header per column plus one for the actions', async () => {
     const el = await mount();
     const headers = [...(el.shadowRoot?.querySelectorAll('th') ?? [])].map((th) =>

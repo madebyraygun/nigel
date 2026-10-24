@@ -81,7 +81,7 @@ function rowLabels(el: NigelClientsScreen): string[] {
 }
 
 function dialog(el: NigelClientsScreen): WcManagerDialog | null {
-  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog') ?? null;
+  return el.shadowRoot?.querySelector<WcManagerDialog>('wc-manager-dialog[open]') ?? null;
 }
 
 function form(el: NigelClientsScreen): WcClientForm {

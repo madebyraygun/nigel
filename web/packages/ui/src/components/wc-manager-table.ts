@@ -4,6 +4,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '../icons/icons.js';
 import { controlsCss } from '@nigel/theme';
 import './wc-row-badge.js';
+import { stackedTableCss } from './stacked-table.js';
 
 /** A column in a manager list. `key` is for keying the cells, not for lookup. */
 export interface ManagerColumn {
@@ -64,15 +65,28 @@ export class WcManagerTable extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* The refresh's table card: the card ground, a 1px border and the
+         card radius, scrolling sideways inside itself on a narrow window. */
       :host {
         display: block;
         overflow-x: auto;
+        background: var(--wa-color-surface);
+        border: 1px solid var(--wa-color-border);
+        border-radius: var(--wa-radius-lg);
+      }
+
+      /* Inside a container that is already a card, such as a wc-panel, the
+         table drops its own card so the two do not nest. */
+      :host([plain]) {
+        background: none;
+        border: 0;
+        border-radius: 0;
       }
 
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: var(--wa-font-size-s);
+        font-size: var(--nc-font-size-body);
         color: var(--wa-color-text);
       }
 
@@ -88,19 +102,47 @@ export class WcManagerTable extends LitElement {
       th,
       td {
         text-align: start;
-        padding: var(--wa-space-xs) var(--wa-space-s);
-        border-bottom: 1px solid var(--wa-color-border);
-        vertical-align: top;
+        padding: 0 8px;
+        vertical-align: middle;
       }
 
-      td {
-        user-select: text;
+      /* The column every list keys its rows by keeps room for a short name
+         on one line when the action buttons claim the rest of the width. */
+      th:first-child,
+      td:first-child {
+        min-width: 14ch;
+        padding-left: 16px;
+      }
+
+      th:last-child,
+      td:last-child {
+        padding-right: 12px;
       }
 
       th {
+        height: 36px;
+        background: var(--wa-color-surface-alt);
+        border-bottom: 1px solid var(--wa-color-border);
+        font-size: var(--nc-font-size-meta);
         font-weight: var(--nc-font-weight-table-heading);
         color: var(--wa-color-muted);
         white-space: nowrap;
+      }
+
+      /* A 44px row: a table cell's height does not count its padding. */
+      td {
+        height: 32px;
+        padding-block: 6px;
+        border-bottom: 1px solid var(--wa-color-border-soft);
+        user-select: text;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      tbody tr:hover td {
+        background: var(--wa-color-surface-alt);
       }
 
       td.end,
@@ -125,7 +167,7 @@ export class WcManagerTable extends LitElement {
       .actions {
         display: flex;
         justify-content: flex-end;
-        gap: var(--wa-space-2xs);
+        gap: 6px;
         white-space: nowrap;
         user-select: none;
       }
@@ -133,7 +175,17 @@ export class WcManagerTable extends LitElement {
       th.actions-header {
         text-align: end;
       }
+
+      /* Below the shared stacking width (stacked-table.ts) the row's
+         buttons start the last line and wrap. */
+      @container (max-width: 720px) {
+        .actions {
+          flex-wrap: wrap;
+          justify-content: flex-start;
+        }
+      }
     `,
+    stackedTableCss,
   ];
 
   @property({ attribute: false })
@@ -148,6 +200,10 @@ export class WcManagerTable extends LitElement {
   /** The row with a request in flight: its buttons go inert. */
   @property({ type: Number, attribute: false })
   busyId: number | null = null;
+
+  /** Drop the table card, for a list placed inside a card of its own. */
+  @property({ type: Boolean, reflect: true })
+  plain = false;
 
   /** Visually hidden table caption — what this list is. */
   @property({ type: String })
@@ -170,27 +226,36 @@ export class WcManagerTable extends LitElement {
     const hasActions =
       this.actions.length > 0 || this.rows.some((row) => (row.actions?.length ?? 0) > 0);
 
+    // At a phone's width the rows stack into cards (stacked-table.ts); the
+    // roles are stated because that layout sets the table's elements to
+    // display: block, which some engines take as leaving the table.
     return html`
-      <table>
-        ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
-        <thead>
-          <tr>
-            ${this.columns.map(
-              (column) => html`
-                <th scope="col" class=${column.align === 'end' ? 'end' : ''}>
-                  ${column.label}
-                </th>
-              `,
-            )}
-            ${hasActions
-              ? html`<th scope="col" class="actions-header">Actions</th>`
-              : nothing}
-          </tr>
-        </thead>
-        <tbody>
-          ${this.rows.map((row) => this.renderRow(row, hasActions))}
-        </tbody>
-      </table>
+      <div class="frame stack">
+        <table role="table">
+          ${this.caption ? html`<caption>${this.caption}</caption>` : nothing}
+          <thead role="rowgroup">
+            <tr role="row">
+              ${this.columns.map(
+                (column) => html`
+                  <th
+                    scope="col"
+                    role="columnheader"
+                    class=${column.align === 'end' ? 'end' : ''}
+                  >
+                    ${column.label}
+                  </th>
+                `,
+              )}
+              ${hasActions
+                ? html`<th scope="col" role="columnheader" class="actions-header">Actions</th>`
+                : nothing}
+            </tr>
+          </thead>
+          <tbody role="rowgroup">
+            ${this.rows.map((row) => this.renderRow(row, hasActions))}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -199,7 +264,7 @@ export class WcManagerTable extends LitElement {
     const actions = row.actions ?? this.actions;
 
     return html`
-      <tr data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
+      <tr role="row" data-row=${row.id} aria-busy=${busy ? 'true' : 'false'}>
         ${this.columns.map((column, index) => {
           const value = row.cells[index] ?? null;
           const classes = [
@@ -209,7 +274,14 @@ export class WcManagerTable extends LitElement {
           ]
             .filter(Boolean)
             .join(' ');
-          return html`<td class=${classes}>
+          // The first column titles the stacked card; every other one
+          // carries its heading, which the card shows beside the value.
+          return html`<td
+            role="cell"
+            class=${classes}
+            data-stack=${index === 0 ? 'title' : nothing}
+            data-label=${index === 0 ? nothing : column.label}
+          >
             ${value === null ? '—' : value}
             ${index === 0 && row.badge
               ? html`<wc-row-badge label=${row.badge}></wc-row-badge>`
@@ -218,7 +290,7 @@ export class WcManagerTable extends LitElement {
         })}
         ${hasActions
           ? html`
-              <td>
+              <td role="cell" class="actions-cell" data-stack="last">
                 <div class="actions">
                   ${actions.map(
                     (action) => html`

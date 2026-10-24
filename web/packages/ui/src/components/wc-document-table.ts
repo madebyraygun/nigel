@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './wc-spinner.js';
 import './wc-document-status.js';
+import { stackedTableCss } from './stacked-table.js';
 
 /** One document as the list shows it. */
 export interface DocumentTableRow {
@@ -20,7 +21,8 @@ export interface DocumentTableRow {
 /** The document list: title, status, kind, client, version and last update. */
 @customElement('wc-document-table')
 export class WcDocumentTable extends LitElement {
-  static styles = css`
+  static styles = [
+    css`
     :host {
       display: block;
       font-family: var(--wa-font-family-sans);
@@ -96,7 +98,9 @@ export class WcDocumentTable extends LitElement {
       color: var(--wa-color-muted);
       font-size: var(--wa-font-size-s);
     }
-  `;
+  `,
+    stackedTableCss,
+  ];
 
   @property({ attribute: false })
   rows: DocumentTableRow[] = [];
@@ -122,22 +126,22 @@ export class WcDocumentTable extends LitElement {
     }
 
     return html`
-      <div class="scroll">
-        <table>
+      <div class="scroll stack">
+        <table role="table">
           <caption>
             ${this.caption}
           </caption>
-          <thead>
-            <tr>
-              <th scope="col">Title</th>
-              <th scope="col">Status</th>
-              <th scope="col">Kind</th>
-              <th scope="col">Client</th>
-              <th scope="col">Version</th>
-              <th scope="col">Updated</th>
+          <thead role="rowgroup">
+            <tr role="row">
+              <th scope="col" role="columnheader">Title</th>
+              <th scope="col" role="columnheader">Status</th>
+              <th scope="col" role="columnheader">Kind</th>
+              <th scope="col" role="columnheader">Client</th>
+              <th scope="col" role="columnheader">Version</th>
+              <th scope="col" role="columnheader">Updated</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             ${this.rows.map((row) => this.renderRow(row))}
           </tbody>
         </table>
@@ -149,15 +153,21 @@ export class WcDocumentTable extends LitElement {
     const title = row.href ? html`<a href=${row.href}>${row.title}</a>` : html`${row.title}`;
 
     return html`
-      <tr data-row=${row.id}>
-        <td class="title">${title}</td>
-        <td><wc-document-status status=${row.status}></wc-document-status></td>
-        <td>${row.kind}</td>
-        <td class="client ${row.clientName === null ? 'muted' : ''}">
+      <tr role="row" data-row=${row.id}>
+        <td role="cell" class="title" data-stack="title">${title}</td>
+        <td role="cell" data-stack="last">
+          <wc-document-status status=${row.status}></wc-document-status>
+        </td>
+        <td role="cell" data-label="Kind">${row.kind}</td>
+        <td
+          role="cell"
+          class="client ${row.clientName === null ? 'muted' : ''}"
+          data-label="Client"
+        >
           ${row.clientName ?? '—'}
         </td>
-        <td class="version">v${row.version}</td>
-        <td>${row.updatedAt}</td>
+        <td role="cell" class="version" data-label="Version">v${row.version}</td>
+        <td role="cell" data-label="Updated">${row.updatedAt}</td>
       </tr>
     `;
   }

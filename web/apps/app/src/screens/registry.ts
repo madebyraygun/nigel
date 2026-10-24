@@ -146,6 +146,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-clients',
     inNav: true,
     navGroup: 'Billing',
+    heading: 'screen',
     render: renderClients,
   },
   invoices: {
@@ -174,6 +175,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-account',
     inNav: true,
     navGroup: 'Setup',
+    heading: 'screen',
     render: renderAccounts,
   },
   categories: {
@@ -183,6 +185,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-category',
     inNav: true,
     navGroup: 'Setup',
+    heading: 'screen',
     render: renderCategories,
   },
   rules: {
@@ -192,6 +195,7 @@ const DEFS: Record<ScreenId, ScreenDef> = {
     icon: 'wc-icon-rule',
     inNav: true,
     navGroup: 'Setup',
+    heading: 'screen',
     render: renderRules,
   },
   settings: {

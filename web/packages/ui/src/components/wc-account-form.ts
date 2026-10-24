@@ -81,12 +81,14 @@ export class WcAccountForm extends LitElement {
       .fields {
         display: grid;
         gap: var(--wa-space-m);
-        min-width: 20rem;
+        min-width: 0;
       }
 
+      /* Two fields side by side while each keeps 12rem, stacked below that:
+         the dialog's width decides, and nothing overflows it. */
       .row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
         gap: var(--wa-space-m);
       }
 
@@ -99,7 +101,7 @@ export class WcAccountForm extends LitElement {
       .fixed {
         margin: 0;
         display: grid;
-        grid-template-columns: max-content 1fr;
+        grid-template-columns: max-content minmax(0, 1fr);
         gap: var(--wa-space-2xs) var(--wa-space-m);
         font-size: var(--wa-font-size-s);
       }
