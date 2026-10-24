@@ -8,6 +8,7 @@ pub mod auth;
 pub mod error;
 pub mod extract;
 pub mod routes;
+pub mod scheme;
 pub mod secret;
 pub mod state;
 mod static_files;

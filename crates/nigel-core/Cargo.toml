@@ -3,9 +3,10 @@ name = "nigel-core"
 version = "1.1.0"
 edition = "2021"
 description = "Cash-basis bookkeeping core: data layer, importers, rules, reports, invoicing and the web server"
-# This crate is consumed only by `nigel` and `nigel-desktop`, both in this
-# workspace. `pub` here means "reachable across the workspace's crate line" and
-# carries no promise to anyone outside it — see backlog/decisions/decision-4.
+# This crate is consumed only by crates in this repository: `nigel` in this
+# workspace, and the shells `nigel-desktop` and `nigel-ffi`, each in its own.
+# `pub` here means "reachable across those crate lines" and carries no promise
+# to anyone outside them — see backlog/decisions/decision-4.
 publish = false
 
 [features]

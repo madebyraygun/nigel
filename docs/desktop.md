@@ -4,10 +4,14 @@
 `nigel serve` exposes over a socket. Instead of a socket, it builds
 `nigel_core::server::build_desktop_router` and drives it from
 `register_asynchronous_uri_scheme_protocol` on a custom `nigel://` scheme: an
-axum `Router` is a `tower::Service`, so `src/transport.rs::answer` is the
-whole adapter — Tauri's request goes in, the router's response comes out, one
-call to `oneshot`. There is no TCP port, no listener, and no CORS to reason
-about, because the page and its API are served from the same origin.
+axum `Router` is a `tower::Service`, so `nigel_core::server::scheme::answer`
+is the whole adapter — the request goes in, the router's response comes out,
+one call to `oneshot`. There is no TCP port, no listener, and no CORS to
+reason about, because the page and its API are served from the same origin.
+
+The Swift macOS shell answers the same scheme through `crates/nigel-ffi`
+(see [The Swift shell's bridge](#the-swift-shells-bridge-nigel-ffi)), over the
+same router and the same `answer`.
 
 ## Running it
 
@@ -46,17 +50,20 @@ stand in for.
 Tauri gives a custom scheme a different origin form per platform, and the
 shell has to know it two ways: as the URL the window navigates to, and as the
 `Host` header the router's guard must accept. Both live in
-`crates/nigel-desktop/src/lib.rs`, pinned to literals and checked by unit
-tests rather than derived from each other, because a wrong value would move
-both sides together and stay green while every real launch answered 403:
+`crates/nigel-core/src/server/scheme.rs`, which every shell uses so the origin
+cannot drift between them, pinned to literals and checked by unit tests rather
+than derived from each other, because a wrong value would move both sides
+together and stay green while every real launch answered 403:
 
 | Platform | `scheme_url()` | `trusted_host()` |
 |---|---|---|
 | macOS, Linux | `nigel://localhost/` | `localhost` |
 | Windows | `http://nigel.localhost/` | `nigel.localhost` |
 
-`main.rs` hands `trusted_host()` to `TrustedOrigins::exactly`, so the router
-accepts requests bearing that one `Host` value and nothing else.
+Each shell hands `trusted_origins()` to `build_desktop_router`, so the router
+accepts requests bearing that one `Host` value, or the scheme's own origin, and
+nothing else. A webview sends no `Host` for a custom scheme, so `answer`
+carries the URL's authority into one before the guard reads it.
 
 ## No session guard
 
@@ -70,14 +77,14 @@ same LAN from reaching the whole API with no session, since `Host` and
 `Origin` are headers a curl invocation sets freely.
 
 That absence has to stay structural rather than a bet on one crate's
-discipline. `crates/nigel-desktop` is its own Cargo workspace, deliberately
-excluded from the root one — Cargo unifies features across workspace
-members, so a member enabling `desktop` would switch that feature on for
-every build in the tree, including the one that produces the `nigel` binary.
-`crates/nigel/tests/layering.rs` guards this: it fails if any root-workspace
-member's manifest asks `nigel-core` for the `desktop` feature. CI builds and
-tests `nigel-desktop` from its own directory rather than as part of the root
-workspace's run.
+discipline. `crates/nigel-desktop` and `crates/nigel-ffi` are each their own
+Cargo workspace, deliberately excluded from the root one — Cargo unifies
+features across workspace members, so a member enabling `desktop` would switch
+that feature on for every build in the tree, including the one that produces
+the `nigel` binary. `crates/nigel/tests/layering.rs` guards this: it fails if
+any root-workspace member's manifest asks `nigel-core` for the `desktop`
+feature. CI builds and tests both crates from their own directories rather
+than as part of the root workspace's run.
 
 ## The database
 
@@ -210,8 +217,9 @@ existing routes over the custom scheme with the staged id — there is no
 desktop-only import endpoint, which is what makes the two paths identical
 downstream rather than merely similar.
 
-`crates/nigel-desktop/src/imports.rs` holds both commands and the `stage_file`
-they share. The extension filter on the dialog is derived from
+`crates/nigel-desktop/src/imports.rs` holds both commands; the `stage_file`
+they share is `nigel_core::server::uploads::stage_file`, which the Swift
+shell's `NigelHost::stage_file` calls too. The extension filter on the dialog is derived from
 `uploads::UploadArea::Statement.allowed_extensions()`, so the dialog and the spool cannot disagree
 about what nigel reads.
 
@@ -262,6 +270,50 @@ section above depends on: that nothing outside this process can address the
 scheme. `crates/nigel-desktop/tauri.conf.json` carries no `plugins.deep-link`
 block and the manifest carries no `tauri-plugin-deep-link` dependency;
 `tests/no_deep_link.rs` fails the build if either reappears.
+
+## The Swift shell's bridge: `nigel-ffi`
+
+The Swift macOS shell (design: `docs/superpowers/specs/2026-09-14-swift-shell-design.md`)
+hosts the same SPA in a `WKWebView` and answers `nigel://` from a
+`WKURLSchemeHandler`. `crates/nigel-ffi` is the Rust half: a `staticlib` built
+with UniFFI's proc macros, exporting one object.
+
+| `NigelHost` | What it does |
+|---|---|
+| `new(data_dir, config_dir)` | Opens `<data_dir>/nigel.db` behind `build_desktop_router` and `trusted_origins()`, on its own multi-threaded tokio runtime, and fixes the process's config directory (`settings.json`, the invoicing and documents config) at `config_dir` through `settings::set_config_dir`. Both folders must exist: a missing books folder is `BooksFolderMissing` and a missing config folder `ConfigFolderMissing`, and neither is created. The config folder is fixed for the life of the process; a second host naming another is `ConfigFolderConflict` |
+| `async request(SchemeRequest)` | Method, whole URL, headers and body in; status, headers and body out, through `scheme::answer`. A request the `http` crate cannot represent is answered 400 without reaching the router |
+| `stage_file(path)` | `uploads::stage_file` into the open books' spool, answering the same `StagedUpload` the Tauri shell's commands do |
+| `data_dir()` | The folder the open books live in, following a switch made in Settings |
+
+The FFI is one request method rather than a typed call per route, so every
+route's validation stays in the router and a new route costs the shell
+nothing. The SPA is embedded in the library the way it is in every build:
+rust-embed over `web/dist`. `request` runs the router on the host's runtime,
+so Swift may await it from any executor; releasing the host shuts the runtime
+down without blocking.
+
+`SchemeRequest` and `SchemeResponse` are a plain HTTP exchange, so a
+transport that sends the same request to a remote `nigel serve` can reuse the
+shapes. It is not a drop-in, though: `nigel serve`'s router has a session
+guard and trusts its own host, not `nigel://localhost`. A remote transport
+must rewrite `Host` and `Origin` to the server's before sending, and attach
+the session credential itself, natively, so the page never holds it.
+
+The host knows nothing about where its folders came from. In the sandboxed
+app `$HOME` is the app container, so the shell owns both locations: it
+resolves the security-scoped bookmark to the books folder, starts access, and
+passes that folder and its config folder to `NigelHost::new`. `nigel-core`
+sees only paths and derives neither from the home directory.
+
+```bash
+cd crates/nigel-ffi && cargo test -- --test-threads=1
+```
+
+`tests/host.rs` drives `request` over `testutil`-seeded databases (GET, JSON
+POST, multipart, staging) from a non-tokio executor, as Swift calls it. On
+`aarch64-apple-darwin`, SQLCipher's vendored OpenSSL links statically and
+reqwest uses native-tls over Security.framework, so nothing in the library
+asks for a system OpenSSL.
 
 ## Where builds come from
 
