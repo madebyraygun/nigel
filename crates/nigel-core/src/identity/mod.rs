@@ -7,6 +7,8 @@
 //! Every function that writes or judges a time takes `now` as a parameter;
 //! `clock::now_utc()` is the one read, at the caller.
 
+pub mod passwords;
+
 /// Ordered `ReadOnly < Bookkeeper < Admin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
