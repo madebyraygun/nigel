@@ -11,6 +11,13 @@ pub fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// The current instant in UTC — the reference time every identity write
+/// stamps and every session expiry is judged against. The `identity` data
+/// layer takes it as a parameter rather than reading it, so tests pin it.
+pub fn now_utc() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now()
+}
+
 /// The calendar day an instant falls on in a given zone, `YYYY-MM-DD`.
 ///
 /// Generic over the zone so the conversion can be tested against a fixed
