@@ -62,7 +62,7 @@ pub fn unlock_without_prompting(db_path: &Path) -> Result<()> {
         }
         None => Err(nigel_core::error::NigelError::Other(format!(
             "{} is encrypted and this command never prompts. \
-             Set NIGEL_DB_PASSWORD — see \"Automated backups\" in the README.",
+             Set NIGEL_DB_PASSWORD or NIGEL_DB_PASSWORD_FILE — see \"Automated backups\" in the README.",
             db_path.display()
         ))),
     }

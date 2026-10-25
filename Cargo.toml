@@ -2,3 +2,9 @@
 members = ["crates/nigel", "crates/nigel-core"]
 exclude = ["crates/nigel-desktop", "crates/nigel-ffi"]
 resolver = "2"
+
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

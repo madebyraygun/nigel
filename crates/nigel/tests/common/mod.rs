@@ -100,10 +100,15 @@ impl TestEnv {
     /// Build a `nigel` Command with HOME pointed at our temp dir and every
     /// invoicing credential cleared from the inherited environment, so no test
     /// can reach Stripe, R2, or Mailgun on a machine where those are exported.
+    /// The books-password variables are cleared too; a test that needs one sets
+    /// it on its own command.
     pub fn cmd(&self) -> Command {
         let mut cmd = Command::new(private_binary());
         cmd.env("HOME", self.home.path());
-        for var in INVOICING_ENV_VARS {
+        for var in INVOICING_ENV_VARS
+            .iter()
+            .chain(&["NIGEL_DB_PASSWORD", "NIGEL_DB_PASSWORD_FILE"])
+        {
             cmd.env_remove(var);
         }
         cmd

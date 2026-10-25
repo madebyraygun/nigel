@@ -5040,3 +5040,366 @@ fn a_malformed_settings_file_stops_every_command_and_survives_it() {
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
 }
+
+/// `nigel init` alone: an empty set of books with no users.
+fn init_empty(env: &TestEnv) {
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn every_command_accepts_the_password_file() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    env.encrypt("hunter2");
+    let file = env.home.path().join("nigel-db-password");
+    std::fs::write(&file, "hunter2").unwrap();
+    env.cmd()
+        .arg("status")
+        .env_remove("NIGEL_DB_PASSWORD")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+}
+
+#[test]
+fn a_wrong_or_doubled_password_source_fails_fast_naming_the_variable() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    env.encrypt("hunter2");
+    let file = env.home.path().join("nigel-db-password");
+    std::fs::write(&file, "notit\n").unwrap();
+
+    env.cmd()
+        .arg("status")
+        .env_remove("NIGEL_DB_PASSWORD")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD_FILE did not unlock")
+                .and(predicate::str::contains("notit").not()),
+        );
+    std::fs::write(&file, "hunter2\n").unwrap();
+    env.cmd()
+        .arg("status")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("are both set"));
+}
+
+/// The temporary password printed on the `Temporary password:` line.
+fn temporary_password_from(stdout: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stdout);
+    let line = text
+        .lines()
+        .find_map(|l| l.strip_prefix("Temporary password: "))
+        .unwrap_or_else(|| panic!("no temporary password in:\n{text}"));
+    line.trim().to_string()
+}
+
+/// `nigel user <args>` with neither password variable inherited and no stdin.
+fn user_cmd(env: &TestEnv, args: &[&str]) -> assert_cmd::Command {
+    let mut cmd = env.cmd();
+    cmd.arg("user")
+        .args(args)
+        .env_remove("NIGEL_DB_PASSWORD")
+        .env_remove("NIGEL_DB_PASSWORD_FILE")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT);
+    cmd
+}
+
+#[test]
+fn user_add_prints_a_temporary_password_once_and_warns_on_unencrypted_books() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    let out = user_cmd(&env, &["add", "Pat@Example.com", "--name", "Pat Example", "--admin"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Added Pat Example <pat@example.com> (Admin).").and(
+                predicate::str::contains(
+                    "Give this to Pat Example. They will choose their own password when they first sign in.",
+                ),
+            ),
+        )
+        .stderr(predicate::str::contains("These books are not encrypted."))
+        .get_output()
+        .stdout
+        .clone();
+    let temporary = temporary_password_from(&out);
+    let shape = regex::Regex::new(r"^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){3}$").unwrap();
+    assert!(shape.is_match(&temporary), "{temporary}");
+
+    let hash: String = env
+        .db()
+        .query_row("SELECT password_hash FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert!(hash.starts_with("$argon2id$"));
+    assert!(!hash.contains(&temporary));
+
+    user_cmd(
+        &env,
+        &[
+            "add",
+            "sam@example.com",
+            "--name",
+            "Sam Example",
+            "--role",
+            "bookkeeper",
+        ],
+    )
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("not encrypted").not());
+}
+
+#[test]
+fn user_add_refuses_a_first_user_who_is_not_an_admin() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    user_cmd(
+        &env,
+        &[
+            "add",
+            "sam@example.com",
+            "--name",
+            "Sam Example",
+            "--role",
+            "bookkeeper",
+        ],
+    )
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("The first user must be an admin"));
+    let users: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 0);
+}
+
+#[test]
+fn user_add_needs_exactly_one_of_admin_or_role() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    user_cmd(&env, &["add", "pat@example.com", "--name", "Pat Example"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--admin"));
+    user_cmd(
+        &env,
+        &[
+            "add",
+            "pat@example.com",
+            "--name",
+            "Pat Example",
+            "--admin",
+            "--role",
+            "admin",
+        ],
+    )
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn user_list_role_disable_enable_and_the_last_admin() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    user_cmd(
+        &env,
+        &["add", "pat@example.com", "--name", "Pat Example", "--admin"],
+    )
+    .assert()
+    .success();
+    user_cmd(
+        &env,
+        &[
+            "add",
+            "sam@example.com",
+            "--name",
+            "Sam Example",
+            "--role",
+            "bookkeeper",
+        ],
+    )
+    .assert()
+    .success();
+
+    user_cmd(&env, &["list"]).assert().success().stdout(
+        predicate::str::contains("pat@example.com")
+            .and(predicate::str::contains("Bookkeeper"))
+            .and(predicate::str::contains("must change password"))
+            .and(predicate::str::contains("—"))
+            .and(predicate::str::contains("argon2").not()),
+    );
+
+    user_cmd(&env, &["role", "pat@example.com", "read_only"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only enabled admin"));
+    user_cmd(&env, &["disable", "pat@example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only enabled admin"));
+
+    user_cmd(&env, &["role", "sam@example.com", "read-only"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "sam@example.com is now Read-only.",
+        ));
+    user_cmd(&env, &["disable", "sam@example.com"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Disabled sam@example.com"));
+    user_cmd(&env, &["disable", "sam@example.com"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already disabled"));
+    user_cmd(&env, &["list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("disabled"));
+    user_cmd(&env, &["enable", "SAM@example.com"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Enabled sam@example.com."));
+}
+
+#[test]
+fn user_commands_refuse_an_unknown_email_by_name() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    user_cmd(
+        &env,
+        &["add", "pat@example.com", "--name", "Pat Example", "--admin"],
+    )
+    .assert()
+    .success();
+    for args in [
+        vec!["role", "nobody@example.com", "admin"],
+        vec!["disable", "nobody@example.com"],
+        vec!["enable", "nobody@example.com"],
+        vec!["reset-password", "nobody@example.com"],
+    ] {
+        user_cmd(&env, &args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("nobody@example.com"));
+    }
+}
+
+#[test]
+fn user_reset_password_replaces_the_password_and_can_clear_two_step() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    let first = user_cmd(
+        &env,
+        &["add", "pat@example.com", "--name", "Pat Example", "--admin"],
+    )
+    .assert()
+    .success()
+    .get_output()
+    .stdout
+    .clone();
+    let first = temporary_password_from(&first);
+    env.db()
+        .execute_batch(
+            "UPDATE users SET totp_secret = x'0102', totp_last_step = 7, must_change_password = 0;",
+        )
+        .unwrap();
+
+    let second = user_cmd(&env, &["reset-password", "pat@example.com"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Give this to Pat Example."))
+        .get_output()
+        .stdout
+        .clone();
+    assert_ne!(temporary_password_from(&second), first);
+    let (must_change, secret): (bool, Option<Vec<u8>>) = env
+        .db()
+        .query_row(
+            "SELECT must_change_password, totp_secret FROM users",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(must_change);
+    assert!(secret.is_some(), "without --clear-totp two-step stays on");
+
+    user_cmd(&env, &["reset-password", "pat@example.com", "--clear-totp"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Two-step verification is off"));
+    let secret: Option<Vec<u8>> = env
+        .db()
+        .query_row("SELECT totp_secret FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert!(secret.is_none());
+}
+
+#[test]
+fn user_commands_unlock_encrypted_books_from_a_password_file() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    env.encrypt("hunter2");
+    let file = env.home.path().join("nigel-db-password");
+    std::fs::write(&file, "hunter2\n").unwrap();
+
+    user_cmd(
+        &env,
+        &["add", "pat@example.com", "--name", "Pat Example", "--admin"],
+    )
+    .env("NIGEL_DB_PASSWORD_FILE", &file)
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("not encrypted").not());
+    user_cmd(&env, &["list"])
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pat@example.com"));
+}
+
+#[test]
+fn user_add_refuses_an_email_with_control_characters_without_echoing_them() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    let out = user_cmd(
+        &env,
+        &[
+            "add",
+            "pat\u{1b}]0;pwned\u{7}@example.com",
+            "--name",
+            "Pat Example",
+            "--admin",
+        ],
+    )
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("is not an email address"))
+    .get_output()
+    .clone();
+    assert!(!out.stdout.contains(&0x1b) && !out.stderr.contains(&0x1b));
+    assert!(!out.stdout.contains(&0x07) && !out.stderr.contains(&0x07));
+    let users: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 0);
+}

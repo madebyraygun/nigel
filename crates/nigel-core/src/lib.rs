@@ -15,6 +15,7 @@ pub mod demo;
 pub mod documents;
 pub mod error;
 pub mod fmt;
+pub mod identity;
 pub mod importer;
 pub mod imports;
 pub mod invoicing;

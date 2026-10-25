@@ -205,6 +205,8 @@ Put this in a wrapper script rather than directly in a launchd plist.
 
 Read the password from a secret store, as above, rather than writing it into a script or a plist.
 
+Where the secret store hands over a file instead — a systemd credential, say — set `NIGEL_DB_PASSWORD_FILE` to its path. The file holds the password, and one trailing newline is ignored. Set one of the two variables, not both.
+
 ## Scheduled invoices
 
 `nigel invoice schedule run` generates every recurring invoice currently due and
