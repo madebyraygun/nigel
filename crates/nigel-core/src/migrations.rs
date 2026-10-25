@@ -502,6 +502,44 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 17,
+        description: "users and sessions for signing in to a shared server",
+        up: |conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS users (
+                    id                    INTEGER PRIMARY KEY,
+                    uid                   TEXT NOT NULL UNIQUE,
+                    email                 TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    display_name          TEXT NOT NULL,
+                    password_hash         TEXT NOT NULL,
+                    role                  TEXT NOT NULL
+                                          CHECK (role IN ('admin', 'bookkeeper', 'read_only')),
+                    totp_secret           BLOB,
+                    totp_last_step        INTEGER,
+                    must_change_password  INTEGER NOT NULL DEFAULT 0,
+                    password_changed_at   TEXT NOT NULL,
+                    disabled_at           TEXT,
+                    created_at            TEXT NOT NULL,
+                    updated_at            TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS sessions (
+                    id            INTEGER PRIMARY KEY,
+                    token_hash    BLOB NOT NULL UNIQUE,
+                    user_id       INTEGER NOT NULL REFERENCES users(id),
+                    kind          TEXT NOT NULL CHECK (kind IN ('cookie', 'bearer')),
+                    created_at    TEXT NOT NULL,
+                    last_seen_at  TEXT NOT NULL,
+                    expires_at    TEXT NOT NULL,
+                    user_agent    TEXT,
+                    ip            TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+                 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -1742,6 +1780,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(demote_extra_signers(&conn).unwrap(), None);
+    }
+
+    #[test]
+    fn v17_creates_users_and_sessions_on_a_fresh_database() {
+        let (_dir, conn) = test_db();
+        assert!(table_exists(&conn, "users"));
+        assert!(table_exists(&conn, "sessions"));
+        let users: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(users, 0, "a fresh database has no users, so it stays local");
+    }
+
+    #[test]
+    fn v17_migrates_a_v16_database_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        conn.execute_batch("DROP TABLE sessions; DROP TABLE users;")
+            .unwrap();
+        set_metadata(&conn, "schema_version", "16").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        assert!(table_exists(&conn, "users"));
+        assert!(table_exists(&conn, "sessions"));
+        set_metadata(&conn, "schema_version", "16").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+    }
+
+    #[test]
+    fn v17_refuses_an_unknown_role_and_a_second_spelling_of_an_email() {
+        let (_dir, conn) = test_db();
+        let insert = |uid: &str, email: &str, role: &str| {
+            conn.execute(
+                "INSERT INTO users (uid, email, display_name, password_hash, role,
+                                    password_changed_at, created_at, updated_at)
+                 VALUES (?1, ?2, 'Pat Example', 'x', ?3, 't', 't', 't')",
+                rusqlite::params![uid, email, role],
+            )
+        };
+        insert("a", "pat@example.com", "admin").unwrap();
+        assert!(insert("b", "PAT@example.com", "admin").is_err());
+        assert!(insert("c", "sam@example.com", "owner").is_err());
     }
 
     #[test]
