@@ -5243,7 +5243,7 @@ fn user_list_role_disable_enable_and_the_last_admin() {
         predicate::str::contains("pat@example.com")
             .and(predicate::str::contains("Bookkeeper"))
             .and(predicate::str::contains("must change password"))
-            .and(predicate::str::contains("never"))
+            .and(predicate::str::contains("—"))
             .and(predicate::str::contains("argon2").not()),
     );
 
