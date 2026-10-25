@@ -190,10 +190,10 @@ nigel user reset-password pat@example.com --clear-totp                 # Also tu
 - A chosen password is 12 to 256 characters after Unicode (NFC) normalization, must not
   equal (ignoring case) the user's email, the part of it before the `@`, or their name, and
   must differ from the current one. There is no common-password list.
-- Emails are trimmed, lower-cased and NFC-normalized, and refused if they contain control
-  characters; display names are trimmed and NFC-normalized. Emails are therefore matched
+- Emails are trimmed, lower-cased and NFC-normalized, and refused if they contain
+  whitespace or control characters; display names are trimmed and NFC-normalized. Emails are therefore matched
   without regard to case or surrounding spaces. An unknown email is an error naming it.
-- `add` on unencrypted books warns that anyone who can read the file can read the books,
+- The first `add` on unencrypted books warns that anyone who can read the file can read the books,
   and recommends `nigel password set` first.
 - Users are never deleted. The last enabled admin cannot be disabled or demoted.
 - `list` never prints a password hash or a two-step secret.
