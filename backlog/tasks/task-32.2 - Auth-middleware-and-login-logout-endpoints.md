@@ -1,10 +1,10 @@
 ---
 id: TASK-32.2
 title: Auth middleware and login/logout endpoints
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-25 03:39'
+updated_date: '2026-10-25 19:14'
 labels:
   - multiuser
   - backend
@@ -18,7 +18,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Session-cookie authentication in front of the API when multiuser mode is enabled: login and logout endpoints, HttpOnly SameSite cookies, session expiry, and failed-attempt throttling with lockout. Multiuser mode is an explicit setting; when off, the current single-user tokenized-URL behavior is unchanged. In multiuser mode the database unlock endpoint becomes admin-only (the key is held server-side after an admin unlocks at boot).
+Authentication for nigel serve: sessions (cookie and bearer), login/logout/me, account routes (password change, TOTP), rate limiting, the mode-aware host guard with server_public_url, boot unlock, security headers. Shared mode is derived from users existing (no setting); a shared server unlocks at boot from NIGEL_DB_PASSWORD / NIGEL_DB_PASSWORD_FILE and never over HTTP. Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md; plan: docs/superpowers/plans/2026-10-25-multiuser-pr2-auth-and-modes.md.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
