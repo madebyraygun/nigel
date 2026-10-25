@@ -1024,6 +1024,11 @@ fn did_not_unlock(var: &str, db_path: &Path) -> crate::error::NigelError {
 /// stripped.
 const PASSWORD_FILE_ENV_VAR: &str = "NIGEL_DB_PASSWORD_FILE";
 
+/// The most a password file may hold. The file is one line of text; anything
+/// larger is the wrong file, and reading it whole would pull an arbitrary
+/// amount into memory.
+const PASSWORD_FILE_MAX_BYTES: u64 = 4096;
+
 /// Validate a password read from the file `path` names. Every failure is fatal,
 /// for the reason [`env_password`]'s are, and none of them quotes the file.
 fn file_password(db_path: &Path, path: &std::ffi::OsStr) -> Result<Option<String>> {
@@ -1034,12 +1039,26 @@ fn file_password(db_path: &Path, path: &std::ffi::OsStr) -> Result<Option<String
         )));
     }
     let path = Path::new(path);
-    let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| {
+    let could_not_read = |e: std::io::Error| {
         NigelError::Other(format!(
             "{PASSWORD_FILE_ENV_VAR} names {}, which could not be read: {e}.",
             path.display()
         ))
-    })?);
+    };
+    let mut bytes = Zeroizing::new(Vec::new());
+    {
+        use std::io::Read;
+        let file = std::fs::File::open(path).map_err(could_not_read)?;
+        file.take(PASSWORD_FILE_MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(could_not_read)?;
+    }
+    if bytes.len() as u64 > PASSWORD_FILE_MAX_BYTES {
+        return Err(NigelError::Other(format!(
+            "{PASSWORD_FILE_ENV_VAR} names {}, which is larger than {PASSWORD_FILE_MAX_BYTES} bytes. It should hold only the password.",
+            path.display()
+        )));
+    }
     let Ok(text) = std::str::from_utf8(&bytes) else {
         return Err(NigelError::Other(format!(
             "{PASSWORD_FILE_ENV_VAR} names {}, which is not valid UTF-8.",
@@ -1067,7 +1086,7 @@ fn file_password(db_path: &Path, path: &std::ffi::OsStr) -> Result<Option<String
 /// The password from whichever of the two variables is set. Both set is an
 /// error rather than a precedence rule: two sources for one secret is a
 /// misconfiguration, and silently preferring one hides which is stale.
-fn env_password_from(
+pub(crate) fn env_password_from(
     db_path: &Path,
     raw: Option<OsString>,
     file: Option<OsString>,
@@ -1596,6 +1615,29 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn a_password_file_larger_than_the_cap_is_refused_without_quoting_it() {
+        let (dir, db_path) = encrypted_db();
+        let big = dir.path().join("big-password");
+        std::fs::write(&big, vec![b'a'; PASSWORD_FILE_MAX_BYTES as usize + 1]).unwrap();
+        let err = env_password_from(&db_path, None, Some(big.into_os_string()))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(PASSWORD_FILE_ENV_VAR), "{err}");
+        assert!(err.contains("larger than 4096 bytes"), "{err}");
+        assert!(!err.contains("aaaa"), "{err}");
+
+        let at_cap = dir.path().join("at-cap-password");
+        std::fs::write(&at_cap, vec![b'a'; PASSWORD_FILE_MAX_BYTES as usize]).unwrap();
+        let err = env_password_from(&db_path, None, Some(at_cap.into_os_string()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("may be damaged"),
+            "a file at the cap is read: {err}"
+        );
     }
 
     #[test]
