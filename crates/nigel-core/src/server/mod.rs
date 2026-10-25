@@ -13,6 +13,8 @@ pub mod mode;
 pub mod routes;
 pub mod scheme;
 pub mod secret;
+#[cfg(test)]
+mod shared_tests;
 pub mod state;
 mod static_files;
 #[cfg(any(test, feature = "testutil"))]
@@ -23,7 +25,7 @@ use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -118,9 +120,12 @@ async fn serve_with_shutdown(
     state: AppState,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    axum::serve(listener, build_router(state))
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        build_router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
     Ok(())
 }
 
@@ -148,20 +153,20 @@ async fn shutdown_signal() {
     }
 }
 
-/// Two headers on everything this server answers, refusals included.
+/// Headers on everything this server answers, refusals included, each a
+/// **default** a handler may override (the invoice preview answers
+/// `SAMEORIGIN` for its own `<iframe>`).
 ///
-/// `SameSite=Strict` already keeps the session cookie out of a cross-site
-/// frame, so framing the SPA gets an attacker an unauthenticated shell; denying
-/// it outright costs a header and removes the question. `nosniff` holds the
-/// browser to the content type each response states — the API's `application/
-/// json` error envelopes echo request values, and a sniffed one is HTML.
-///
-/// Both are **defaults**, not overrides: a handler that set either one keeps its
-/// value. `DENY` blocks same-origin framing as well as cross-origin, so the
-/// invoice preview — a document the SPA renders in a sandboxed `<iframe>` of its
-/// own page — answers `SAMEORIGIN` for itself. Deciding that per route beats
-/// loosening the blanket value for every response.
-async fn security_headers(req: Request, next: Next) -> Response {
+/// `nosniff` holds the browser to each response's stated type; `DENY` stops
+/// framing; `Referrer-Policy: same-origin` keeps paths out of other sites'
+/// logs. Every `/api` answer is `no-store`, so books data never sits in a
+/// shared or disk cache. HSTS goes only on answers to the `server_public_url`
+/// host, which a proxy serves over https; on loopback it would pin
+/// `localhost` to https.
+async fn security_headers(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    let is_api = path == "/api" || path.starts_with("/api/");
+    let public = auth::request_is_public(&state, req.headers());
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
     headers
@@ -170,36 +175,52 @@ async fn security_headers(req: Request, next: Next) -> Response {
     headers
         .entry(header::X_FRAME_OPTIONS)
         .or_insert(HeaderValue::from_static("DENY"));
+    headers
+        .entry(header::REFERRER_POLICY)
+        .or_insert(HeaderValue::from_static("same-origin"));
+    if is_api {
+        headers
+            .entry(header::CACHE_CONTROL)
+            .or_insert(HeaderValue::from_static("no-store"));
+    }
+    if public {
+        headers
+            .entry(header::STRICT_TRANSPORT_SECURITY)
+            .or_insert(HeaderValue::from_static("max-age=31536000"));
+    }
     response
 }
 
-/// The `/api` nest, `/auth`, the static assets, Host/Origin, and the blanket
-/// headers — everything [`build_router`] and (behind the `desktop` feature)
-/// `build_desktop_router` share. Layers run outermost-first: the blanket
-/// headers, Host/Origin, then the route. `/auth` and the static assets sit
-/// outside the `/api` nest and need no session either way.
-fn finish_router(state: AppState, api: Router<AppState>, trusted: auth::TrustedOrigins) -> Router {
+/// The `/api` nest, `/auth` and the static assets: what both routers serve.
+/// `/auth` and the static assets carry no data and need no session.
+fn base_router(api: Router<AppState>) -> Router<AppState> {
     Router::new()
         .nest("/api", api)
         .route("/auth", get(auth::auth_redirect))
         .fallback(static_files::static_handler)
-        .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
-        .layer(middleware::from_fn(security_headers))
-        .with_state(state)
 }
 
-/// The router `nigel serve` runs: loopback-only, and every api route behind a
-/// session cookie.
+/// The router `nigel serve` runs. Layers run outermost first: the blanket
+/// headers, the mode-aware host guard, then — on `/api` only — the session
+/// layer.
 ///
 /// The session layer wraps the `/api` router itself rather than using
-/// `route_layer`, so it also covers that router's 404 fallback — otherwise an
-/// unauthenticated request to an unknown `/api` path would skip the check.
+/// `route_layer`, so it also covers that router's 404 fallback.
 pub fn build_router(state: AppState) -> Router {
     let api = routes::api_router(&state).layer(middleware::from_fn_with_state(
         state.clone(),
         auth::session_guard,
     ));
-    finish_router(state, api, auth::TrustedOrigins::loopback())
+    base_router(api)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::served_host_guard,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers,
+        ))
+        .with_state(state)
 }
 
 /// The router a desktop shell serves over its custom URI scheme.
@@ -224,7 +245,13 @@ pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> R
     disable_ansi_output();
 
     let api = routes::api_router(&state);
-    finish_router(state, api, trusted)
+    base_router(api)
+        .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers,
+        ))
+        .with_state(state)
 }
 
 #[cfg(test)]

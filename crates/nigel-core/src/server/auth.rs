@@ -207,6 +207,72 @@ pub async fn host_guard(
     next.run(req).await
 }
 
+/// True when the request's `Host` is this server's `server_public_url`: the
+/// request reached it over https through a proxy, so cookies are `Secure` and
+/// the answer carries HSTS. Loopback is never public.
+pub(crate) fn request_is_public(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    let Some(public) = state.config.public_url.as_ref() else {
+        return false;
+    };
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|host| public.matches_host(host))
+}
+
+/// Outermost guard of `nigel serve`. The `Host` must be loopback by any of
+/// its names, or the `server_public_url` host while the server is shared; an
+/// `Origin`, when sent, must be a loopback origin on any port or, while
+/// shared, exactly the `server_public_url` origin. A public-host request to
+/// a local-mode server re-derives the mode first, so a first user added with
+/// the CLI takes effect without a restart.
+pub async fn served_host_guard(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let loopback = TrustedOrigins::loopback();
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .map(|value| value.to_str().map(str::to_string));
+    let Some(host) = host else {
+        return ApiError::forbidden().into_response();
+    };
+
+    let public = state.config.public_url.clone();
+    let via_public = public.as_ref().is_some_and(|p| p.matches_host(&host));
+    if !via_public && !loopback.host_is_trusted(&host) {
+        return ApiError::forbidden().into_response();
+    }
+
+    let mut mode = state.mode();
+    if via_public && mode == super::mode::Mode::Local {
+        mode = state.refresh_mode_throttled().await;
+    }
+    let shared = mode == super::mode::Mode::Shared;
+    if via_public && !shared {
+        return ApiError::forbidden().into_response();
+    }
+
+    if let Some(origin) = origin {
+        let trusted = origin.is_ok_and(|origin| {
+            loopback.origin_is_trusted(&origin)
+                || (shared && public.as_ref().is_some_and(|p| p.matches_origin(&origin)))
+        });
+        if !trusted {
+            return ApiError::forbidden().into_response();
+        }
+    }
+
+    next.run(req).await
+}
+
 /// Layered over `/api` only — `/auth` and the static assets carry no data and
 /// are reachable without a session.
 pub async fn session_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
