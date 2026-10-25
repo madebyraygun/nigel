@@ -146,7 +146,7 @@ nigel password set                                # Encrypt an unencrypted datab
 nigel password change                             # Change password on encrypted database
 nigel password remove                             # Decrypt database (remove password)
 nigel user add pat@example.com --name "Pat Example" --admin  # Add a user with a temporary password; the first must be --admin
-nigel user list                                   # Email, name, role, status, two-step, last seen
+nigel user list                                   # Email, name, role, status, two-step, last active (— when signed out)
 nigel user role sam@example.com read_only         # Change a role: admin, bookkeeper, read_only
 nigel user disable sam@example.com                # Disable a user and end their sessions (users are never deleted)
 nigel user enable sam@example.com                 # Enable a disabled user
@@ -174,7 +174,7 @@ stays in local mode, with its token link, whatever this table holds.
 ```bash
 nigel user add pat@example.com --name "Pat Example" --admin            # The first user must be --admin
 nigel user add sam@example.com --name "Sam Example" --role bookkeeper  # --role admin|bookkeeper|read_only
-nigel user list                                                        # Email, name, role, status, two-step, last seen
+nigel user list                                                        # Email, name, role, status, two-step, last active (— when signed out)
 nigel user role sam@example.com read_only                              # Change a role
 nigel user disable sam@example.com                                     # Disable and end their sessions
 nigel user enable sam@example.com

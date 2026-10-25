@@ -82,7 +82,7 @@ pub(crate) fn list_table(rows: &[UserListing]) -> String {
         "Role",
         "Status",
         "Two-step",
-        "Last seen",
+        "Last active",
     ]);
     for row in rows {
         let user = &row.user;
@@ -92,7 +92,10 @@ pub(crate) fn list_table(rows: &[UserListing]) -> String {
             Cell::new(user.role.label()),
             Cell::new(status(user)),
             Cell::new(if user.totp_enabled { "on" } else { "off" }),
-            Cell::new(row.last_seen_at.as_deref().unwrap_or("never")),
+            Cell::new(match (row.active_sessions, row.last_seen_at.as_deref()) {
+                (n, Some(seen)) if n > 0 => seen,
+                _ => "—",
+            }),
         ]);
     }
     table.to_string()
@@ -205,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn the_list_shows_status_two_step_and_last_seen() {
+    fn the_list_shows_status_two_step_and_last_active() {
         let rows = vec![
             UserListing {
                 user: user(Role::Admin, false, false, true),
@@ -259,7 +262,7 @@ mod tests {
                 "Read-only",
                 "must change password",
                 "off",
-                "never"
+                "—"
             ]
         );
         assert_eq!(
@@ -270,7 +273,7 @@ mod tests {
                 "Bookkeeper",
                 "disabled",
                 "off",
-                "never"
+                "—"
             ]
         );
     }
