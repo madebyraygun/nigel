@@ -18,6 +18,19 @@ describe('document-level native-feel rules', () => {
     expect(style).toMatch(/overscroll-behavior:\s*none/);
   });
 
+  it('makes the document exactly the window, never a scroller', () => {
+    // The shell fills the window and its content area is the one scroller.
+    // A document that can grow past the window gets a second scrollbar, and
+    // wheel, focus and scrollIntoView slide the whole frame up inside it.
+    expect(style).toMatch(/html,\s*body\s*\{[^}]*height:\s*100%/);
+    expect(style).not.toMatch(/min-height:\s*100vh/);
+    expect(style).toMatch(/(?<!-)\bhtml\s*\{[^}]*overflow:\s*hidden/);
+  });
+
+  it('lets a printed report run past one window', () => {
+    expect(style).toMatch(/@media print[\s\S]*html\s*\{[^}]*overflow:\s*visible/);
+  });
+
   it('disables user-select so dragging chrome does not paint a selection', () => {
     expect(style).toMatch(/(?<!-webkit-)user-select:\s*none/);
     expect(style).toMatch(/-webkit-user-select:\s*none/);

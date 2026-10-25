@@ -53,9 +53,14 @@ export class WcAppShell extends LitElement {
   static styles = [
     controlsCss,
     css`
+      /* Exactly the window: the document never scrolls, only the content
+         area does. The dynamic viewport unit follows a phone browser's
+         toolbars, so the status line is not left under them; 100vh is the
+         fallback where dvh is not understood. */
       :host {
         display: flex;
         height: 100vh;
+        height: 100dvh;
         background: var(--wa-color-bg);
         color: var(--wa-color-text);
         font-family: var(--wa-font-family-sans);
@@ -155,13 +160,24 @@ export class WcAppShell extends LitElement {
       /* A column flex container, so a screen that wants the window can ask
          for it with flex-grow on its own host and get a definite height to
          divide up. A screen that does not stays content-sized, as a block
-         child would. */
+         child would.
+
+         Positioned, so it is the containing block for every absolutely
+         positioned descendant — a visually hidden label, a caption, a radio
+         under its card. Without that their containing block is the window,
+         this element's clip does not apply to them, and one sitting below
+         the fold makes the document taller than the window: a second
+         scrollbar, and a page that wheel, focus and scrollIntoView slide up
+         under the frame. overscroll-behavior keeps a scroll that reaches
+         either end here rather than handing it on. */
       .content {
+        position: relative;
         flex: 1;
         display: flex;
         flex-direction: column;
         gap: 18px;
         overflow: auto;
+        overscroll-behavior: contain;
         padding: 4px 16px 16px 20px;
         min-height: 0;
       }
