@@ -9,6 +9,7 @@ pub mod config;
 pub mod error;
 pub mod events;
 pub mod extract;
+pub mod mode;
 pub mod routes;
 pub mod scheme;
 pub mod secret;
@@ -57,7 +58,8 @@ pub(crate) fn disable_ansi_output() {
 }
 
 async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
-    let state = AppState::new(db_path, auth::generate_token());
+    let mode = mode::derive(&db_path).unwrap_or(mode::Mode::Local);
+    let state = AppState::for_serve(db_path, mode, config::ServerConfig::default());
 
     // A previous run may have been killed between an upload and its import.
     uploads::purge_stale(&uploads::uploads_dir(&state.db_path()), uploads::MAX_AGE);
@@ -66,21 +68,28 @@ async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
 
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).await?;
     let addr = listener.local_addr()?;
-    let url = format!(
-        "http://127.0.0.1:{}/auth?token={}",
-        addr.port(),
-        state.session_token.expose()
-    );
+    if let Some(token) = state.local_token() {
+        let url = format!(
+            "http://127.0.0.1:{}/auth?token={}",
+            addr.port(),
+            token.expose()
+        );
 
-    println!("Nigel is serving on http://127.0.0.1:{}", addr.port());
-    println!("Open this URL to start a session:");
-    println!("  {url}");
-    println!("Press Ctrl-C to stop.");
+        println!("Nigel is serving on http://127.0.0.1:{}", addr.port());
+        println!("Open this URL to start a session:");
+        println!("  {url}");
+        println!("Press Ctrl-C to stop.");
 
-    if !no_open {
-        if let Err(e) = open::that_detached(&url) {
-            eprintln!("notice: couldn't open a browser ({e}) — open the URL above yourself.");
+        if !no_open {
+            if let Err(e) = open::that_detached(&url) {
+                eprintln!("notice: couldn't open a browser ({e}) — open the URL above yourself.");
+            }
         }
+    } else {
+        println!(
+            "Nigel is serving on http://127.0.0.1:{} to signed-in users.",
+            addr.port()
+        );
     }
 
     serve_with_shutdown(listener, state, shutdown_signal()).await?;
@@ -225,6 +234,29 @@ mod tests {
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn the_token_link_is_refused_once_the_server_is_shared() {
+        let state = AppState::for_serve(
+            PathBuf::from("/nonexistent/nigel.db"),
+            mode::Mode::Shared,
+            Default::default(),
+        );
+        let response = build_router(state)
+            .oneshot(
+                get_request("/auth?token=deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!response.headers().contains_key(header::SET_COOKIE));
+        assert_eq!(
+            json_body(response).await["error"]["details"]["mode"],
+            "shared"
+        );
+    }
 
     #[tokio::test]
     async fn api_without_session_is_unauthorized() {

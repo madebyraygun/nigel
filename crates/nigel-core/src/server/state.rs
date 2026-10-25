@@ -80,6 +80,17 @@ impl Features {
     }
 }
 
+type ClockFn = dyn Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync;
+
+#[derive(Clone)]
+struct StateClock(Arc<ClockFn>);
+
+impl std::fmt::Debug for StateClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StateClock")
+    }
+}
+
 /// State cloned into every request. Handlers open their own `rusqlite`
 /// connection from `db_path()` inside `spawn_blocking`; there is no pool.
 ///
@@ -93,7 +104,13 @@ pub struct AppState {
     /// path fixed at startup would leave every later request reading the old
     /// books under the new directory's name.
     db_path: Arc<RwLock<PathBuf>>,
-    pub session_token: SessionToken,
+    /// Local mode with its token, or shared mode; see `mode.rs`.
+    mode: Arc<super::mode::ModeCell>,
+    /// How this server is reached: its public address and client-IP header.
+    pub config: Arc<super::config::ServerConfig>,
+    /// The instant every session write stamps and every expiry is judged
+    /// against. The wall clock in production; tests pin it.
+    clock: StateClock,
     pub features: Features,
     pub unlock: Arc<UnlockGate>,
     /// Guards the database *file* rather than its contents.
@@ -115,15 +132,107 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// A state pinned to local mode, with `session_token` as its token: the
+    /// desktop shells' state, and every test that does not need shared mode.
     pub fn new(db_path: PathBuf, session_token: String) -> Self {
+        Self::with_mode(
+            db_path,
+            super::mode::ModeCell::local(
+                super::mode::ModePolicy::PinnedLocal,
+                SessionToken::from(session_token),
+            ),
+            super::config::ServerConfig::default(),
+        )
+    }
+
+    /// The state `nigel serve` runs: its mode derived (and re-derived) from
+    /// the books. A token is minted only for local mode.
+    pub fn for_serve(
+        db_path: PathBuf,
+        mode: super::mode::Mode,
+        config: super::config::ServerConfig,
+    ) -> Self {
+        let cell = match mode {
+            super::mode::Mode::Local => super::mode::ModeCell::local(
+                super::mode::ModePolicy::Derived,
+                SessionToken::from(super::auth::generate_token()),
+            ),
+            super::mode::Mode::Shared => super::mode::ModeCell::shared(),
+        };
+        Self::with_mode(db_path, cell, config)
+    }
+
+    fn with_mode(
+        db_path: PathBuf,
+        mode: super::mode::ModeCell,
+        config: super::config::ServerConfig,
+    ) -> Self {
         Self {
             db_path: Arc::new(RwLock::new(db_path)),
-            session_token: SessionToken::from(session_token),
+            mode: Arc::new(mode),
+            config: Arc::new(config),
+            clock: StateClock(Arc::new(crate::clock::now_utc)),
             features: Features::detect(),
             unlock: Arc::new(UnlockGate::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
             update_available: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Pin the clock, for tests of expiry and renewal.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn with_clock(
+        mut self,
+        clock: impl Fn() -> chrono::DateTime<chrono::Utc> + Send + Sync + 'static,
+    ) -> Self {
+        self.clock = StateClock(Arc::new(clock));
+        self
+    }
+
+    pub fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        (self.clock.0)()
+    }
+
+    pub fn mode(&self) -> super::mode::Mode {
+        self.mode.mode()
+    }
+
+    /// The local-mode token, or `None` once the server is shared.
+    pub fn local_token(&self) -> Option<SessionToken> {
+        self.mode.local_token()
+    }
+
+    /// Re-derive the mode from the books and move to shared if they call for
+    /// it. Never moves back. Pinned states answer local without reading.
+    pub async fn refresh_mode(&self) -> super::mode::Mode {
+        if self.mode.policy() == super::mode::ModePolicy::PinnedLocal
+            || self.mode() == super::mode::Mode::Shared
+        {
+            return self.mode();
+        }
+        let gate = self.db_gate.clone().read_owned().await;
+        let db_path = self.db_path();
+        let derived =
+            super::routes::spawn_blocking_holding(gate, move || super::mode::derive(&db_path))
+                .await;
+        if let Ok((_gate, Ok(super::mode::Mode::Shared))) = derived {
+            if self.mode.enter_shared() {
+                super::events::emit(&super::events::AuthEvent::new(
+                    super::events::EventKind::SharedModeBegan,
+                ));
+            }
+        }
+        self.mode()
+    }
+
+    /// [`Self::refresh_mode`], at most once per `mode::REFRESH_INTERVAL`.
+    pub async fn refresh_mode_throttled(&self) -> super::mode::Mode {
+        if self.mode() == super::mode::Mode::Shared
+            || !self.mode.claim_refresh(std::time::Instant::now())
+        {
+            return self.mode();
+        }
+        self.refresh_mode().await
     }
 
     /// The version of the newer release the startup check found, if any.
@@ -208,7 +317,29 @@ mod tests {
             assert!(!rendered.contains(&token), "token in {rendered}");
             assert!(rendered.contains("<redacted>"), "got {rendered}");
         }
-        assert_eq!(state.session_token.expose(), token);
+        assert_eq!(state.local_token().unwrap().expose(), token);
+    }
+
+    #[test]
+    fn a_new_state_is_pinned_local_and_a_shared_serve_state_has_no_token() {
+        let state = AppState::new(PathBuf::from("/books/acme/nigel.db"), "ab".repeat(32));
+        assert_eq!(state.mode(), super::super::mode::Mode::Local);
+        assert!(state.local_token().is_some());
+
+        let shared = AppState::for_serve(
+            PathBuf::from("/books/acme/nigel.db"),
+            super::super::mode::Mode::Shared,
+            Default::default(),
+        );
+        assert_eq!(shared.mode(), super::super::mode::Mode::Shared);
+        assert!(shared.local_token().is_none());
+
+        let local = AppState::for_serve(
+            PathBuf::from("/books/acme/nigel.db"),
+            super::super::mode::Mode::Local,
+            Default::default(),
+        );
+        assert_eq!(local.local_token().unwrap().expose().len(), 64);
     }
 
     #[test]

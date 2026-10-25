@@ -210,14 +210,16 @@ pub async fn host_guard(
 /// Layered over `/api` only — `/auth` and the static assets carry no data and
 /// are reachable without a session.
 pub async fn session_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let Some(expected) = state.local_token() else {
+        return ApiError::unauthorized_shared().into_response();
+    };
     let authorized = req
         .headers()
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .filter_map(|cookies| cookie_value(cookies, SESSION_COOKIE))
-        .any(|token| tokens_match(token, state.session_token.expose()));
-
+        .any(|token| tokens_match(token, expected.expose()));
     if authorized {
         next.run(req).await
     } else {
@@ -237,8 +239,11 @@ pub async fn auth_redirect(
     State(state): State<AppState>,
     Query(query): Query<AuthQuery>,
 ) -> Response {
+    let Some(expected) = state.local_token() else {
+        return ApiError::unauthorized_shared().into_response();
+    };
     let token = query.token.unwrap_or_default();
-    if !tokens_match(&token, state.session_token.expose()) {
+    if !tokens_match(&token, expected.expose()) {
         return ApiError::unauthorized().into_response();
     }
 
