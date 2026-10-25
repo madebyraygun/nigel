@@ -113,6 +113,8 @@ pub struct AppState {
     clock: StateClock,
     pub features: Features,
     pub unlock: Arc<UnlockGate>,
+    /// Sign-in rate limits; see `ratelimit.rs`.
+    pub limiter: Arc<super::ratelimit::LoginLimiter>,
     /// Guards the database *file* rather than its contents.
     ///
     /// `cli::password::encrypt_database` and `decrypt_database` rewrite the
@@ -174,6 +176,7 @@ impl AppState {
             clock: StateClock(Arc::new(crate::clock::now_utc)),
             features: Features::detect(),
             unlock: Arc::new(UnlockGate::default()),
+            limiter: Arc::new(super::ratelimit::LoginLimiter::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
             update_available: Arc::new(RwLock::new(None)),
         }

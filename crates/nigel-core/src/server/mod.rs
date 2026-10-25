@@ -12,6 +12,7 @@ pub mod events;
 pub mod extract;
 pub mod mode;
 pub mod principal;
+pub mod ratelimit;
 pub mod routes;
 pub mod scheme;
 pub mod secret;
