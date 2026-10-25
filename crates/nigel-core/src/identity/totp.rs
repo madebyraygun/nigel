@@ -160,7 +160,15 @@ mod tests {
         let code = code_for_step(RFC_SECRET, step_at(now));
         let spaced = format!("{} {}", &code[..3], &code[3..]);
         assert!(matching_step(RFC_SECRET, &spaced, now).is_some());
-        for junk in ["", "12345", "1234567", "abcdef", "１２３４５６", "12345\n"] {
+        for junk in [
+            "",
+            "12345",
+            "1234567",
+            "abcdef",
+            "１２３４５６",
+            "12345\n",
+            "123456\n",
+        ] {
             assert_eq!(matching_step(RFC_SECRET, junk, now), None, "{junk:?}");
         }
     }
