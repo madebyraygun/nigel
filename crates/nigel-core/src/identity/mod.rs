@@ -8,6 +8,7 @@
 //! `clock::now_utc()` is the one read, at the caller.
 
 pub mod passwords;
+pub mod seal;
 pub mod totp;
 
 /// Ordered `ReadOnly < Bookkeeper < Admin`.
