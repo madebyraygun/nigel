@@ -1,10 +1,10 @@
 ---
 id: TASK-32.1
 title: 'Users and sessions: schema migration + data layer'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-25 03:39'
+updated_date: '2026-10-25 15:44'
 labels:
   - multiuser
   - backend
