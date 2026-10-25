@@ -91,6 +91,8 @@ fn parse_stamp(value: &str) -> Result<DateTime<Utc>> {
         .map_err(|_| NigelError::Other(format!("unreadable session timestamp: {value}")))
 }
 
+/// Issue a session for a user. It does not check the user is enabled: callers
+/// create sessions only after `verify_credentials` or `verify_totp` succeeds.
 pub fn create_session(
     conn: &Connection,
     user_id: i64,
