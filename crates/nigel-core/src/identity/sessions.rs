@@ -178,7 +178,8 @@ pub fn find_session(
 
 /// Slide a session's expiry forward once its last use is over an hour old:
 /// `expires_at = min(now + 30 days, created_at + 90 days)`. Answers the new
-/// expiry when it wrote one, `None` when the session was used within the hour.
+/// expiry when it wrote one, `None` when the session was used within the hour
+/// or has since ended or expired.
 pub fn renew_session(
     conn: &Connection,
     session: &ActiveSession,
@@ -190,11 +191,12 @@ pub fn renew_session(
     }
     let absolute = parse_stamp(&session.created_at)? + Duration::days(ABSOLUTE_DAYS);
     let expires_at = stamp((now + Duration::days(IDLE_DAYS)).min(absolute));
-    conn.execute(
-        "UPDATE sessions SET last_seen_at = ?1, expires_at = ?2 WHERE id = ?3",
+    let renewed = conn.execute(
+        "UPDATE sessions SET last_seen_at = ?1, expires_at = ?2
+          WHERE id = ?3 AND expires_at > ?1",
         params![stamp(now), expires_at, session.id],
     )?;
-    Ok(Some(expires_at))
+    Ok((renewed > 0).then_some(expires_at))
 }
 
 pub fn end_session(conn: &Connection, id: i64) -> Result<bool> {
@@ -280,6 +282,58 @@ mod tests {
         conn.execute("UPDATE users SET disabled_at = 'x' WHERE id = ?1", [sam])
             .unwrap();
         assert!(find_session(&conn, &theirs.token, start).unwrap().is_none());
+    }
+
+    fn row_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn renewing_a_session_that_was_ended_answers_none_and_brings_no_row_back() {
+        let (_dir, conn) = db();
+        let user = admin(&conn);
+        let start = at("2026-01-01T00:00:00Z");
+        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let later = at("2026-01-02T00:00:00Z");
+        let found = find_session(&conn, &issued.token, later).unwrap().unwrap();
+        end_session(&conn, issued.id).unwrap();
+        assert_eq!(renew_session(&conn, &found, later).unwrap(), None);
+        assert_eq!(row_count(&conn), 0);
+    }
+
+    #[test]
+    fn renewing_an_expired_unswept_session_answers_none_and_leaves_it_expired() {
+        let (_dir, conn) = db();
+        let user = admin(&conn);
+        let start = at("2026-01-01T00:00:00Z");
+        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let found = find_session(&conn, &issued.token, start).unwrap().unwrap();
+        let after_expiry = at("2026-02-01T00:00:00Z");
+        assert_eq!(renew_session(&conn, &found, after_expiry).unwrap(), None);
+        let (seen, expires): (String, String) = conn
+            .query_row("SELECT last_seen_at, expires_at FROM sessions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(seen, "2026-01-01T00:00:00Z");
+        assert_eq!(expires, "2026-01-31T00:00:00Z");
+    }
+
+    #[test]
+    fn renewal_starts_just_past_an_hour_after_the_last_one() {
+        let (_dir, conn) = db();
+        let user = admin(&conn);
+        let start = at("2026-01-01T00:00:00Z");
+        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let found = find_session(&conn, &issued.token, start).unwrap().unwrap();
+        assert_eq!(
+            renew_session(&conn, &found, at("2026-01-01T00:59:59Z")).unwrap(),
+            None
+        );
+        assert!(renew_session(&conn, &found, at("2026-01-01T01:00:01Z"))
+            .unwrap()
+            .is_some());
     }
 
     #[test]
