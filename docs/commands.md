@@ -186,7 +186,7 @@ nigel user reset-password pat@example.com --clear-totp                 # Also tu
 - `add` and `reset-password` print a temporary password once, in the form
   `K7QXM-2RTPA-W9HCN-4FJDE`. It is stored only as an Argon2id hash and cannot be shown
   again. The user must choose their own password when they first sign in.
-- `reset-password` prints `Ended every session for <email>.` when it ended any sessions.
+- `reset-password` prints `Ended every session for <email>.`.
 - A chosen password is 12 to 256 characters after Unicode (NFC) normalization, must not
   equal (ignoring case) the user's email, the part of it before the `@`, or their name, and
   must differ from the current one. There is no common-password list.
