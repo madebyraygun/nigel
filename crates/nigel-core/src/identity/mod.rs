@@ -11,6 +11,7 @@ pub mod passwords;
 pub mod seal;
 pub mod sessions;
 pub mod totp;
+pub mod users;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 
