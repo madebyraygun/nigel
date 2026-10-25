@@ -5,7 +5,9 @@
 //! and [`run`] owns the tokio runtime.
 
 pub mod auth;
+pub mod config;
 pub mod error;
+pub mod events;
 pub mod extract;
 pub mod routes;
 pub mod scheme;
