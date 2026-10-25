@@ -1,10 +1,10 @@
 ---
 id: TASK-32.1
 title: 'Users and sessions: schema migration + data layer'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-24 21:54'
+updated_date: '2026-10-25 03:39'
 labels:
   - multiuser
   - backend
@@ -38,4 +38,6 @@ Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (PR #74). 
 Spec (docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md) adds uid, TOTP, must-change-password and session fields; 'active flag' is disabled_at.
 
 Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
+
+Implemented in PR #79 (users data layer and nigel user CLI).
 <!-- SECTION:NOTES:END -->
