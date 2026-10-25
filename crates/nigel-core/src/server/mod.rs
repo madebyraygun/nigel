@@ -58,7 +58,7 @@ pub(crate) fn disable_ansi_output() {
 }
 
 async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
-    let mode = mode::derive(&db_path).unwrap_or(mode::Mode::Local);
+    let mode = mode::derive_or_local(&db_path, |notice| eprintln!("{notice}"));
     let state = AppState::for_serve(db_path, mode, config::ServerConfig::default());
 
     // A previous run may have been killed between an upload and its import.

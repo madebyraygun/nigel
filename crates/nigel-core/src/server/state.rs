@@ -212,14 +212,26 @@ impl AppState {
         }
         let gate = self.db_gate.clone().read_owned().await;
         let db_path = self.db_path();
+        let reading = db_path.clone();
         let derived =
-            super::routes::spawn_blocking_holding(gate, move || super::mode::derive(&db_path))
+            super::routes::spawn_blocking_holding(gate, move || super::mode::derive(&reading))
                 .await;
-        if let Ok((_gate, Ok(super::mode::Mode::Shared))) = derived {
-            if self.mode.enter_shared() {
-                super::events::emit(&super::events::AuthEvent::new(
-                    super::events::EventKind::SharedModeBegan,
-                ));
+        let failure = match derived {
+            Ok((_gate, Ok(super::mode::Mode::Shared))) => {
+                if self.mode.enter_shared() {
+                    super::events::emit(&super::events::AuthEvent::new(
+                        super::events::EventKind::SharedModeBegan,
+                    ));
+                }
+                None
+            }
+            Ok((_gate, Ok(super::mode::Mode::Local))) => None,
+            Ok((_gate, Err(err))) => Some(err.to_string()),
+            Err(err) => Some(err.message().to_string()),
+        };
+        if let Some(failure) = failure {
+            if self.mode.first_refresh_failure() {
+                eprintln!("{}", super::mode::derive_failure_notice(&db_path, &failure));
             }
         }
         self.mode()
@@ -318,6 +330,48 @@ mod tests {
             assert!(rendered.contains("<redacted>"), "got {rendered}");
         }
         assert_eq!(state.local_token().unwrap().expose(), token);
+    }
+
+    #[tokio::test]
+    async fn a_new_state_stays_local_over_books_with_users() {
+        let (_dir, db_path) = super::super::testutil::temp_db();
+        let conn = crate::db::get_connection(&db_path).unwrap();
+        crate::identity::users::create_user(
+            &conn,
+            &crate::identity::users::NewUser {
+                email: "pat@example.com",
+                display_name: "Pat Example",
+                role: crate::identity::Role::Admin,
+            },
+            crate::clock::now_utc(),
+        )
+        .unwrap();
+        drop(conn);
+        assert_eq!(
+            super::super::mode::derive(&db_path).unwrap(),
+            super::super::mode::Mode::Shared
+        );
+
+        let token = "ab".repeat(32);
+        let state = AppState::new(db_path, token.clone());
+        assert_eq!(state.refresh_mode().await, super::super::mode::Mode::Local);
+        assert_eq!(state.mode(), super::super::mode::Mode::Local);
+        assert_eq!(state.local_token().unwrap().expose(), token);
+    }
+
+    #[tokio::test]
+    async fn a_serve_state_stays_local_when_the_books_cannot_be_read() {
+        crate::db::set_db_password_for_tests(None);
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nigel.db");
+        std::fs::create_dir(&db_path).unwrap();
+        assert!(super::super::mode::derive(&db_path).is_err());
+
+        let state =
+            AppState::for_serve(db_path, super::super::mode::Mode::Local, Default::default());
+        assert_eq!(state.refresh_mode().await, super::super::mode::Mode::Local);
+        assert_eq!(state.refresh_mode().await, super::super::mode::Mode::Local);
+        assert!(state.local_token().is_some());
     }
 
     #[test]
