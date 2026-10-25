@@ -152,12 +152,15 @@ pub fn verify_password(password: &str, phc: &str) -> bool {
 /// One verification against a fixed hash, for an email that matches no user,
 /// so an unknown address costs the same time as a known one.
 pub fn verify_dummy(password: &str) {
+    let _ = verify_password(password, dummy_phc());
+}
+
+fn dummy_phc() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
-    let phc = DUMMY.get_or_init(|| {
+    DUMMY.get_or_init(|| {
         // unwrap: hashing a fixed string with valid parameters cannot fail
         hash_password("nigel-dummy-password-never-matches").unwrap()
-    });
-    let _ = verify_password(password, phc);
+    })
 }
 
 /// Twenty characters from [`TEMPORARY_ALPHABET`] in four groups of five, about
@@ -221,27 +224,23 @@ mod tests {
 
     #[test]
     fn the_dummy_path_runs_and_matches_nothing() {
-        verify_dummy("anything at all here");
-        verify_dummy("");
+        for candidate in [
+            "anything at all here",
+            "",
+            "nigel-dummy-password-never-match",
+        ] {
+            assert!(!verify_password(candidate, dummy_phc()), "{candidate}");
+            verify_dummy(candidate);
+        }
     }
 
     #[test]
-    fn the_dummy_path_costs_about_as_much_as_a_real_verify() {
-        use std::time::Instant;
-        let phc = hash_password("correct horse battery").unwrap();
-        verify_dummy("warm the lazy hash");
-        let real = {
-            let start = Instant::now();
-            verify_password("wrong password here", &phc);
-            start.elapsed()
-        };
-        let dummy = {
-            let start = Instant::now();
-            verify_dummy("wrong password here");
-            start.elapsed()
-        };
-        assert!(dummy * 4 > real, "dummy {dummy:?} vs real {real:?}");
-        assert!(real * 4 > dummy, "dummy {dummy:?} vs real {real:?}");
+    fn the_dummy_hash_carries_the_pinned_parameters() {
+        assert!(
+            dummy_phc().starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+            "{}",
+            dummy_phc()
+        );
     }
 
     #[test]
