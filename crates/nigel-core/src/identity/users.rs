@@ -17,7 +17,8 @@ use super::passwords::{
     check_new_password, hash_password, temporary_password, verify_dummy, verify_password,
     PasswordOwner, PasswordRule,
 };
-use super::{sessions, stamp, Role};
+use super::seal::ServerKey;
+use super::{sessions, stamp, totp, Role};
 use crate::error::{NigelError, Result};
 
 pub const DISPLAY_NAME_MAX_CHARS: usize = 100;
@@ -496,6 +497,87 @@ fn commit_password_change(
     Ok(())
 }
 
+/// What a code proved against a user's second factor.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TotpCheck {
+    Accepted,
+    Rejected,
+    NotEnrolled,
+}
+
+/// Store a confirmed second factor, sealed for this user. `confirmed_step` is
+/// the step of the code that confirmed it, so that code cannot sign in again.
+pub fn set_totp_secret(
+    conn: &Connection,
+    id: i64,
+    key: &ServerKey,
+    secret: &[u8],
+    confirmed_step: i64,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let user = get_user(conn, id)?.ok_or_else(|| not_found(id))?;
+    let sealed = key.seal(&user.uid, secret)?;
+    let changed = conn.execute(
+        "UPDATE users SET totp_secret = ?1, totp_last_step = ?2, updated_at = ?3 WHERE id = ?4",
+        params![sealed, confirmed_step, stamp(now), id],
+    )?;
+    if changed == 0 {
+        return Err(not_found(id));
+    }
+    Ok(())
+}
+
+pub fn clear_totp(conn: &Connection, id: i64, now: DateTime<Utc>) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE users SET totp_secret = NULL, totp_last_step = NULL, updated_at = ?1 WHERE id = ?2",
+        params![stamp(now), id],
+    )?;
+    if changed == 0 {
+        return Err(not_found(id));
+    }
+    Ok(())
+}
+
+/// Check a code against a user's sealed secret. A code is accepted only when
+/// its step is later than the last accepted one, and the write that records it
+/// is guarded on that, so two sign-ins racing with one code cannot both pass.
+/// A secret the server key cannot open is an error, not a rejection: the
+/// caller logs which user.
+pub fn verify_totp(
+    conn: &Connection,
+    id: i64,
+    key: &ServerKey,
+    code: &str,
+    now: DateTime<Utc>,
+) -> Result<TotpCheck> {
+    let tx = immediate(conn)?;
+    let row: Option<(String, Option<Vec<u8>>)> = tx
+        .query_row(
+            "SELECT uid, totp_secret FROM users WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let (uid, sealed) = row.ok_or_else(|| not_found(id))?;
+    let Some(sealed) = sealed else {
+        return Ok(TotpCheck::NotEnrolled);
+    };
+    let secret = key.open(&uid, &sealed)?;
+    let Some(step) = totp::matching_step(&secret, code, now) else {
+        return Ok(TotpCheck::Rejected);
+    };
+    let changed = tx.execute(
+        "UPDATE users SET totp_last_step = ?1
+          WHERE id = ?2 AND (totp_last_step IS NULL OR totp_last_step < ?1)",
+        params![step, id],
+    )?;
+    if changed == 0 {
+        return Ok(TotpCheck::Rejected);
+    }
+    tx.commit()?;
+    Ok(TotpCheck::Accepted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -945,5 +1027,118 @@ mod tests {
         };
         assert_eq!(count(sam), 0);
         assert_eq!(count(pat), 1);
+    }
+
+    #[test]
+    fn a_totp_code_is_accepted_once_and_never_replayed() {
+        let (_dir, conn) = db();
+        let pat = add(&conn, "pat@example.com", Role::Admin).user.id;
+        let key = ServerKey::from_bytes([1; 32]);
+        let secret = [3u8; 20];
+        let now = at("2026-03-01T12:00:00Z");
+        let step = totp::step_at(now);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, "123456", now).unwrap(),
+            TotpCheck::NotEnrolled
+        );
+        set_totp_secret(&conn, pat, &key, &secret, step - 1, now).unwrap();
+        let stored: Vec<u8> = conn
+            .query_row("SELECT totp_secret FROM users WHERE id = ?1", [pat], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(!stored.windows(20).any(|w| w == secret), "stored sealed");
+
+        let confirmed = totp::code_for_step(&secret, step - 1);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &confirmed, now).unwrap(),
+            TotpCheck::Rejected,
+            "the confirming code cannot sign in"
+        );
+        let code = totp::code_for_step(&secret, step);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &code, now).unwrap(),
+            TotpCheck::Accepted
+        );
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &code, now).unwrap(),
+            TotpCheck::Rejected,
+            "replay"
+        );
+        let next = totp::code_for_step(&secret, step + 1);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &next, now).unwrap(),
+            TotpCheck::Accepted
+        );
+    }
+
+    #[test]
+    fn a_code_for_an_earlier_step_is_refused_after_a_later_one() {
+        let (_dir, conn) = db();
+        let pat = add(&conn, "pat@example.com", Role::Admin).user.id;
+        let key = ServerKey::from_bytes([1; 32]);
+        let secret = [3u8; 20];
+        let now = at("2026-03-01T12:00:00Z");
+        let step = totp::step_at(now);
+        set_totp_secret(&conn, pat, &key, &secret, step - 5, now).unwrap();
+        let later = totp::code_for_step(&secret, step + 1);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &later, now).unwrap(),
+            TotpCheck::Accepted
+        );
+        let earlier = totp::code_for_step(&secret, step);
+        assert_eq!(
+            verify_totp(&conn, pat, &key, &earlier, now).unwrap(),
+            TotpCheck::Rejected
+        );
+        let last: i64 = conn
+            .query_row(
+                "SELECT totp_last_step FROM users WHERE id = ?1",
+                [pat],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(last, step + 1, "a refused code does not move the guard");
+    }
+
+    #[test]
+    fn a_secret_sealed_under_another_key_is_an_error_not_a_rejection() {
+        let (_dir, conn) = db();
+        let pat = add(&conn, "pat@example.com", Role::Admin).user.id;
+        set_totp_secret(
+            &conn,
+            pat,
+            &ServerKey::from_bytes([1; 32]),
+            &[3; 20],
+            0,
+            at(T0),
+        )
+        .unwrap();
+        let err = verify_totp(
+            &conn,
+            pat,
+            &ServerKey::from_bytes([2; 32]),
+            "123456",
+            at(T0),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn clearing_totp_turns_it_off() {
+        let (_dir, conn) = db();
+        let pat = add(&conn, "pat@example.com", Role::Admin).user.id;
+        set_totp_secret(
+            &conn,
+            pat,
+            &ServerKey::from_bytes([1; 32]),
+            &[3; 20],
+            0,
+            at(T0),
+        )
+        .unwrap();
+        clear_totp(&conn, pat, at(T0)).unwrap();
+        assert!(!get_user(&conn, pat).unwrap().unwrap().totp_enabled);
+        assert!(clear_totp(&conn, 999, at(T0)).is_err());
     }
 }
