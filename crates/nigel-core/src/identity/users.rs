@@ -541,6 +541,7 @@ pub fn clear_totp(conn: &Connection, id: i64, now: DateTime<Utc>) -> Result<()> 
 /// Check a code against a user's sealed secret. A code is accepted only when
 /// its step is later than the last accepted one, and the write that records it
 /// is guarded on that, so two sign-ins racing with one code cannot both pass.
+/// A disabled user is rejected.
 /// A secret the server key cannot open is an error, not a rejection: the
 /// caller logs which user.
 pub fn verify_totp(
@@ -568,7 +569,8 @@ pub fn verify_totp(
     };
     let changed = tx.execute(
         "UPDATE users SET totp_last_step = ?1
-          WHERE id = ?2 AND (totp_last_step IS NULL OR totp_last_step < ?1)",
+          WHERE id = ?2 AND disabled_at IS NULL
+            AND (totp_last_step IS NULL OR totp_last_step < ?1)",
         params![step, id],
     )?;
     if changed == 0 {
@@ -1140,5 +1142,31 @@ mod tests {
         clear_totp(&conn, pat, at(T0)).unwrap();
         assert!(!get_user(&conn, pat).unwrap().unwrap().totp_enabled);
         assert!(clear_totp(&conn, 999, at(T0)).is_err());
+    }
+
+    #[test]
+    fn a_disabled_user_cannot_pass_the_second_factor() {
+        let (_dir, conn) = db();
+        add(&conn, "pat@example.com", Role::Admin);
+        let sam = add(&conn, "sam@example.com", Role::Bookkeeper).user.id;
+        let key = ServerKey::from_bytes([1; 32]);
+        let secret = [3u8; 20];
+        let now = at("2026-03-01T12:00:00Z");
+        let step = totp::step_at(now);
+        set_totp_secret(&conn, sam, &key, &secret, step - 5, now).unwrap();
+        disable_user(&conn, sam, now).unwrap();
+        let code = totp::code_for_step(&secret, step);
+        assert_eq!(
+            verify_totp(&conn, sam, &key, &code, now).unwrap(),
+            TotpCheck::Rejected
+        );
+        let last: i64 = conn
+            .query_row(
+                "SELECT totp_last_step FROM users WHERE id = ?1",
+                [sam],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(last, step - 5);
     }
 }
