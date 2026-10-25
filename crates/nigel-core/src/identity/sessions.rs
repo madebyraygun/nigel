@@ -300,6 +300,9 @@ mod tests {
                 .as_deref(),
             Some("2026-02-19T00:00:00Z")
         );
+        let renewed = session(at("2026-02-01T00:00:00Z"));
+        assert_eq!(renewed.expires_at, "2026-02-19T00:00:00Z");
+        assert_eq!(renewed.last_seen_at, "2026-01-20T00:00:00Z");
 
         let near_the_cap = at("2026-03-15T00:00:00Z");
         conn.execute(
@@ -351,11 +354,20 @@ mod tests {
         let start = at("2026-01-01T00:00:00Z");
         let a = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
         let b = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
-        let _c = create_session(&conn, user, SessionKind::Bearer, None, None, start).unwrap();
+        let c = create_session(&conn, user, SessionKind::Bearer, None, None, start).unwrap();
+        let sam = insert_user(&conn, "sam@example.com", "bookkeeper");
+        let theirs = create_session(&conn, sam, SessionKind::Cookie, None, None, start).unwrap();
+        let live = |token: &str| find_session(&conn, token, start).unwrap().is_some();
         assert!(end_session(&conn, a.id).unwrap());
         assert!(!end_session(&conn, a.id).unwrap());
         assert_eq!(end_user_sessions(&conn, user, Some(b.id)).unwrap(), 1);
+        assert!(live(&b.token));
+        assert!(!live(&c.token));
+        assert!(live(&theirs.token));
         assert_eq!(end_user_sessions(&conn, user, None).unwrap(), 1);
+        assert!(!live(&b.token));
+        assert!(live(&theirs.token));
+        assert_eq!(end_user_sessions(&conn, sam, None).unwrap(), 1);
 
         create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
         assert_eq!(sweep_expired(&conn, at("2026-01-30T23:59:59Z")).unwrap(), 0);
