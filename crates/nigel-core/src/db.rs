@@ -1004,22 +1004,93 @@ fn env_password(db_path: &Path, raw: Option<OsString>) -> Result<Option<String>>
         return Ok(Some(pw));
     }
     pw.zeroize();
-
-    // A wrong password and a damaged file are indistinguishable here: SQLCipher
-    // reports both as "not a database", and `is_encrypted` reads anything without
-    // the plaintext header as encrypted. Naming one cause would send an operator
-    // rotating a password when the ledger is actually corrupt.
-    Err(crate::error::NigelError::Other(format!(
-        "{PASSWORD_ENV_VAR} did not unlock {}. The password may be wrong, or the database file may be damaged.",
-        db_path.display()
-    )))
+    Err(did_not_unlock(PASSWORD_ENV_VAR, db_path))
 }
 
-/// Resolve a password for `db_path` from `NIGEL_DB_PASSWORD`, if set.
-/// `Ok(None)` means the variable is unset and the caller should ask the user
-/// some other way — this function never touches stdin.
+/// A wrong password and a damaged file are indistinguishable here: SQLCipher
+/// reports both as "not a database", and `is_encrypted` reads anything without
+/// the plaintext header as encrypted. Naming one cause would send an operator
+/// rotating a password when the ledger is actually corrupt.
+fn did_not_unlock(var: &str, db_path: &Path) -> crate::error::NigelError {
+    crate::error::NigelError::Other(format!(
+        "{var} did not unlock {}. The password may be wrong, or the database file may be damaged.",
+        db_path.display()
+    ))
+}
+
+/// Environment variable naming a file that holds the database password — a
+/// systemd credential, say — so the password itself never sits in the
+/// environment. The file's content is the password, one trailing newline
+/// stripped.
+const PASSWORD_FILE_ENV_VAR: &str = "NIGEL_DB_PASSWORD_FILE";
+
+/// Validate a password read from the file `path` names. Every failure is fatal,
+/// for the reason [`env_password`]'s are, and none of them quotes the file.
+fn file_password(db_path: &Path, path: &std::ffi::OsStr) -> Result<Option<String>> {
+    use crate::error::NigelError;
+    if path.is_empty() {
+        return Err(NigelError::Other(format!(
+            "{PASSWORD_FILE_ENV_VAR} is set but empty — it should name the file holding the password."
+        )));
+    }
+    let path = Path::new(path);
+    let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| {
+        NigelError::Other(format!(
+            "{PASSWORD_FILE_ENV_VAR} names {}, which could not be read: {e}.",
+            path.display()
+        ))
+    })?);
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return Err(NigelError::Other(format!(
+            "{PASSWORD_FILE_ENV_VAR} names {}, which is not valid UTF-8.",
+            path.display()
+        )));
+    };
+    let text = match text.strip_suffix('\n') {
+        Some(rest) => rest.strip_suffix('\r').unwrap_or(rest),
+        None => text,
+    };
+    if text.is_empty() {
+        return Err(NigelError::Other(format!(
+            "{PASSWORD_FILE_ENV_VAR} names {}, which is empty.",
+            path.display()
+        )));
+    }
+    let mut pw = text.to_string();
+    if validate_password(db_path, &pw)? {
+        return Ok(Some(pw));
+    }
+    pw.zeroize();
+    Err(did_not_unlock(PASSWORD_FILE_ENV_VAR, db_path))
+}
+
+/// The password from whichever of the two variables is set. Both set is an
+/// error rather than a precedence rule: two sources for one secret is a
+/// misconfiguration, and silently preferring one hides which is stale.
+fn env_password_from(
+    db_path: &Path,
+    raw: Option<OsString>,
+    file: Option<OsString>,
+) -> Result<Option<String>> {
+    match (raw, file) {
+        (Some(_), Some(_)) => Err(crate::error::NigelError::Other(format!(
+            "{PASSWORD_ENV_VAR} and {PASSWORD_FILE_ENV_VAR} are both set. Set one of them."
+        ))),
+        (None, Some(path)) => file_password(db_path, &path),
+        (raw, None) => env_password(db_path, raw),
+    }
+}
+
+/// Resolve a password for `db_path` from `NIGEL_DB_PASSWORD_FILE` or
+/// `NIGEL_DB_PASSWORD`, if either is set. `Ok(None)` means neither is and the
+/// caller should ask the user some other way — this function never touches
+/// stdin.
 pub fn env_password_if_set(db_path: &Path) -> Result<Option<String>> {
-    env_password(db_path, std::env::var_os(PASSWORD_ENV_VAR))
+    env_password_from(
+        db_path,
+        std::env::var_os(PASSWORD_ENV_VAR),
+        std::env::var_os(PASSWORD_FILE_ENV_VAR),
+    )
 }
 
 pub fn init_db(conn: &Connection) -> Result<()> {
@@ -1455,6 +1526,82 @@ mod tests {
         assert!(err.contains("password may be wrong"), "{err}");
         assert!(err.contains("may be damaged"), "{err}");
         assert!(err.contains(&db_path.display().to_string()), "{err}");
+    }
+
+    fn password_file(dir: &Path, contents: &[u8]) -> OsString {
+        let path = dir.join(format!("password-{}", hex::encode(contents)));
+        std::fs::write(&path, contents).unwrap();
+        path.into_os_string()
+    }
+
+    #[test]
+    fn a_password_file_unlocks_with_one_trailing_newline_stripped() {
+        let (dir, db_path) = encrypted_db();
+        for contents in [&b"secret"[..], b"secret\n", b"secret\r\n"] {
+            let file = password_file(dir.path(), contents);
+            let resolved = env_password_from(&db_path, None, Some(file)).unwrap();
+            assert_eq!(resolved.as_deref(), Some("secret"), "{contents:?}");
+        }
+    }
+
+    #[test]
+    fn only_one_newline_is_stripped() {
+        let (dir, db_path) = encrypted_db();
+        let file = password_file(dir.path(), b"secret\n\n");
+        let err = env_password_from(&db_path, None, Some(file))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(PASSWORD_FILE_ENV_VAR), "{err}");
+    }
+
+    #[test]
+    fn both_variables_set_is_an_error_naming_both() {
+        let (dir, db_path) = encrypted_db();
+        let file = password_file(dir.path(), b"secret");
+        let err = env_password_from(&db_path, Some("secret".into()), Some(file))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(PASSWORD_ENV_VAR) && err.contains(PASSWORD_FILE_ENV_VAR),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_missing_empty_or_wrong_password_file_is_fatal_and_quotes_nothing() {
+        let (dir, db_path) = encrypted_db();
+        let missing = dir.path().join("absent").into_os_string();
+        let cases = [
+            (OsString::new(), "empty"),
+            (missing, "could not be read"),
+            (password_file(dir.path(), b"\n"), "is empty"),
+            (password_file(dir.path(), b"hunter2\n"), "may be damaged"),
+        ];
+        for (file, expected) in cases {
+            let err = env_password_from(&db_path, None, Some(file))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(PASSWORD_FILE_ENV_VAR), "{err}");
+            assert!(err.contains(expected), "{expected}: {err}");
+            assert!(!err.contains("hunter2"), "{err}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_password_file_that_is_not_utf8_is_fatal() {
+        let (dir, db_path) = encrypted_db();
+        let file = password_file(dir.path(), b"secret\xff");
+        let err = env_password_from(&db_path, None, Some(file))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn neither_variable_set_defers_to_the_prompt() {
+        let (_dir, db_path) = encrypted_db();
+        assert_eq!(env_password_from(&db_path, None, None).unwrap(), None);
     }
 
     #[test]

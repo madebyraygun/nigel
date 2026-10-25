@@ -5040,3 +5040,60 @@ fn a_malformed_settings_file_stops_every_command_and_survives_it() {
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
 }
+
+/// `nigel init` alone: an empty set of books with no users.
+fn init_empty(env: &TestEnv) {
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn every_command_accepts_the_password_file() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    env.encrypt("hunter2");
+    let file = env.home.path().join("nigel-db-password");
+    std::fs::write(&file, "hunter2").unwrap();
+    env.cmd()
+        .arg("status")
+        .env_remove("NIGEL_DB_PASSWORD")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .success();
+}
+
+#[test]
+fn a_wrong_or_doubled_password_source_fails_fast_naming_the_variable() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    env.encrypt("hunter2");
+    let file = env.home.path().join("nigel-db-password");
+    std::fs::write(&file, "notit\n").unwrap();
+
+    env.cmd()
+        .arg("status")
+        .env_remove("NIGEL_DB_PASSWORD")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD_FILE did not unlock")
+                .and(predicate::str::contains("notit").not()),
+        );
+    std::fs::write(&file, "hunter2\n").unwrap();
+    env.cmd()
+        .arg("status")
+        .env("NIGEL_DB_PASSWORD_FILE", &file)
+        .env("NIGEL_DB_PASSWORD", "hunter2")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("are both set"));
+}
