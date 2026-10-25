@@ -251,6 +251,7 @@ async fn post_data_dir(
         switched?;
     }
 
+    state.refresh_mode().await;
     Ok(Json(current_status(&state).await?))
 }
 

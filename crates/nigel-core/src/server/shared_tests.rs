@@ -567,3 +567,110 @@ async fn disabling_a_user_ends_their_next_request() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn until_roles_land_a_non_admin_reaches_only_their_own_account() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let sam = add_ready_user(&db_path, "sam@example.com", Role::Bookkeeper);
+    let token = session_for(
+        &db_path,
+        sam.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+
+    for uri in [
+        "/api/status",
+        "/api/accounts",
+        "/api/reports/pnl",
+        "/api/no-such-route",
+    ] {
+        let response = app.clone().oneshot(bearer_get(uri, &token)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+        let json = json_body(response).await;
+        assert_eq!(json["error"]["details"]["reason"], "role", "{uri}");
+        assert_eq!(json["error"]["details"]["required"], "admin", "{uri}");
+    }
+    let ping = app.oneshot(bearer_get("/api/ping", &token)).await.unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_admin_reaches_the_data_routes_and_status_reports_shared() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let accounts = app
+        .clone()
+        .oneshot(bearer_get("/api/accounts", &token))
+        .await
+        .unwrap();
+    assert_eq!(accounts.status(), StatusCode::OK);
+    let status = app
+        .oneshot(bearer_get("/api/status", &token))
+        .await
+        .unwrap();
+    assert_eq!(json_body(status).await["mode"], "shared");
+}
+
+#[tokio::test]
+async fn unlocking_books_that_have_users_ends_the_token_session() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    encrypt(&db_path);
+    crate::db::set_db_password_for_tests(None);
+    let (app, state) = served_app(&db_path, public_config());
+    assert_eq!(state.mode(), super::mode::Mode::Local);
+    let token = state.local_token().unwrap().expose().to_string();
+
+    let unlocked = app
+        .clone()
+        .oneshot(session_post("/api/unlock", &token, &unlock_body(PASSWORD)))
+        .await
+        .unwrap();
+    assert_eq!(unlocked.status(), StatusCode::OK);
+    assert_eq!(state.mode(), super::mode::Mode::Shared);
+
+    let next = app.oneshot(session_get("/api/ping", &token)).await.unwrap();
+    assert_eq!(next.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(next).await["error"]["details"]["mode"], "shared");
+    crate::db::set_db_password_for_tests(None);
+}
+
+#[tokio::test]
+async fn switching_to_a_folder_whose_books_have_users_ends_the_token_session() {
+    let _config = TempConfig::new();
+    let (_dir, db_path) = temp_db();
+    let (app, state) = served_app(&db_path, public_config());
+    assert_eq!(state.mode(), super::mode::Mode::Local);
+    let token = state.local_token().unwrap().expose().to_string();
+
+    let (_other_dir, other_db) = temp_db();
+    add_ready_user(&other_db, "pat@example.com", Role::Admin);
+    let body = serde_json::json!({ "path": other_db.parent().unwrap().to_string_lossy() });
+    let switched = app
+        .clone()
+        .oneshot(session_post(
+            "/api/settings/data-dir",
+            &token,
+            &body.to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(switched.status(), StatusCode::OK);
+    assert_eq!(json_body(switched).await["mode"], "shared");
+    assert_eq!(state.mode(), super::mode::Mode::Shared);
+
+    let next = app.oneshot(session_get("/api/ping", &token)).await.unwrap();
+    assert_eq!(next.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(next).await["error"]["details"]["mode"], "shared");
+}

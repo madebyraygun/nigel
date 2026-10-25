@@ -57,6 +57,8 @@ pub(crate) struct StatusResponse {
     initialized: bool,
     encrypted: bool,
     locked: bool,
+    /// `local` or `shared`; a desktop shell is always `local`.
+    mode: &'static str,
     company_name: Option<String>,
     /// `business` or `personal` — which chart of accounts the database keeps.
     /// The SPA hides the K-1 worksheet and relabels the name field from this.
@@ -142,6 +144,7 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
         initialized,
         encrypted,
         locked,
+        mode: state.mode().as_str(),
         company_name,
         profile: profile.as_str(),
         version: env!("CARGO_PKG_VERSION"),
@@ -223,6 +226,7 @@ async fn unlock(
 
     if unlocked {
         state.unlock.reset();
+        state.refresh_mode().await;
         return Ok(Json(UnlockResponse { locked: false }));
     }
 

@@ -5,6 +5,7 @@
 //! and [`run`] owns the tokio runtime.
 
 pub mod auth;
+pub mod authz;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -203,15 +204,17 @@ fn base_router(api: Router<AppState>) -> Router<AppState> {
 
 /// The router `nigel serve` runs. Layers run outermost first: the blanket
 /// headers, the mode-aware host guard, then — on `/api` only — the session
-/// layer.
+/// layer and the interim admin guard.
 ///
-/// The session layer wraps the `/api` router itself rather than using
-/// `route_layer`, so it also covers that router's 404 fallback.
+/// Both `/api` layers wrap the `/api` router itself rather than using
+/// `route_layer`, so they also cover that router's 404 fallback.
 pub fn build_router(state: AppState) -> Router {
-    let api = routes::api_router(&state).layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::session_guard,
-    ));
+    let api = routes::api_router(&state)
+        .layer(middleware::from_fn(authz::interim_admin_guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::session_guard,
+        ));
     base_router(api)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -230,7 +233,8 @@ pub fn build_router(state: AppState) -> Router {
 /// nothing else on the machine can address it — a cookie here would be a token
 /// the app issues to itself. The absence is structural: this router is never
 /// built with the layer, rather than built with one that is asked to stand
-/// down.
+/// down. Every request runs as the local owner, even over books that have
+/// users, and passes the interim admin guard on that authority.
 ///
 /// Behind the `desktop` feature, which is not in `default`: bound to a TCP
 /// port instead of a desktop shell's custom scheme, `host_guard` alone does
@@ -245,7 +249,9 @@ pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> R
     // escape sequences out of a downloaded file whoever builds the router.
     disable_ansi_output();
 
-    let api = routes::api_router(&state);
+    let api = routes::api_router(&state)
+        .layer(middleware::from_fn(authz::interim_admin_guard))
+        .layer(middleware::from_fn(authz::as_local_owner));
     base_router(api)
         .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
         .layer(middleware::from_fn_with_state(
@@ -992,7 +998,42 @@ mod tests {
         assert!(!content_type(&response).starts_with("text/html"));
     }
 
+    #[tokio::test]
+    async fn status_reports_local_mode() {
+        let (_dir, db_path) = temp_db();
+        let (app, token) = app_for(&db_path);
+        let response = app
+            .oneshot(session_get("/api/status", &token))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["mode"], "local");
+    }
+
     // -- desktop router ------------------------------------------------------
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_runs_as_the_local_owner_even_over_books_with_users() {
+        let (_dir, db_path) = temp_db();
+        add_ready_user(&db_path, "pat@example.com", crate::identity::Role::Admin);
+        let state = AppState::new(db_path.clone(), auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["localhost".to_string()]),
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header(header::HOST, "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["mode"], "local");
+    }
 
     #[cfg(feature = "desktop")]
     #[tokio::test]
