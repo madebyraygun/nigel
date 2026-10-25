@@ -466,14 +466,31 @@ pub fn change_password(
     )
     .map_err(PasswordChangeError::Rule)?;
     let new_hash = hash_password(new)?;
+    commit_password_change(conn, id, &hash, &new_hash, keep_session, now)
+}
+
+/// Write `new_hash` only if the stored hash is still the one the current
+/// password was verified against and the user is enabled. A reset or a
+/// disable in between leaves the row and the sessions untouched.
+fn commit_password_change(
+    conn: &Connection,
+    id: i64,
+    expected_hash: &str,
+    new_hash: &str,
+    keep_session: Option<i64>,
+    now: DateTime<Utc>,
+) -> std::result::Result<(), PasswordChangeError> {
     let tx = immediate(conn)?;
     let ts = stamp(now);
-    tx.execute(
+    let changed = tx.execute(
         "UPDATE users SET password_hash = ?1, must_change_password = 0,
                           password_changed_at = ?2, updated_at = ?2
-          WHERE id = ?3",
-        params![new_hash, ts, id],
+          WHERE id = ?3 AND password_hash = ?4 AND disabled_at IS NULL",
+        params![new_hash, ts, id, expected_hash],
     )?;
+    if changed == 0 {
+        return Err(PasswordChangeError::WrongCurrentPassword);
+    }
     sessions::end_user_sessions(&tx, id, keep_session)?;
     tx.commit()?;
     Ok(())
@@ -793,6 +810,67 @@ mod tests {
             verify_credentials(&conn, "pat@example.com", "a new long password").unwrap(),
             Credentials::Valid(_)
         ));
+    }
+
+    fn stored_hash(conn: &Connection, id: i64) -> String {
+        conn.query_row("SELECT password_hash FROM users WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    }
+
+    fn session_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_change_verified_before_a_reset_does_not_undo_the_reset() {
+        let (_dir, conn) = db();
+        let id = add(&conn, "pat@example.com", Role::Admin).user.id;
+        let before = stored_hash(&conn, id);
+        let fresh = reset_password(&conn, id, false, at(T0)).unwrap();
+        let after = stored_hash(&conn, id);
+        create_session(&conn, id, SessionKind::Cookie, None, None, at(T0)).unwrap();
+        let new_hash = hash_password("a new long password").unwrap();
+        assert!(matches!(
+            commit_password_change(&conn, id, &before, &new_hash, None, at(T0)),
+            Err(PasswordChangeError::WrongCurrentPassword)
+        ));
+        assert_eq!(stored_hash(&conn, id), after);
+        assert!(get_user(&conn, id).unwrap().unwrap().must_change_password);
+        assert_eq!(session_count(&conn), 1);
+        assert!(matches!(
+            verify_credentials(&conn, "pat@example.com", &fresh).unwrap(),
+            Credentials::Valid(_)
+        ));
+    }
+
+    #[test]
+    fn a_disabled_user_cannot_change_their_password() {
+        let (_dir, conn) = db();
+        add(&conn, "pat@example.com", Role::Admin);
+        let sam = add(&conn, "sam@example.com", Role::Bookkeeper);
+        disable_user(&conn, sam.user.id, at(T0)).unwrap();
+        let before = stored_hash(&conn, sam.user.id);
+        assert!(matches!(
+            change_password(
+                &conn,
+                sam.user.id,
+                &sam.temporary_password,
+                "a new long password",
+                None,
+                at(T0)
+            ),
+            Err(PasswordChangeError::WrongCurrentPassword)
+        ));
+        assert_eq!(stored_hash(&conn, sam.user.id), before);
+        assert!(
+            get_user(&conn, sam.user.id)
+                .unwrap()
+                .unwrap()
+                .must_change_password
+        );
     }
 
     #[test]
