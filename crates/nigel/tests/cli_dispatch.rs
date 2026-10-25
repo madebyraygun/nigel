@@ -5375,3 +5375,31 @@ fn user_commands_unlock_encrypted_books_from_a_password_file() {
         .success()
         .stdout(predicate::str::contains("pat@example.com"));
 }
+
+#[test]
+fn user_add_refuses_an_email_with_control_characters_without_echoing_them() {
+    let env = TestEnv::new();
+    init_empty(&env);
+    let out = user_cmd(
+        &env,
+        &[
+            "add",
+            "pat\u{1b}]0;pwned\u{7}@example.com",
+            "--name",
+            "Pat Example",
+            "--admin",
+        ],
+    )
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("is not an email address"))
+    .get_output()
+    .clone();
+    assert!(!out.stdout.contains(&0x1b) && !out.stderr.contains(&0x1b));
+    assert!(!out.stdout.contains(&0x07) && !out.stderr.contains(&0x07));
+    let users: i64 = env
+        .db()
+        .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 0);
+}

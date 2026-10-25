@@ -145,7 +145,7 @@ fn user_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
 }
 
 /// Trimmed, lower-cased and NFC-normalized, with one `@`, a non-empty local
-/// part and domain, and no whitespace.
+/// part and domain, and no whitespace or control characters.
 pub fn normalize_email(raw: &str) -> Result<String> {
     let email: String = raw.trim().to_lowercase().nfc().collect();
     let mut parts = email.split('@');
@@ -153,7 +153,7 @@ pub fn normalize_email(raw: &str) -> Result<String> {
     let well_formed = matches!(domain, Some(d) if !d.is_empty())
         && parts.next().is_none()
         && !local.is_empty()
-        && !email.chars().any(char::is_whitespace);
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control());
     if well_formed {
         Ok(email)
     } else {
@@ -247,7 +247,7 @@ pub fn find_by_email(conn: &Connection, email: &str) -> Result<Option<User>> {
 pub fn require_by_email(conn: &Connection, email: &str) -> Result<User> {
     find_by_email(conn, email)?.ok_or_else(|| {
         NigelError::NotFound(format!(
-            "No user has the email {}. Run `nigel user list` to see who does.",
+            "No user has the email {:?}. Run `nigel user list` to see who does.",
             email.trim()
         ))
     })
@@ -623,6 +623,20 @@ mod tests {
             "pat x@example.com",
         ] {
             assert!(normalize_email(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn emails_with_control_characters_are_refused_without_echoing_them() {
+        for bad in [
+            "pat\u{1b}]0;x\u{7}@example.com",
+            "pat\u{7}@example.com",
+            "pat\u{0}@example.com",
+        ] {
+            let err = normalize_email(bad).unwrap_err();
+            assert!(matches!(err, NigelError::Invalid(_)), "{bad:?}");
+            let message = err.to_string();
+            assert!(!message.chars().any(char::is_control), "{message:?}");
         }
     }
 
@@ -1008,7 +1022,7 @@ mod tests {
             Err(NigelError::NotFound(_))
         ));
         let err = require_by_email(&conn, "nobody@example.com").unwrap_err();
-        assert!(err.to_string().contains("nobody@example.com"), "{err}");
+        assert!(err.to_string().contains("\"nobody@example.com\""), "{err}");
     }
 
     #[test]

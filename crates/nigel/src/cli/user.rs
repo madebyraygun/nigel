@@ -166,7 +166,7 @@ pub fn reset_password(email: &str, clear_totp: bool) -> Result<()> {
     if clear_totp {
         println!("Two-step verification is off for {}.", user.email);
     }
-    println!("Every session {} had has ended.", user.email);
+    println!("Ended every session for {}.", user.email);
     Ok(())
 }
 
@@ -230,19 +230,49 @@ mod tests {
             },
         ];
         let table = list_table(&rows);
-        for expected in [
-            "pat@example.com",
-            "Admin",
-            "active",
-            "on",
-            "2026-01-05T10:00:00Z",
-            "Read-only",
-            "must change password",
-            "never",
-            "disabled",
-        ] {
-            assert!(table.contains(expected), "{expected}\n{table}");
-        }
+        let row = |email: &str| -> Vec<String> {
+            let line = table
+                .lines()
+                .find(|l| l.contains(email))
+                .unwrap_or_else(|| panic!("no row for {email}\n{table}"));
+            line.split('|')
+                .map(|cell| cell.trim().to_string())
+                .filter(|cell| !cell.is_empty())
+                .collect()
+        };
+        assert_eq!(
+            row("pat@example.com"),
+            [
+                "pat@example.com",
+                "Pat Example",
+                "Admin",
+                "active",
+                "on",
+                "2026-01-05T10:00:00Z"
+            ]
+        );
+        assert_eq!(
+            row("sam@example.com"),
+            [
+                "sam@example.com",
+                "Pat Example",
+                "Read-only",
+                "must change password",
+                "off",
+                "never"
+            ]
+        );
+        assert_eq!(
+            row("lee@example.com"),
+            [
+                "lee@example.com",
+                "Pat Example",
+                "Bookkeeper",
+                "disabled",
+                "off",
+                "never"
+            ]
+        );
     }
 
     #[test]
