@@ -30,7 +30,7 @@ Copied from the spec; every task's requirements include these.
 - Server key: 32 random bytes in `<config_dir>/server.key`, created on first need, mode `0600` in a `0700` directory; never in the data directory, so never in a backup.
 - Never logged: passwords, temporary passwords, TOTP secrets and codes, session tokens. The `identity` module keeps secrets out of its error messages.
 - TOTP: RFC 6238, HMAC-SHA1, 6 digits, 30-second step, 160-bit secret from the CSPRNG; current step ± 1 accepted; a code is accepted only if its step is greater than `totp_last_step`, which is then written.
-- Password rules (NIST SP 800-63B): at least 12 and at most 256 characters, Unicode NFC-normalized before hashing; not on a bundled list of the 10,000 most common passwords (compiled in, compared case-insensitively); not equal to the email, its local part, or the display name (case-insensitive); a new password must differ from the current one. One function enforces them for the CLI and the API; failure reasons `too_short`, `too_long`, `common`, `matches_identity`, `unchanged`.
+- Password rules (NIST SP 800-63B): at least 12 and at most 256 characters, Unicode NFC-normalized before hashing; not equal to the email, its local part, or the display name (case-insensitive); a new password must differ from the current one. One function enforces them for the CLI and the API; failure reasons `too_short`, `too_long`, `matches_identity`, `unchanged`.
 - Session lifetime: 30 days idle, 90 days absolute; renewal at most once an hour, `expires_at = min(now + 30 days, created_at + 90 days)`.
 - CLI: `nigel user add <email> --name <name> (--admin | --role <admin|bookkeeper|read_only>)`, `list`, `role <email> <role>`, `disable <email>`, `enable <email>`, `reset-password <email> [--clear-totp]`. Exactly one of `--admin`/`--role`; no default role. `add` and `reset-password` print the temporary password once with "Give this to <name>. They will choose their own password when they first sign in." `add` creating the first user on unencrypted books prints: "These books are not encrypted. Anyone who can read the file can read the books. Encrypt them with `nigel password set` before you give anyone else access." Unknown emails are refused with a clear error. `list` never prints hashes or secrets.
 - `NIGEL_DB_PASSWORD_FILE` is added to `db::env_password_if_set`, so every command accepts it. Setting both variables is an error. The file's content is the password with one trailing newline stripped.
@@ -54,8 +54,8 @@ These are decisions this plan makes; each is small and reversible, and the revie
 
 - **Crates.** `argon2` 0.5.3, `chacha20poly1305` 0.10.1, `hmac` 0.12.1, `sha1` 0.10, `unicode-normalization` 0.1, `data-encoding` 2 — all RustCrypto or long-standing MIT/Apache crates. The 0.5/0.10 generation is chosen over the newer 0.6/0.11 because it shares `digest` 0.10 and `rand_core` 0.6 with the `sha2` 0.10 and `rand` 0.8 nigel-core already uses for every token it generates, so `rand::rngs::OsRng` feeds all of them and no second generation of trait crates enters the tree. TOTP is hand-written over `hmac` + `sha1` (about 30 lines, pinned to the RFC vectors) rather than taking `totp-rs`, which brings its own base32 and URL handling and a newer MSRV for no gain. `subtle` stops being `serve`-only, because the TOTP comparison lives outside `server/`.
 - **`unicode-normalization`'s licence** is `(MIT OR Apache-2.0) AND Unicode-3.0`; Unicode-3.0 is a permissive data licence compatible with MIT.
-- **The common-password list** is SecLists `Passwords/Common-Credentials/10k-most-common.txt` (MIT, Daniel Miessler), bundled verbatim (73 KB, sha256 `68782d6a4a19a4768d5f15dd66bd534e7a33055cc755411e33f16d18c50fdcce`) with its licence notice. Only 10 of its entries are 12 characters or longer, so beside the length rule it adds little; it also contains profanity, as every such list does. Both are flagged for the operator; a longer-password list is a possible follow-up, not this PR.
-- **Rule order:** length, then the common list, then identity, then unchanged. The first failure is the reason reported.
+- **No common-password list.** The rules are length, identity and unchanged. A list of long common passwords (12 characters and up) may be a later follow-up; it is not in this PR. The 256-character maximum stays as written in spec section 4.5.
+- **Rule order:** length, then identity, then unchanged. The first failure is the reason reported.
 - **Display name:** trimmed, 1–100 characters, no control characters. `--name` is required on `nigel user add`.
 - **The first non-admin user** is refused as `Conflict { code: "last_admin" }` — the invariant's own reason code — with "The first user must be an admin. Add them with --admin."
 - **Wrong-key or unknown-uid TOTP** is an `Err`, not a `Rejected`, so PR 2 can log which users are affected when `server.key` is lost (spec section 3).
@@ -83,7 +83,6 @@ These are decisions this plan makes; each is small and reversible, and the revie
 | `crates/nigel-core/src/migrations.rs` | modify | v17: `users`, `sessions` |
 | `crates/nigel-core/src/identity/mod.rs` | create | `Role`, `stamp`, test helpers |
 | `crates/nigel-core/src/identity/passwords.rs` | create | Rules, Argon2id, dummy verify, temporary passwords |
-| `crates/nigel-core/src/identity/common-passwords.txt` | create | The bundled 10k list |
 | `crates/nigel-core/src/identity/totp.rs` | create | HOTP/TOTP, skew window, base32, otpauth URI |
 | `crates/nigel-core/src/identity/seal.rs` | create | `ServerKey`, `server.key`, seal/open |
 | `crates/nigel-core/src/identity/sessions.rs` | create | Create/find/renew/end/sweep sessions |
@@ -105,7 +104,7 @@ impl Role { pub const ALL: [Role; 3]; fn as_str(self) -> &'static str; fn parse(
 pub(crate) fn stamp(now: DateTime<Utc>) -> String;    // "2026-10-24T07:30:15Z"
 
 // identity/passwords.rs
-pub enum PasswordRule { TooShort, TooLong, Common, MatchesIdentity, Unchanged }  // reason_code(), Display, Into<NigelError>
+pub enum PasswordRule { TooShort, TooLong, MatchesIdentity, Unchanged }  // reason_code(), Display, Into<NigelError>
 pub struct PasswordOwner<'a> { email: &'a str, display_name: &'a str, current_hash: Option<&'a str> }
 pub fn check_new_password(password: &str, owner: &PasswordOwner<'_>) -> Result<(), PasswordRule>;
 pub fn hash_password(password: &str) -> nigel_core::error::Result<String>;
@@ -466,25 +465,13 @@ git commit -m "Migration 17: users and sessions"
 
 **Files:**
 - Create: `crates/nigel-core/src/identity/passwords.rs`
-- Create: `crates/nigel-core/src/identity/common-passwords.txt`
 - Modify: `crates/nigel-core/src/identity/mod.rs` (`pub mod passwords;`)
 
 **Interfaces:**
 - Consumes: `crate::error::{NigelError, Result}`.
-- Produces: `PasswordRule` (`TooShort`, `TooLong`, `Common`, `MatchesIdentity`, `Unchanged`; `reason_code()`; `Display`; `From<PasswordRule> for NigelError` → `Invalid`), `PasswordOwner<'a> { email, display_name, current_hash: Option<&str> }`, `MIN_LENGTH = 12`, `MAX_LENGTH = 256`, `normalize(&str) -> Zeroizing<String>`, `check_new_password(&str, &PasswordOwner) -> Result<(), PasswordRule>`, `hash_password(&str) -> Result<String>`, `verify_password(&str, &str) -> bool`, `verify_dummy(&str)`, `temporary_password() -> Zeroizing<String>`.
+- Produces: `PasswordRule` (`TooShort`, `TooLong`, `MatchesIdentity`, `Unchanged`; `reason_code()`; `Display`; `From<PasswordRule> for NigelError` → `Invalid`), `PasswordOwner<'a> { email, display_name, current_hash: Option<&str> }`, `MIN_LENGTH = 12`, `MAX_LENGTH = 256`, `normalize(&str) -> Zeroizing<String>`, `check_new_password(&str, &PasswordOwner) -> Result<(), PasswordRule>`, `hash_password(&str) -> Result<String>`, `verify_password(&str, &str) -> bool`, `verify_dummy(&str)`, `temporary_password() -> Zeroizing<String>`.
 
-- [ ] **Step 1: Bundle the common-password list**
-
-```bash
-curl -fsSL -o crates/nigel-core/src/identity/common-passwords.txt \
-  "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt"
-sha256sum crates/nigel-core/src/identity/common-passwords.txt
-wc -l crates/nigel-core/src/identity/common-passwords.txt
-./scripts/check-no-real-data.sh; echo "exit=$?"
-```
-Expected: sha256 `68782d6a4a19a4768d5f15dd66bd534e7a33055cc755411e33f16d18c50fdcce`, about 10,000 lines, check exit 0. If upstream has changed and the hash differs, the file is still acceptable if it is the same list (one password per line, MIT-licensed SecLists); record the new hash in the commit message. If the check script ever fails on an entry, delete that line. The licence notice is the `COMMON_PASSWORDS` doc comment below.
-
-- [ ] **Step 2: Write the failing tests**
+- [ ] **Step 1: Write the failing tests**
 
 Add `pub mod passwords;` to `identity/mod.rs` (above `/// Ordered`), and create `identity/passwords.rs` containing only:
 
@@ -562,28 +549,6 @@ mod tests {
     }
 
     #[test]
-    fn a_common_password_is_refused_whatever_its_case() {
-        assert_eq!(
-            check_new_password("unbelievable", &owner()),
-            Err(PasswordRule::Common)
-        );
-        assert_eq!(
-            check_new_password("UnBelievable", &owner()),
-            Err(PasswordRule::Common)
-        );
-    }
-
-    #[test]
-    fn the_list_is_bundled_whole() {
-        assert!(
-            common_passwords().len() >= 9_900,
-            "{}",
-            common_passwords().len()
-        );
-        assert!(common_passwords().contains("password"));
-    }
-
-    #[test]
     fn the_email_its_local_part_and_the_name_are_refused() {
         let owner = PasswordOwner {
             email: "patexample12@example.com",
@@ -622,7 +587,6 @@ mod tests {
         let codes: Vec<_> = [
             PasswordRule::TooShort,
             PasswordRule::TooLong,
-            PasswordRule::Common,
             PasswordRule::MatchesIdentity,
             PasswordRule::Unchanged,
         ]
@@ -631,13 +595,7 @@ mod tests {
         .collect();
         assert_eq!(
             codes,
-            [
-                "too_short",
-                "too_long",
-                "common",
-                "matches_identity",
-                "unchanged"
-            ]
+            ["too_short", "too_long", "matches_identity", "unchanged"]
         );
     }
 
@@ -662,12 +620,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run them to see them fail**
+- [ ] **Step 2: Run them to see them fail**
 
 Run: `cargo test -p nigel-core identity::passwords -- --test-threads=1`
 Expected: compile errors — `cannot find type PasswordOwner`, `cannot find function hash_password`, etc.
 
-- [ ] **Step 4: Implement**
+- [ ] **Step 3: Implement**
 
 Put this above the tests in `passwords.rs`:
 
@@ -678,7 +636,6 @@ Put this above the tests in `passwords.rs`:
 //! This is sign-in identity. The books' encryption password is `crate::password`
 //! and has nothing to do with it.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -700,9 +657,6 @@ const T_COST: u32 = 2;
 const P_COST: u32 = 1;
 const OUTPUT_LEN: usize = 32;
 
-/// The 10,000 most common passwords, one per line (SecLists, MIT licence).
-const COMMON_PASSWORDS: &str = include_str!("common-passwords.txt");
-
 /// Crockford's base32 alphabet: no I, L, O or U, so nothing on paper reads as
 /// two different characters.
 const TEMPORARY_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -712,7 +666,6 @@ const TEMPORARY_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 pub enum PasswordRule {
     TooShort,
     TooLong,
-    Common,
     MatchesIdentity,
     Unchanged,
 }
@@ -722,7 +675,6 @@ impl PasswordRule {
         match self {
             PasswordRule::TooShort => "too_short",
             PasswordRule::TooLong => "too_long",
-            PasswordRule::Common => "common",
             PasswordRule::MatchesIdentity => "matches_identity",
             PasswordRule::Unchanged => "unchanged",
         }
@@ -736,10 +688,6 @@ impl fmt::Display for PasswordRule {
                 write!(f, "Use at least {MIN_LENGTH} characters.")
             }
             PasswordRule::TooLong => write!(f, "Use at most {MAX_LENGTH} characters."),
-            PasswordRule::Common => write!(
-                f,
-                "That password is on a list of common passwords. Choose another."
-            ),
             PasswordRule::MatchesIdentity => write!(
                 f,
                 "Don't use your email address or your name as your password."
@@ -772,20 +720,8 @@ pub fn normalize(password: &str) -> Zeroizing<String> {
     Zeroizing::new(password.nfc().collect())
 }
 
-fn common_passwords() -> &'static HashSet<String> {
-    static SET: OnceLock<HashSet<String>> = OnceLock::new();
-    SET.get_or_init(|| {
-        COMMON_PASSWORDS
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_lowercase)
-            .collect()
-    })
-}
-
 /// The one check every new password passes, from the CLI and the API alike.
-/// Checked in this order: length, the common list, identity, unchanged.
+/// Checked in this order: length, identity, unchanged.
 pub fn check_new_password(
     password: &str,
     owner: &PasswordOwner<'_>,
@@ -799,9 +735,6 @@ pub fn check_new_password(
         return Err(PasswordRule::TooLong);
     }
     let folded = Zeroizing::new(normalized.to_lowercase());
-    if common_passwords().contains(folded.as_str()) {
-        return Err(PasswordRule::Common);
-    }
     let email = owner.email.trim().to_lowercase();
     let local_part = email.split('@').next().unwrap_or("").to_string();
     let name = owner.display_name.trim().to_lowercase();
@@ -874,19 +807,17 @@ pub fn temporary_password() -> Zeroizing<String> {
 }
 ```
 
-- [ ] **Step 5: Run them to see them pass**
+- [ ] **Step 4: Run them to see them pass**
 
 Run: `cargo test -p nigel-core identity::passwords -- --test-threads=1`
-Expected: 13 passed, in a few seconds (the dev-profile override from Task 1 keeps Argon2 fast).
+Expected: 11 passed, in a few seconds (the dev-profile override from Task 1 keeps Argon2 fast).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add crates/nigel-core/src/identity/
 ./scripts/check-no-real-data.sh --staged; echo "exit=$?"   # must be exit=0
-git commit -m "identity: password rules, Argon2id hashing and temporary passwords
-
-The common-password list is SecLists 10k-most-common.txt (MIT)."
+git commit -m "identity: password rules, Argon2id hashing and temporary passwords"
 ```
 
 ---
@@ -2945,7 +2876,7 @@ pub fn verify_totp(
 - [ ] **Step 4: Run them to see them pass**
 
 Run: `cargo test -p nigel-core identity -- --test-threads=1 && cargo clippy --all-targets -- -D warnings`
-Expected: the 54 tests under `identity::` pass; clippy clean.
+Expected: the 52 tests under `identity::` pass; clippy clean.
 
 - [ ] **Step 5: Commit**
 
@@ -4059,7 +3990,6 @@ In the Project Structure tree, add before `categorizer.rs`:
       identity/             # Who signs in to a shared server: users, sessions, passwords, second factor
         mod.rs                 # Role (read_only < bookkeeper < admin), the timestamp form, test helpers
         passwords.rs           # The password rules, Argon2id hash/verify, the dummy verify, temporary passwords
-        common-passwords.txt   # The 10,000 most common passwords (SecLists, MIT), compiled in
         totp.rs                # RFC 6238 codes, the ±1 step window, base32 and the otpauth URI
         seal.rs                # ServerKey (<config_dir>/server.key) and sealing a secret to a user's uid
         sessions.rs            # Session rows: create, find, renew, end, sweep
