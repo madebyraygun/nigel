@@ -1045,7 +1045,7 @@ fn file_password(db_path: &Path, path: &std::ffi::OsStr) -> Result<Option<String
             path.display()
         ))
     };
-    let mut bytes = Zeroizing::new(Vec::new());
+    let mut bytes = Zeroizing::new(Vec::with_capacity(PASSWORD_FILE_MAX_BYTES as usize + 1));
     {
         use std::io::Read;
         let file = std::fs::File::open(path).map_err(could_not_read)?;

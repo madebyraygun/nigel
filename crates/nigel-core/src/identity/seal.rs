@@ -200,7 +200,7 @@ pub fn permission_warning(path: &Path) -> Option<String> {
         let file_mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
         if file_mode & 0o077 != 0 {
             return Some(format!(
-                "warning: {} can be read by other users (mode {file_mode:o}). Run `chmod 600 {}`.",
+                "warning: {} is open to other users (mode {file_mode:o}). Run `chmod 600 {}`.",
                 path.display(),
                 path.display()
             ));
