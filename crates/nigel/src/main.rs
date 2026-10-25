@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
     DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
-    InvoiceTemplateCommands, PasswordCommand, RulesCommands,
+    InvoiceTemplateCommands, PasswordCommand, RulesCommands, UserCommands,
 };
 use nigel_core::error;
 
@@ -535,6 +535,24 @@ fn dispatch(command: Commands) -> error::Result<()> {
         Commands::Backup { output } => cli::backup::run(output),
         Commands::Restore { path } => cli::restore::run(&path),
         Commands::Serve { port, no_open } => cli::serve::run(port, no_open),
+        Commands::User { command } => match command {
+            UserCommands::Add {
+                email,
+                name,
+                admin: _,
+                role,
+            } => {
+                let role = role.map_or(nigel_core::identity::Role::Admin, Into::into);
+                cli::user::add(&email, &name, role)
+            }
+            UserCommands::List => cli::user::list(),
+            UserCommands::Role { email, role } => cli::user::set_role(&email, role.into()),
+            UserCommands::Disable { email } => cli::user::disable(&email),
+            UserCommands::Enable { email } => cli::user::enable(&email),
+            UserCommands::ResetPassword { email, clear_totp } => {
+                cli::user::reset_password(&email, clear_totp)
+            }
+        },
         Commands::Undo => cli::undo::run(),
         Commands::Update => cli::update::run(),
         Commands::Status => cli::status::run(),

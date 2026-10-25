@@ -42,6 +42,7 @@ pub mod status;
 pub mod undo;
 pub mod undo_manager;
 pub mod update;
+pub mod user;
 
 pub use nigel_core::clock::today;
 
@@ -230,6 +231,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: PasswordCommand,
     },
+    /// Manage the people who sign in to a shared `nigel serve`.
+    User {
+        #[command(subcommand)]
+        command: UserCommands,
+    },
     /// Undo the last import (delete its transactions and import record).
     Undo,
     /// Check for and install updates from GitHub Releases.
@@ -249,6 +255,44 @@ pub enum ImportsCommands {
     Rejects {
         /// Import id, from `nigel imports list`.
         id: i64,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UserCommands {
+    /// Add a user with a temporary password. The first user must be --admin.
+    #[command(group(clap::ArgGroup::new("grant").required(true).args(["admin", "role"])))]
+    Add {
+        /// Their email address, which they sign in with
+        email: String,
+        /// Their name, e.g. "Pat Example"
+        #[arg(long)]
+        name: String,
+        /// Make them an admin (same as --role admin)
+        #[arg(long)]
+        admin: bool,
+        /// Their role
+        #[arg(long, value_enum)]
+        role: Option<user::RoleArg>,
+    },
+    /// List users: email, name, role, status, two-step and last seen.
+    List,
+    /// Change a user's role. The last enabled admin cannot be demoted.
+    Role {
+        email: String,
+        #[arg(value_enum)]
+        role: user::RoleArg,
+    },
+    /// Disable a user and end their sessions. Users are never deleted.
+    Disable { email: String },
+    /// Enable a disabled user.
+    Enable { email: String },
+    /// Issue a new temporary password and end the user's sessions.
+    ResetPassword {
+        email: String,
+        /// Also turn off their two-step verification (a lost device)
+        #[arg(long)]
+        clear_totp: bool,
     },
 }
 
@@ -1109,6 +1153,7 @@ pub fn launch_sync_allowed(command: &Commands) -> bool {
             | Commands::Password { .. }
             | Commands::Restore { .. }
             | Commands::Serve { .. }
+            | Commands::User { .. }
             | Commands::Invoice {
                 command: InvoiceCommands::Sync
                     | InvoiceCommands::Preview { .. }
@@ -1158,5 +1203,32 @@ mod tests {
         }
         let cli = Cli::try_parse_from(["nigel", "document", "list"]).unwrap();
         assert!(launch_sync_allowed(&cli.command.unwrap()));
+    }
+
+    #[test]
+    fn user_commands_never_reach_the_network() {
+        let cli = Cli::try_parse_from(["nigel", "user", "list"]).unwrap();
+        assert!(!launch_sync_allowed(&cli.command.unwrap()));
+    }
+
+    #[test]
+    fn user_add_takes_exactly_one_of_admin_or_role() {
+        let base = [
+            "nigel",
+            "user",
+            "add",
+            "pat@example.com",
+            "--name",
+            "Pat Example",
+        ];
+        assert!(Cli::try_parse_from(base).is_err(), "neither");
+        let both = [&base[..], &["--admin", "--role", "bookkeeper"]].concat();
+        assert!(Cli::try_parse_from(both).is_err(), "both");
+        let admin = [&base[..], &["--admin"]].concat();
+        assert!(Cli::try_parse_from(admin).is_ok());
+        let role = [&base[..], &["--role", "read-only"]].concat();
+        assert!(Cli::try_parse_from(role).is_ok());
+        let bogus = [&base[..], &["--role", "owner"]].concat();
+        assert!(Cli::try_parse_from(bogus).is_err());
     }
 }
