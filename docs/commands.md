@@ -145,6 +145,12 @@ nigel restore ~/backups/nigel-20250301-120000.db  # Restore the DB and, when nig
 nigel password set                                # Encrypt an unencrypted database
 nigel password change                             # Change password on encrypted database
 nigel password remove                             # Decrypt database (remove password)
+nigel user add pat@example.com --name "Pat Example" --admin  # Add a user with a temporary password; the first must be --admin
+nigel user list                                   # Email, name, role, status, two-step, last seen
+nigel user role sam@example.com read_only         # Change a role: admin, bookkeeper, read_only
+nigel user disable sam@example.com                # Disable a user and end their sessions (users are never deleted)
+nigel user enable sam@example.com                 # Enable a disabled user
+nigel user reset-password sam@example.com         # New temporary password; ends their sessions (--clear-totp also turns off two-step)
 nigel update                                      # Check for and install the latest version
 nigel completions bash                            # Generate shell completions (bash, zsh, fish, powershell)
 ```
@@ -155,6 +161,52 @@ category called something else was classified from its type and landed on
 `expense`, where the K-1 worksheet counts it as a deduction. Give it the class
 it actually is — `nigel categories update <id> "<name>" --type expense --class
 equity` — and its `K-16d` money is reported as distributions.
+
+### Users
+
+Users are the people who sign in to a shared `nigel serve`, identified by email. These
+commands open the books in the configured data directory like every other command, so an
+encrypted database is unlocked by the prompt, `NIGEL_DB_PASSWORD`, or
+`NIGEL_DB_PASSWORD_FILE`. Whoever can open the file has full authority over its users;
+this is also how a locked-out admin recovers. `nigel serve` does not read users yet: it
+stays in local mode, with its token link, whatever this table holds.
+
+```bash
+nigel user add pat@example.com --name "Pat Example" --admin            # The first user must be --admin
+nigel user add sam@example.com --name "Sam Example" --role bookkeeper  # --role admin|bookkeeper|read_only
+nigel user list                                                        # Email, name, role, status, two-step, last seen
+nigel user role sam@example.com read_only                              # Change a role
+nigel user disable sam@example.com                                     # Disable and end their sessions
+nigel user enable sam@example.com
+nigel user reset-password sam@example.com                              # New temporary password; ends their sessions
+nigel user reset-password pat@example.com --clear-totp                 # Also turn off two-step (lost device)
+```
+
+- Exactly one of `--admin` or `--role` is required; no role is granted by default.
+- `add` and `reset-password` print a temporary password once, in the form
+  `K7QXM-2RTPA-W9HCN-4FJDE`. It is stored only as an Argon2id hash and cannot be shown
+  again. The user must choose their own password when they first sign in.
+- `reset-password` prints `Ended every session for <email>.` when it ended any sessions.
+- A chosen password is 12 to 256 characters after Unicode (NFC) normalization, must not
+  equal (ignoring case) the user's email, the part of it before the `@`, or their name, and
+  must differ from the current one. There is no common-password list.
+- Emails are trimmed, lower-cased and NFC-normalized, and refused if they contain control
+  characters; display names are trimmed and NFC-normalized. Emails are therefore matched
+  without regard to case or surrounding spaces. An unknown email is an error naming it.
+- `add` on unencrypted books warns that anyone who can read the file can read the books,
+  and recommends `nigel password set` first.
+- Users are never deleted. The last enabled admin cannot be disabled or demoted.
+- `list` never prints a password hash or a two-step secret.
+- Two-step secrets are sealed with `server.key`, which sits beside `settings.json` in
+  `~/.config/nigel/`, not in the data directory, so it is not in any backup. If it is lost,
+  each user with two-step on needs `nigel user reset-password <email> --clear-totp`.
+
+### Unattended password
+
+Any command that opens encrypted books reads the password from `NIGEL_DB_PASSWORD_FILE` (a
+path to a file holding it, one trailing newline stripped) or from `NIGEL_DB_PASSWORD`
+before it would prompt. Setting both is an error. A value that is empty, unreadable or
+wrong stops the command rather than falling back to a prompt.
 
 ### Web UI
 
