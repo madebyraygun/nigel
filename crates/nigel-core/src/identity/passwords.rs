@@ -140,6 +140,8 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// Whether `password` matches the PHC string. A string that does not parse is
 /// a mismatch, never a panic.
 pub fn verify_password(password: &str, phc: &str) -> bool {
+    #[cfg(test)]
+    VERIFICATIONS.with(|count| count.set(count.get() + 1));
     let Ok(parsed) = PasswordHash::new(phc) else {
         return false;
     };
@@ -155,12 +157,30 @@ pub fn verify_dummy(password: &str) {
     let _ = verify_password(password, dummy_phc());
 }
 
-fn dummy_phc() -> &'static str {
+pub(crate) fn dummy_phc() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
     DUMMY.get_or_init(|| {
         // unwrap: hashing a fixed string with valid parameters cannot fail
         hash_password("nigel-dummy-password-never-matches").unwrap()
     })
+}
+
+/// Compute the dummy hash now, so the first sign-in for an unknown address
+/// does not pay for hashing it on top of verifying against it.
+pub fn warm_dummy_hash() {
+    let _ = dummy_phc();
+}
+
+#[cfg(test)]
+thread_local! {
+    static VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many Argon2id verifications this thread has run, for the test that
+/// every sign-in path runs exactly one.
+#[cfg(test)]
+pub(crate) fn verifications_for_tests() -> usize {
+    VERIFICATIONS.with(|count| count.get())
 }
 
 /// Twenty characters from [`TEMPORARY_ALPHABET`] in four groups of five, about
@@ -332,5 +352,11 @@ mod tests {
     fn a_temporary_password_passes_the_rules_it_never_has_to_meet() {
         let pw = temporary_password();
         assert_eq!(check_new_password(&pw, &owner()), Ok(()));
+    }
+
+    #[test]
+    fn warming_the_dummy_hash_makes_it_ready() {
+        warm_dummy_hash();
+        assert!(dummy_phc().starts_with("$argon2id$"));
     }
 }

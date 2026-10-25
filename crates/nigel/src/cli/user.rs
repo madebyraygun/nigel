@@ -9,14 +9,10 @@ use comfy_table::{Cell, Table};
 
 use nigel_core::clock::now_utc;
 use nigel_core::db::{get_connection, is_encrypted};
-use nigel_core::error::Result;
+use nigel_core::error::{NigelError, Result};
 use nigel_core::identity::users::{self, NewUser, User, UserListing};
-use nigel_core::identity::Role;
+use nigel_core::identity::{Role, NOT_ENCRYPTED_WARNING};
 use nigel_core::settings::get_data_dir;
-
-pub const NOT_ENCRYPTED_WARNING: &str = "These books are not encrypted. Anyone who can read the \
-     file can read the books. Encrypt them with `nigel password set` before you give anyone \
-     else access.";
 
 /// The role as typed on the command line. `read-only` is accepted beside the
 /// stored spelling `read_only`.
@@ -58,6 +54,10 @@ pub(crate) fn added_message(user: &User, temporary: &str) -> String {
         user.role.label(),
         temporary_password_lines(user, temporary)
     )
+}
+
+pub(crate) fn first_user_message(email: &str) -> String {
+    format!("Nigel will now require sign-in. Run `nigel serve` and sign in as {email}.")
 }
 
 fn status(user: &User) -> &'static str {
@@ -104,6 +104,11 @@ pub(crate) fn list_table(rows: &[UserListing]) -> String {
 pub fn add(email: &str, name: &str, role: Role) -> Result<()> {
     let path = db_path();
     let conn = get_connection(&path)?;
+    if role != Role::Admin && !users::has_users(&conn)? {
+        return Err(NigelError::Invalid(
+            "The first user must be an admin. Add them with --admin.".into(),
+        ));
+    }
     let created = users::create_user(
         &conn,
         &NewUser {
@@ -117,8 +122,11 @@ pub fn add(email: &str, name: &str, role: Role) -> Result<()> {
         "{}",
         added_message(&created.user, &created.temporary_password)
     );
-    if created.first_user && !is_encrypted(&path)? {
-        eprintln!("{NOT_ENCRYPTED_WARNING}");
+    if created.first_user {
+        println!("{}", first_user_message(&created.user.email));
+        if !is_encrypted(&path)? {
+            eprintln!("{NOT_ENCRYPTED_WARNING}");
+        }
     }
     Ok(())
 }
@@ -176,6 +184,14 @@ pub fn reset_password(email: &str, clear_totp: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_user_message_says_sign_in_is_now_required() {
+        assert_eq!(
+            first_user_message("pat@example.com"),
+            "Nigel will now require sign-in. Run `nigel serve` and sign in as pat@example.com."
+        );
+    }
 
     fn user(role: Role, must_change: bool, disabled: bool, totp: bool) -> User {
         User {

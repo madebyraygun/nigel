@@ -14,9 +14,11 @@ pub mod totp;
 pub mod users;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 
-/// Ordered `ReadOnly < Bookkeeper < Admin`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Ordered `ReadOnly < Bookkeeper < Admin`. Serialized as the stored word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     ReadOnly,
     Bookkeeper,
@@ -52,6 +54,18 @@ impl Role {
         }
     }
 }
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Printed by `nigel user add` for the first user and by `nigel serve` at
+/// startup in shared mode, when the books are not encrypted.
+pub const NOT_ENCRYPTED_WARNING: &str = "These books are not encrypted. Anyone who can read the \
+     file can read the books. Encrypt them with `nigel password set` before you give anyone \
+     else access.";
 
 /// The stored form of an instant: UTC RFC 3339 to the second, `Z`-suffixed,
 /// so stored values compare correctly as strings.
@@ -105,6 +119,19 @@ mod tests {
         }
         assert_eq!(Role::parse("owner"), None);
         assert_eq!(Role::ReadOnly.label(), "Read-only");
+    }
+
+    #[test]
+    fn a_role_serializes_as_its_stored_word_and_displays_it() {
+        assert_eq!(
+            serde_json::to_string(&Role::ReadOnly).unwrap(),
+            "\"read_only\""
+        );
+        assert_eq!(serde_json::to_string(&Role::Admin).unwrap(), "\"admin\"");
+        let parsed: Role = serde_json::from_str("\"bookkeeper\"").unwrap();
+        assert_eq!(parsed, Role::Bookkeeper);
+        assert!(serde_json::from_str::<Role>("\"owner\"").is_err());
+        assert_eq!(Role::ReadOnly.to_string(), "read_only");
     }
 
     #[test]
