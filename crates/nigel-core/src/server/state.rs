@@ -239,9 +239,7 @@ impl AppState {
 
     /// [`Self::refresh_mode`], at most once per `mode::REFRESH_INTERVAL`.
     pub async fn refresh_mode_throttled(&self) -> super::mode::Mode {
-        if self.mode() == super::mode::Mode::Shared
-            || !self.mode.claim_refresh(std::time::Instant::now())
-        {
+        if self.mode() == super::mode::Mode::Shared || !self.mode.claim_refresh(self.now()) {
             return self.mode();
         }
         self.refresh_mode().await

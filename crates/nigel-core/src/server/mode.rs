@@ -5,7 +5,9 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 use super::secret::SessionToken;
 
@@ -33,9 +35,9 @@ pub(crate) enum ModePolicy {
     Derived,
 }
 
-/// A public-host request against a local-mode server re-derives the mode, at
-/// most this often, so traffic through a tunnel costs one users query per
-/// interval rather than one per request.
+/// A public-host request, or a token-cookie request, against a local-mode
+/// server re-derives the mode at most this often, so traffic costs one users
+/// query per interval rather than one per request.
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 enum Current {
@@ -46,7 +48,7 @@ enum Current {
 pub(crate) struct ModeCell {
     policy: ModePolicy,
     current: RwLock<Current>,
-    last_refresh: Mutex<Option<Instant>>,
+    last_refresh: Mutex<Option<DateTime<Utc>>>,
     refresh_failed: AtomicBool,
 }
 
@@ -115,11 +117,17 @@ impl ModeCell {
     }
 
     /// Claim the right to re-derive at `now`: false when a refresh was
-    /// claimed less than `REFRESH_INTERVAL` before it.
-    pub(crate) fn claim_refresh(&self, now: Instant) -> bool {
+    /// claimed less than `REFRESH_INTERVAL` before it. A clock that has
+    /// stepped back past the last claim may claim again.
+    pub(crate) fn claim_refresh(&self, now: DateTime<Utc>) -> bool {
         // unwrap: poisoned mutex means a thread panicked — unrecoverable
         let mut last = self.last_refresh.lock().unwrap();
-        if last.is_some_and(|at| now.duration_since(at) < REFRESH_INTERVAL) {
+        let recent = |at: DateTime<Utc>| {
+            (now - at)
+                .to_std()
+                .is_ok_and(|since| since < REFRESH_INTERVAL)
+        };
+        if last.is_some_and(recent) {
             return false;
         }
         *last = Some(now);
@@ -311,9 +319,14 @@ mod tests {
     #[test]
     fn refreshes_are_claimed_at_most_once_per_interval() {
         let cell = ModeCell::local(ModePolicy::Derived, SessionToken::from("ab".repeat(32)));
-        let t0 = std::time::Instant::now();
+        let t0 = crate::clock::now_utc();
+        let interval = chrono::Duration::from_std(REFRESH_INTERVAL).unwrap();
         assert!(cell.claim_refresh(t0));
-        assert!(!cell.claim_refresh(t0 + REFRESH_INTERVAL / 2));
-        assert!(cell.claim_refresh(t0 + REFRESH_INTERVAL));
+        assert!(!cell.claim_refresh(t0 + interval / 2));
+        assert!(cell.claim_refresh(t0 + interval));
+        assert!(
+            cell.claim_refresh(t0 - interval * 10),
+            "a clock stepped back"
+        );
     }
 }

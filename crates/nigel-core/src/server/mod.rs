@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod extract;
 pub mod mode;
+pub mod principal;
 pub mod routes;
 pub mod scheme;
 pub mod secret;
