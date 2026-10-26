@@ -44,6 +44,8 @@ pub struct BootFacts {
     pub company: Option<String>,
     /// Users whose two-step this machine cannot check (shared mode only).
     pub totp_unopenable: Vec<String>,
+    /// Why server.key could not be read, with its path (shared mode only).
+    pub key_unreadable: Option<String>,
 }
 
 /// Read the facts, and in shared mode sweep expired sessions.
@@ -60,19 +62,23 @@ pub fn read_facts(db_path: &Path, mode: Mode, now: DateTime<Utc>) -> Result<Boot
     }
     let conn = crate::db::get_connection(db_path)?;
     let company = crate::db::get_metadata(&conn, "company_name").filter(|c| !c.trim().is_empty());
-    let totp_unopenable = if mode == Mode::Shared {
+    let mut totp_unopenable = Vec::new();
+    let mut key_unreadable = None;
+    if mode == Mode::Shared {
         crate::identity::sessions::sweep_expired(&conn, now)?;
-        let key = crate::identity::seal::ServerKey::load(&crate::identity::seal::key_path())
-            .ok()
-            .flatten();
-        crate::identity::users::totp_unopenable(&conn, key.as_ref())?
-    } else {
-        Vec::new()
-    };
+        let path = crate::identity::seal::key_path();
+        match crate::identity::seal::ServerKey::load(&path) {
+            Ok(key) => {
+                totp_unopenable = crate::identity::users::totp_unopenable(&conn, key.as_ref())?;
+            }
+            Err(e) => key_unreadable = Some(format!("{}: {e}", path.display())),
+        }
+    }
     Ok(BootFacts {
         encrypted,
         company,
         totp_unopenable,
+        key_unreadable,
     })
 }
 
@@ -107,6 +113,12 @@ pub fn startup_notices(
                      client_ip_header to \"CF-Connecting-IP\" or \"X-Forwarded-For\"."
                         .to_string(),
                 );
+            }
+            if let Some(reason) = &facts.key_unreadable {
+                notices.push(format!(
+                    "warning: two-step verification can't be checked until Nigel can read its \
+                     server key ({reason}). Fix the file's ownership or permissions and restart."
+                ));
             }
             if !facts.totp_unopenable.is_empty() {
                 notices.push(format!(
@@ -226,6 +238,7 @@ mod tests {
             encrypted: false,
             company: Some("Acme".into()),
             totp_unopenable: vec!["sam@example.com".into()],
+            key_unreadable: None,
         };
         let notices = startup_notices(Mode::Shared, &facts, &public(), Some("warning: key".into()));
         let all = notices.join("\n");
@@ -283,6 +296,49 @@ mod tests {
             loopback_only.lines().next().unwrap(),
             "Nigel is serving these books to signed-in users at http://127.0.0.1:5731."
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_server_key_is_named_and_two_step_users_are_not_told_to_clear_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let _config = TempConfig::new();
+        let (_dir, db_path) = temp_db();
+        let user = crate::server::testutil::add_ready_user(
+            &db_path,
+            "pat@example.com",
+            crate::identity::Role::Admin,
+        );
+        let path = crate::identity::seal::key_path();
+        let key = crate::identity::seal::ServerKey::load_or_create(&path).unwrap();
+        let now = crate::clock::now_utc();
+        let conn = crate::db::get_connection(&db_path).unwrap();
+        crate::identity::users::set_totp_secret(&conn, user.id, &key, &[7u8; 20], 0, now).unwrap();
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&path).is_ok() {
+            eprintln!("skipped: running as a user that can read a mode-000 file");
+            return;
+        }
+        let facts = read_facts(&db_path, Mode::Shared, now).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(facts.totp_unopenable.is_empty(), "{facts:?}");
+        let notices = startup_notices(
+            Mode::Shared,
+            &BootFacts {
+                encrypted: true,
+                ..facts
+            },
+            &ServerConfig::default(),
+            None,
+        );
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains(&path.display().to_string()),
+            "{notices:?}"
+        );
+        assert!(!notices[0].contains("--clear-totp"), "{notices:?}");
     }
 
     #[test]
