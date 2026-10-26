@@ -163,8 +163,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
 
     // Commands that need the encryption password up front. `password` does its own
     // prompting as part of set/change/remove, `completions` never touches the DB, and
-    // `serve` has no stdin to prompt on — its clients unlock over HTTP instead, and
-    // `invoice template` never opens the database.
+    // `serve` has no stdin to prompt on — its pre-flight unlocks from the environment
+    // or its clients unlock over HTTP — and `invoice template` never opens the database.
     let needs_password = !matches!(
         command,
         Commands::Init { .. }
@@ -201,7 +201,7 @@ fn dispatch(command: Commands) -> error::Result<()> {
     // intersection of the two guards above is exactly the set of commands that open the
     // existing database with a usable password; init/demo/restore migrate via their own
     // init_db() call, the dashboard migrates in its own pre-flight, and serve migrates
-    // whatever it can reach without a password.
+    // whatever its pre-flight can open.
     if needs_existing_db && needs_password && !replaces_db {
         let conn = nigel_core::db::get_connection(&db_path)?;
         nigel_core::db::init_db(&conn)?;

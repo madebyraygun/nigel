@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod authz;
+pub mod boot;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -44,13 +45,15 @@ use state::AppState;
 pub fn run(port: u16, no_open: bool) -> Result<()> {
     disable_ansi_output();
 
-    let db_path = PathBuf::from(crate::settings::try_load_settings()?.data_dir).join("nigel.db");
+    let settings = crate::settings::try_load_settings()?;
+    let config = config::ServerConfig::from_settings(&settings)?;
+    let db_path = PathBuf::from(settings.data_dir).join("nigel.db");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| NigelError::Other(format!("Couldn't start the async runtime: {e}")))?;
 
-    runtime.block_on(serve(db_path, port, no_open))
+    runtime.block_on(serve(db_path, port, no_open, config))
 }
 
 /// Turn off `colored`'s escape sequences for the whole process.
@@ -63,9 +66,24 @@ pub(crate) fn disable_ansi_output() {
     colored::control::set_override(false);
 }
 
-async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
+async fn serve(
+    db_path: PathBuf,
+    port: u16,
+    no_open: bool,
+    config: config::ServerConfig,
+) -> Result<()> {
     let mode = mode::derive_or_local(&db_path, |notice| eprintln!("{notice}"));
-    let state = AppState::for_serve(db_path, mode, config::ServerConfig::default());
+    crate::identity::passwords::warm_dummy_hash();
+    let facts = boot::read_facts(&db_path, mode, crate::clock::now_utc()).unwrap_or_else(|e| {
+        eprintln!("notice: couldn't read these books before starting ({e}).");
+        boot::BootFacts::default()
+    });
+    let key_warning = crate::identity::seal::permission_warning(&crate::identity::seal::key_path());
+    for notice in boot::startup_notices(mode, &facts, &config, key_warning) {
+        eprintln!("{notice}");
+    }
+
+    let state = AppState::for_serve(db_path, mode, config.clone());
 
     // A previous run may have been killed between an upload and its import.
     uploads::purge_stale(&uploads::uploads_dir(&state.db_path()), uploads::MAX_AGE);
@@ -73,29 +91,27 @@ async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
     spawn_update_check(state.clone());
 
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).await?;
-    let addr = listener.local_addr()?;
-    if let Some(token) = state.local_token() {
-        let url = format!(
-            "http://127.0.0.1:{}/auth?token={}",
-            addr.port(),
-            token.expose()
-        );
+    let port = listener.local_addr()?.port();
+    let token = state.local_token();
+    println!(
+        "{}",
+        boot::serving_banner(
+            mode,
+            facts.company.as_deref(),
+            &config,
+            port,
+            token.as_ref().map(|t| t.expose()),
+        )
+    );
 
-        println!("Nigel is serving on http://127.0.0.1:{}", addr.port());
-        println!("Open this URL to start a session:");
-        println!("  {url}");
-        println!("Press Ctrl-C to stop.");
-
-        if !no_open {
-            if let Err(e) = open::that_detached(&url) {
-                eprintln!("notice: couldn't open a browser ({e}) — open the URL above yourself.");
-            }
+    if !no_open {
+        let url = match &token {
+            Some(token) => format!("http://127.0.0.1:{port}/auth?token={}", token.expose()),
+            None => format!("http://127.0.0.1:{port}/"),
+        };
+        if let Err(e) = open::that_detached(&url) {
+            eprintln!("notice: couldn't open a browser ({e}) — open the URL above yourself.");
         }
-    } else {
-        println!(
-            "Nigel is serving on http://127.0.0.1:{} to signed-in users.",
-            addr.port()
-        );
     }
 
     serve_with_shutdown(listener, state, shutdown_signal()).await?;
