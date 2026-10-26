@@ -151,12 +151,6 @@ pub fn verify_password(password: &str, phc: &str) -> bool {
         .is_ok()
 }
 
-/// One verification against a fixed hash, for an email that matches no user,
-/// so an unknown address costs the same time as a known one.
-pub fn verify_dummy(password: &str) {
-    let _ = verify_password(password, dummy_phc());
-}
-
 pub(crate) fn dummy_phc() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
     DUMMY.get_or_init(|| {
@@ -250,7 +244,6 @@ mod tests {
             "nigel-dummy-password-never-match",
         ] {
             assert!(!verify_password(candidate, dummy_phc()), "{candidate}");
-            verify_dummy(candidate);
         }
     }
 
