@@ -4,7 +4,7 @@ title: Network exposure and deployment guide
 status: To Do
 assignee: []
 created_date: '2026-08-06 16:28'
-updated_date: '2026-10-24 21:54'
+updated_date: '2026-10-26 02:59'
 labels:
   - multiuser
   - backend
@@ -39,4 +39,6 @@ First deployment (decision-11, phase 1): the operator's server on bee, reachable
 Design: multiuser phase 1 spec (PR #74). No --bind flag: tunnels and reverse proxies connect to loopback. Content-Security-Policy is its own task and must land before public exposure.
 
 Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
+
+From multiuser PR 2 review: the deployment guide must require the tunnel or reverse proxy to set Host to the public name (server_public_url's host). A request forwarded with Host: 127.0.0.1 is answered as a loopback request. Cloudflare Tunnel routes by hostname; for Caddy/nginx document that the site block matches only the public name. X-Forwarded-For is read as one trusted hop.
 <!-- SECTION:NOTES:END -->
