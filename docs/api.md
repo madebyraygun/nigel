@@ -163,7 +163,7 @@ authenticates with the cookie and carries no `Origin` is `403 forbidden` with
 `details.reason = "origin_required"`; a browser sign-in (`client` of `browser`)
 without `Origin` is refused the same way. Bearer-token requests and `native`
 sign-ins are exempt, since nothing sends a bearer header on a page's behalf.
-`GET` never writes.
+No `GET` changes the books.
 
 ### Response headers
 
