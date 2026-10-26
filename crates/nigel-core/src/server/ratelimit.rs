@@ -42,6 +42,9 @@ impl Bucket {
 
 #[derive(Debug, Default)]
 struct Account {
+    /// The key is a real user's: exempt from `MAX_KEYS` and never evicted,
+    /// since there are only as many such entries as users.
+    known: bool,
     failures: u32,
     last_failure: Option<Instant>,
     locked_until: Option<Instant>,
@@ -105,6 +108,10 @@ trait Entry {
     /// Eviction order among unlocked entries: fewest failures, then the
     /// oldest last failure.
     fn rank(&self) -> (usize, Option<Instant>);
+    /// Outside the cap and never evicted.
+    fn exempt(&self) -> bool {
+        false
+    }
 }
 
 impl Entry for Account {
@@ -121,6 +128,10 @@ impl Entry for Account {
 
     fn rank(&self) -> (usize, Option<Instant>) {
         (self.failures as usize, self.last_failure)
+    }
+
+    fn exempt(&self) -> bool {
+        self.known
     }
 }
 
@@ -139,46 +150,77 @@ impl Entry for Client {
     }
 }
 
-/// Make room for `key` in `map` if it is new and the map is full: drop idle
-/// entries, then the lowest-ranked unlocked one. A running lockout is never
-/// evicted; when every entry is locked the new key is refused until the
-/// first lockout ends.
-fn make_room<E: Entry>(
+/// Whether a bucket can track a key.
+enum Room {
+    /// The key is held already, or is exempt from the cap.
+    Held,
+    /// A new key fits.
+    Free,
+    /// A new key fits once this unlocked entry is evicted.
+    Evict(String),
+    /// Every capped entry is a running lockout: the key goes untracked.
+    Full,
+}
+
+/// Decide whether `map` can take `key`, leaving the eviction to the caller
+/// so no bucket changes until every bucket has been asked. Idle entries,
+/// which hold no count or lockout, may be dropped on the way. The victim is
+/// the unlocked capped entry with the fewest failures, then the oldest; a
+/// running lockout is never chosen.
+fn plan_room<E: Entry>(
     map: &mut HashMap<String, E>,
     key: &str,
+    exempt_key: bool,
+    capacity: usize,
     now: Instant,
-) -> Result<(), Duration> {
-    if map.len() < MAX_KEYS || map.contains_key(key) {
-        return Ok(());
+) -> Room {
+    if exempt_key || map.contains_key(key) {
+        return Room::Held;
+    }
+    let capped = |map: &HashMap<String, E>| map.values().filter(|e| !e.exempt()).count();
+    if map.len() < capacity || capped(map) < capacity {
+        return Room::Free;
     }
     map.retain(|_, entry| !entry.idle(now));
-    while map.len() >= MAX_KEYS {
-        let victim = map
-            .iter()
-            .filter(|(_, entry)| entry.locked_until().is_none_or(|until| now >= until))
-            .min_by_key(|(_, entry)| entry.rank())
-            .map(|(key, _)| key.clone());
-        match victim {
-            Some(victim) => {
-                map.remove(&victim);
-            }
-            None => {
-                let first_unlock = map
-                    .values()
-                    .filter_map(|entry| entry.locked_until())
-                    .min()
-                    .map_or(Duration::ZERO, |until| until - now);
-                return Err(first_unlock);
-            }
-        }
+    if capped(map) < capacity {
+        return Room::Free;
     }
-    Ok(())
+    map.iter()
+        .filter(|(_, entry)| !entry.exempt())
+        .filter(|(_, entry)| entry.locked_until().is_none_or(|until| now >= until))
+        .min_by_key(|(_, entry)| entry.rank())
+        .map_or(Room::Full, |(key, _)| Room::Evict(key.clone()))
+}
+
+/// Act on a plan: evict if it says to, and answer whether the key is
+/// tracked and whether this is the first untracked key since the bucket
+/// last had room.
+fn take_room<E>(
+    map: &mut HashMap<String, E>,
+    room: Room,
+    reported_full: &mut bool,
+) -> (bool, bool) {
+    match room {
+        Room::Held => (true, false),
+        Room::Free => {
+            *reported_full = false;
+            (true, false)
+        }
+        Room::Evict(victim) => {
+            map.remove(&victim);
+            *reported_full = false;
+            (true, false)
+        }
+        Room::Full => (false, !std::mem::replace(reported_full, true)),
+    }
 }
 
 #[derive(Debug, Default)]
 struct Buckets {
     accounts: HashMap<String, Account>,
     clients: HashMap<String, Client>,
+    accounts_full_reported: bool,
+    clients_full_reported: bool,
 }
 
 /// One admitted attempt, already counted as a failure.
@@ -193,43 +235,112 @@ pub struct Attempt {
     /// The lockouts this attempt started, as their end instants.
     account_lock: Option<Instant>,
     ip_lock: Option<Instant>,
+    /// Whether each bucket holds an entry for this attempt; one that was
+    /// full of lockouts admits it untracked.
+    account_tracked: bool,
+    ip_tracked: bool,
+    newly_full: Vec<Bucket>,
 }
 
-#[derive(Debug, Default)]
+impl Attempt {
+    /// The buckets this attempt found full of lockouts when none had been
+    /// reported since they last had room: once per flood, for the operator's
+    /// log.
+    pub fn newly_full(&self) -> &[Bucket] {
+        &self.newly_full
+    }
+}
+
+#[derive(Debug)]
 pub struct LoginLimiter {
     buckets: Mutex<Buckets>,
+    capacity: usize,
+}
+
+impl Default for LoginLimiter {
+    fn default() -> Self {
+        Self {
+            buckets: Mutex::default(),
+            capacity: MAX_KEYS,
+        }
+    }
 }
 
 impl LoginLimiter {
     /// Admit an attempt and charge it, or answer how long until one would be
     /// admitted. Checked before any password is, so a locked-out guess costs
     /// no Argon2 time.
-    pub fn begin(&self, account: &str, ip: &str, now: Instant) -> Result<Attempt, Duration> {
+    ///
+    /// `known_user` says whether `account` is a real user's key; the caller
+    /// looks the email up before verifying any password. Real users' entries
+    /// sit outside `MAX_KEYS` and are never evicted. When a bucket is full of
+    /// lockouts a new key is admitted untracked rather than refused: an
+    /// unknown address has no account to protect, and a real account keeps
+    /// its own bucket whatever the IP table holds.
+    pub fn begin(
+        &self,
+        account: &str,
+        known_user: bool,
+        ip: &str,
+        now: Instant,
+    ) -> Result<Attempt, Duration> {
         // unwrap: poisoned mutex means a thread panicked — unrecoverable
-        let mut buckets = self.buckets.lock().unwrap();
+        let mut guard = self.buckets.lock().unwrap();
+        let buckets = &mut *guard;
         let account_wait = buckets.accounts.get_mut(account).and_then(|a| a.wait(now));
         let ip_wait = buckets.clients.get_mut(ip).and_then(|c| c.wait(now));
         if let Some(wait) = account_wait.into_iter().chain(ip_wait).max() {
             return Err(wait);
         }
-        make_room(&mut buckets.accounts, account, now)?;
-        make_room(&mut buckets.clients, ip, now)?;
-
-        let entry = buckets.accounts.entry(account.to_string()).or_default();
-        let previous_last_failure = entry.last_failure;
-        entry.failures += 1;
-        entry.last_failure = Some(now);
-        let account_lock = (entry.failures >= ACCOUNT_FAILURES).then(|| now + LOCKOUT);
-        if account_lock.is_some() {
-            entry.locked_until = account_lock;
+        let account_room = plan_room(
+            &mut buckets.accounts,
+            account,
+            known_user,
+            self.capacity,
+            now,
+        );
+        let ip_room = plan_room(&mut buckets.clients, ip, false, self.capacity, now);
+        let (account_tracked, accounts_newly_full) = take_room(
+            &mut buckets.accounts,
+            account_room,
+            &mut buckets.accounts_full_reported,
+        );
+        let (ip_tracked, clients_newly_full) = take_room(
+            &mut buckets.clients,
+            ip_room,
+            &mut buckets.clients_full_reported,
+        );
+        let mut newly_full = Vec::new();
+        if accounts_newly_full {
+            newly_full.push(Bucket::Account);
+        }
+        if clients_newly_full {
+            newly_full.push(Bucket::Ip);
         }
 
-        let client = buckets.clients.entry(ip.to_string()).or_default();
-        client.prune(now);
-        client.failures.push_back(now);
-        let ip_lock = (client.failures.len() >= IP_FAILURES).then(|| now + LOCKOUT);
-        if ip_lock.is_some() {
-            client.locked_until = ip_lock;
+        let mut previous_last_failure = None;
+        let mut account_lock = None;
+        if account_tracked {
+            let entry = buckets.accounts.entry(account.to_string()).or_default();
+            entry.known |= known_user;
+            previous_last_failure = entry.last_failure;
+            entry.failures += 1;
+            entry.last_failure = Some(now);
+            account_lock = (entry.failures >= ACCOUNT_FAILURES).then(|| now + LOCKOUT);
+            if account_lock.is_some() {
+                entry.locked_until = account_lock;
+            }
+        }
+
+        let mut ip_lock = None;
+        if ip_tracked {
+            let client = buckets.clients.entry(ip.to_string()).or_default();
+            client.prune(now);
+            client.failures.push_back(now);
+            ip_lock = (client.failures.len() >= IP_FAILURES).then(|| now + LOCKOUT);
+            if ip_lock.is_some() {
+                client.locked_until = ip_lock;
+            }
         }
 
         Ok(Attempt {
@@ -239,6 +350,9 @@ impl LoginLimiter {
             previous_last_failure,
             account_lock,
             ip_lock,
+            account_tracked,
+            ip_tracked,
+            newly_full,
         })
     }
 
@@ -253,7 +367,7 @@ impl LoginLimiter {
             .get(&attempt.account)
             .and_then(|a| a.locked_until)
             .is_some_and(|until| Some(until) != attempt.account_lock);
-        if !foreign_lock {
+        if attempt.account_tracked && !foreign_lock {
             buckets.accounts.remove(&attempt.account);
         }
         refund_ip(&mut buckets, &attempt);
@@ -265,7 +379,11 @@ impl LoginLimiter {
     pub fn not_a_failure(&self, attempt: Attempt) {
         // unwrap: poisoned mutex means a thread panicked — unrecoverable
         let mut buckets = self.buckets.lock().unwrap();
-        if let Some(account) = buckets.accounts.get_mut(&attempt.account) {
+        let tracked = buckets
+            .accounts
+            .get_mut(&attempt.account)
+            .filter(|_| attempt.account_tracked);
+        if let Some(account) = tracked {
             account.failures = account.failures.saturating_sub(1);
             if account.last_failure == Some(attempt.at) {
                 account.last_failure = attempt.previous_last_failure;
@@ -294,6 +412,20 @@ impl LoginLimiter {
     }
 
     #[cfg(test)]
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buckets: Mutex::default(),
+            capacity,
+        }
+    }
+
+    #[cfg(test)]
+    fn account_keys(&self) -> Vec<String> {
+        let buckets = self.buckets.lock().unwrap();
+        buckets.accounts.keys().cloned().collect()
+    }
+
+    #[cfg(test)]
     fn sizes(&self) -> (usize, usize) {
         let buckets = self.buckets.lock().unwrap();
         (buckets.accounts.len(), buckets.clients.len())
@@ -301,7 +433,11 @@ impl LoginLimiter {
 }
 
 fn refund_ip(buckets: &mut Buckets, attempt: &Attempt) {
-    if let Some(client) = buckets.clients.get_mut(&attempt.ip) {
+    let tracked = buckets
+        .clients
+        .get_mut(&attempt.ip)
+        .filter(|_| attempt.ip_tracked);
+    if let Some(client) = tracked {
         if let Some(position) = client.failures.iter().position(|at| *at == attempt.at) {
             client.failures.remove(position);
         }
@@ -425,8 +561,21 @@ mod tests {
     const PAT: &str = "pat@example.com";
     const IP: &str = "203.0.113.9";
 
+    const NOBODY: &str = "nobody@example.com";
+
+    /// PAT is the one real user in these tests; every other address is
+    /// unknown.
+    fn begin(
+        limiter: &LoginLimiter,
+        account: &str,
+        ip: &str,
+        at: Instant,
+    ) -> Result<Attempt, Duration> {
+        limiter.begin(account, account == PAT, ip, at)
+    }
+
     fn fail(limiter: &LoginLimiter, account: &str, ip: &str, at: Instant) -> Vec<Bucket> {
-        limiter.failed(limiter.begin(account, ip, at).expect("admitted"))
+        limiter.failed(begin(limiter, account, ip, at).expect("admitted"))
     }
 
     #[test]
@@ -437,20 +586,18 @@ mod tests {
             assert!(fail(&limiter, PAT, IP, t0).is_empty(), "failure {i}");
         }
         assert_eq!(fail(&limiter, PAT, IP, t0), [Bucket::Account]);
-        let wait = limiter.begin(PAT, "198.51.100.7", t0).unwrap_err();
+        let wait = begin(&limiter, PAT, "198.51.100.7", t0).unwrap_err();
         assert_eq!(wait, LOCKOUT);
         let later = t0 + Duration::from_secs(60);
         assert_eq!(
-            limiter.begin(PAT, IP, later).unwrap_err(),
+            begin(&limiter, PAT, IP, later).unwrap_err(),
             LOCKOUT - Duration::from_secs(60)
         );
         let after = t0 + LOCKOUT;
-        let attempt = limiter
-            .begin(PAT, IP, after)
-            .expect("the lockout has passed");
+        let attempt = begin(&limiter, PAT, IP, after).expect("the lockout has passed");
         limiter.failed(attempt);
         assert!(
-            limiter.begin(PAT, IP, after).is_ok(),
+            begin(&limiter, PAT, IP, after).is_ok(),
             "the count started again"
         );
     }
@@ -463,7 +610,7 @@ mod tests {
             fail(&limiter, PAT, IP, t0);
         }
         for _ in 0..IP_FAILURES {
-            limiter.succeeded(limiter.begin(PAT, IP, t0).unwrap());
+            limiter.succeeded(begin(&limiter, PAT, IP, t0).unwrap());
         }
         for _ in 0..4 {
             assert!(fail(&limiter, PAT, IP, t0).is_empty());
@@ -477,9 +624,7 @@ mod tests {
         for _ in 0..5 {
             fail(&limiter, "nobody@example.com", IP, t0);
         }
-        assert!(limiter
-            .begin("nobody@example.com", "198.51.100.7", t0)
-            .is_err());
+        assert!(begin(&limiter, "nobody@example.com", "198.51.100.7", t0).is_err());
     }
 
     #[test]
@@ -490,7 +635,7 @@ mod tests {
             fail(&limiter, PAT, IP, t0);
         }
         for _ in 0..IP_FAILURES {
-            limiter.not_a_failure(limiter.begin(PAT, IP, t0).unwrap());
+            limiter.not_a_failure(begin(&limiter, PAT, IP, t0).unwrap());
         }
         assert!(
             fail(&limiter, PAT, IP, t0).is_empty(),
@@ -527,12 +672,14 @@ mod tests {
             t0 + Duration::from_secs(19),
         );
         assert_eq!(locks, [Bucket::Ip]);
-        assert!(limiter
-            .begin("fresh@example.com", IP, t0 + Duration::from_secs(20))
-            .is_err());
-        assert!(limiter
-            .begin("fresh@example.com", "198.51.100.7", t0)
-            .is_ok());
+        assert!(begin(
+            &limiter,
+            "fresh@example.com",
+            IP,
+            t0 + Duration::from_secs(20)
+        )
+        .is_err());
+        assert!(begin(&limiter, "fresh@example.com", "198.51.100.7", t0).is_ok());
     }
 
     #[test]
@@ -554,9 +701,9 @@ mod tests {
         let limiter = LoginLimiter::default();
         let t0 = Instant::now();
         let held: Vec<Attempt> = (0..5)
-            .map(|_| limiter.begin(PAT, IP, t0).unwrap())
+            .map(|_| begin(&limiter, PAT, IP, t0).unwrap())
             .collect();
-        assert!(limiter.begin(PAT, IP, t0).is_err(), "the sixth waits");
+        assert!(begin(&limiter, PAT, IP, t0).is_err(), "the sixth waits");
         drop(held);
     }
 
@@ -583,15 +730,15 @@ mod tests {
     }
 
     #[test]
-    fn a_flood_of_new_keys_cannot_evict_a_locked_account() {
+    fn a_flood_of_new_keys_cannot_evict_a_locked_unknown_account() {
         let limiter = LoginLimiter::default();
         let t0 = Instant::now();
         for _ in 0..ACCOUNT_FAILURES {
-            fail(&limiter, PAT, IP, t0);
+            fail(&limiter, NOBODY, IP, t0);
         }
         flood(&limiter, MAX_KEYS, t0 + Duration::from_secs(1));
         let later = t0 + Duration::from_secs(2);
-        assert!(limiter.begin(PAT, "198.51.100.7", later).is_err());
+        assert!(begin(&limiter, NOBODY, "198.51.100.7", later).is_err());
     }
 
     #[test]
@@ -603,7 +750,7 @@ mod tests {
         }
         flood(&limiter, MAX_KEYS, t0 + Duration::from_secs(1));
         let later = t0 + Duration::from_secs(2);
-        assert!(limiter.begin("fresh@example.com", IP, later).is_err());
+        assert!(begin(&limiter, "fresh@example.com", IP, later).is_err());
     }
 
     #[test]
@@ -620,7 +767,7 @@ mod tests {
         let limiter = LoginLimiter::default();
         let t0 = Instant::now();
         for _ in 0..(ACCOUNT_FAILURES - 1) {
-            fail(&limiter, PAT, IP, t0);
+            fail(&limiter, NOBODY, IP, t0);
         }
         flood(&limiter, MAX_KEYS - 1, t0 + Duration::from_secs(1));
         fail(
@@ -629,31 +776,160 @@ mod tests {
             "198.51.100.7",
             t0 + Duration::from_secs(2),
         );
-        let locks = fail(&limiter, PAT, IP, t0 + Duration::from_secs(3));
+        let locks = fail(&limiter, NOBODY, IP, t0 + Duration::from_secs(3));
         assert_eq!(locks, [Bucket::Account], "the older, busier count survived");
     }
 
-    #[test]
-    fn a_table_full_of_locked_accounts_refuses_a_new_one() {
-        let limiter = LoginLimiter::default();
-        let t0 = Instant::now();
-        for i in 0..MAX_KEYS {
-            let ip = format!("10.{}.{}.{}", i / 65536, (i / 256) % 256, i % 256);
+    fn lock_unknown_accounts(limiter: &LoginLimiter, count: usize, at: Instant) {
+        for i in 0..count {
             for _ in 0..ACCOUNT_FAILURES {
-                fail(&limiter, &format!("flood{i}@example.com"), &ip, t0);
+                fail(
+                    limiter,
+                    &format!("locked{i}@example.com"),
+                    &format!("198.51.100.{i}"),
+                    at,
+                );
             }
         }
-        let later = t0 + Duration::from_secs(60);
-        let wait = limiter.begin(PAT, IP, later).unwrap_err();
-        assert_eq!(wait, LOCKOUT - Duration::from_secs(60));
-        assert_eq!(limiter.sizes().0, MAX_KEYS);
+    }
+
+    #[test]
+    fn a_flood_of_locked_unknown_keys_does_not_stop_a_real_user() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        lock_unknown_accounts(&limiter, 3, t0);
+        for _ in 0..(ACCOUNT_FAILURES - 1) {
+            assert!(fail(&limiter, PAT, IP, t0).is_empty());
+        }
+        assert_eq!(
+            fail(&limiter, PAT, IP, t0),
+            [Bucket::Account],
+            "PAT is tracked"
+        );
+    }
+
+    #[test]
+    fn a_real_users_lock_survives_any_flood() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        for _ in 0..ACCOUNT_FAILURES {
+            fail(&limiter, PAT, IP, t0);
+        }
+        flood(&limiter, 50, t0 + Duration::from_secs(1));
+        assert!(begin(&limiter, PAT, "198.51.100.200", t0 + Duration::from_secs(2)).is_err());
+    }
+
+    #[test]
+    fn an_unknown_key_at_a_table_full_of_locks_is_admitted_untracked() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        lock_unknown_accounts(&limiter, 3, t0);
+        for i in 0..(2 * ACCOUNT_FAILURES) {
+            let attempt = begin(&limiter, NOBODY, &format!("203.0.113.{i}"), t0)
+                .expect("admitted while the table is full");
+            assert!(limiter.failed(attempt).is_empty(), "untracked never locks");
+        }
+        assert_eq!(limiter.sizes().0, 3);
+    }
+
+    #[test]
+    fn a_full_table_is_reported_once_per_flood() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        lock_unknown_accounts(&limiter, 3, t0);
+        let first = begin(&limiter, NOBODY, "203.0.113.1", t0).unwrap();
+        assert_eq!(first.newly_full(), [Bucket::Account]);
+        limiter.failed(first);
+        let second = begin(&limiter, NOBODY, "203.0.113.2", t0).unwrap();
+        assert!(second.newly_full().is_empty());
+        limiter.failed(second);
+        let after = t0 + LOCKOUT;
+        let room = begin(&limiter, "late@example.com", "203.0.113.3", after).unwrap();
+        assert!(room.newly_full().is_empty());
+        limiter.failed(room);
+        lock_unknown_accounts(&limiter, 3, after);
+        let again = begin(&limiter, NOBODY, "203.0.113.5", after).unwrap();
+        assert_eq!(
+            again.newly_full(),
+            [Bucket::Account],
+            "a new flood is reported"
+        );
+        limiter.failed(again);
+    }
+
+    #[test]
+    fn a_new_ip_at_a_table_full_of_locked_ips_is_admitted() {
+        let limiter = LoginLimiter::with_capacity(1);
+        let t0 = Instant::now();
+        for i in 0..IP_FAILURES {
+            fail(&limiter, &format!("user{i}@example.com"), IP, t0);
+        }
+        let attempt = begin(&limiter, PAT, "198.51.100.7", t0).expect("admitted");
+        assert_eq!(attempt.newly_full(), [Bucket::Ip]);
+        limiter.failed(attempt);
+        assert_eq!(limiter.sizes().1, 1);
+        assert!(
+            begin(&limiter, "fresh@example.com", IP, t0).is_err(),
+            "the locked IP stays locked"
+        );
+    }
+
+    #[test]
+    fn no_eviction_happens_for_an_attempt_another_bucket_turns_away() {
+        let limiter = LoginLimiter::with_capacity(2);
+        let t0 = Instant::now();
+        fail(&limiter, "a@example.com", "198.51.100.1", t0);
+        fail(&limiter, "b@example.com", "198.51.100.1", t0);
+        for i in 0..IP_FAILURES {
+            let user = format!("user{i}@example.com");
+            limiter.failed(limiter.begin(&user, true, IP, t0).unwrap());
+        }
+        assert!(begin(&limiter, "c@example.com", IP, t0).is_err());
+        let held = limiter.account_keys();
+        assert!(
+            held.contains(&"a@example.com".to_string())
+                && held.contains(&"b@example.com".to_string()),
+            "{held:?}"
+        );
+    }
+
+    #[test]
+    fn a_real_users_count_is_neither_evicted_nor_counted_against_the_cap() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        fail(&limiter, PAT, IP, t0);
+        flood(&limiter, 3, t0 + Duration::from_secs(1));
+        assert_eq!(limiter.sizes().0, 4, "three unknown keys beside PAT");
+        flood(&limiter, 50, t0 + Duration::from_secs(2));
+        for _ in 0..(ACCOUNT_FAILURES - 2) {
+            assert!(fail(&limiter, PAT, IP, t0 + Duration::from_secs(3)).is_empty());
+        }
+        let locks = fail(&limiter, PAT, IP, t0 + Duration::from_secs(3));
+        assert_eq!(locks, [Bucket::Account], "PAT's first failure was kept");
+    }
+
+    #[test]
+    fn an_untracked_attempt_settles_nothing() {
+        let limiter = LoginLimiter::with_capacity(3);
+        let t0 = Instant::now();
+        lock_unknown_accounts(&limiter, 3, t0);
+        let refunded = begin(&limiter, NOBODY, "203.0.113.1", t0).unwrap();
+        let signed_in = begin(&limiter, NOBODY, "203.0.113.2", t0).unwrap();
+        let after = t0 + LOCKOUT;
+        for _ in 0..(ACCOUNT_FAILURES - 1) {
+            fail(&limiter, NOBODY, "203.0.113.3", after);
+        }
+        limiter.not_a_failure(refunded);
+        limiter.succeeded(signed_in);
+        let locks = fail(&limiter, NOBODY, "203.0.113.3", after);
+        assert_eq!(locks, [Bucket::Account], "the tracked count was untouched");
     }
 
     #[test]
     fn a_totp_required_answer_does_not_hold_a_slot() {
         let limiter = LoginLimiter::default();
         let t0 = Instant::now();
-        limiter.not_a_failure(limiter.begin(PAT, IP, t0).unwrap());
+        limiter.not_a_failure(begin(&limiter, PAT, IP, t0).unwrap());
         assert_eq!(limiter.sizes(), (0, 0));
     }
 
@@ -665,7 +941,7 @@ mod tests {
             fail(&limiter, PAT, IP, t0);
         }
         let mid = t0 + Duration::from_secs(10 * 60);
-        limiter.not_a_failure(limiter.begin(PAT, IP, mid).unwrap());
+        limiter.not_a_failure(begin(&limiter, PAT, IP, mid).unwrap());
         let lapsed = t0 + WINDOW;
         assert!(
             fail(&limiter, PAT, IP, lapsed).is_empty(),
@@ -680,13 +956,13 @@ mod tests {
         for _ in 0..4 {
             fail(&limiter, PAT, IP, t0);
         }
-        let stale = limiter.begin(PAT, IP, t0).unwrap();
+        let stale = begin(&limiter, PAT, IP, t0).unwrap();
         let later = t0 + LOCKOUT;
         for i in 0..ACCOUNT_FAILURES {
             fail(&limiter, PAT, &format!("198.51.100.{i}"), later);
         }
         limiter.not_a_failure(stale);
-        assert!(limiter.begin(PAT, "198.51.100.99", later).is_err());
+        assert!(begin(&limiter, PAT, "198.51.100.99", later).is_err());
     }
 
     #[test]
@@ -696,13 +972,13 @@ mod tests {
         for i in 0..(IP_FAILURES - 1) {
             fail(&limiter, &format!("user{i}@example.com"), IP, t0);
         }
-        let stale = limiter.begin("last@example.com", IP, t0).unwrap();
+        let stale = begin(&limiter, "last@example.com", IP, t0).unwrap();
         let later = t0 + LOCKOUT;
         for i in 0..IP_FAILURES {
             fail(&limiter, &format!("again{i}@example.com"), IP, later);
         }
         limiter.not_a_failure(stale);
-        assert!(limiter.begin("fresh@example.com", IP, later).is_err());
+        assert!(begin(&limiter, "fresh@example.com", IP, later).is_err());
     }
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
