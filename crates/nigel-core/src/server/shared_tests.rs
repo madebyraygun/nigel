@@ -1655,3 +1655,114 @@ async fn a_user_who_must_change_their_password_cannot_start_two_step() {
         "password_change_required"
     );
 }
+
+/// Every password-verification permit, held until the guard drops.
+fn hold_every_password_check(state: &AppState) -> tokio::sync::OwnedSemaphorePermit {
+    let all = state.password_checks.available_permits() as u32;
+    assert!(all >= 1);
+    state
+        .password_checks
+        .clone()
+        .try_acquire_many_owned(all)
+        .unwrap()
+}
+
+async fn assert_busy(response: axum::response::Response) {
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let json = json_body(response).await;
+    assert_eq!(json["error"]["code"], "busy");
+    assert!(json["error"]["details"]["retryAfterMs"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn a_sign_in_with_no_verification_free_is_refused_busy_and_not_charged() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, state) = served_app(&db_path, public_config());
+
+    let held = hold_every_password_check(&state);
+    for _ in 0..8 {
+        let busy = app
+            .clone()
+            .oneshot(login_request(
+                &login_body("pat@example.com", "wrong password here"),
+                Some(PUBLIC_URL),
+                PEER,
+            ))
+            .await
+            .unwrap();
+        assert_busy(busy).await;
+    }
+    drop(held);
+
+    let right = app
+        .oneshot(login_request(
+            &login_body("pat@example.com", READY_PASSWORD),
+            Some(PUBLIC_URL),
+            PEER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        right.status(),
+        StatusCode::OK,
+        "the busy refusals were charged"
+    );
+}
+
+#[tokio::test]
+async fn account_routes_with_no_verification_free_are_refused_busy_and_not_charged() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let _config = crate::settings::TempConfigDir::new();
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, state) = served_app(&db_path, public_config());
+
+    let held = hold_every_password_check(&state);
+    for _ in 0..4 {
+        let busy = app
+            .clone()
+            .oneshot(bearer_post(
+                "/api/account/password",
+                &token,
+                serde_json::json!({
+                    "currentPassword": "not it at all", "newPassword": "a brand new passphrase"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_busy(busy).await;
+        let busy = app
+            .clone()
+            .oneshot(bearer_post(
+                "/api/account/totp/setup",
+                &token,
+                serde_json::json!({ "currentPassword": "not it at all" }),
+            ))
+            .await
+            .unwrap();
+        assert_busy(busy).await;
+    }
+    drop(held);
+
+    let changed = app
+        .oneshot(bearer_post(
+            "/api/account/password",
+            &token,
+            serde_json::json!({
+                "currentPassword": READY_PASSWORD, "newPassword": "a brand new passphrase"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        changed.status(),
+        StatusCode::OK,
+        "the busy refusals were charged"
+    );
+}

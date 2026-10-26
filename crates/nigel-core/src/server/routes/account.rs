@@ -86,8 +86,13 @@ async fn admit_with_password(
     password: Secret,
 ) -> ApiResult<Attempt> {
     let attempt = admit(state, user, ip)?;
+    let Some(permit) = state.try_password_check() else {
+        state.limiter.not_a_failure(attempt);
+        return Err(ApiError::busy());
+    };
     let id = user.id;
     let verified = super::with_conn(state, move |conn| {
+        let _permit = permit;
         users::verify_user_password(conn, id, password.expose())
     })
     .await;
@@ -136,11 +141,16 @@ async fn change_password(
     let SecretJson(request) = body?;
     let ip = client_ip(peer, &headers, state.config.client_ip_header);
     let attempt = admit(&state, &user, &ip)?;
+    let Some(permit) = state.try_password_check() else {
+        state.limiter.not_a_failure(attempt);
+        return Err(ApiError::busy());
+    };
 
     let (id, session_id, now) = (user.id, user.session_id, state.now());
     let gate = state.db_gate.clone().read_owned().await;
     let db_path = state.db_path();
     let ran = super::spawn_blocking_holding(gate, move || {
+        let _permit = permit;
         let conn = crate::db::get_connection(&db_path)?;
         users::change_password(
             &conn,

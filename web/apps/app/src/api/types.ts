@@ -756,6 +756,7 @@ export const API_ERROR_CODES = [
   'totp_required',
   'password_change_required',
   'too_many_attempts',
+  'busy',
 ] as const;
 
 export type KnownApiErrorCode = (typeof API_ERROR_CODES)[number];

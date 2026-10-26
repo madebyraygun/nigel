@@ -115,6 +115,9 @@ pub struct AppState {
     pub unlock: Arc<UnlockGate>,
     /// Sign-in rate limits; see `ratelimit.rs`.
     pub limiter: Arc<super::ratelimit::LoginLimiter>,
+    /// Bounds how many Argon2 password verifications run at once; see
+    /// [`password_check_slots`].
+    pub password_checks: Arc<tokio::sync::Semaphore>,
     /// Two-step enrollments started but not yet confirmed.
     pub totp_setups: Arc<super::pending_totp::PendingTotpSetups>,
     /// Guards the database *file* rather than its contents.
@@ -133,6 +136,15 @@ pub struct AppState {
     /// so an early `/api/status` reports nothing rather than waiting on the
     /// network.
     update_available: Arc<RwLock<Option<String>>>,
+}
+
+/// How many password verifications may run at once: one per core, at most
+/// four, so sign-in bursts cannot take every blocking thread and core.
+pub fn password_check_slots() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .clamp(1, 4)
 }
 
 impl AppState {
@@ -179,6 +191,7 @@ impl AppState {
             features: Features::detect(),
             unlock: Arc::new(UnlockGate::default()),
             limiter: Arc::new(super::ratelimit::LoginLimiter::default()),
+            password_checks: Arc::new(tokio::sync::Semaphore::new(password_check_slots())),
             totp_setups: Arc::new(Default::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
             update_available: Arc::new(RwLock::new(None)),
@@ -193,6 +206,11 @@ impl AppState {
     ) -> Self {
         self.clock = StateClock(Arc::new(clock));
         self
+    }
+
+    /// A password-verification slot, or `None` when every one is in use.
+    pub fn try_password_check(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.password_checks.clone().try_acquire_owned().ok()
     }
 
     pub fn now(&self) -> chrono::DateTime<chrono::Utc> {

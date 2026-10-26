@@ -35,6 +35,8 @@ pub enum ApiErrorCode {
     TotpRequired,
     PasswordChangeRequired,
     TooManyAttempts,
+    /// Every password verification slot is in use; retry shortly.
+    Busy,
 }
 
 impl ApiErrorCode {
@@ -53,6 +55,7 @@ impl ApiErrorCode {
             Self::InvalidCredentials | Self::TotpRequired => StatusCode::UNAUTHORIZED,
             Self::PasswordChangeRequired => StatusCode::FORBIDDEN,
             Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
+            Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -73,6 +76,7 @@ impl ApiErrorCode {
             Self::TotpRequired => "totp_required",
             Self::PasswordChangeRequired => "password_change_required",
             Self::TooManyAttempts => "too_many_attempts",
+            Self::Busy => "busy",
         }
     }
 }
@@ -164,6 +168,16 @@ impl ApiError {
             "Sign-in is temporarily unavailable. Try again later.",
         )
         .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
+    }
+
+    /// Every password verification slot is taken. Refused rather than queued,
+    /// so a burst of sign-ins cannot pile up Argon2 work behind it.
+    pub fn busy() -> Self {
+        Self::new(
+            ApiErrorCode::Busy,
+            "The server is busy. Try again in a moment.",
+        )
+        .with_details(serde_json::json!({ "retryAfterMs": 1000 }))
     }
 
     /// The sign-in limits refused an account route: wrong current passwords

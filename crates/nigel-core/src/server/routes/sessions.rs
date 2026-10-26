@@ -210,6 +210,10 @@ async fn login(
         }
     };
     report_full(&attempt);
+    let Some(permit) = state.try_password_check() else {
+        state.limiter.not_a_failure(attempt);
+        return Err(ApiError::busy());
+    };
 
     let kind = match client {
         LoginClient::Browser => SessionKind::Cookie,
@@ -222,6 +226,7 @@ async fn login(
     let now = state.now();
     let row_ip = ip.log.clone();
     let judged = super::spawn_blocking_holding(gate, move || -> crate::error::Result<Outcome> {
+        let _permit = permit;
         let conn = crate::db::get_connection(&db_path)?;
         let proof =
             match users::verify_credentials(&conn, &request.email, request.password.expose())? {
