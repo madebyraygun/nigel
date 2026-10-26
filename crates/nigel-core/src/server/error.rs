@@ -156,10 +156,12 @@ impl ApiError {
         )
     }
 
+    /// A sign-in limit is running. The person reading it may not be the one
+    /// who made the attempts, so it accuses no one.
     pub fn too_many_attempts(retry_after_ms: u128) -> Self {
         Self::new(
             ApiErrorCode::TooManyAttempts,
-            "Too many attempts. Try again later.",
+            "Sign-in is temporarily unavailable. Try again later.",
         )
         .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
     }

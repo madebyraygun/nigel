@@ -5,13 +5,17 @@
 //! every other failure. These wrappers are the same extractors with the
 //! rejection translated.
 //!
-//! `POST /api/unlock` and `POST /api/setup` deliberately do not use `ApiJson`:
-//! its rejection text would quote the offending value, and both of those
-//! bodies carry a password.
+//! A body that carries a password or a code never goes through `ApiJson`: its
+//! rejection text would quote the offending value. `POST /api/unlock` and
+//! `POST /api/setup` read theirs by hand; the sign-in routes use
+//! [`SecretJson`].
+
+use std::net::SocketAddr;
 
 use axum::extract::rejection::{JsonRejection, PathRejection};
-use axum::extract::{FromRequest, FromRequestParts, Path, Request};
+use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Path, Request};
 use axum::http::request::Parts;
+use axum::http::StatusCode;
 use axum::Json;
 use serde::de::DeserializeOwned;
 
@@ -69,4 +73,49 @@ fn bad_path(rejection: &PathRejection) -> ApiError {
         }
         other => other.body_text(),
     })
+}
+
+/// `Json<T>` for bodies that carry a password or a code. Every rejection is
+/// a fixed sentence that quotes nothing from the body, and a body over the
+/// route's limit is a `413`.
+pub struct SecretJson<T>(pub T);
+
+impl<S, T> FromRequest<S> for SecretJson<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => Err(
+                ApiError::payload_too_large("That request body is too large."),
+            ),
+            Err(JsonRejection::MissingJsonContentType(_)) => Err(ApiError::bad_request(
+                "Expected a JSON body with Content-Type: application/json.",
+            )),
+            Err(_) => Err(ApiError::bad_request(
+                "That request body is not the JSON this endpoint expects.",
+            )),
+        }
+    }
+}
+
+/// The TCP peer, when the server was started with connect info. In-process
+/// requests (tests, the desktop scheme) have none.
+pub struct PeerAddr(pub Option<SocketAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|info| info.0),
+        ))
+    }
 }

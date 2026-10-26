@@ -17,6 +17,7 @@ pub enum EventKind {
     TotpRemoved,
     TotpUnavailable,
     SharedModeBegan,
+    LimiterFull,
 }
 
 impl EventKind {
@@ -32,6 +33,7 @@ impl EventKind {
             Self::TotpRemoved => "totp_removed",
             Self::TotpUnavailable => "totp_unavailable",
             Self::SharedModeBegan => "shared_mode_began",
+            Self::LimiterFull => "limiter_full",
         }
     }
 }

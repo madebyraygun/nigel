@@ -294,6 +294,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_local_mode_me_is_the_admin_owner_and_login_is_a_conflict() {
+        let (_dir, db_path) = temp_db();
+        let (app, token) = app_for(&db_path);
+        let me = app
+            .clone()
+            .oneshot(session_get("/api/auth/me", &token))
+            .await
+            .unwrap();
+        let me = json_body(me).await;
+        assert_eq!(
+            me,
+            serde_json::json!({ "mode": "local", "user": null, "role": "admin" })
+        );
+
+        let login = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/login")
+                    .header(header::HOST, HOST)
+                    .header(header::ORIGIN, "http://127.0.0.1:5731")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"email":"pat@example.com","password":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            json_body(login).await["error"]["details"]["reason"],
+            "local_mode"
+        );
+    }
+
+    #[tokio::test]
     async fn api_without_session_is_unauthorized() {
         let (app, _token) = test_app();
         let response = app

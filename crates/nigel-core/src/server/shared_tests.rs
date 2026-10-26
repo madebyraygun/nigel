@@ -674,3 +674,421 @@ async fn switching_to_a_folder_whose_books_have_users_ends_the_token_session() {
     assert_eq!(next.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(json_body(next).await["error"]["details"]["mode"], "shared");
 }
+
+use axum::extract::ConnectInfo;
+use std::net::SocketAddr;
+
+fn login_request(body: &str, origin: Option<&str>, peer: &str) -> Request<Body> {
+    let mut builder =
+        public_request("POST", "/api/auth/login").header(header::CONTENT_TYPE, "application/json");
+    if let Some(origin) = origin {
+        builder = builder.header(header::ORIGIN, origin);
+    }
+    let mut request = builder.body(Body::from(body.to_owned())).unwrap();
+    let peer: SocketAddr = peer.parse().unwrap();
+    request.extensions_mut().insert(ConnectInfo(peer));
+    request
+}
+
+fn login_body(email: &str, password: &str) -> String {
+    serde_json::json!({ "email": email, "password": password }).to_string()
+}
+
+const PEER: &str = "198.51.100.7:50000";
+
+#[tokio::test]
+async fn a_browser_login_sets_a_secure_cookie_on_the_public_host() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let response = app
+        .clone()
+        .oneshot(login_request(
+            &login_body("Pat@Example.com", READY_PASSWORD),
+            Some(PUBLIC_URL),
+            PEER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = header_str(&response, header::SET_COOKIE);
+    for part in [
+        "nigel_session=",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Path=/",
+        "Max-Age=2592000",
+        "Secure",
+    ] {
+        assert!(cookie.contains(part), "{part}: {cookie}");
+    }
+    let json = json_body(response).await;
+    assert_eq!(json["user"]["email"], "pat@example.com");
+    assert_eq!(json["user"]["role"], "admin");
+    assert!(json.get("token").is_none());
+
+    let token = cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .trim_start_matches("nigel_session=")
+        .to_string();
+    let me = app
+        .oneshot(cookie_get("/api/auth/me", &token))
+        .await
+        .unwrap();
+    let me = json_body(me).await;
+    assert_eq!(me["mode"], "shared");
+    assert_eq!(me["role"], "admin");
+    assert_eq!(me["user"]["displayName"], "Pat Example");
+    assert_eq!(me["user"]["mustChangePassword"], false);
+}
+
+#[tokio::test]
+async fn a_loopback_login_cookie_is_not_secure() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header(header::HOST, HOST)
+        .header(header::ORIGIN, "http://127.0.0.1:5731")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(login_body("pat@example.com", READY_PASSWORD)))
+        .unwrap();
+    request.extensions_mut().insert(ConnectInfo(
+        "127.0.0.1:50000".parse::<SocketAddr>().unwrap(),
+    ));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = header_str(&response, header::SET_COOKIE);
+    assert!(cookie.contains("nigel_session="), "{cookie}");
+    assert!(!cookie.contains("Secure"), "{cookie}");
+}
+
+#[tokio::test]
+async fn a_native_login_answers_a_bearer_token_and_sets_no_cookie() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    let body = serde_json::json!({
+        "email": "pat@example.com", "password": READY_PASSWORD, "client": "native"
+    })
+    .to_string();
+    let response = app
+        .clone()
+        .oneshot(login_request(&body, None, PEER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header_str(&response, header::SET_COOKIE), "");
+    let json = json_body(response).await;
+    let token = json["token"].as_str().unwrap().to_string();
+    assert_eq!(token.len(), 64);
+    assert!(json["expiresAt"].as_str().unwrap().ends_with('Z'));
+    let ping = app.oneshot(bearer_get("/api/ping", &token)).await.unwrap();
+    assert_eq!(ping.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_browser_login_without_an_origin_is_refused() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    let response = app
+        .oneshot(login_request(
+            &login_body("pat@example.com", READY_PASSWORD),
+            None,
+            PEER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(header_str(&response, header::SET_COOKIE), "");
+}
+
+#[tokio::test]
+async fn wrong_unknown_and_disabled_credentials_all_answer_alike() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let sam = add_ready_user(&db_path, "sam@example.com", Role::Admin);
+    let conn = crate::db::get_connection(&db_path).unwrap();
+    crate::identity::users::disable_user(&conn, sam.id, crate::clock::now_utc()).unwrap();
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let mut answers = Vec::new();
+    for (email, password, peer) in [
+        (
+            "pat@example.com",
+            "not the password at all",
+            "198.51.100.1:1",
+        ),
+        ("nobody@example.com", READY_PASSWORD, "198.51.100.2:1"),
+        ("sam@example.com", READY_PASSWORD, "198.51.100.3:1"),
+        ("not an email", READY_PASSWORD, "198.51.100.4:1"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(login_request(
+                &login_body(email, password),
+                Some(PUBLIC_URL),
+                peer,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{email}");
+        answers.push(body_string(response).await);
+    }
+    assert!(answers.windows(2).all(|w| w[0] == w[1]), "{answers:?}");
+    let json: serde_json::Value = serde_json::from_str(&answers[0]).unwrap();
+    assert_eq!(json["error"]["code"], "invalid_credentials");
+    assert_eq!(
+        json["error"]["message"],
+        "That email and password don't match."
+    );
+}
+
+#[tokio::test]
+async fn five_wrong_passwords_lock_the_account_before_the_password_is_checked() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    for _ in 0..5 {
+        let wrong = app
+            .clone()
+            .oneshot(login_request(
+                &login_body("pat@example.com", "wrong password here"),
+                Some(PUBLIC_URL),
+                PEER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    }
+    let locked = app
+        .oneshot(login_request(
+            &login_body("pat@example.com", READY_PASSWORD),
+            Some(PUBLIC_URL),
+            "198.51.100.99:1",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+    let json = json_body(locked).await;
+    assert_eq!(json["error"]["code"], "too_many_attempts");
+    assert_eq!(
+        json["error"]["message"],
+        "Sign-in is temporarily unavailable. Try again later."
+    );
+    let wait = json["error"]["details"]["retryAfterMs"].as_u64().unwrap();
+    assert!(wait > 0 && wait <= 15 * 60 * 1000, "{wait}");
+}
+
+/// Two-step for pat, sealed under a server key in a temporary config dir
+/// that the caller keeps alive.
+fn enrol_totp(db_path: &std::path::Path, user_id: i64) -> [u8; 20] {
+    use crate::identity::{seal, totp, users};
+    let key = seal::ServerKey::load_or_create(&seal::key_path()).unwrap();
+    let secret = [7u8; 20];
+    let now = crate::clock::now_utc();
+    let conn = crate::db::get_connection(db_path).unwrap();
+    users::set_totp_secret(&conn, user_id, &key, &secret, totp::step_at(now) - 5, now).unwrap();
+    secret
+}
+
+#[tokio::test]
+async fn a_second_factor_is_asked_for_then_checked() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let _config = crate::settings::TempConfigDir::new();
+    let secret = enrol_totp(&db_path, pat.id);
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let needs_code = app
+        .clone()
+        .oneshot(login_request(
+            &login_body("pat@example.com", READY_PASSWORD),
+            Some(PUBLIC_URL),
+            PEER,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(needs_code.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_body(needs_code).await["error"]["code"],
+        "totp_required"
+    );
+
+    let wrong = serde_json::json!({
+        "email": "pat@example.com", "password": READY_PASSWORD, "code": "000000"
+    })
+    .to_string();
+    let wrong = app
+        .clone()
+        .oneshot(login_request(&wrong, Some(PUBLIC_URL), PEER))
+        .await
+        .unwrap();
+    let wrong = json_body(wrong).await;
+    assert_eq!(wrong["error"]["code"], "invalid_credentials");
+    assert_eq!(
+        wrong["error"]["message"],
+        "That code didn't match. Check the time on your device."
+    );
+
+    let code = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let right = serde_json::json!({
+        "email": "pat@example.com", "password": READY_PASSWORD, "code": code
+    })
+    .to_string();
+    let right = app
+        .oneshot(login_request(&right, Some(PUBLIC_URL), PEER))
+        .await
+        .unwrap();
+    assert_eq!(right.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn being_asked_for_a_code_is_not_a_failed_attempt() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let _config = crate::settings::TempConfigDir::new();
+    let secret = enrol_totp(&db_path, pat.id);
+    let (app, _state) = served_app(&db_path, public_config());
+
+    for _ in 0..6 {
+        let needs_code = app
+            .clone()
+            .oneshot(login_request(
+                &login_body("pat@example.com", READY_PASSWORD),
+                Some(PUBLIC_URL),
+                PEER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(needs_code).await["error"]["code"],
+            "totp_required"
+        );
+    }
+    let code = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let right = serde_json::json!({
+        "email": "pat@example.com", "password": READY_PASSWORD, "code": code
+    })
+    .to_string();
+    let right = app
+        .oneshot(login_request(&right, Some(PUBLIC_URL), PEER))
+        .await
+        .unwrap();
+    assert_eq!(right.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_second_factor_this_server_cannot_check_is_not_a_failed_attempt() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let config = crate::settings::TempConfigDir::new();
+    enrol_totp(&db_path, pat.id);
+    drop(config);
+    let _other_config = crate::settings::TempConfigDir::new();
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let with_code = serde_json::json!({
+        "email": "pat@example.com", "password": READY_PASSWORD, "code": "123456"
+    })
+    .to_string();
+    for _ in 0..6 {
+        let unavailable = app
+            .clone()
+            .oneshot(login_request(&with_code, Some(PUBLIC_URL), PEER))
+            .await
+            .unwrap();
+        assert_eq!(unavailable.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = json_body(unavailable).await;
+        assert_eq!(json["error"]["details"]["reason"], "totp_unavailable");
+    }
+}
+
+#[tokio::test]
+async fn an_oversized_login_body_is_refused_before_any_check() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    let body = login_body("pat@example.com", &"x".repeat(9 * 1024));
+    let response = app
+        .oneshot(login_request(&body, Some(PUBLIC_URL), PEER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!body_string(response).await.contains("xxxx"));
+}
+
+#[tokio::test]
+async fn a_malformed_login_body_quotes_nothing_back() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, _state) = served_app(&db_path, public_config());
+    let body = r#"{"email":"pat@example.com","password":12345678901}"#;
+    let response = app
+        .oneshot(login_request(body, Some(PUBLIC_URL), PEER))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(!body_string(response).await.contains("12345678901"));
+}
+
+#[tokio::test]
+async fn logout_ends_the_session_and_expires_the_cookie() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Cookie,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    let response = app
+        .clone()
+        .oneshot(
+            public_request("POST", "/api/auth/logout")
+                .header(header::COOKIE, format!("nigel_session={token}"))
+                .header(header::ORIGIN, PUBLIC_URL)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(header_str(&response, header::SET_COOKIE).contains("Max-Age=0"));
+    assert_eq!(json_body(response).await["loggedOut"], true);
+    let after = app.oneshot(cookie_get("/api/ping", &token)).await.unwrap();
+    assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn sign_in_routes_answer_while_the_books_are_locked() {
+    let (_dir, db_path) = temp_db();
+    encrypt(&db_path);
+    crate::db::set_db_password_for_tests(None);
+    let (app, state) = served_app(&db_path, public_config());
+    let token = state.local_token().unwrap().expose().to_string();
+    let me = app
+        .clone()
+        .oneshot(session_get("/api/auth/me", &token))
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+    let logout = app
+        .oneshot(session_post("/api/auth/logout", &token, ""))
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+}

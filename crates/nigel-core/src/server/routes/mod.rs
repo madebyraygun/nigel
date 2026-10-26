@@ -1,7 +1,8 @@
 //! API route modules — one file per domain as endpoints land.
 //!
-//! Routes fall into two groups. `/ping`, `/status`, and `/unlock` answer while
-//! the database is still encrypted and locked; everything else needs the key.
+//! Routes fall into two groups. `/ping`, `/status`, `/unlock` and the three
+//! `/auth` routes answer while the database is still encrypted and locked;
+//! everything else needs the key.
 //! The locked guard is layered over the whole `/api` router and exempts that
 //! short list by path, so a new endpoint is guarded by default — forgetting to
 //! mount it in the right place cannot expose a locked database.
@@ -17,6 +18,7 @@ pub mod reconcile;
 pub mod reports;
 pub mod review;
 pub mod rules;
+pub mod sessions;
 pub mod settings;
 pub mod setup;
 pub mod status;
@@ -35,6 +37,7 @@ pub fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/ping", get(ping))
         .merge(status::routes())
+        .merge(sessions::routes())
         .merge(data_router())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(
