@@ -29,6 +29,11 @@ export interface StatusResponse {
   initialized: boolean;
   encrypted: boolean;
   locked: boolean;
+  /**
+   * `local` (no users, or still locked) or `shared` (signed-in users only).
+   * A desktop shell is always `local`.
+   */
+  mode?: 'local' | 'shared';
   companyName: string | null;
   /** Locked databases report `business` until unlocked. */
   profile: BooksProfile;
@@ -747,6 +752,10 @@ export const API_ERROR_CODES = [
   'internal',
   'upstream_failed',
   'feature_disabled',
+  'invalid_credentials',
+  'totp_required',
+  'password_change_required',
+  'too_many_attempts',
 ] as const;
 
 export type KnownApiErrorCode = (typeof API_ERROR_CODES)[number];
