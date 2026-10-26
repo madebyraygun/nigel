@@ -85,7 +85,8 @@ async fn the_public_origin_is_trusted_whole_and_only_in_shared_mode() {
     let (app, _state) = served_app(&db_path, public_config());
     for (origin, expected) in [
         ("https://books.example.com", StatusCode::UNAUTHORIZED),
-        ("http://localhost:5173", StatusCode::UNAUTHORIZED),
+        ("http://localhost:5173", StatusCode::FORBIDDEN),
+        ("http://127.0.0.1:5731", StatusCode::FORBIDDEN),
         ("http://books.example.com", StatusCode::FORBIDDEN),
         ("https://books.example.com:8443", StatusCode::FORBIDDEN),
         ("https://evil.example.com", StatusCode::FORBIDDEN),
@@ -101,6 +102,24 @@ async fn the_public_origin_is_trusted_whole_and_only_in_shared_mode() {
             .await
             .unwrap();
         assert_eq!(response.status(), expected, "{origin}");
+    }
+
+    for origin in ["https://books.example.com", "http://localhost:5173"] {
+        let response = app
+            .clone()
+            .oneshot(
+                get_request("/api/ping")
+                    .header(header::ORIGIN, origin)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "a loopback host accepts {origin}"
+        );
     }
 
     let (_dir2, local_db) = temp_db();

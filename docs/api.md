@@ -88,8 +88,9 @@ Localhost is not a trust boundary on its own, so the checks below apply in order
 2. **Host/Origin.** The `Host` header, and `Origin` when the request carries
    one, must name `localhost`, `127.0.0.1`, or `[::1]` on any port, in both
    modes. In shared mode the `server_public_url` host is also accepted, and its
-   origin is compared whole: scheme, host and port. Anything else is `403
-   forbidden`. Matching is exact, so names like `127.0.0.1.example.com` that
+   origin is compared whole: scheme, host and port. A request whose `Host` is
+   the public host accepts only the public origin, never a loopback one.
+   Anything else is `403 forbidden`. Matching is exact, so names like `127.0.0.1.example.com` that
    resolve to loopback are still rejected — this is what blocks DNS rebinding.
    Allowing any loopback port is what lets the vite dev server on `:5173` proxy
    through. A request is judged by its `Host` only when it carries exactly one

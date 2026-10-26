@@ -232,11 +232,12 @@ pub(crate) fn request_is_public(state: &AppState, headers: &axum::http::HeaderMa
 }
 
 /// Outermost guard of `nigel serve`. The `Host` must be loopback by any of
-/// its names, or the `server_public_url` host while the server is shared; an
-/// `Origin`, when sent, must be a loopback origin on any port or, while
-/// shared, exactly the `server_public_url` origin. A public-host request to
-/// a local-mode server re-derives the mode first, so a first user added with
-/// the CLI takes effect without a restart.
+/// its names, or the `server_public_url` host while the server is shared. An
+/// `Origin`, when sent, must be exactly the `server_public_url` origin on a
+/// public-host request; on a loopback-host request it may also be a loopback
+/// origin on any port, and is the public origin only while shared. A
+/// public-host request to a local-mode server re-derives the mode first, so a
+/// first user added with the CLI takes effect without a restart.
 pub async fn served_host_guard(
     State(state): State<AppState>,
     req: Request,
@@ -269,8 +270,9 @@ pub async fn served_host_guard(
 
     if let Some(origin) = origin {
         let trusted = origin.is_ok_and(|origin| {
-            loopback.origin_is_trusted(&origin)
-                || (shared && public.as_ref().is_some_and(|p| p.matches_origin(&origin)))
+            let public_origin =
+                shared && public.as_ref().is_some_and(|p| p.matches_origin(&origin));
+            public_origin || (!via_public && loopback.origin_is_trusted(&origin))
         });
         if !trusted {
             return ApiError::forbidden().into_response();
