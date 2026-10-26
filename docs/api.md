@@ -39,8 +39,10 @@ unlock over loopback.
 - `server.key` or its directory readable by other users.
 
 Shared mode prints `Nigel is serving <company> to signed-in users at
-<server_public_url> (and http://127.0.0.1:<port>).` and no token link, so no
-credential reaches a journal. Local mode prints the token link as it always has.
+<server_public_url> (and http://127.0.0.1:<port>).` with `server_public_url`
+set, or `Nigel is serving <company> to signed-in users at
+http://127.0.0.1:<port>.` without it, and no token link, so no credential
+reaches a journal. Local mode prints the token link as it always has.
 
 ### Settings
 
@@ -49,7 +51,8 @@ credential reaches a journal. Local mode prints the token link as it always has.
 | `server_public_url` | `NIGEL_SERVER_PUBLIC_URL` | One `https://` origin: host, an optional port, no path, query or credentials |
 | `client_ip_header` | `NIGEL_CLIENT_IP_HEADER` | `CF-Connecting-IP` or `X-Forwarded-For` (any case), or unset |
 
-A value that does not parse stops `nigel serve` at startup with an error naming
+The environment variable wins over `settings.json`. Values are trimmed, and a
+blank value counts as unset. A value that does not parse stops `nigel serve` at startup with an error naming
 it. `server_public_url` refuses every spelling of the loopback interface
 (`localhost`, `*.localhost`, `127.0.0.1`, `127.1`, `2130706433`, `0x7f.1`, `[::1]`,
 `::ffff:127.0.0.1`, `0.0.0.0`, `[::]`), because loopback is always accepted and
@@ -145,7 +148,9 @@ SameSite=Strict; Path=/; Max-Age=<seconds>`, with `; Secure` when the request's
 - While the user's `mustChangePassword` is set, the session may call only
   `GET /api/auth/me`, `GET /api/status`, `GET /api/ping`,
   `POST /api/account/password` and `POST /api/auth/logout`; everything else is
-  `403 password_change_required`.
+  `403 password_change_required`. [Who may call what](#security-model) narrows
+  this further: until roles land, a non-admin gets `403` with `details.reason =
+  "role"` on `GET /api/status`.
 - Changing a password ends the user's other sessions and keeps the current one.
 
 ### CSRF
@@ -231,7 +236,7 @@ password, code or token. `ip` is the full address for a resolved client, or
 |---|---|---|
 | `login_succeeded` | A session was issued | |
 | `login_failed` | Wrong password or code | `credentials`, `code` |
-| `login_refused` | A locked bucket refused the attempt | |
+| `login_refused` | A locked bucket refused the attempt; `email` is the normalized account key, not the raw input | |
 | `lockout` | An attempt started a lockout | `account`, `ip` |
 | `logout` | A session was ended | |
 | `password_changed` | `POST /api/account/password` succeeded | |
@@ -244,8 +249,10 @@ password, code or token. `ip` is the full address for a resolved client, or
 ## Locked state
 
 An encrypted database starts **locked**: the server has the file but not the
-key. `GET /api/ping`, `GET /api/status`, and `POST /api/unlock` answer in that
-state; every other `/api` path returns `423 locked` until the password arrives —
+key. `GET /api/ping`, `GET /api/status`, `POST /api/unlock`,
+`POST /api/auth/login`, `POST /api/auth/logout` and `GET /api/auth/me` answer in
+that state (login answers `409 local_mode`, since locked books have no readable
+users); every other `/api` path returns `423 locked` until the password arrives —
 including unknown ones, which are locked before they are reported missing. Unlocking also runs any pending schema migrations, which
 `nigel serve` cannot run at startup on a database it cannot open.
 

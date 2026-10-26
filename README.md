@@ -30,7 +30,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 - **Documents** — file a PDF (proposal, estimate, agreement) for a client, send it to a signer and any collaborators with a link of their own, and let the signer accept or request changes online. Revise it, record a response that arrived by email, or countersign it, which publishes a one-page signing record beside the signed PDF and emails every recipient both. The signer's typed name is a simple electronic signature, recorded with an audit trail against a checksum of the exact PDF; Nigel does not verify identity. No Stripe needed. See [docs/invoicing.md](docs/invoicing.md#documents)
 - **Monthly reconciliation** — compare calculated balances against bank statements
 - **Personal books** — `nigel init --profile personal` seeds a household chart of accounts (groceries, rent, utilities, …) instead of the business one; the K-1 worksheet steps aside and everything else works the same.
-- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link
+- **Web UI** — `nigel serve` runs a local web interface and JSON API from the same binary on 127.0.0.1, opening a browser with a one-time session link (local mode, while the books have no users; once they do, users sign in — see [docs/api.md](docs/api.md#modes))
 - **SQLite storage** — single portable database, no server required
 - **Database encryption** — optional SQLCipher encryption; set a password during onboarding or manage via the Settings screen (`p` from dashboard) or `nigel password set`; returning users enter their password inline on the splash screen, or in the browser when using `nigel serve`; backups preserve encryption state
 - **Auto-updater** — checks GitHub Releases for new versions on launch (once per 24 hours); run `nigel update` to download and install the latest binary in-place; opt out via the Settings screen or `update_check: false` in settings.json
@@ -235,7 +235,7 @@ Settings are stored in `~/.config/nigel/settings.json`. The data directory defau
 
 An optional password encrypts the database with SQLCipher, from the first page written when it is set during setup. **There is no recovery**: lose the password and the books are gone.
 
-`nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
+`nigel serve` binds 127.0.0.1 only and generates a fresh session token on every start while the books have no users (local mode); once they have users, only signed-in users are admitted and no token is issued. See [docs/api.md](docs/api.md) for the endpoint inventory and security model.
 
 ## Feature Flags
 
