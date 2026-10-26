@@ -2,6 +2,9 @@
 
 #![allow(dead_code)]
 
+#[cfg(feature = "serve")]
+pub mod serve;
+
 use std::path::PathBuf;
 
 use assert_cmd::cargo::cargo_bin_cmd;

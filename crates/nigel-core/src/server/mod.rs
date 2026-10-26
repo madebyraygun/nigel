@@ -1140,6 +1140,31 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_refuses_two_host_headers() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "nigel.localhost")
+                    .header("host", "books.example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
     #[tokio::test]
     async fn the_served_router_still_refuses_the_same_request() {
         let (_dir, db_path) = temp_db();

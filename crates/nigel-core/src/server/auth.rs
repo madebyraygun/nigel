@@ -183,6 +183,16 @@ pub fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
+/// The request's `Host`, when it carries exactly one. A request with two
+/// names no single host, so neither guard trusts either of them.
+fn sole_host(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let mut hosts = headers.get_all(header::HOST).iter();
+    match (hosts.next(), hosts.next()) {
+        (Some(host), None) => host.to_str().ok(),
+        _ => None,
+    }
+}
+
 /// Outermost layer: reject anything not addressed to a trusted host.
 pub async fn host_guard(
     State(trusted): State<TrustedOrigins>,
@@ -191,10 +201,7 @@ pub async fn host_guard(
 ) -> Response {
     let headers = req.headers();
 
-    let host_ok = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|host| trusted.host_is_trusted(host));
+    let host_ok = sole_host(headers).is_some_and(|host| trusted.host_is_trusted(host));
     if !host_ok {
         return ApiError::forbidden().into_response();
     }
@@ -236,11 +243,7 @@ pub async fn served_host_guard(
     next: Next,
 ) -> Response {
     let loopback = TrustedOrigins::loopback();
-    let host = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
+    let host = sole_host(req.headers()).map(str::to_string);
     let origin = req
         .headers()
         .get(header::ORIGIN)
