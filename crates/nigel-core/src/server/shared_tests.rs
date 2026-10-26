@@ -1494,3 +1494,164 @@ async fn a_server_key_that_cannot_be_read_is_a_clean_totp_unavailable() {
         "left as it is"
     );
 }
+
+/// Four wrong codes on remove, then `between` proving the password on
+/// another account route, then a fifth wrong code: the account must lock.
+async fn proving_the_password_elsewhere_keeps_the_code_count(
+    between: serde_json::Value,
+    uri: &str,
+) {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let _config = TempConfig::new();
+    let secret = enrol_totp(&db_path, pat.id);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    let right = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let wrong = if right == "000000" {
+        "111111"
+    } else {
+        "000000"
+    };
+    let remove = |code: &str| {
+        bearer_post(
+            "/api/account/totp/remove",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD, "code": code }),
+        )
+    };
+    for _ in 0..4 {
+        let response = app.clone().oneshot(remove(wrong)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let middle = app
+        .clone()
+        .oneshot(bearer_post(uri, &token, between))
+        .await
+        .unwrap();
+    assert!(middle.status().is_client_error(), "{}", middle.status());
+    let fifth = app.clone().oneshot(remove(wrong)).await.unwrap();
+    assert_eq!(fifth.status(), StatusCode::BAD_REQUEST);
+    let locked = app.oneshot(remove(&right)).await.unwrap();
+    assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_two_step_setup_does_not_reset_the_code_count() {
+    proving_the_password_elsewhere_keeps_the_code_count(
+        serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        "/api/account/totp/setup",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_refused_new_password_does_not_reset_the_code_count() {
+    proving_the_password_elsewhere_keeps_the_code_count(
+        serde_json::json!({ "currentPassword": READY_PASSWORD, "newPassword": "short" }),
+        "/api/account/password",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_setup_answers_only_the_session_that_started_it() {
+    let (_dir, db_path) = temp_db();
+    let _config = TempConfig::new();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let first = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let second = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let setup = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &first,
+            serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    let setup = json_body(setup).await;
+    let secret = data_encoding::BASE32_NOPAD
+        .decode(setup["secret"].as_str().unwrap().as_bytes())
+        .unwrap();
+    let code = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let body = serde_json::json!({ "setupId": setup["setupId"], "code": code });
+
+    let other = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/confirm",
+            &second,
+            body.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(other).await["error"]["details"]["reason"],
+        "setup_expired"
+    );
+    let own = app
+        .oneshot(bearer_post("/api/account/totp/confirm", &first, body))
+        .await
+        .unwrap();
+    assert_eq!(own.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_user_who_must_change_their_password_cannot_start_two_step() {
+    let (_dir, db_path) = temp_db();
+    let conn = crate::db::get_connection(&db_path).unwrap();
+    let created = crate::identity::users::create_user(
+        &conn,
+        &crate::identity::users::NewUser {
+            email: "pat@example.com",
+            display_name: "Pat Example",
+            role: Role::Admin,
+        },
+        crate::clock::now_utc(),
+    )
+    .unwrap();
+    let token = session_for(
+        &db_path,
+        created.user.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    let refused = app
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": created.temporary_password.as_str() }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(refused).await["error"]["code"],
+        "password_change_required"
+    );
+}

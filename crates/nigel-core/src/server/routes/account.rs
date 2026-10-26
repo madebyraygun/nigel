@@ -4,7 +4,10 @@
 //!
 //! Every wrong current password, and every wrong code when removing two-step,
 //! counts against the sign-in limits for the user's account and client IP, so
-//! a stolen session cannot become a way to guess either.
+//! a stolen session cannot become a way to guess either. Only a right code
+//! resets the account's count: proving the password alone takes back that
+//! attempt's charge and leaves earlier failures standing, or a request that
+//! needs only the password would wipe the count of guessed codes.
 
 use std::time::Instant;
 
@@ -159,7 +162,7 @@ async fn change_password(
 
     match result {
         Ok(()) => {
-            state.limiter.succeeded(attempt);
+            state.limiter.not_a_failure(attempt);
             emit(&event(EventKind::PasswordChanged, &user, &ip));
             Ok(Json(PasswordChanged { changed: true }))
         }
@@ -168,7 +171,7 @@ async fn change_password(
             Err(ApiError::wrong_password())
         }
         Err(PasswordChangeError::Rule(rule)) => {
-            state.limiter.succeeded(attempt);
+            state.limiter.not_a_failure(attempt);
             Err(ApiError::bad_request(rule.to_string())
                 .with_details(serde_json::json!({ "reason": rule.reason_code() })))
         }
@@ -185,6 +188,8 @@ struct TotpSetupRequest {
     current_password: Secret,
 }
 
+/// The new secret three ways. Its fields are wiped when it drops; the
+/// serialized body axum writes from it is not.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TotpSetupResponse {
@@ -225,7 +230,7 @@ async fn totp_setup(
     let SecretJson(request) = body?;
     let ip = client_ip(peer, &headers, state.config.client_ip_header);
     let attempt = admit_with_password(&state, &user, &ip, request.current_password).await?;
-    state.limiter.succeeded(attempt);
+    state.limiter.not_a_failure(attempt);
 
     let id = user.id;
     let current = super::with_conn(&state, move |conn| users::get_user(conn, id))
@@ -255,11 +260,17 @@ fn totp_already_enabled() -> ApiError {
     )
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TotpConfirmRequest {
     setup_id: String,
     code: Secret,
+}
+
+impl std::fmt::Debug for TotpConfirmRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TotpConfirmRequest(<redacted>)")
+    }
 }
 
 #[derive(Serialize)]
