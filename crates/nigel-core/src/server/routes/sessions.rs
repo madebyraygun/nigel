@@ -184,16 +184,9 @@ async fn login(
     let ip = client_ip(peer, &headers, state.config.client_ip_header);
     let account = account_key(&request.email);
 
-    let gate = state.db_gate.clone().read_owned().await;
-    let db_path = state.db_path();
-    let lookup_path = db_path.clone();
     let lookup_email = request.email.clone();
-    let (gate, known_user) = super::spawn_blocking_holding(gate, move || {
-        let conn = crate::db::get_connection(&lookup_path)?;
-        is_known_user(&conn, &lookup_email)
-    })
-    .await?;
-    let known_user = known_user?;
+    let known_user =
+        super::with_conn(&state, move |conn| is_known_user(conn, &lookup_email)).await?;
 
     let attempt = match state
         .limiter
@@ -210,7 +203,7 @@ async fn login(
         }
     };
     report_full(&attempt);
-    let Some(permit) = state.try_password_check() else {
+    let Some(permit) = state.password_check().await else {
         state.limiter.not_a_failure(attempt);
         return Err(ApiError::busy());
     };
@@ -225,6 +218,8 @@ async fn login(
         .map(str::to_string);
     let now = state.now();
     let row_ip = ip.log.clone();
+    let gate = state.db_gate.clone().read_owned().await;
+    let db_path = state.db_path();
     let judged = super::spawn_blocking_holding(gate, move || -> crate::error::Result<Outcome> {
         let _permit = permit;
         let conn = crate::db::get_connection(&db_path)?;

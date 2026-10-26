@@ -293,7 +293,7 @@ structured context to give:
 | `totp_required` | 401 | The password was correct; send it again with `code` |
 | `password_change_required` | 403 | This session's user must change a temporary password first |
 | `too_many_attempts` | 429 | Login rate limit; `details.retryAfterMs` says how long |
-| `busy` | 503 | Every password-verification slot is in use; retry after `details.retryAfterMs` |
+| `busy` | 503 | No password-verification slot came free within 2 seconds; retry after `details.retryAfterMs` |
 | `forbidden` | 403 | Host/Origin check failed, a cookie write without `Origin` (`details.reason = "origin_required"`), or the role check (`details.reason = "role"`, `details.required`) |
 | `not_found` | 404 | No such route or record |
 | `conflict` | 409 | A guardrail blocked the change; `details` carries a reason code, including `local_mode` |
@@ -529,15 +529,17 @@ must carry an `Origin` header, or it is `403` with `details.reason =
 | `401 totp_required` | The password was right and two-step is on, but `code` is missing. Not a failure: send all three fields again |
 | `401 invalid_credentials` | A wrong email, password, code, or a disabled user, all with "That email and password don't match." A wrong code, which is only answered after the password was proven, says "That code didn't match. Check the time on your device." |
 | `429 too_many_attempts` | A rate limit is running; `details.retryAfterMs` |
-| `503 busy` | Every password-verification slot is in use; retry after `details.retryAfterMs`. Not a failed attempt |
+| `503 busy` | No password-verification slot came free within 2 seconds; retry after `details.retryAfterMs`. Not a failed attempt |
 | `409 conflict` | `details.reason = "local_mode"` |
 | `500 internal` | `details.reason = "totp_unavailable"`: this machine's `server.key` cannot open the user's secret. An admin clears it with `nigel user reset-password <email> --clear-totp` |
 
 Every sign-in runs exactly one Argon2id verification, a warmed dummy hash for an
 unknown address, so timing reveals nothing about which emails exist.
 At most as many verifications run at once as the machine has cores, capped at
-four; an admitted attempt that finds every slot taken is refused `503 busy`
-rather than queued, and is not charged against the sign-in limits.
+four. An admitted attempt that finds every slot taken waits up to 2 seconds for
+one; if none comes free it is refused `503 busy` and is not charged against the
+sign-in limits. The sign-in limits also bound how many attempts one client can
+have waiting.
 
 `user` is `{ id, email, displayName, role, totpEnabled, mustChangePassword }`.
 It carries no hash or secret.
@@ -598,9 +600,9 @@ secret.
 
 A `429 too_many_attempts` on these routes reads "Too many wrong passwords. Try
 again later." Like sign-in, a route that checks the current password answers
-`503 busy` when every password-verification slot is in use. The `setup`
-response holds the secret, so the server clears its own copies as soon as it
-can; the response body itself cannot be erased from memory by the server.
+`503 busy` when no password-verification slot comes free within 2 seconds. The
+`setup` response holds the secret, so the server clears its own copies as soon
+as it can; the response body itself cannot be erased from memory by the server.
 
 ## Reading data
 

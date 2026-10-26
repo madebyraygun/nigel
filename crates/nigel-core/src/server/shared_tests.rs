@@ -1697,11 +1697,23 @@ async fn assert_busy(response: axum::response::Response) {
     assert!(json["error"]["details"]["retryAfterMs"].as_u64().unwrap() > 0);
 }
 
+/// [`served_app`] with a password-verification wait of `wait`.
+fn served_app_waiting(
+    db_path: &std::path::Path,
+    wait: std::time::Duration,
+) -> (axum::Router, AppState) {
+    let (_, state) = served_app(db_path, public_config());
+    let state = state.with_password_check_wait(wait);
+    (super::build_router(state.clone()), state)
+}
+
+const SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
+
 #[tokio::test]
 async fn a_sign_in_with_no_verification_free_is_refused_busy_and_not_charged() {
     let (_dir, db_path) = temp_db();
     add_ready_user(&db_path, "pat@example.com", Role::Admin);
-    let (app, state) = served_app(&db_path, public_config());
+    let (app, state) = served_app_waiting(&db_path, SHORT_WAIT);
 
     let held = hold_every_password_check(&state);
     for _ in 0..8 {
@@ -1744,7 +1756,7 @@ async fn account_routes_with_no_verification_free_are_refused_busy_and_not_charg
         SessionKind::Bearer,
         crate::clock::now_utc(),
     );
-    let (app, state) = served_app(&db_path, public_config());
+    let (app, state) = served_app_waiting(&db_path, SHORT_WAIT);
 
     let held = hold_every_password_check(&state);
     for _ in 0..4 {
@@ -1788,4 +1800,27 @@ async fn account_routes_with_no_verification_free_are_refused_busy_and_not_charg
         StatusCode::OK,
         "the busy refusals were charged"
     );
+}
+
+#[tokio::test]
+async fn a_sign_in_waits_for_a_verification_freed_within_the_bound() {
+    let (_dir, db_path) = temp_db();
+    add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let (app, state) = served_app_waiting(&db_path, std::time::Duration::from_secs(30));
+
+    let held = hold_every_password_check(&state);
+    let waiting = tokio::spawn(app.oneshot(login_request(
+        &login_body("pat@example.com", READY_PASSWORD),
+        Some(PUBLIC_URL),
+        PEER,
+    )));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !waiting.is_finished(),
+        "the sign-in did not wait for a slot"
+    );
+    drop(held);
+
+    let response = waiting.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }

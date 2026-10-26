@@ -86,7 +86,7 @@ async fn admit_with_password(
     password: Secret,
 ) -> ApiResult<Attempt> {
     let attempt = admit(state, user, ip)?;
-    let Some(permit) = state.try_password_check() else {
+    let Some(permit) = state.password_check().await else {
         state.limiter.not_a_failure(attempt);
         return Err(ApiError::busy());
     };
@@ -141,7 +141,7 @@ async fn change_password(
     let SecretJson(request) = body?;
     let ip = client_ip(peer, &headers, state.config.client_ip_header);
     let attempt = admit(&state, &user, &ip)?;
-    let Some(permit) = state.try_password_check() else {
+    let Some(permit) = state.password_check().await else {
         state.limiter.not_a_failure(attempt);
         return Err(ApiError::busy());
     };

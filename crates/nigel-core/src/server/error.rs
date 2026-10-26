@@ -35,7 +35,7 @@ pub enum ApiErrorCode {
     TotpRequired,
     PasswordChangeRequired,
     TooManyAttempts,
-    /// Every password verification slot is in use; retry shortly.
+    /// No password verification slot came free in time; retry shortly.
     Busy,
 }
 
@@ -170,8 +170,8 @@ impl ApiError {
         .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
     }
 
-    /// Every password verification slot is taken. Refused rather than queued,
-    /// so a burst of sign-ins cannot pile up Argon2 work behind it.
+    /// No password verification slot came free within the wait, so a burst
+    /// of sign-ins cannot pile up Argon2 work without end.
     pub fn busy() -> Self {
         Self::new(
             ApiErrorCode::Busy,

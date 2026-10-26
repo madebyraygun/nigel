@@ -118,6 +118,9 @@ pub struct AppState {
     /// Bounds how many Argon2 password verifications run at once; see
     /// [`password_check_slots`].
     pub password_checks: Arc<tokio::sync::Semaphore>,
+    /// How long a request waits for a password-verification slot before it
+    /// is refused busy. [`PASSWORD_CHECK_WAIT`] outside tests.
+    password_check_wait: std::time::Duration,
     /// Two-step enrollments started but not yet confirmed.
     pub totp_setups: Arc<super::pending_totp::PendingTotpSetups>,
     /// Guards the database *file* rather than its contents.
@@ -137,6 +140,11 @@ pub struct AppState {
     /// network.
     update_available: Arc<RwLock<Option<String>>>,
 }
+
+/// How long a request waits for a password-verification slot. Bounded, so a
+/// burst cannot queue without end; the sign-in limiter already caps how many
+/// attempts one client can have waiting.
+pub const PASSWORD_CHECK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How many password verifications may run at once: one per core, at most
 /// four, so sign-in bursts cannot take every blocking thread and core.
@@ -192,6 +200,7 @@ impl AppState {
             unlock: Arc::new(UnlockGate::default()),
             limiter: Arc::new(super::ratelimit::LoginLimiter::default()),
             password_checks: Arc::new(tokio::sync::Semaphore::new(password_check_slots())),
+            password_check_wait: PASSWORD_CHECK_WAIT,
             totp_setups: Arc::new(Default::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
             update_available: Arc::new(RwLock::new(None)),
@@ -208,9 +217,21 @@ impl AppState {
         self
     }
 
-    /// A password-verification slot, or `None` when every one is in use.
-    pub fn try_password_check(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        self.password_checks.clone().try_acquire_owned().ok()
+    /// A password-verification slot, waiting for one up to the bound, or
+    /// `None` when none came free in time.
+    pub async fn password_check(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let acquire = self.password_checks.clone().acquire_owned();
+        tokio::time::timeout(self.password_check_wait, acquire)
+            .await
+            .ok()?
+            .ok()
+    }
+
+    /// Change how long a request waits for a password-verification slot.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn with_password_check_wait(mut self, wait: std::time::Duration) -> Self {
+        self.password_check_wait = wait;
+        self
     }
 
     pub fn now(&self) -> chrono::DateTime<chrono::Utc> {
