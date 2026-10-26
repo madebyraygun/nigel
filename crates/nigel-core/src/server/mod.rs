@@ -11,6 +11,7 @@ pub mod error;
 pub mod events;
 pub mod extract;
 pub mod mode;
+pub mod pending_totp;
 pub mod principal;
 pub mod ratelimit;
 pub mod routes;

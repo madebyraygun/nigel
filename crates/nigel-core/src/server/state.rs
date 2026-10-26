@@ -115,6 +115,8 @@ pub struct AppState {
     pub unlock: Arc<UnlockGate>,
     /// Sign-in rate limits; see `ratelimit.rs`.
     pub limiter: Arc<super::ratelimit::LoginLimiter>,
+    /// Two-step enrollments started but not yet confirmed.
+    pub totp_setups: Arc<super::pending_totp::PendingTotpSetups>,
     /// Guards the database *file* rather than its contents.
     ///
     /// `cli::password::encrypt_database` and `decrypt_database` rewrite the
@@ -177,6 +179,7 @@ impl AppState {
             features: Features::detect(),
             unlock: Arc::new(UnlockGate::default()),
             limiter: Arc::new(super::ratelimit::LoginLimiter::default()),
+            totp_setups: Arc::new(Default::default()),
             db_gate: Arc::new(TokioRwLock::new(())),
             update_available: Arc::new(RwLock::new(None)),
         }

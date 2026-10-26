@@ -127,7 +127,7 @@ fn full_notice_due(last: &Mutex<Option<Instant>>, now: Instant) -> bool {
 
 /// Tell the operator a limiter table filled with lockouts and began
 /// admitting new keys untracked: at most one line a minute.
-fn report_full(attempt: &Attempt) {
+pub(super) fn report_full(attempt: &Attempt) {
     let full = attempt.newly_full();
     if full.is_empty() || !full_notice_due(&LAST_FULL_NOTICE, Instant::now()) {
         return;

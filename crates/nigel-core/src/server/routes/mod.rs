@@ -7,6 +7,7 @@
 //! short list by path, so a new endpoint is guarded by default — forgetting to
 //! mount it in the right place cannot expose a locked database.
 
+pub mod account;
 pub mod accounts;
 pub mod categories;
 pub mod clients;
@@ -38,6 +39,7 @@ pub fn api_router(state: &AppState) -> Router<AppState> {
         .route("/ping", get(ping))
         .merge(status::routes())
         .merge(sessions::routes())
+        .merge(account::routes())
         .merge(data_router())
         .fallback(api_not_found)
         .layer(middleware::from_fn_with_state(

@@ -166,6 +166,26 @@ impl ApiError {
         .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
     }
 
+    /// The sign-in limits refused an account route: wrong current passwords
+    /// or codes locked the signed-in user's account.
+    pub fn too_many_wrong_passwords(retry_after_ms: u128) -> Self {
+        Self::new(
+            ApiErrorCode::TooManyAttempts,
+            "Too many wrong passwords. Try again later.",
+        )
+        .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
+    }
+
+    /// The server key could not be read or created while turning two-step
+    /// verification on or off.
+    pub fn totp_key_unavailable() -> Self {
+        Self::new(
+            ApiErrorCode::Internal,
+            "Two-step verification can't be changed on this server right now. Ask an admin to check the server key.",
+        )
+        .with_details(serde_json::json!({ "reason": "totp_unavailable" }))
+    }
+
     /// A cookie-authenticated change, or a browser sign-in, that carried no
     /// `Origin`.
     pub fn origin_required() -> Self {

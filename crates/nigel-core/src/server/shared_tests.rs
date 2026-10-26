@@ -1092,3 +1092,405 @@ async fn sign_in_routes_answer_while_the_books_are_locked() {
         .unwrap();
     assert_eq!(logout.status(), StatusCode::OK);
 }
+
+fn bearer_post(uri: &str, token: &str, body: serde_json::Value) -> Request<Body> {
+    public_request("POST", uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_temporary_password_is_changed_and_other_sessions_end() {
+    let (_dir, db_path) = temp_db();
+    let conn = crate::db::get_connection(&db_path).unwrap();
+    let created = crate::identity::users::create_user(
+        &conn,
+        &crate::identity::users::NewUser {
+            email: "pat@example.com",
+            display_name: "Pat Example",
+            role: Role::Admin,
+        },
+        crate::clock::now_utc(),
+    )
+    .unwrap();
+    let this = session_for(
+        &db_path,
+        created.user.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let other = session_for(
+        &db_path,
+        created.user.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+
+    for (new, reason) in [
+        ("short", "too_short"),
+        ("pat@example.com", "matches_identity"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(bearer_post(
+                "/api/account/password",
+                &this,
+                serde_json::json!({
+                    "currentPassword": created.temporary_password.as_str(), "newPassword": new
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{new}");
+        assert_eq!(
+            json_body(response).await["error"]["details"]["reason"],
+            reason
+        );
+    }
+    let wrong = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/password",
+            &this,
+            serde_json::json!({
+                "currentPassword": "not it at all", "newPassword": "a brand new passphrase"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(wrong).await["error"]["details"]["reason"],
+        "wrong_password"
+    );
+
+    let changed = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/password",
+            &this,
+            serde_json::json!({
+                "currentPassword": created.temporary_password.as_str(),
+                "newPassword": "a brand new passphrase"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+
+    let accounts = app
+        .clone()
+        .oneshot(bearer_get("/api/accounts", &this))
+        .await
+        .unwrap();
+    assert_eq!(
+        accounts.status(),
+        StatusCode::OK,
+        "must-change cleared, this session kept"
+    );
+    let ended = app.oneshot(bearer_get("/api/ping", &other)).await.unwrap();
+    assert_eq!(ended.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn two_step_is_set_up_confirmed_and_removed() {
+    let (_dir, db_path) = temp_db();
+    let _config = TempConfig::new();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+
+    let wrong_password = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": "nope nope nope" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(wrong_password).await["error"]["details"]["reason"],
+        "wrong_password"
+    );
+
+    let setup = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), StatusCode::OK);
+    assert_eq!(
+        header_str(&setup, header::CACHE_CONTROL),
+        "no-store",
+        "the secret is never cached"
+    );
+    let setup = json_body(setup).await;
+    let setup_id = setup["setupId"].as_str().unwrap().to_string();
+    let secret_b32 = setup["secret"].as_str().unwrap();
+    assert!(setup["otpauthUri"]
+        .as_str()
+        .unwrap()
+        .starts_with("otpauth://totp/Nigel:pat@example.com?secret="));
+    assert!(setup["qrSvg"].as_str().unwrap().contains("<svg"));
+    let secret = data_encoding::BASE32_NOPAD
+        .decode(secret_b32.as_bytes())
+        .unwrap();
+    assert!(
+        !crate::identity::users::get_user(&crate::db::get_connection(&db_path).unwrap(), pat.id)
+            .unwrap()
+            .unwrap()
+            .totp_enabled,
+        "nothing stored yet"
+    );
+
+    let bad = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/confirm",
+            &token,
+            serde_json::json!({ "setupId": setup_id, "code": "000000" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(bad).await["error"]["details"]["reason"],
+        "wrong_code"
+    );
+
+    let stale = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/confirm",
+            &token,
+            serde_json::json!({ "setupId": "ff".repeat(16), "code": "000000" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(stale).await["error"]["details"]["reason"],
+        "setup_expired"
+    );
+
+    let now = crate::clock::now_utc();
+    let step = crate::identity::totp::step_at(now);
+    let code = crate::identity::totp::code_for_step(&secret, step);
+    let confirmed = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/confirm",
+            &token,
+            serde_json::json!({ "setupId": setup_id, "code": code }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(confirmed.status(), StatusCode::OK);
+    assert!(
+        crate::identity::seal::key_path().exists(),
+        "server.key created on first enrollment"
+    );
+
+    let again = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(again).await["error"]["details"]["reason"],
+        "totp_enabled"
+    );
+
+    let next = crate::identity::totp::code_for_step(&secret, step + 1);
+    let removed = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/remove",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD, "code": next }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
+    let conn = crate::db::get_connection(&db_path).unwrap();
+    assert!(
+        !crate::identity::users::get_user(&conn, pat.id)
+            .unwrap()
+            .unwrap()
+            .totp_enabled
+    );
+}
+
+#[tokio::test]
+async fn account_routes_are_a_conflict_for_the_local_owner() {
+    let (_dir, db_path) = temp_db();
+    let (app, token) = app_for(&db_path);
+    let response = app
+        .oneshot(session_post(
+            "/api/account/password",
+            &token,
+            r#"{"currentPassword":"x","newPassword":"y"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await["error"]["details"]["reason"],
+        "local_mode"
+    );
+}
+
+#[tokio::test]
+async fn wrong_current_passwords_on_an_account_route_lock_like_logins() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    for _ in 0..5 {
+        app.clone()
+            .oneshot(bearer_post(
+                "/api/account/totp/setup",
+                &token,
+                serde_json::json!({ "currentPassword": "wrong password here" }),
+            ))
+            .await
+            .unwrap();
+    }
+    let locked = app
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+    let locked = json_body(locked).await;
+    assert_eq!(
+        locked["error"]["message"],
+        "Too many wrong passwords. Try again later."
+    );
+    let wait = locked["error"]["details"]["retryAfterMs"].as_u64().unwrap();
+    assert!(wait > 0 && wait <= 15 * 60 * 1000, "{wait}");
+}
+
+#[tokio::test]
+async fn wrong_codes_when_removing_two_step_lock_like_logins() {
+    let (_dir, db_path) = temp_db();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let _config = TempConfig::new();
+    let secret = enrol_totp(&db_path, pat.id);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    let right = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let wrong = if right == "000000" {
+        "111111"
+    } else {
+        "000000"
+    };
+    for _ in 0..5 {
+        let response = app
+            .clone()
+            .oneshot(bearer_post(
+                "/api/account/totp/remove",
+                &token,
+                serde_json::json!({ "currentPassword": READY_PASSWORD, "code": wrong }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            json_body(response).await["error"]["details"]["reason"],
+            "wrong_code"
+        );
+    }
+    let locked = app
+        .oneshot(bearer_post(
+            "/api/account/totp/remove",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD, "code": right }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(locked.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_server_key_that_cannot_be_read_is_a_clean_totp_unavailable() {
+    let (_dir, db_path) = temp_db();
+    let _config = TempConfig::new();
+    let pat = add_ready_user(&db_path, "pat@example.com", Role::Admin);
+    let token = session_for(
+        &db_path,
+        pat.id,
+        SessionKind::Bearer,
+        crate::clock::now_utc(),
+    );
+    let (app, _state) = served_app(&db_path, public_config());
+    let key_path = crate::identity::seal::key_path();
+    std::fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+    std::fs::write(&key_path, b"not a key").unwrap();
+
+    let setup = app
+        .clone()
+        .oneshot(bearer_post(
+            "/api/account/totp/setup",
+            &token,
+            serde_json::json!({ "currentPassword": READY_PASSWORD }),
+        ))
+        .await
+        .unwrap();
+    let setup = json_body(setup).await;
+    let secret = data_encoding::BASE32_NOPAD
+        .decode(setup["secret"].as_str().unwrap().as_bytes())
+        .unwrap();
+    let code = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()),
+    );
+    let confirmed = app
+        .oneshot(bearer_post(
+            "/api/account/totp/confirm",
+            &token,
+            serde_json::json!({ "setupId": setup["setupId"], "code": code }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(confirmed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = json_body(confirmed).await;
+    assert_eq!(body["error"]["details"]["reason"], "totp_unavailable");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(!message.contains("server.key"), "{message}");
+    assert!(!message.contains(&code), "{message}");
+    assert_eq!(
+        std::fs::read(&key_path).unwrap(),
+        b"not a key",
+        "left as it is"
+    );
+}
