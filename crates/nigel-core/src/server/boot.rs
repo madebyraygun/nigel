@@ -28,15 +28,6 @@ pub fn unlock_with(db_path: &Path, raw: Option<OsString>, file: Option<OsString>
     }
 }
 
-/// [`unlock_with`] from the process environment.
-pub fn unlock_from_env(db_path: &Path) -> Result<bool> {
-    unlock_with(
-        db_path,
-        std::env::var_os("NIGEL_DB_PASSWORD"),
-        std::env::var_os("NIGEL_DB_PASSWORD_FILE"),
-    )
-}
-
 /// What the banner and notices need from the books.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BootFacts {
@@ -79,6 +70,26 @@ pub fn read_facts(db_path: &Path, mode: Mode, now: DateTime<Utc>) -> Result<Boot
         company,
         totp_unopenable,
         key_unreadable,
+    })
+}
+
+/// [`read_facts`], or when the books can't be read, a notice through
+/// `report` and facts that assume encrypted books unless they are known
+/// not to be, so no false not-encrypted warning follows.
+pub fn read_facts_or_report(
+    db_path: &Path,
+    mode: Mode,
+    now: DateTime<Utc>,
+    mut report: impl FnMut(String),
+) -> BootFacts {
+    read_facts(db_path, mode, now).unwrap_or_else(|e| {
+        report(format!(
+            "notice: couldn't read these books before starting ({e})."
+        ));
+        BootFacts {
+            encrypted: crate::db::is_encrypted(db_path).unwrap_or(true),
+            ..BootFacts::default()
+        }
     })
 }
 
@@ -339,6 +350,33 @@ mod tests {
             "{notices:?}"
         );
         assert!(!notices[0].contains("--clear-totp"), "{notices:?}");
+    }
+
+    #[test]
+    fn unreadable_books_report_why_and_raise_no_false_not_encrypted_warning() {
+        let _clear = ClearPassword;
+        let (_dir, db_path) = temp_db();
+        encrypt(&db_path);
+        crate::db::set_db_password_for_tests(Some(zeroize::Zeroizing::new(
+            "pass-not-the-right-one".to_string(),
+        )));
+        let mut reported = Vec::new();
+        let facts = read_facts_or_report(&db_path, Mode::Shared, crate::clock::now_utc(), |n| {
+            reported.push(n)
+        });
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("couldn't read these books"),
+            "{reported:?}"
+        );
+        assert!(facts.encrypted, "{facts:?}");
+        let notices = startup_notices(Mode::Shared, &facts, &ServerConfig::default(), None);
+        assert!(
+            !notices
+                .join("\n")
+                .contains(crate::identity::NOT_ENCRYPTED_WARNING),
+            "{notices:?}"
+        );
     }
 
     #[test]

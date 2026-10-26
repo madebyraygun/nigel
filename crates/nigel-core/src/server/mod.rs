@@ -74,9 +74,8 @@ async fn serve(
 ) -> Result<()> {
     let mode = mode::derive_or_local(&db_path, |notice| eprintln!("{notice}"));
     crate::identity::passwords::warm_dummy_hash();
-    let facts = boot::read_facts(&db_path, mode, crate::clock::now_utc()).unwrap_or_else(|e| {
-        eprintln!("notice: couldn't read these books before starting ({e}).");
-        boot::BootFacts::default()
+    let facts = boot::read_facts_or_report(&db_path, mode, crate::clock::now_utc(), |notice| {
+        eprintln!("{notice}")
     });
     let key_warning = crate::identity::seal::permission_warning(&crate::identity::seal::key_path());
     for notice in boot::startup_notices(mode, &facts, &config, key_warning) {
