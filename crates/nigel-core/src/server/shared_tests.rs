@@ -940,8 +940,12 @@ async fn a_second_factor_is_asked_for_then_checked() {
         "totp_required"
     );
 
+    let outside_the_window = crate::identity::totp::code_for_step(
+        &secret,
+        crate::identity::totp::step_at(crate::clock::now_utc()) + 5,
+    );
     let wrong = serde_json::json!({
-        "email": "pat@example.com", "password": READY_PASSWORD, "code": "000000"
+        "email": "pat@example.com", "password": READY_PASSWORD, "code": outside_the_window
     })
     .to_string();
     let wrong = app
