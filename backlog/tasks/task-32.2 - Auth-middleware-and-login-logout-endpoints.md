@@ -1,10 +1,10 @@
 ---
 id: TASK-32.2
 title: Auth middleware and login/logout endpoints
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-25 19:14'
+updated_date: '2026-10-29 21:31'
 labels:
   - multiuser
   - backend
@@ -23,11 +23,11 @@ Authentication for nigel serve: sessions (cookie and bearer), login/logout/me, a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Login and logout work with HttpOnly SameSite session cookies and server-side expiry
-- [ ] #2 Failed logins are throttled and repeated failures lock the account temporarily
-- [ ] #3 All /api routes require an authenticated session in multiuser mode; logout invalidates the session server-side
-- [ ] #4 Sessions expire after 30 days idle and after 90 days regardless of activity
-- [ ] #5 Local single-user mode stays the default with behaviour identical to before; shared mode begins automatically when the first user exists (no setting), and only shared mode accepts the server_public_url host
+- [x] #1 Login and logout work with HttpOnly SameSite session cookies and server-side expiry
+- [x] #2 Failed logins are throttled and repeated failures lock the account temporarily
+- [x] #3 All /api routes require an authenticated session in multiuser mode; logout invalidates the session server-side
+- [x] #4 Sessions expire after 30 days idle and after 90 days regardless of activity
+- [x] #5 Local single-user mode stays the default with behaviour identical to before; shared mode begins automatically when the first user exists (no setting), and only shared mode accepts the server_public_url host
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -40,4 +40,6 @@ Unlock is not admin-only over HTTP: a shared server unlocks at boot from a crede
 Design: docs/superpowers/specs/2026-10-23-multiuser-phase-1-design.md (approved, PR #74). Implementation sequence in §17.
 
 Carried from PR #79's review, to do in PR 2: (1) fsync the config dir after server.key's hard_link, add the path to hard_link errors, test the race-loser and cleanup paths, and warn at serve boot if server.key's permissions are loose — all before any TOTP secret is sealed in production; (2) cap the login request body before verify_password / verify_dummy, and collapse verify_credentials into one verify call with dummy_phc warmed at startup; (3) cap the NIGEL_DB_PASSWORD_FILE read at a few KiB; (4) refuse TOTP enrollment for disabled users and tighten the TOTP key-error and clear tests; (5) exercise the sessions constraints (kind CHECK, token_hash UNIQUE, FK) once sessions are written over HTTP; (6) give Role Display/serde when the API serializes it; (7) create_session is called only after verify_credentials / verify_totp; (8) call local_mode before create_user so the CLI-flag wording never reaches the API.
+
+Shipped in PR #81.
 <!-- SECTION:NOTES:END -->
