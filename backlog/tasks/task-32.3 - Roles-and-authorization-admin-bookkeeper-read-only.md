@@ -1,10 +1,11 @@
 ---
 id: TASK-32.3
 title: 'Roles and authorization: admin, bookkeeper, read-only'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-06 16:27'
-updated_date: '2026-10-26 04:00'
+updated_date: '2026-10-29 21:31'
 labels:
   - multiuser
   - backend
