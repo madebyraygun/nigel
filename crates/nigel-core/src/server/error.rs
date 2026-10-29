@@ -31,6 +31,12 @@ pub enum ApiErrorCode {
     /// that offers "try again" has to know which it is looking at.
     UpstreamFailed,
     FeatureDisabled,
+    InvalidCredentials,
+    TotpRequired,
+    PasswordChangeRequired,
+    TooManyAttempts,
+    /// No password verification slot came free in time; retry shortly.
+    Busy,
 }
 
 impl ApiErrorCode {
@@ -46,6 +52,10 @@ impl ApiErrorCode {
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::UpstreamFailed => StatusCode::BAD_GATEWAY,
             Self::FeatureDisabled => StatusCode::NOT_IMPLEMENTED,
+            Self::InvalidCredentials | Self::TotpRequired => StatusCode::UNAUTHORIZED,
+            Self::PasswordChangeRequired => StatusCode::FORBIDDEN,
+            Self::TooManyAttempts => StatusCode::TOO_MANY_REQUESTS,
+            Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -62,6 +72,11 @@ impl ApiErrorCode {
             Self::Internal => "internal",
             Self::UpstreamFailed => "upstream_failed",
             Self::FeatureDisabled => "feature_disabled",
+            Self::InvalidCredentials => "invalid_credentials",
+            Self::TotpRequired => "totp_required",
+            Self::PasswordChangeRequired => "password_change_required",
+            Self::TooManyAttempts => "too_many_attempts",
+            Self::Busy => "busy",
         }
     }
 }
@@ -98,6 +113,126 @@ impl ApiError {
             ApiErrorCode::Unauthorized,
             "Not signed in. Open the URL printed by `nigel serve` to start a session.",
         )
+    }
+
+    /// A shared-mode `401`: `details.mode` tells a client to show its sign-in
+    /// screen rather than "open the link again".
+    pub fn unauthorized_shared() -> Self {
+        Self::new(ApiErrorCode::Unauthorized, "Not signed in.")
+            .with_details(serde_json::json!({ "mode": "shared" }))
+    }
+
+    pub fn invalid_credentials() -> Self {
+        Self::new(
+            ApiErrorCode::InvalidCredentials,
+            "That email and password don't match.",
+        )
+    }
+
+    /// A wrong second-factor code at sign-in. Answered only after the
+    /// password was proven, which `totp_required` had already revealed.
+    pub fn login_code_mismatch() -> Self {
+        Self::new(
+            ApiErrorCode::InvalidCredentials,
+            "That code didn't match. Check the time on your device.",
+        )
+    }
+
+    pub fn totp_required() -> Self {
+        Self::new(
+            ApiErrorCode::TotpRequired,
+            "Enter the six-digit code from your authenticator app.",
+        )
+    }
+
+    pub fn totp_unavailable() -> Self {
+        Self::new(
+            ApiErrorCode::Internal,
+            "Two-step verification can't be checked on this server. Ask an admin to turn it off for you.",
+        )
+        .with_details(serde_json::json!({ "reason": "totp_unavailable" }))
+    }
+
+    pub fn password_change_required() -> Self {
+        Self::new(
+            ApiErrorCode::PasswordChangeRequired,
+            "Choose a new password before you continue.",
+        )
+    }
+
+    /// A sign-in limit is running. The person reading it may not be the one
+    /// who made the attempts, so it accuses no one.
+    pub fn too_many_attempts(retry_after_ms: u128) -> Self {
+        Self::new(
+            ApiErrorCode::TooManyAttempts,
+            "Sign-in is temporarily unavailable. Try again later.",
+        )
+        .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
+    }
+
+    /// No password verification slot came free within the wait, so a burst
+    /// of sign-ins cannot pile up Argon2 work without end.
+    pub fn busy() -> Self {
+        Self::new(
+            ApiErrorCode::Busy,
+            "The server is busy. Try again in a moment.",
+        )
+        .with_details(serde_json::json!({ "retryAfterMs": 1000 }))
+    }
+
+    /// The sign-in limits refused an account route: wrong current passwords
+    /// or codes locked the signed-in user's account.
+    pub fn too_many_wrong_passwords(retry_after_ms: u128) -> Self {
+        Self::new(
+            ApiErrorCode::TooManyAttempts,
+            "Too many wrong passwords. Try again later.",
+        )
+        .with_details(serde_json::json!({ "retryAfterMs": retry_after_ms }))
+    }
+
+    /// The server key could not be read or created while turning two-step
+    /// verification on or off.
+    pub fn totp_key_unavailable() -> Self {
+        Self::new(
+            ApiErrorCode::Internal,
+            "Two-step verification can't be changed on this server right now. Ask an admin to check the server key.",
+        )
+        .with_details(serde_json::json!({ "reason": "totp_unavailable" }))
+    }
+
+    /// A cookie-authenticated change, or a browser sign-in, that carried no
+    /// `Origin`.
+    pub fn origin_required() -> Self {
+        Self::new(
+            ApiErrorCode::Forbidden,
+            "Request rejected: it did not say which page sent it.",
+        )
+        .with_details(serde_json::json!({ "reason": "origin_required" }))
+    }
+
+    pub fn forbidden_role(required: crate::identity::Role) -> Self {
+        Self::new(ApiErrorCode::Forbidden, "Your role doesn't allow this.")
+            .with_details(serde_json::json!({ "reason": "role", "required": required.as_str() }))
+    }
+
+    /// An account or user operation on a server with no users.
+    pub fn local_mode() -> Self {
+        Self::conflict(
+            "This server has no users, so there is no account to sign in to.",
+            serde_json::json!({ "reason": "local_mode" }),
+        )
+    }
+
+    /// The signed-in user's current password was wrong on an account route.
+    pub fn wrong_password() -> Self {
+        Self::bad_request("Your current password is not right.")
+            .with_details(serde_json::json!({ "reason": "wrong_password" }))
+    }
+
+    /// A wrong code on an account route (confirming or removing two-step).
+    pub fn code_mismatch() -> Self {
+        Self::bad_request("That code didn't match. Check the time on your device.")
+            .with_details(serde_json::json!({ "reason": "wrong_code" }))
     }
 
     /// A rejected unlock attempt. `details` carries the attempt budget and the
@@ -808,6 +943,82 @@ mod tests {
         assert_eq!(
             (details["reason"].as_str(), details["step"].as_str()),
             (Some("signer_count"), Some("freeze"))
+        );
+    }
+
+    #[test]
+    fn the_sign_in_codes_carry_their_statuses_and_details() {
+        use axum::http::StatusCode;
+        let cases = [
+            (
+                ApiError::invalid_credentials(),
+                StatusCode::UNAUTHORIZED,
+                "invalid_credentials",
+            ),
+            (
+                ApiError::login_code_mismatch(),
+                StatusCode::UNAUTHORIZED,
+                "invalid_credentials",
+            ),
+            (
+                ApiError::totp_required(),
+                StatusCode::UNAUTHORIZED,
+                "totp_required",
+            ),
+            (
+                ApiError::password_change_required(),
+                StatusCode::FORBIDDEN,
+                "password_change_required",
+            ),
+            (
+                ApiError::too_many_attempts(1500),
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+            ),
+            (
+                ApiError::unauthorized_shared(),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+            ),
+            (
+                ApiError::origin_required(),
+                StatusCode::FORBIDDEN,
+                "forbidden",
+            ),
+            (
+                ApiError::forbidden_role(crate::identity::Role::Admin),
+                StatusCode::FORBIDDEN,
+                "forbidden",
+            ),
+            (ApiError::local_mode(), StatusCode::CONFLICT, "conflict"),
+        ];
+        for (error, status, code) in cases {
+            assert_eq!(error.code().status(), status, "{code}");
+            assert_eq!(error.code().as_str(), code);
+        }
+        assert_eq!(
+            ApiError::invalid_credentials().message(),
+            "That email and password don't match."
+        );
+        assert_eq!(
+            ApiError::login_code_mismatch().message(),
+            "That code didn't match. Check the time on your device."
+        );
+        assert_eq!(
+            ApiError::too_many_attempts(1500).details,
+            Some(serde_json::json!({ "retryAfterMs": 1500 }))
+        );
+        assert_eq!(
+            ApiError::unauthorized_shared().details,
+            Some(serde_json::json!({ "mode": "shared" }))
+        );
+        assert_eq!(
+            ApiError::forbidden_role(crate::identity::Role::Admin).details,
+            Some(serde_json::json!({ "reason": "role", "required": "admin" }))
+        );
+        assert_eq!(
+            ApiError::local_mode().details,
+            Some(serde_json::json!({ "reason": "local_mode" }))
         );
     }
 }

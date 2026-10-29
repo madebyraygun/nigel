@@ -168,8 +168,9 @@ Users are the people who sign in to a shared `nigel serve`, identified by email.
 commands open the books in the configured data directory like every other command, so an
 encrypted database is unlocked by the prompt, `NIGEL_DB_PASSWORD`, or
 `NIGEL_DB_PASSWORD_FILE`. Whoever can open the file has full authority over its users;
-this is also how a locked-out admin recovers. `nigel serve` does not read users yet: it
-stays in local mode, with its token link, whatever this table holds.
+this is also how a locked-out admin recovers. Once this table has a user, `nigel serve` admits only signed-in users;
+with none it stays in local mode with its token link. See "Modes" in
+[api.md](api.md#modes).
 
 ```bash
 nigel user add pat@example.com --name "Pat Example" --admin            # The first user must be --admin

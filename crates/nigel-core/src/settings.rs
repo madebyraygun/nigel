@@ -47,6 +47,10 @@ pub struct Settings {
     pub documents_base_url: Option<String>,
     #[serde(default)]
     pub document_response_url: Option<String>,
+    #[serde(default)]
+    pub server_public_url: Option<String>,
+    #[serde(default)]
+    pub client_ip_header: Option<String>,
 }
 
 impl Default for Settings {
@@ -71,6 +75,8 @@ impl Default for Settings {
             r2_private_bucket: None,
             documents_base_url: None,
             document_response_url: None,
+            server_public_url: None,
+            client_ip_header: None,
         }
     }
 }

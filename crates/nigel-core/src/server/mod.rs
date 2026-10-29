@@ -5,11 +5,21 @@
 //! and [`run`] owns the tokio runtime.
 
 pub mod auth;
+pub mod authz;
+pub mod boot;
+pub mod config;
 pub mod error;
+pub mod events;
 pub mod extract;
+pub mod mode;
+pub mod pending_totp;
+pub mod principal;
+pub mod ratelimit;
 pub mod routes;
 pub mod scheme;
 pub mod secret;
+#[cfg(test)]
+mod shared_tests;
 pub mod state;
 mod static_files;
 #[cfg(any(test, feature = "testutil"))]
@@ -20,7 +30,7 @@ use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
-use axum::extract::Request;
+use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -35,13 +45,15 @@ use state::AppState;
 pub fn run(port: u16, no_open: bool) -> Result<()> {
     disable_ansi_output();
 
-    let db_path = PathBuf::from(crate::settings::try_load_settings()?.data_dir).join("nigel.db");
+    let settings = crate::settings::try_load_settings()?;
+    let config = config::ServerConfig::from_settings(&settings)?;
+    let db_path = PathBuf::from(settings.data_dir).join("nigel.db");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| NigelError::Other(format!("Couldn't start the async runtime: {e}")))?;
 
-    runtime.block_on(serve(db_path, port, no_open))
+    runtime.block_on(serve(db_path, port, no_open, config))
 }
 
 /// Turn off `colored`'s escape sequences for the whole process.
@@ -54,8 +66,23 @@ pub(crate) fn disable_ansi_output() {
     colored::control::set_override(false);
 }
 
-async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
-    let state = AppState::new(db_path, auth::generate_token());
+async fn serve(
+    db_path: PathBuf,
+    port: u16,
+    no_open: bool,
+    config: config::ServerConfig,
+) -> Result<()> {
+    let mode = mode::derive_or_local(&db_path, |notice| eprintln!("{notice}"));
+    crate::identity::passwords::warm_dummy_hash();
+    let facts = boot::read_facts_or_report(&db_path, mode, crate::clock::now_utc(), |notice| {
+        eprintln!("{notice}")
+    });
+    let key_warning = crate::identity::seal::permission_warning(&crate::identity::seal::key_path());
+    for notice in boot::startup_notices(mode, &facts, &config, key_warning) {
+        eprintln!("{notice}");
+    }
+
+    let state = AppState::for_serve(db_path, mode, config.clone());
 
     // A previous run may have been killed between an upload and its import.
     uploads::purge_stale(&uploads::uploads_dir(&state.db_path()), uploads::MAX_AGE);
@@ -63,19 +90,24 @@ async fn serve(db_path: PathBuf, port: u16, no_open: bool) -> Result<()> {
     spawn_update_check(state.clone());
 
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).await?;
-    let addr = listener.local_addr()?;
-    let url = format!(
-        "http://127.0.0.1:{}/auth?token={}",
-        addr.port(),
-        state.session_token.expose()
+    let port = listener.local_addr()?.port();
+    let token = state.local_token();
+    println!(
+        "{}",
+        boot::serving_banner(
+            mode,
+            facts.company.as_deref(),
+            &config,
+            port,
+            token.as_ref().map(|t| t.expose()),
+        )
     );
 
-    println!("Nigel is serving on http://127.0.0.1:{}", addr.port());
-    println!("Open this URL to start a session:");
-    println!("  {url}");
-    println!("Press Ctrl-C to stop.");
-
     if !no_open {
+        let url = match &token {
+            Some(token) => format!("http://127.0.0.1:{port}/auth?token={}", token.expose()),
+            None => format!("http://127.0.0.1:{port}/"),
+        };
         if let Err(e) = open::that_detached(&url) {
             eprintln!("notice: couldn't open a browser ({e}) — open the URL above yourself.");
         }
@@ -107,9 +139,12 @@ async fn serve_with_shutdown(
     state: AppState,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    axum::serve(listener, build_router(state))
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        build_router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
     Ok(())
 }
 
@@ -137,20 +172,20 @@ async fn shutdown_signal() {
     }
 }
 
-/// Two headers on everything this server answers, refusals included.
+/// Headers on everything this server answers, refusals included, each a
+/// **default** a handler may override (the invoice preview answers
+/// `SAMEORIGIN` for its own `<iframe>`).
 ///
-/// `SameSite=Strict` already keeps the session cookie out of a cross-site
-/// frame, so framing the SPA gets an attacker an unauthenticated shell; denying
-/// it outright costs a header and removes the question. `nosniff` holds the
-/// browser to the content type each response states — the API's `application/
-/// json` error envelopes echo request values, and a sniffed one is HTML.
-///
-/// Both are **defaults**, not overrides: a handler that set either one keeps its
-/// value. `DENY` blocks same-origin framing as well as cross-origin, so the
-/// invoice preview — a document the SPA renders in a sandboxed `<iframe>` of its
-/// own page — answers `SAMEORIGIN` for itself. Deciding that per route beats
-/// loosening the blanket value for every response.
-async fn security_headers(req: Request, next: Next) -> Response {
+/// `nosniff` holds the browser to each response's stated type; `DENY` stops
+/// framing; `Referrer-Policy: same-origin` keeps paths out of other sites'
+/// logs. Every `/api` answer is `no-store`, so books data never sits in a
+/// shared or disk cache. HSTS goes only on answers to the `server_public_url`
+/// host, which a proxy serves over https; on loopback it would pin
+/// `localhost` to https.
+async fn security_headers(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    let is_api = path == "/api" || path.starts_with("/api/");
+    let public = auth::request_is_public(&state, req.headers());
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
     headers
@@ -159,36 +194,54 @@ async fn security_headers(req: Request, next: Next) -> Response {
     headers
         .entry(header::X_FRAME_OPTIONS)
         .or_insert(HeaderValue::from_static("DENY"));
+    headers
+        .entry(header::REFERRER_POLICY)
+        .or_insert(HeaderValue::from_static("same-origin"));
+    if is_api {
+        headers
+            .entry(header::CACHE_CONTROL)
+            .or_insert(HeaderValue::from_static("no-store"));
+    }
+    if public {
+        headers
+            .entry(header::STRICT_TRANSPORT_SECURITY)
+            .or_insert(HeaderValue::from_static("max-age=31536000"));
+    }
     response
 }
 
-/// The `/api` nest, `/auth`, the static assets, Host/Origin, and the blanket
-/// headers — everything [`build_router`] and (behind the `desktop` feature)
-/// `build_desktop_router` share. Layers run outermost-first: the blanket
-/// headers, Host/Origin, then the route. `/auth` and the static assets sit
-/// outside the `/api` nest and need no session either way.
-fn finish_router(state: AppState, api: Router<AppState>, trusted: auth::TrustedOrigins) -> Router {
+/// The `/api` nest, `/auth` and the static assets: what both routers serve.
+/// `/auth` and the static assets carry no data and need no session.
+fn base_router(api: Router<AppState>) -> Router<AppState> {
     Router::new()
         .nest("/api", api)
         .route("/auth", get(auth::auth_redirect))
         .fallback(static_files::static_handler)
-        .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
-        .layer(middleware::from_fn(security_headers))
-        .with_state(state)
 }
 
-/// The router `nigel serve` runs: loopback-only, and every api route behind a
-/// session cookie.
+/// The router `nigel serve` runs. Layers run outermost first: the blanket
+/// headers, the mode-aware host guard, then — on `/api` only — the session
+/// layer and the interim admin guard.
 ///
-/// The session layer wraps the `/api` router itself rather than using
-/// `route_layer`, so it also covers that router's 404 fallback — otherwise an
-/// unauthenticated request to an unknown `/api` path would skip the check.
+/// Both `/api` layers wrap the `/api` router itself rather than using
+/// `route_layer`, so they also cover that router's 404 fallback.
 pub fn build_router(state: AppState) -> Router {
-    let api = routes::api_router(&state).layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::session_guard,
-    ));
-    finish_router(state, api, auth::TrustedOrigins::loopback())
+    let api = routes::api_router(&state)
+        .layer(middleware::from_fn(authz::interim_admin_guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::session_guard,
+        ));
+    base_router(api)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::served_host_guard,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers,
+        ))
+        .with_state(state)
 }
 
 /// The router a desktop shell serves over its custom URI scheme.
@@ -197,7 +250,8 @@ pub fn build_router(state: AppState) -> Router {
 /// nothing else on the machine can address it — a cookie here would be a token
 /// the app issues to itself. The absence is structural: this router is never
 /// built with the layer, rather than built with one that is asked to stand
-/// down.
+/// down. Every request runs as the local owner, even over books that have
+/// users, and passes the interim admin guard on that authority.
 ///
 /// Behind the `desktop` feature, which is not in `default`: bound to a TCP
 /// port instead of a desktop shell's custom scheme, `host_guard` alone does
@@ -212,8 +266,16 @@ pub fn build_desktop_router(state: AppState, trusted: auth::TrustedOrigins) -> R
     // escape sequences out of a downloaded file whoever builds the router.
     disable_ansi_output();
 
-    let api = routes::api_router(&state);
-    finish_router(state, api, trusted)
+    let api = routes::api_router(&state)
+        .layer(middleware::from_fn(authz::interim_admin_guard))
+        .layer(middleware::from_fn(authz::as_local_owner));
+    base_router(api)
+        .layer(middleware::from_fn_with_state(trusted, auth::host_guard))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            security_headers,
+        ))
+        .with_state(state)
 }
 
 #[cfg(test)]
@@ -223,6 +285,64 @@ mod tests {
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn the_token_link_is_refused_once_the_server_is_shared() {
+        let state = AppState::for_serve(
+            PathBuf::from("/nonexistent/nigel.db"),
+            mode::Mode::Shared,
+            Default::default(),
+        );
+        let response = build_router(state)
+            .oneshot(
+                get_request("/auth?token=deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!response.headers().contains_key(header::SET_COOKIE));
+        assert_eq!(
+            json_body(response).await["error"]["details"]["mode"],
+            "shared"
+        );
+    }
+
+    #[tokio::test]
+    async fn in_local_mode_me_is_the_admin_owner_and_login_is_a_conflict() {
+        let (_dir, db_path) = temp_db();
+        let (app, token) = app_for(&db_path);
+        let me = app
+            .clone()
+            .oneshot(session_get("/api/auth/me", &token))
+            .await
+            .unwrap();
+        let me = json_body(me).await;
+        assert_eq!(
+            me,
+            serde_json::json!({ "mode": "local", "user": null, "role": "admin" })
+        );
+
+        let login = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/login")
+                    .header(header::HOST, HOST)
+                    .header(header::ORIGIN, "http://127.0.0.1:5731")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"email":"pat@example.com","password":"x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            json_body(login).await["error"]["details"]["reason"],
+            "local_mode"
+        );
+    }
 
     #[tokio::test]
     async fn api_without_session_is_unauthorized() {
@@ -930,7 +1050,42 @@ mod tests {
         assert!(!content_type(&response).starts_with("text/html"));
     }
 
+    #[tokio::test]
+    async fn status_reports_local_mode() {
+        let (_dir, db_path) = temp_db();
+        let (app, token) = app_for(&db_path);
+        let response = app
+            .oneshot(session_get("/api/status", &token))
+            .await
+            .unwrap();
+        assert_eq!(json_body(response).await["mode"], "local");
+    }
+
     // -- desktop router ------------------------------------------------------
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_runs_as_the_local_owner_even_over_books_with_users() {
+        let (_dir, db_path) = temp_db();
+        add_ready_user(&db_path, "pat@example.com", crate::identity::Role::Admin);
+        let state = AppState::new(db_path.clone(), auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["localhost".to_string()]),
+        );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .header(header::HOST, "localhost")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(json_body(response).await["mode"], "local");
+    }
 
     #[cfg(feature = "desktop")]
     #[tokio::test]
@@ -975,6 +1130,31 @@ mod tests {
                 Request::builder()
                     .uri("/api/accounts")
                     .header("host", "127.0.0.1:5731")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[cfg(feature = "desktop")]
+    #[tokio::test]
+    async fn the_desktop_router_refuses_two_host_headers() {
+        let (_dir, db_path) = temp_db();
+        let state = AppState::new(db_path, auth::generate_token());
+        let router = build_desktop_router(
+            state,
+            auth::TrustedOrigins::exactly(vec!["nigel.localhost".to_string()]),
+        );
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/accounts")
+                    .header("host", "nigel.localhost")
+                    .header("host", "books.example.com")
                     .body(Body::empty())
                     .unwrap(),
             )

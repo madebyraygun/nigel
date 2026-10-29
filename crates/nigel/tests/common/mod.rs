@@ -2,6 +2,9 @@
 
 #![allow(dead_code)]
 
+#[cfg(feature = "serve")]
+pub mod serve;
+
 use std::path::PathBuf;
 
 use assert_cmd::cargo::cargo_bin_cmd;
@@ -100,15 +103,23 @@ impl TestEnv {
     /// Build a `nigel` Command with HOME pointed at our temp dir and every
     /// invoicing credential cleared from the inherited environment, so no test
     /// can reach Stripe, R2, or Mailgun on a machine where those are exported.
-    /// The books-password variables are cleared too; a test that needs one sets
-    /// it on its own command.
+    /// The books-password and server variables are cleared too; a test that
+    /// needs one sets it on its own command.
     pub fn cmd(&self) -> Command {
-        let mut cmd = Command::new(private_binary());
+        Command::from_std(self.std_cmd())
+    }
+
+    /// [`TestEnv::cmd`] as a plain `std::process::Command`, for a run that has
+    /// to be spawned and read while it is still going — `nigel serve`.
+    pub fn std_cmd(&self) -> std::process::Command {
+        let mut cmd = std::process::Command::new(private_binary());
         cmd.env("HOME", self.home.path());
-        for var in INVOICING_ENV_VARS
-            .iter()
-            .chain(&["NIGEL_DB_PASSWORD", "NIGEL_DB_PASSWORD_FILE"])
-        {
+        for var in INVOICING_ENV_VARS.iter().chain(&[
+            "NIGEL_DB_PASSWORD",
+            "NIGEL_DB_PASSWORD_FILE",
+            "NIGEL_SERVER_PUBLIC_URL",
+            "NIGEL_CLIENT_IP_HEADER",
+        ]) {
             cmd.env_remove(var);
         }
         cmd

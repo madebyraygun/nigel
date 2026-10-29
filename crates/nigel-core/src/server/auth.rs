@@ -8,15 +8,19 @@
 
 use axum::body::Body;
 use axum::extract::{Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use rand::RngCore;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use super::error::ApiError;
+use super::mode::Mode;
+use super::principal::{Principal, SessionUser};
 use super::state::AppState;
+use crate::identity::sessions::{self, ActiveSession, SessionKind};
 
 pub const SESSION_COOKIE: &str = "nigel_session";
 
@@ -179,6 +183,16 @@ pub fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
+/// The request's `Host`, when it carries exactly one. A request with two
+/// names no single host, so neither guard trusts either of them.
+fn sole_host(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let mut hosts = headers.get_all(header::HOST).iter();
+    match (hosts.next(), hosts.next()) {
+        (Some(host), None) => host.to_str().ok(),
+        _ => None,
+    }
+}
+
 /// Outermost layer: reject anything not addressed to a trusted host.
 pub async fn host_guard(
     State(trusted): State<TrustedOrigins>,
@@ -187,10 +201,7 @@ pub async fn host_guard(
 ) -> Response {
     let headers = req.headers();
 
-    let host_ok = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|host| trusted.host_is_trusted(host));
+    let host_ok = sole_host(headers).is_some_and(|host| trusted.host_is_trusted(host));
     if !host_ok {
         return ApiError::forbidden().into_response();
     }
@@ -207,22 +218,232 @@ pub async fn host_guard(
     next.run(req).await
 }
 
-/// Layered over `/api` only — `/auth` and the static assets carry no data and
-/// are reachable without a session.
+/// True when the request's `Host` is this server's `server_public_url`: the
+/// request reached it over https through a proxy, so cookies are `Secure` and
+/// the answer carries HSTS. Loopback is never public.
+pub(crate) fn request_is_public(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    let Some(public) = state.config.public_url.as_ref() else {
+        return false;
+    };
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|host| public.matches_host(host))
+}
+
+/// Outermost guard of `nigel serve`. The `Host` must be loopback by any of
+/// its names, or the `server_public_url` host while the server is shared. An
+/// `Origin`, when sent, must be exactly the `server_public_url` origin on a
+/// public-host request; on a loopback-host request it may also be a loopback
+/// origin on any port, and is the public origin only while shared. A
+/// public-host request to a local-mode server re-derives the mode first, so a
+/// first user added with the CLI takes effect without a restart.
+pub async fn served_host_guard(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let loopback = TrustedOrigins::loopback();
+    let host = sole_host(req.headers()).map(str::to_string);
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .map(|value| value.to_str().map(str::to_string));
+    let Some(host) = host else {
+        return ApiError::forbidden().into_response();
+    };
+
+    let public = state.config.public_url.clone();
+    let via_public = public.as_ref().is_some_and(|p| p.matches_host(&host));
+    if !via_public && !loopback.host_is_trusted(&host) {
+        return ApiError::forbidden().into_response();
+    }
+
+    let mut mode = state.mode();
+    if via_public && mode == super::mode::Mode::Local {
+        mode = state.refresh_mode_throttled().await;
+    }
+    let shared = mode == super::mode::Mode::Shared;
+    if via_public && !shared {
+        return ApiError::forbidden().into_response();
+    }
+
+    if let Some(origin) = origin {
+        let trusted = origin.is_ok_and(|origin| {
+            let public_origin =
+                shared && public.as_ref().is_some_and(|p| p.matches_origin(&origin));
+            public_origin || (!via_public && loopback.origin_is_trusted(&origin))
+        });
+        if !trusted {
+            return ApiError::forbidden().into_response();
+        }
+    }
+
+    next.run(req).await
+}
+
+/// The one `/api` path that needs no session, as seen inside the nest.
+pub const LOGIN_PATH: &str = "/auth/login";
+
+/// What a user who must change a temporary password may still call.
+const MUST_CHANGE_ALLOWED: [(Method, &str); 5] = [
+    (Method::GET, "/auth/me"),
+    (Method::GET, "/status"),
+    (Method::GET, "/ping"),
+    (Method::POST, "/account/password"),
+    (Method::POST, "/auth/logout"),
+];
+
+/// `nigel_session=<token>; HttpOnly; SameSite=Strict; Path=/; Max-Age=<n>`,
+/// with `; Secure` for a request to the public host.
+pub fn session_cookie(token: &str, max_age_secs: i64, secure: bool) -> String {
+    format!(
+        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age_secs}{}",
+        if secure { "; Secure" } else { "" }
+    )
+}
+
+/// The cookie that ends a browser session.
+pub fn expired_cookie(secure: bool) -> String {
+    session_cookie("", 0, secure)
+}
+
+fn is_safe_method(method: &Method) -> bool {
+    matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+}
+
+/// The credential a request presents: `Authorization: Bearer` when that
+/// header is present (a malformed one is `None`, never a fall-back to the
+/// cookie), otherwise the `nigel_session` cookie.
+fn presented_credential(headers: &HeaderMap) -> Option<(Zeroizing<String>, SessionKind)> {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
+        let value = value.to_str().ok()?;
+        let scheme = value.get(..7)?;
+        if !scheme.eq_ignore_ascii_case("bearer ") {
+            return None;
+        }
+        let token = value[7..].trim();
+        return Some((Zeroizing::new(token.to_string()), SessionKind::Bearer));
+    }
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookies| cookie_value(cookies, SESSION_COOKIE))
+        .map(|token| (Zeroizing::new(token.to_string()), SessionKind::Cookie))
+}
+
+fn seconds_until(expires_at: &str, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+    let at = chrono::DateTime::parse_from_rfc3339(expires_at)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    Some((at - now).num_seconds().max(0))
+}
+
+/// Layered over `/api` only — `/auth` and the static assets carry no data.
+///
+/// Local mode: the per-run token cookie, and the request runs as the local
+/// owner. Shared mode: a session looked up by the hash of its token, joined
+/// to an enabled user, unexpired; the user's role is read on every request.
+/// `POST /api/auth/login` passes without one.
 pub async fn session_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    if req.uri().path() == LOGIN_PATH {
+        return next.run(req).await;
+    }
+    match state.mode() {
+        Mode::Local => local_session(state, req, next).await,
+        Mode::Shared => shared_session(state, req, next).await,
+    }
+}
+
+/// A token-cookie request re-derives the mode (throttled) before it is let
+/// through, so a first user added from another process ends the token
+/// session on loopback too, not only once the public host is used.
+async fn local_session(state: AppState, mut req: Request, next: Next) -> Response {
+    let Some(expected) = state.local_token() else {
+        return ApiError::unauthorized_shared().into_response();
+    };
     let authorized = req
         .headers()
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .filter_map(|cookies| cookie_value(cookies, SESSION_COOKIE))
-        .any(|token| tokens_match(token, state.session_token.expose()));
-
-    if authorized {
-        next.run(req).await
-    } else {
-        ApiError::unauthorized().into_response()
+        .any(|token| tokens_match(token, expected.expose()));
+    if !authorized {
+        return ApiError::unauthorized().into_response();
     }
+    if state.refresh_mode_throttled().await == Mode::Shared {
+        return ApiError::unauthorized_shared().into_response();
+    }
+    req.extensions_mut().insert(Principal::LocalOwner);
+    next.run(req).await
+}
+
+async fn shared_session(state: AppState, mut req: Request, next: Next) -> Response {
+    let Some((token, via)) = presented_credential(req.headers()) else {
+        return ApiError::unauthorized_shared().into_response();
+    };
+
+    let now = state.now();
+    let lookup = token.clone();
+    let gate = state.db_gate.clone().read_owned().await;
+    let db_path = state.db_path();
+    let found = super::routes::spawn_blocking_holding(
+        gate,
+        move || -> crate::error::Result<Option<(ActiveSession, Option<String>)>> {
+            let conn = crate::db::get_connection(&db_path)?;
+            let Some(session) = sessions::find_session(&conn, &lookup, now)? else {
+                return Ok(None);
+            };
+            let renewed = sessions::renew_session(&conn, &session, now)?;
+            Ok(Some((session, renewed)))
+        },
+    )
+    .await;
+    let (session, renewed) = match found {
+        Ok((_gate, Ok(Some(found)))) => found,
+        Ok((_gate, Ok(None))) => return ApiError::unauthorized_shared().into_response(),
+        Ok((_gate, Err(e))) => return ApiError::from(e).into_response(),
+        Err(e) => return e.into_response(),
+    };
+    if session.kind != via {
+        return ApiError::unauthorized_shared().into_response();
+    }
+
+    let method = req.method().clone();
+    if via == SessionKind::Cookie
+        && !is_safe_method(&method)
+        && !req.headers().contains_key(header::ORIGIN)
+    {
+        return ApiError::origin_required().into_response();
+    }
+    if session.must_change_password {
+        let path = req.uri().path();
+        let allowed = MUST_CHANGE_ALLOWED
+            .iter()
+            .any(|(m, p)| *m == method && *p == path);
+        if !allowed {
+            return ApiError::password_change_required().into_response();
+        }
+    }
+
+    let secure = request_is_public(&state, req.headers());
+    req.extensions_mut()
+        .insert(Principal::User(SessionUser::from(&session)));
+    let mut response = next.run(req).await;
+
+    if let (SessionKind::Cookie, Some(expires_at)) = (session.kind, renewed) {
+        if !response.headers().contains_key(header::SET_COOKIE) {
+            let cookie = seconds_until(&expires_at, now).and_then(|max_age| {
+                HeaderValue::from_str(&session_cookie(&token, max_age, secure)).ok()
+            });
+            if let Some(cookie) = cookie {
+                response.headers_mut().append(header::SET_COOKIE, cookie);
+            }
+        }
+    }
+    response
 }
 
 #[derive(Deserialize)]
@@ -237,8 +458,11 @@ pub async fn auth_redirect(
     State(state): State<AppState>,
     Query(query): Query<AuthQuery>,
 ) -> Response {
+    let Some(expected) = state.local_token() else {
+        return ApiError::unauthorized_shared().into_response();
+    };
     let token = query.token.unwrap_or_default();
-    if !tokens_match(&token, state.session_token.expose()) {
+    if !tokens_match(&token, expected.expose()) {
         return ApiError::unauthorized().into_response();
     }
 

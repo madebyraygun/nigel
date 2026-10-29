@@ -39,6 +39,31 @@ impl SessionKind {
     }
 }
 
+/// Proof that a sign-in passed every check it owed: the password, and the
+/// second factor when the user has one. `users::complete_sign_in` is the only
+/// production constructor and `create_session` consumes it, so a session
+/// cannot be issued on a path that skipped verification.
+#[derive(Debug)]
+pub struct SessionGrant {
+    user_id: i64,
+}
+
+impl SessionGrant {
+    pub(super) fn for_verified(user_id: i64) -> Self {
+        Self { user_id }
+    }
+
+    /// A grant without a sign-in, for tests that need a session.
+    #[cfg(any(test, feature = "testutil"))]
+    pub fn assume_verified(user_id: i64) -> Self {
+        Self { user_id }
+    }
+
+    pub fn user_id(&self) -> i64 {
+        self.user_id
+    }
+}
+
 /// A session just created. `token` is the only copy of the credential: it is
 /// returned to the client once and never stored.
 pub struct IssuedSession {
@@ -63,6 +88,7 @@ pub struct ActiveSession {
     pub id: i64,
     pub user_id: i64,
     pub uid: String,
+    pub email: String,
     pub role: Role,
     pub must_change_password: bool,
     pub kind: SessionKind,
@@ -91,16 +117,16 @@ fn parse_stamp(value: &str) -> Result<DateTime<Utc>> {
         .map_err(|_| NigelError::Other(format!("unreadable session timestamp: {value}")))
 }
 
-/// Issue a session for a user. It does not check the user is enabled: callers
-/// create sessions only after `verify_credentials` or `verify_totp` succeeds.
+/// Issue a session for the user a grant names.
 pub fn create_session(
     conn: &Connection,
-    user_id: i64,
+    grant: SessionGrant,
     kind: SessionKind,
     user_agent: Option<&str>,
     ip: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<IssuedSession> {
+    let user_id = grant.user_id;
     let mut raw = Zeroizing::new([0u8; TOKEN_BYTES]);
     rand::rngs::OsRng.fill_bytes(raw.as_mut());
     let token = Zeroizing::new(hex::encode(raw.as_ref()));
@@ -138,7 +164,7 @@ pub fn find_session(
     };
     let row = conn
         .query_row(
-            "SELECT s.id, s.user_id, u.uid, u.role, u.must_change_password, s.kind,
+            "SELECT s.id, s.user_id, u.uid, u.email, u.role, u.must_change_password, s.kind,
                     s.created_at, s.last_seen_at, s.expires_at
                FROM sessions s JOIN users u ON u.id = s.user_id
               WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND u.disabled_at IS NULL",
@@ -149,16 +175,18 @@ pub fn find_session(
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-                    r.get::<_, bool>(4)?,
-                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, bool>(5)?,
                     r.get::<_, String>(6)?,
                     r.get::<_, String>(7)?,
                     r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
                 ))
             },
         )
         .optional()?;
-    let Some((id, user_id, uid, role, must_change, kind, created, seen, expires)) = row else {
+    let Some((id, user_id, uid, email, role, must_change, kind, created, seen, expires)) = row
+    else {
         return Ok(None);
     };
     let role = Role::parse(&role)
@@ -169,6 +197,7 @@ pub fn find_session(
         id,
         user_id,
         uid,
+        email,
         role,
         must_change_password: must_change,
         kind,
@@ -232,7 +261,7 @@ mod tests {
         let user = admin(&conn);
         let issued = create_session(
             &conn,
-            user,
+            SessionGrant::assume_verified(user),
             SessionKind::Cookie,
             None,
             None,
@@ -257,7 +286,15 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let now = at("2026-01-01T00:00:00Z");
-        let issued = create_session(&conn, user, SessionKind::Bearer, None, None, now).unwrap();
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Bearer,
+            None,
+            None,
+            now,
+        )
+        .unwrap();
         let found = find_session(&conn, &issued.token, now).unwrap().unwrap();
         assert_eq!(found.user_id, user);
         assert_eq!(found.role, Role::Admin);
@@ -276,11 +313,27 @@ mod tests {
         let user = admin(&conn);
         let sam = insert_user(&conn, "sam@example.com", "bookkeeper");
         let start = at("2026-01-01T00:00:00Z");
-        let mine = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let mine = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         assert!(find_session(&conn, &mine.token, at("2026-01-31T00:00:00Z"))
             .unwrap()
             .is_none());
-        let theirs = create_session(&conn, sam, SessionKind::Cookie, None, None, start).unwrap();
+        let theirs = create_session(
+            &conn,
+            SessionGrant::assume_verified(sam),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         conn.execute("UPDATE users SET disabled_at = 'x' WHERE id = ?1", [sam])
             .unwrap();
         assert!(find_session(&conn, &theirs.token, start).unwrap().is_none());
@@ -296,7 +349,15 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let start = at("2026-01-01T00:00:00Z");
-        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let later = at("2026-01-02T00:00:00Z");
         let found = find_session(&conn, &issued.token, later).unwrap().unwrap();
         end_session(&conn, issued.id).unwrap();
@@ -309,7 +370,15 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let start = at("2026-01-01T00:00:00Z");
-        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let found = find_session(&conn, &issued.token, start).unwrap().unwrap();
         let after_expiry = at("2026-02-01T00:00:00Z");
         assert_eq!(renew_session(&conn, &found, after_expiry).unwrap(), None);
@@ -327,7 +396,15 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let start = at("2026-01-01T00:00:00Z");
-        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let found = find_session(&conn, &issued.token, start).unwrap().unwrap();
         assert_eq!(
             renew_session(&conn, &found, at("2026-01-01T00:59:59Z")).unwrap(),
@@ -343,7 +420,15 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let start = at("2026-01-01T00:00:00Z");
-        let issued = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let session = |now| find_session(&conn, &issued.token, now).unwrap().unwrap();
 
         let soon = at("2026-01-01T00:59:00Z");
@@ -387,7 +472,7 @@ mod tests {
         let long = "é".repeat(300);
         create_session(
             &conn,
-            user,
+            SessionGrant::assume_verified(user),
             SessionKind::Cookie,
             Some(&long),
             Some("203.0.113.9"),
@@ -408,11 +493,43 @@ mod tests {
         let (_dir, conn) = db();
         let user = admin(&conn);
         let start = at("2026-01-01T00:00:00Z");
-        let a = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
-        let b = create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
-        let c = create_session(&conn, user, SessionKind::Bearer, None, None, start).unwrap();
+        let a = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
+        let b = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
+        let c = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Bearer,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let sam = insert_user(&conn, "sam@example.com", "bookkeeper");
-        let theirs = create_session(&conn, sam, SessionKind::Cookie, None, None, start).unwrap();
+        let theirs = create_session(
+            &conn,
+            SessionGrant::assume_verified(sam),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         let live = |token: &str| find_session(&conn, token, start).unwrap().is_some();
         assert!(end_session(&conn, a.id).unwrap());
         assert!(!end_session(&conn, a.id).unwrap());
@@ -425,8 +542,57 @@ mod tests {
         assert!(live(&theirs.token));
         assert_eq!(end_user_sessions(&conn, sam, None).unwrap(), 1);
 
-        create_session(&conn, user, SessionKind::Cookie, None, None, start).unwrap();
+        create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            start,
+        )
+        .unwrap();
         assert_eq!(sweep_expired(&conn, at("2026-01-30T23:59:59Z")).unwrap(), 0);
         assert_eq!(sweep_expired(&conn, at("2026-01-31T00:00:00Z")).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_schema_refuses_a_bad_kind_a_repeated_hash_and_an_unknown_user() {
+        let (_dir, conn) = db();
+        let user = admin(&conn);
+        let insert = |hash: &[u8], user_id: i64, kind: &str| {
+            conn.execute(
+                "INSERT INTO sessions (token_hash, user_id, kind, created_at, last_seen_at, expires_at)
+                 VALUES (?1, ?2, ?3, 't', 't', 't')",
+                params![hash, user_id, kind],
+            )
+        };
+        assert!(insert(&[1; 32], user, "cookie").is_ok());
+        assert!(insert(&[2; 32], user, "magic").is_err(), "kind CHECK");
+        assert!(
+            insert(&[1; 32], user, "bearer").is_err(),
+            "token_hash UNIQUE"
+        );
+        assert!(
+            insert(&[3; 32], 9_999, "cookie").is_err(),
+            "user_id FOREIGN KEY"
+        );
+    }
+
+    #[test]
+    fn a_found_session_carries_its_users_email() {
+        let (_dir, conn) = db();
+        let user = admin(&conn);
+        let now = at("2026-01-01T00:00:00Z");
+        let issued = create_session(
+            &conn,
+            SessionGrant::assume_verified(user),
+            SessionKind::Cookie,
+            None,
+            None,
+            now,
+        )
+        .unwrap();
+        let found = find_session(&conn, &issued.token, now).unwrap().unwrap();
+        assert_eq!(found.email, "pat@example.com");
     }
 }

@@ -13,44 +13,247 @@ nigel serve --port 0        # an ephemeral port (the chosen port is printed)
 nigel serve --no-open       # print the URL instead of launching a browser
 ```
 
-The server prints a URL containing a one-time session token and opens it unless
-`--no-open` was passed. Ctrl-C shuts it down, draining in-flight requests.
+In local mode the server prints a URL containing a one-time session token and
+opens it unless `--no-open` was passed. In shared mode it prints no token (see
+[Modes](#modes)). Ctrl-C shuts it down, draining in-flight requests.
+
+An encrypted database unlocks before the server binds when
+`NIGEL_DB_PASSWORD_FILE` (a path to a file holding the password, one trailing
+newline stripped, at most 4 KiB) or `NIGEL_DB_PASSWORD` is set; setting both is
+an error. A password that does not unlock the books, or a file that cannot be
+read, stops `nigel serve` with the error. With neither variable set, or on
+unencrypted books, startup is unchanged: encrypted books start locked and
+unlock over loopback.
+
+`nigel serve` writes these to stderr before it binds, each only when it applies:
+
+- local mode with `server_public_url` set: the address is ignored until the
+  books have a user;
+- shared mode on unencrypted books: the sign-in layer protects the API, not the
+  file on disk;
+- shared mode with `server_public_url` and no `client_ip_header`: every request
+  arrives from the proxy's address and shares one sign-in rate limit;
+- shared mode with users whose two-step secrets this machine's `server.key`
+  cannot open, listing their emails and the `nigel user reset-password
+  <email> --clear-totp` recovery;
+- `server.key` or its directory readable by other users.
+
+Shared mode prints `Nigel is serving <company> to signed-in users at
+<server_public_url> (and http://127.0.0.1:<port>).` with `server_public_url`
+set, or `Nigel is serving <company> to signed-in users at
+http://127.0.0.1:<port>.` without it, and no token link, so no credential
+reaches a journal. Local mode prints the token link as it always has.
+
+### Settings
+
+| Key | Environment | Value |
+|---|---|---|
+| `server_public_url` | `NIGEL_SERVER_PUBLIC_URL` | One `https://` origin: host, an optional port, no path, query or credentials |
+| `client_ip_header` | `NIGEL_CLIENT_IP_HEADER` | `CF-Connecting-IP` or `X-Forwarded-For` (any case), or unset |
+
+The environment variable wins over `settings.json`. Values are trimmed, and a
+blank value counts as unset. A value that does not parse stops `nigel serve` at startup with an error naming
+it. `server_public_url` refuses every spelling of the loopback interface
+(`localhost`, `*.localhost`, `127.0.0.1`, `127.1`, `2130706433`, `0x7f.1`, `[::1]`,
+`::ffff:127.0.0.1`, `0.0.0.0`, `[::]`), because loopback is always accepted and
+the `Secure` cookies and HSTS that follow this address must never reach it. The
+default port 443 is never part of the address.
+
+## Modes
+
+The server is in one of two modes, derived from the books.
+
+- **Local** — the books have no users, or are encrypted and still locked.
+  Exactly what the server has always been: the token link, the `nigel_session`
+  cookie it sets, loopback only.
+- **Shared** — the books are open and have at least one user. Only signed-in
+  users are admitted. `GET /auth?token=…` answers `401 unauthorized` with
+  `details.mode = "shared"` and sets no cookie, and a non-loopback `Host` is
+  accepted only when it is `server_public_url`.
+
+The mode is read at startup, again after an unlock and after a data-directory
+switch, and — while local — on a request to the public host or carrying the
+token cookie, at most every 2 seconds. That is how a first `nigel user add` takes
+effect without a restart. The mode never returns to local within a run, and
+entering shared mode retires the token, so a stale reading can only ever be the
+one that accepts less. A failure to read the books leaves the mode where it was
+and is logged once.
 
 ## Security model
 
-Localhost is not a trust boundary on its own, so three checks apply in order:
+Localhost is not a trust boundary on its own, so the checks below apply in order.
 
-1. **Bind.** The listener is on `127.0.0.1` only — never `0.0.0.0`.
+1. **Bind.** The listener is on `127.0.0.1` only — never `0.0.0.0`. Anything
+   reached from elsewhere arrives through a tunnel or proxy on the same machine.
 2. **Host/Origin.** The `Host` header, and `Origin` when the request carries
-   one, must name `localhost`, `127.0.0.1`, or `[::1]` on any port. Anything
-   else is `403 forbidden`. Matching is exact, so names like
-   `127.0.0.1.example.com` that resolve to loopback are still rejected — this is
-   what blocks DNS rebinding. Allowing any port is what lets the vite dev server
-   on `:5173` proxy through.
-3. **Session.** A 32-byte token is generated per server run.
-   `GET /auth?token=<token>` compares it in constant time, sets the
-   `nigel_session` cookie (`HttpOnly`, `SameSite=Strict`, `Path=/`), and
-   redirects to `/`. Every `/api` route requires that cookie; without it the
-   response is `401 unauthorized`. Static assets carry no data and are served
-   without a session.
+   one, must name `localhost`, `127.0.0.1`, or `[::1]` on any port, in both
+   modes. In shared mode the `server_public_url` host is also accepted, and its
+   origin is compared whole: scheme, host and port. A request whose `Host` is
+   the public host accepts only the public origin, never a loopback one.
+   Anything else is `403 forbidden`. Matching is exact, so names like `127.0.0.1.example.com` that
+   resolve to loopback are still rejected — this is what blocks DNS rebinding.
+   Allowing any loopback port is what lets the vite dev server on `:5173` proxy
+   through. A request is judged by its `Host` only when it carries exactly one
+   `Host` header; two are refused. A proxy or tunnel must therefore forward the
+   public name as `Host`: a forwarded `Host: 127.0.0.1` is answered as
+   loopback.
+3. **Session.** Every `/api` route except `POST /api/auth/login` needs one.
+   - *Local:* a 32-byte token generated per server run. `GET /auth?token=<token>`
+     compares it in constant time, sets the `nigel_session` cookie (`HttpOnly`,
+     `SameSite=Strict`, `Path=/`), and redirects to `/`. Without the cookie the
+     response is `401 unauthorized`.
+   - *Shared:* `Authorization: Bearer <hex>` when that header is present (a
+     malformed one is `401`, never a fall back to the cookie), otherwise the
+     `nigel_session` cookie. The token is looked up by its SHA-256 and joined to
+     a user who is not disabled; the user's role is read on every request, so a
+     disable takes effect on the next one. A missing, unknown, expired or
+     disabled session is `401 unauthorized` with `details.mode = "shared"`.
+
+   Static assets carry no data and are served without a session.
+4. **Who may call what.** Until the role table lands, a signed-in user who is
+   not an admin may call only `GET /api/ping`, `GET /api/auth/me`,
+   `POST /api/auth/logout` and `POST /api/account/*`; everything else, unknown
+   paths included, answers `403 forbidden` with `details: { "reason": "role",
+   "required": "admin" }`. The local owner — a local-mode token session, or the
+   desktop shell — may call everything.
 
 The token is never written to disk and never appears in a response body. The
 database password is likewise runtime-only.
 
 Two routers are built from the same routes. `build_router` is what `nigel serve`
-runs: it trusts the loopback interface by its three names and puts every `/api`
-route behind a session cookie, because anything on the machine can reach a
-loopback port. `build_desktop_router` takes its trusted origin as a parameter and
-carries no session layer at all — a desktop shell serves it over a custom URI
-scheme registered inside its own process, which nothing else on the machine can
-address. The absence is structural rather than conditional: the layer is not
-attached, so there is no flag that could be set wrongly.
+runs: it puts every `/api` route behind the session layer, because anything on
+the machine can reach a loopback port. `build_desktop_router` takes its trusted
+origin as a parameter and carries no session layer at all — a desktop shell
+serves it over a custom URI scheme registered inside its own process, which
+nothing else on the machine can address. The absence is structural rather than
+conditional: the layer is not attached, so there is no flag that could be set
+wrongly. Every desktop request runs as the local owner, so `GET /api/auth/me`
+answers `local` there whatever the books hold.
+
+### Sessions
+
+A shared-mode session cookie is `nigel_session=<token>; HttpOnly;
+SameSite=Strict; Path=/; Max-Age=<seconds>`, with `; Secure` when the request's
+`Host` is `server_public_url`. Loopback is plain http and omits it.
+
+- A session ends after 30 days without use and in any case 90 days after
+  sign-in. A session row is created only by a completed sign-in.
+- A request more than an hour after the session was last seen renews it: the
+  idle window restarts, never past the 90-day limit, and a cookie session gets
+  a fresh `Set-Cookie` with the same token and a `Max-Age` equal to the time
+  remaining.
+- A session answers only on the transport it was issued for. A cookie session
+  presented as a bearer token, and a bearer session sent as a cookie, are both
+  `401`.
+- Expired sessions are deleted at startup and at each sign-in.
+- While the user's `mustChangePassword` is set, the session may call only
+  `GET /api/auth/me`, `GET /api/status`, `GET /api/ping`,
+  `POST /api/account/password` and `POST /api/auth/logout`; everything else is
+  `403 password_change_required`. [Who may call what](#security-model) narrows
+  this further: until roles land, a non-admin gets `403` with `details.reason =
+  "role"` on `GET /api/status`.
+- Changing a password ends the user's other sessions and keeps the current one.
+
+### CSRF
+
+`SameSite=Strict` stops a cross-site page sending the cookie. Behind it, the
+`Host` check above, and the `Origin` check when one is sent. In shared mode a
+state-changing request (anything but `GET`, `HEAD` or `OPTIONS`) that
+authenticates with the cookie and carries no `Origin` is `403 forbidden` with
+`details.reason = "origin_required"`; a browser sign-in (`client` of `browser`)
+without `Origin` is refused the same way. Bearer-token requests and `native`
+sign-ins are exempt, since nothing sends a bearer header on a page's behalf.
+No `GET` changes the books.
+
+### Response headers
+
+| Header | Where |
+|---|---|
+| `X-Content-Type-Options: nosniff` | every response |
+| `X-Frame-Options: DENY` | every response (the invoice and document previews answer `SAMEORIGIN` for their own frame) |
+| `Referrer-Policy: same-origin` | every response |
+| `Cache-Control: no-store` | every `/api` response |
+| `Strict-Transport-Security: max-age=31536000` | responses to the `server_public_url` host only; on loopback it would pin `localhost` to https |
+
+### Rate limits
+
+In memory and process-wide, so a restart clears them. An attempt is charged
+when it is admitted, before any password is checked; the handler then settles
+it. Parallel guesses therefore cannot all pass the check, and a locked bucket
+answers without spending any Argon2 time.
+
+| Bucket | Key | Limit | Lockout |
+|---|---|---|---|
+| Account | The normalized email, including emails that match no user | 5 failures | 15 minutes |
+| Client IP | An IPv4 address or an IPv6 /64 (an IPv4-mapped address counts as IPv4) | 20 failures in a sliding 15 minutes | 15 minutes |
+
+- A count with no failure for 15 minutes starts again from zero.
+- A wrong password and a wrong code are failures. `totp_required`, a request
+  the server could not judge (`500`), and a successful sign-in take the charge
+  back; a sign-in also resets the account's count.
+- Account routes that check a current password (`/api/account/*`) charge the
+  same two buckets: a stolen session cannot be used to guess the password. On
+  those routes only a correct code on `totp/remove` resets the account's
+  count. Proving the password alone takes back that attempt's charge and leaves
+  earlier failures standing, and a wrong code on `totp/remove` is charged.
+  Confirming a setup (`totp/confirm`) is not limited: the secret it guesses
+  against is the caller's own.
+- Entries for emails that belong to a user are never evicted. Entries for
+  other emails and for client IPs are capped at 10,000 each; when a table is
+  full of running lockouts a new unknown email or new IP is admitted untracked
+  rather than refused. A flood therefore cannot lock real users out, and the
+  accepted cost is that during a large flood (tens of thousands of failures
+  from thousands of /64s within 15 minutes) an attacker can tell real emails,
+  which lock, from unknown ones, which no longer do. The server logs
+  `limiter_full` (at most once a minute) when a table reaches that state.
+- A locked sign-in is `429 too_many_attempts` with `details.retryAfterMs`
+  (never more than one lockout). Its message, "Sign-in is temporarily
+  unavailable. Try again later.", accuses no one. An account route locked the
+  same way says "Too many wrong passwords. Try again later."
+
+**`client_ip_header`.** The client IP is the TCP peer, unless the peer is
+loopback and `client_ip_header` is set. Then it is `CF-Connecting-IP` as given,
+or the rightmost entry of `X-Forwarded-For`, with any `:port` or `[v6]:port`
+stripped. The header is read only from a loopback peer, so a remote client
+cannot choose its bucket. A header that is configured but absent falls back to
+the peer; one that is present but holds no address gets its own bucket (not the
+proxy's) and logs `ip=invalid-forwarded`. With the header unset behind a proxy,
+every client shares the proxy's bucket.
+
+### Event lines
+
+Sign-in events go to stderr, one line each, for the journal:
+
+```
+auth event=login_failed email="nobody@example.com" user=- ip=203.0.113.9 session=- reason=credentials
+```
+
+Absent fields are `-`. The email is cut to 254 characters and quoted with
+escapes, so a typed email cannot start a second line, and no line can hold a
+password, code or token. `ip` is the full address for a resolved client, or
+`invalid-forwarded`. `event` is one of:
+
+| `event` | When | `reason` |
+|---|---|---|
+| `login_succeeded` | A session was issued | |
+| `login_failed` | Wrong password or code | `credentials`, `code` |
+| `login_refused` | A locked bucket refused the attempt; `email` is the normalized account key, not the raw input | |
+| `lockout` | An attempt started a lockout | `account`, `ip` |
+| `logout` | A session was ended | |
+| `password_changed` | `POST /api/account/password` succeeded | |
+| `totp_enabled` | Two-step was confirmed | |
+| `totp_removed` | Two-step was removed | |
+| `totp_unavailable` | The secret could not be opened with this machine's `server.key` | |
+| `shared_mode_began` | The server entered shared mode | |
+| `limiter_full` | A limiter table is full of lockouts | `account`, `ip` |
 
 ## Locked state
 
 An encrypted database starts **locked**: the server has the file but not the
-key. `GET /api/ping`, `GET /api/status`, and `POST /api/unlock` answer in that
-state; every other `/api` path returns `423 locked` until the password arrives —
+key. `GET /api/ping`, `GET /api/status`, `POST /api/unlock`,
+`POST /api/auth/login`, `POST /api/auth/logout` and `GET /api/auth/me` answer in
+that state (login answers `409 local_mode`, since locked books have no readable
+users); every other `/api` path returns `423 locked` until the password arrives —
 including unknown ones, which are locked before they are reported missing. Unlocking also runs any pending schema migrations, which
 `nigel serve` cannot run at startup on a database it cannot open.
 
@@ -84,11 +287,16 @@ structured context to give:
 | Code | Status | Meaning |
 |------|--------|---------|
 | `bad_request` | 400 | Malformed or contradictory parameters |
-| `unauthorized` | 401 | Missing or invalid session cookie |
+| `unauthorized` | 401 | Missing or invalid session; in shared mode `details.mode = "shared"` |
 | `invalid_password` | 401 | Wrong database password; `details` carries the attempt budget |
-| `forbidden` | 403 | Host/Origin check failed |
+| `invalid_credentials` | 401 | Login refused: the email, password, user status or code didn't match |
+| `totp_required` | 401 | The password was correct; send it again with `code` |
+| `password_change_required` | 403 | This session's user must change a temporary password first |
+| `too_many_attempts` | 429 | Login rate limit; `details.retryAfterMs` says how long |
+| `busy` | 503 | No password-verification slot came free within 2 seconds; retry after `details.retryAfterMs` |
+| `forbidden` | 403 | Host/Origin check failed, a cookie write without `Origin` (`details.reason = "origin_required"`), or the role check (`details.reason = "role"`, `details.required`) |
 | `not_found` | 404 | No such route or record |
-| `conflict` | 409 | A guardrail blocked the change; `details` carries a reason code |
+| `conflict` | 409 | A guardrail blocked the change; `details` carries a reason code, including `local_mode` |
 | `payload_too_large` | 413 | An upload exceeded the size limit |
 | `locked` | 423 | The database is encrypted and not yet unlocked |
 | `internal` | 500 | Unexpected server-side failure |
@@ -100,12 +308,13 @@ structured context to give:
 ### `GET /auth?token=<token>`
 
 Exchanges the startup token for a session cookie. Responds `302` with
-`Location: /` and a `Set-Cookie` header on success, `401` otherwise. This is the
+`Location: /` and a `Set-Cookie` header on success, `401` otherwise — in shared
+mode always `401` with `details.mode = "shared"`, and no cookie. This is the
 only route outside `/api` that is part of the API surface.
 
 ### `GET /api/ping`
 
-Liveness probe. Requires a session; touches no data.
+Liveness probe. Requires a session (any role); touches no data.
 
 ```json
 { "ok": true, "version": "1.0.1" }
@@ -121,6 +330,7 @@ uninitialized, so the SPA can decide which screen to show before it has data.
   "initialized": true,
   "encrypted": true,
   "locked": false,
+  "mode": "local",
   "companyName": "Bluepeak LLC",
   "profile": "business",
   "version": "1.0.1",
@@ -157,7 +367,8 @@ a key, and `locked` whether this process still lacks that key. `companyName` is
 `dataDir` names the directory of the database the server actually opened;
 `dataDirDisplay` is the same path with the home directory written as `~`, for
 showing to a person, and is the full path when the directory is outside home.
-`profile` is `business` or `personal` — which chart of accounts the database
+`mode` is `local` or `shared` (see [Modes](#modes)); a desktop shell always
+reports `local`. `profile` is `business` or `personal` — which chart of accounts the database
 was created with (`nigel init --profile`). The SPA hides the K-1 worksheet
 from the report directory and relabels the name field for personal books;
 while locked or uninitialized it reads `business`, since the profile lives in
@@ -290,6 +501,108 @@ as it does to every other endpoint.
 [`POST /api/settings/data-dir`](#switching-data-directory), which already
 validates, migrates and rebinds, and which relocks the server when the target
 turns out to be encrypted.
+
+### Signing in
+
+Shared mode only. In local mode the three routes below answer as noted, and
+every account route is `409 conflict` with `details.reason = "local_mode"`.
+All three answer while the books are locked.
+
+#### `POST /api/auth/login`
+
+The one `/api` route that needs no session. Capped at 8 KiB (`413
+payload_too_large`).
+
+```json
+{ "email": "pat@example.com", "password": "…", "code": "123456", "client": "browser" }
+```
+
+`code` is needed only when the user has two-step on. `client` is `browser` (the
+default) or `native`, for an app that holds its own token. A browser sign-in
+must carry an `Origin` header, or it is `403` with `details.reason =
+"origin_required"`.
+
+| Answer | When |
+|---|---|
+| `200`, `browser` | `{ "user": {…} }` and the `nigel_session` `Set-Cookie` (`Max-Age` 2,592,000, 30 days) |
+| `200`, `native` | `{ "user": {…}, "token": "<hex>", "expiresAt": "…" }` and no cookie; the token is sent back as `Authorization: Bearer` |
+| `401 totp_required` | The password was right and two-step is on, but `code` is missing. Not a failure: send all three fields again |
+| `401 invalid_credentials` | A wrong email, password, code, or a disabled user, all with "That email and password don't match." A wrong code, which is only answered after the password was proven, says "That code didn't match. Check the time on your device." |
+| `429 too_many_attempts` | A rate limit is running; `details.retryAfterMs` |
+| `503 busy` | No password-verification slot came free within 2 seconds; retry after `details.retryAfterMs`. Not a failed attempt |
+| `409 conflict` | `details.reason = "local_mode"` |
+| `500 internal` | `details.reason = "totp_unavailable"`: this machine's `server.key` cannot open the user's secret. An admin clears it with `nigel user reset-password <email> --clear-totp` |
+
+Every sign-in runs exactly one Argon2id verification, a warmed dummy hash for an
+unknown address, so timing reveals nothing about which emails exist.
+At most as many verifications run at once as the machine has cores, capped at
+four. An admitted attempt that finds every slot taken waits up to 2 seconds for
+one; if none comes free it is refused `503 busy` and is not charged against the
+sign-in limits. The sign-in limits also bound how many attempts one client can
+have waiting.
+
+`user` is `{ id, email, displayName, role, totpEnabled, mustChangePassword }`.
+It carries no hash or secret.
+
+#### `POST /api/auth/logout`
+
+Ends the current session and answers `200 { "loggedOut": true }`, with an
+expiring `Set-Cookie` for a browser session. In local mode there is no session
+and the answer is the same.
+
+#### `GET /api/auth/me`
+
+```json
+{
+  "mode": "shared",
+  "user": {
+    "id": 2, "email": "pat@example.com", "displayName": "Pat Example",
+    "role": "bookkeeper", "totpEnabled": true, "mustChangePassword": false
+  },
+  "role": "bookkeeper"
+}
+```
+
+In local mode, and on a desktop shell, `mode` is `local`, `user` is `null` and
+`role` is `admin`. A client keys what it shows off `role`.
+
+### Your account
+
+The signed-in user's own password and two-step verification, open to every role
+and to a user who must change a temporary password. Each body is capped at 8 KiB.
+In local mode these are `409 local_mode`. A wrong current password or a wrong
+code counts against the [rate limits](#rate-limits).
+
+| Route | Body | Effect |
+|---|---|---|
+| `POST /api/account/password` | `currentPassword`, `newPassword` | Sets the new password, clears `mustChangePassword`, and ends the user's other sessions. `200 { "changed": true }` |
+| `POST /api/account/totp/setup` | `currentPassword` | `200 { "setupId", "secret", "otpauthUri", "qrSvg" }`: the base32 secret, the `otpauth://` URI and a server-drawn SVG QR code. Nothing is stored yet |
+| `POST /api/account/totp/confirm` | `setupId`, `code` | Checks the code against the pending secret, then seals and stores it. `200 { "totpEnabled": true }` |
+| `POST /api/account/totp/remove` | `currentPassword`, `code` | Clears the secret. `200 { "totpEnabled": false }` |
+
+A setup holds its secret in memory for 10 minutes, for the session that started
+it; another session cannot confirm it, and starting again replaces it. The first
+confirmation on a machine creates `server.key`, the key that seals every user's
+secret.
+
+`details.reason` on a refusal:
+
+| Status | `reason` | When |
+|---|---|---|
+| 400 | `wrong_password` | The current password is wrong |
+| 400 | `too_short`, `too_long`, `matches_identity`, `unchanged` | The new password breaks a rule |
+| 400 | `wrong_code` | The code is wrong (confirm, remove) |
+| 409 | `setup_expired` | The setup is unknown, expired, or another session's |
+| 409 | `totp_enabled` | Two-step is already on (setup, confirm) |
+| 409 | `totp_not_enabled` | Two-step is not on (remove) |
+| 409 | `local_mode` | The server has no users |
+| 500 | `totp_unavailable` | The server key is missing or unreadable |
+
+A `429 too_many_attempts` on these routes reads "Too many wrong passwords. Try
+again later." Like sign-in, a route that checks the current password answers
+`503 busy` when no password-verification slot comes free within 2 seconds. The
+`setup` response holds the secret, so the server clears its own copies as soon
+as it can; the response body itself cannot be erased from memory by the server.
 
 ## Reading data
 

@@ -1,6 +1,7 @@
 //! Server state and the encrypted-database gate: `GET /api/status`,
 //! `POST /api/unlock`, and the middleware that keeps every data route shut
-//! until the key arrives.
+//! until the key arrives. `/api/ping` and the sign-in routes
+//! (`/api/auth/login`, `/api/auth/logout`, `/api/auth/me`) pass it too.
 //!
 //! This is the web equivalent of the splash screen's password prompt. Unlock is
 //! process-wide because the password lives in the process-global
@@ -32,7 +33,14 @@ pub fn routes() -> Router<AppState> {
 
 /// The only `/api` paths that answer while the database is still locked. Paths
 /// are as seen inside the `/api` nest, which strips the mount point.
-const UNGATED_PATHS: [&str; 3] = ["/ping", "/status", "/unlock"];
+const UNGATED_PATHS: [&str; 6] = [
+    "/ping",
+    "/status",
+    "/unlock",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/me",
+];
 
 /// Refuse anything that needs the database key until the database is unlocked.
 ///
@@ -57,6 +65,8 @@ pub(crate) struct StatusResponse {
     initialized: bool,
     encrypted: bool,
     locked: bool,
+    /// `local` or `shared`; a desktop shell is always `local`.
+    mode: &'static str,
     company_name: Option<String>,
     /// `business` or `personal` — which chart of accounts the database keeps.
     /// The SPA hides the K-1 worksheet and relabels the name field from this.
@@ -142,6 +152,7 @@ pub(crate) async fn current_status(state: &AppState) -> ApiResult<StatusResponse
         initialized,
         encrypted,
         locked,
+        mode: state.mode().as_str(),
         company_name,
         profile: profile.as_str(),
         version: env!("CARGO_PKG_VERSION"),
@@ -223,6 +234,7 @@ async fn unlock(
 
     if unlocked {
         state.unlock.reset();
+        state.refresh_mode().await;
         return Ok(Json(UnlockResponse { locked: false }));
     }
 

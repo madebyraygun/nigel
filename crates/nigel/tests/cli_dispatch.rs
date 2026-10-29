@@ -5134,6 +5134,9 @@ fn user_add_prints_a_temporary_password_once_and_warns_on_unencrypted_books() {
                 ),
             ),
         )
+        .stdout(predicate::str::contains(
+            "Nigel will now require sign-in. Run `nigel serve` and sign in as pat@example.com.",
+        ))
         .stderr(predicate::str::contains("These books are not encrypted."))
         .get_output()
         .stdout
@@ -5182,7 +5185,8 @@ fn user_add_refuses_a_first_user_who_is_not_an_admin() {
     )
     .assert()
     .failure()
-    .stderr(predicate::str::contains("The first user must be an admin"));
+    .stderr(predicate::str::contains("The first user must be an admin"))
+    .stderr(predicate::str::contains("--admin"));
     let users: i64 = env
         .db()
         .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))

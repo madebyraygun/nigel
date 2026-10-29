@@ -85,30 +85,11 @@ impl ServerKey {
 
         let mut key = Zeroizing::new([0u8; KEY_LEN]);
         rand::rngs::OsRng.fill_bytes(key.as_mut());
-        let mut suffix = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut suffix);
-        let temp = dir.join(format!(".{KEY_FILE}.{}.tmp", hex::encode(suffix)));
-
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let linked = options
-            .open(&temp)
-            .and_then(|mut file| {
-                file.write_all(key.as_ref())?;
-                file.sync_all()
-            })
-            .and_then(|()| std::fs::hard_link(&temp, path));
-        let _ = std::fs::remove_file(&temp);
-        match linked {
+        match install_new_key(dir, path, key.as_ref()) {
             Ok(()) => Ok(Self(key)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => Self::load(path)?
                 .ok_or_else(|| NigelError::Other(format!("{} vanished", path.display()))),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(key_install_error(path, e)),
         }
     }
 
@@ -160,6 +141,85 @@ impl ServerKey {
             )
             .map(Zeroizing::new)
             .map_err(|_| refused())
+    }
+}
+
+/// Write `key` to a private temporary file in `dir` and hard-link it to
+/// `path`. A link never replaces an existing file, so a second process racing
+/// to create the key gets `AlreadyExists` and reads the winner's. The
+/// temporary file is removed on every path, and after a successful link the
+/// directory is synced so the new name survives a crash.
+fn install_new_key(dir: &Path, path: &Path, key: &[u8]) -> std::io::Result<()> {
+    let mut suffix = [0u8; 8];
+    rand::rngs::OsRng.fill_bytes(&mut suffix);
+    let temp = dir.join(format!(".{KEY_FILE}.{}.tmp", hex::encode(suffix)));
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let linked = options
+        .open(&temp)
+        .and_then(|mut file| {
+            file.write_all(key)?;
+            file.sync_all()
+        })
+        .and_then(|()| std::fs::hard_link(&temp, path));
+    let _ = std::fs::remove_file(&temp);
+    linked?;
+    sync_dir(dir)
+}
+
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn key_install_error(path: &Path, e: std::io::Error) -> NigelError {
+    NigelError::Other(format!(
+        "Could not create the server key at {}: {e}",
+        path.display()
+    ))
+}
+
+/// A sentence for `nigel serve` to print when the key, or the directory it
+/// lives in, is open to anyone but its owner. `None` when both are private or
+/// there is no key yet.
+pub fn permission_warning(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let file_mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+        if file_mode & 0o077 != 0 {
+            return Some(format!(
+                "warning: {} is open to other users (mode {file_mode:o}). Run `chmod 600 {}`.",
+                path.display(),
+                path.display()
+            ));
+        }
+        let dir = path.parent()?;
+        let dir_mode = std::fs::metadata(dir).ok()?.permissions().mode() & 0o777;
+        if dir_mode & 0o077 != 0 {
+            return Some(format!(
+                "warning: {} is open to other users (mode {dir_mode:o}). Run `chmod 700 {}`.",
+                dir.display(),
+                dir.display()
+            ));
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
     }
 }
 
@@ -268,5 +328,66 @@ mod tests {
         let _config = crate::settings::TempConfigDir::new();
         assert_eq!(key_path(), crate::settings::config_dir().join("server.key"));
         assert!(!key_path().starts_with(crate::settings::get_data_dir()));
+    }
+
+    fn entries(dir: &Path) -> Vec<std::ffi::OsString> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn losing_the_race_keeps_the_winners_key_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(KEY_FILE);
+        std::fs::write(&path, [9u8; 32]).unwrap();
+
+        let err = install_new_key(dir.path(), &path, &[1u8; 32]).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).unwrap(), [9u8; 32]);
+        assert_eq!(entries(dir.path()), [KEY_FILE]);
+        let key = ServerKey::load_or_create(&path).unwrap();
+        let sealed = ServerKey::from_bytes([9; 32]).seal(UID, b"x").unwrap();
+        assert_eq!(key.open(UID, &sealed).unwrap().as_slice(), b"x");
+    }
+
+    #[test]
+    fn a_failed_link_leaves_no_temp_file_and_the_error_names_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing").join(KEY_FILE);
+
+        let err = install_new_key(dir.path(), &path, &[1u8; 32]).unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+        assert!(entries(dir.path()).is_empty(), "{:?}", entries(dir.path()));
+        let message = key_install_error(&path, err).to_string();
+        assert!(message.contains(&path.display().to_string()), "{message}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_permissions_on_the_key_or_its_directory_are_reported() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let path = config.join(KEY_FILE);
+        assert_eq!(permission_warning(&path), None, "no key yet");
+
+        ServerKey::load_or_create(&path).unwrap();
+        assert_eq!(permission_warning(&path), None);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let warning = permission_warning(&path).unwrap();
+        assert!(warning.contains("chmod 600"), "{warning}");
+        assert!(warning.contains(&path.display().to_string()), "{warning}");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let warning = permission_warning(&path).unwrap();
+        assert!(warning.contains("chmod 700"), "{warning}");
     }
 }

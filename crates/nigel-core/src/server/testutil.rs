@@ -15,7 +15,12 @@ use rusqlite::Connection;
 use tower::ServiceExt;
 
 use super::auth;
+use super::config::{PublicUrl, ServerConfig};
+use super::mode::Mode;
 use super::state::AppState;
+use crate::identity::sessions::{self, SessionGrant, SessionKind};
+use crate::identity::users::{self, NewUser, User};
+use crate::identity::Role;
 
 pub const HOST: &str = "127.0.0.1:5731";
 pub const PASSWORD: &str = "correct horse battery staple";
@@ -855,4 +860,82 @@ fn seed_invoicing(conn: &Connection) {
     for id in ids {
         inv::refresh_status(conn, id, AS_OF).expect("refresh status");
     }
+}
+
+pub const PUBLIC_URL: &str = "https://books.example.com";
+pub const PUBLIC_HOST: &str = "books.example.com";
+/// The password `add_ready_user` gives every user it creates.
+pub const READY_PASSWORD: &str = "a long passphrase for tests";
+
+/// A config with `server_public_url` set to [`PUBLIC_URL`].
+pub fn public_config() -> ServerConfig {
+    ServerConfig {
+        public_url: Some(PublicUrl::parse(PUBLIC_URL).expect("public url")),
+        client_ip_header: None,
+    }
+}
+
+/// The router `nigel serve` would build over `db_path`, its mode derived the
+/// way `serve` derives it, and the state behind it.
+pub fn served_app(db_path: &Path, config: ServerConfig) -> (Router, AppState) {
+    let mode = super::mode::derive(db_path).unwrap_or(Mode::Local);
+    let state = AppState::for_serve(db_path.to_path_buf(), mode, config);
+    (super::build_router(state.clone()), state)
+}
+
+/// A user who has already chosen [`READY_PASSWORD`], so `must_change_password`
+/// is clear.
+pub fn add_ready_user(db_path: &Path, email: &str, role: Role) -> User {
+    let conn = crate::db::get_connection(db_path).expect("connection");
+    let now = crate::clock::now_utc();
+    let created = users::create_user(
+        &conn,
+        &NewUser {
+            email,
+            display_name: "Pat Example",
+            role,
+        },
+        now,
+    )
+    .expect("create user");
+    users::change_password(
+        &conn,
+        created.user.id,
+        &created.temporary_password,
+        READY_PASSWORD,
+        None,
+        now,
+    )
+    .expect("choose a password");
+    users::get_user(&conn, created.user.id)
+        .expect("read user")
+        .expect("user exists")
+}
+
+/// A session for `user_id` issued at `now`, as a sign-in would issue it.
+pub fn session_for(
+    db_path: &Path,
+    user_id: i64,
+    kind: SessionKind,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let conn = crate::db::get_connection(db_path).expect("connection");
+    let issued = sessions::create_session(
+        &conn,
+        SessionGrant::assume_verified(user_id),
+        kind,
+        None,
+        None,
+        now,
+    )
+    .expect("create session");
+    issued.token.to_string()
+}
+
+/// A request addressed to [`PUBLIC_HOST`].
+pub fn public_request(method: &str, uri: &str) -> axum::http::request::Builder {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, PUBLIC_HOST)
 }
