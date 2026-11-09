@@ -23,6 +23,7 @@ pub mod sessions;
 pub mod settings;
 pub mod setup;
 pub mod status;
+pub mod sync;
 pub mod transactions;
 
 use axum::http::Uri;
@@ -64,7 +65,8 @@ fn data_router() -> Router<AppState> {
         .merge(setup::routes())
         .merge(clients::routes())
         .merge(invoices::routes())
-        .merge(documents::routes());
+        .merge(documents::routes())
+        .merge(sync::routes());
 
     // A route that exists only to prove `api_router` — the assembly every
     // endpoint is mounted into — actually applies the guard, without pinning

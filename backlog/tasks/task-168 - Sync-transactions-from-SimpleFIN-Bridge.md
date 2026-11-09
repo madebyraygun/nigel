@@ -1,11 +1,11 @@
 ---
 id: TASK-168
 title: Sync transactions from SimpleFIN Bridge
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-09 22:22'
-updated_date: '2026-11-09 23:25'
+updated_date: '2026-11-09 23:55'
 labels:
   - importer
   - enhancement
@@ -33,7 +33,7 @@ Relates to TASK-117 (shared external-ID dedup) and TASK-46 (balances).
 - [x] #4 Transactions carry an `external_id`; one already imported by ID is never imported again, even if its description changes
 - [x] #5 A first sync can start after the last CSV import date so overlapping rows are not duplicated
 - [x] #6 Each account's reported balance is stored with its as-of date, and `report balance` can show it beside Nigel's computed figure
-- [ ] #7 Settings in the web app can paste a setup token, show linked accounts and run a sync
+- [x] #7 Settings in the web app can paste a setup token, show linked accounts and run a sync
 - [x] #8 The docs give an example timer unit that runs the sync, in the same shape as the existing schedule timers
 - [x] #9 Tests use a stubbed SimpleFIN server and fictional data; docs/importers.md gains the source
 <!-- AC:END -->
@@ -62,3 +62,9 @@ PR C — web (AC #7)
 12. API: POST /api/sync/setup, GET /api/sync/accounts, PUT mapping, POST /api/sync/run (dry-run flag), documented in docs/api.md. The access URL is never returned.
 13. A @nigel/ui component (wc-sync-settings: token entry, linked accounts with a mapping select, run/preview button, results) with a preview and describePreviewA11y, consumed by the Settings screen.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+SimpleFIN Bridge sync across four stacked PRs: #83 (multiplicity dedup, TASK-169), #84 (transactions.external_id with (account, id) dedup and import_parsed, reusable by TASK-117's FITID), #85 (nigel sync setup/accounts/sync, bank-reported balances, docs, systemd timer runbook), and the web Settings 'Bank sync' card with /api/sync endpoints.
+<!-- SECTION:FINAL_SUMMARY:END -->

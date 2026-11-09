@@ -9,6 +9,10 @@ import {
   type ApiErrorEnvelope,
   type AppSettings,
   type BalanceReport,
+  type BankSyncMapRequest,
+  type BankSyncRunRequest,
+  type BankSyncRunResult,
+  type BankSyncState,
   type CashflowReport,
   type CategorizeResult,
   type CategoryRow,
@@ -478,6 +482,16 @@ export interface ApiClient {
   changePassword(input: ChangePasswordRequest): Promise<PasswordStateResponse>;
   removePassword(input: RemovePasswordRequest): Promise<PasswordStateResponse>;
 
+  /** Whether a SimpleFIN bridge is connected, and its accounts. No network call. */
+  getBankSync(): Promise<BankSyncState>;
+  /** Claim a setup token and read the bridge's accounts. */
+  setupBankSync(token: string): Promise<BankSyncState>;
+  /** Ask the bridge for its accounts again, keeping every link. */
+  refreshBankAccounts(): Promise<BankSyncState>;
+  mapBankAccount(input: BankSyncMapRequest): Promise<BankSyncState>;
+  /** Preview (`dryRun`) or run a sync. */
+  runBankSync(input?: BankSyncRunRequest): Promise<BankSyncRunResult>;
+
   /** Invoicing clients, by name. Archived ones are excluded unless asked for. */
   getClients(includeArchived?: boolean): Promise<Client[]>;
   /** One client with its invoice history and open balance — `nigel client show`. */
@@ -919,6 +933,26 @@ export class FetchApiClient implements ApiClient {
       '/settings/password/remove',
       input,
     );
+  }
+
+  getBankSync(): Promise<BankSyncState> {
+    return this.request<BankSyncState>('GET', '/sync');
+  }
+
+  setupBankSync(token: string): Promise<BankSyncState> {
+    return this.request<BankSyncState>('POST', '/sync/setup', { token });
+  }
+
+  refreshBankAccounts(): Promise<BankSyncState> {
+    return this.request<BankSyncState>('POST', '/sync/accounts/refresh', {});
+  }
+
+  mapBankAccount(input: BankSyncMapRequest): Promise<BankSyncState> {
+    return this.request<BankSyncState>('PUT', '/sync/accounts/map', input);
+  }
+
+  runBankSync(input: BankSyncRunRequest = {}): Promise<BankSyncRunResult> {
+    return this.request<BankSyncRunResult>('POST', '/sync/run', input);
   }
 
   getClients(includeArchived = false): Promise<Client[]> {

@@ -92,11 +92,12 @@ describe('settings screen', () => {
     expect(index?.groups.flatMap((g) => g.items.map((i) => i.id))).toEqual([
       'letterhead',
       'security',
+      'bank-sync',
       'location',
       'appearance',
       'updates',
     ]);
-    for (const id of ['letterhead', 'security', 'location', 'appearance', 'updates']) {
+    for (const id of ['letterhead', 'security', 'bank-sync', 'location', 'appearance', 'updates']) {
       expect(section(el, id), id).toBeTruthy();
     }
     expect(index?.active).toBe('letterhead');
@@ -850,6 +851,121 @@ describe('settings screen', () => {
       await settle(el);
 
       expect(client.calls).toEqual([]);
+    });
+  });
+
+  describe('bank sync', () => {
+    const ACCOUNT_BASE = {
+      accountType: 'checking',
+      class: 'asset',
+      institution: null,
+      lastFour: null,
+    };
+    const LINKED = {
+      key: 'harborvale.example/chk1',
+      orgName: 'Harbor & Vale Bank',
+      name: 'Checking',
+      currency: 'USD',
+      account: null,
+      lastSynced: null,
+    };
+
+    function connectedClient(): FakeApiClient {
+      const client = new FakeApiClient();
+      client.accounts = [
+        { ...ACCOUNT_BASE, id: 1, name: 'Operating' },
+        { ...ACCOUNT_BASE, id: 2, name: 'Savings' },
+      ];
+      client.bankSync = { configured: true, accounts: [LINKED], warnings: [] };
+      return client;
+    }
+
+    const card = (el: NigelSettingsScreen) => {
+      const found = el.shadowRoot?.querySelector('wc-sync-settings');
+      if (!found) throw new Error('no wc-sync-settings');
+      return found;
+    };
+
+    function emit(el: NigelSettingsScreen, name: string, detail: unknown) {
+      card(el).dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+    }
+
+    it('loads the connection and offers every Nigel account as a target', async () => {
+      const { el, client } = await mount(connectedClient());
+      expect(client.calls).toEqual(expect.arrayContaining(['getBankSync', 'getAccounts']));
+      expect(card(el).configured).toBe(true);
+      expect(card(el).accounts).toEqual([LINKED]);
+      expect(card(el).targets).toEqual(['Operating', 'Savings']);
+    });
+
+    it('connects with a pasted token', async () => {
+      const { el, client } = await mount();
+      expect(card(el).configured).toBe(false);
+      emit(el, 'nc-sync-setup', { token: 'dG9rZW4=' });
+      await settle(el);
+      expect(client.calls).toContain('setupBankSync:dG9rZW4=');
+      expect(card(el).configured).toBe(true);
+    });
+
+    it('links and unlinks a bank account', async () => {
+      const { el, client } = await mount(connectedClient());
+      emit(el, 'nc-sync-map', { key: LINKED.key, account: 'Operating' });
+      await settle(el);
+      expect(client.calls).toContain(`mapBankAccount:${LINKED.key}:Operating`);
+      expect(card(el).accounts[0]?.account).toBe('Operating');
+
+      emit(el, 'nc-sync-map', { key: LINKED.key, account: null });
+      await settle(el);
+      expect(client.calls).toContain(`mapBankAccount:${LINKED.key}:null`);
+      expect(card(el).accounts[0]?.account).toBeNull();
+    });
+
+    it('shows a preview without re-reading anything', async () => {
+      const { el, client } = await mount(connectedClient());
+      client.calls.length = 0;
+      emit(el, 'nc-sync-run', { dryRun: true });
+      await settle(el);
+      expect(client.calls).toEqual(['runBankSync:dry']);
+      expect(card(el).outcome?.dryRun).toBe(true);
+      expect(card(el).busy).toBeNull();
+    });
+
+    it('re-reads the links and the status after a real sync', async () => {
+      const { el, client } = await mount(connectedClient());
+      client.calls.length = 0;
+      emit(el, 'nc-sync-run', { dryRun: false });
+      await settle(el);
+      expect(client.calls).toEqual(['runBankSync:real', 'getBankSync', 'getStatus']);
+      expect(card(el).outcome?.dryRun).toBe(false);
+    });
+
+    it('puts a refusal beside the card in the server’s words', async () => {
+      const client = connectedClient();
+      const { el } = await mount(client);
+      client.bankSyncError = new ApiError({
+        code: 'bad_request',
+        rawCode: 'bad_request',
+        message: 'SimpleFIN refused the stored credentials: access was revoked or has expired.',
+        status: 400,
+      });
+      emit(el, 'nc-sync-refresh', {});
+      await settle(el);
+      expect(card(el).error).toContain('access was revoked');
+      expect(card(el).busy).toBeNull();
+    });
+
+    it('offers a retry when the connection cannot be read', async () => {
+      const client = new FakeApiClient();
+      client.bankSyncLoadError = new Error('socket hang up');
+      const { el } = await mount(client);
+      expect(el.shadowRoot?.querySelector('wc-sync-settings')).toBeNull();
+      expect(section(el, 'bank-sync')?.textContent).toContain('Could not load bank sync.');
+
+      client.bankSyncLoadError = null;
+      const retry = section(el, 'bank-sync')?.querySelector('wa-button') as HTMLElement;
+      retry.click();
+      await settle(el);
+      expect(el.shadowRoot?.querySelector('wc-sync-settings')).toBeTruthy();
     });
   });
 });

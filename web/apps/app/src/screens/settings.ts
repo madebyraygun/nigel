@@ -14,14 +14,19 @@ import {
   type NcSettingsSectionDetail,
   type NcSwitchChangeDetail,
   type SecurityPanel,
+  type NcSyncMapDetail,
+  type NcSyncRunDetail,
+  type NcSyncSetupDetail,
   type SettingsIndexGroup,
+  type SyncBusy,
+  type SyncOutcome,
   type WcPasswordMode,
 } from '@nigel/ui';
 
 import { SignalWatcher } from '../mixins/signal-watcher.js';
 import { ApiError, type ApiClient } from '../api/index.js';
 import { getAppStore, type AppStore } from '../state/app-store.js';
-import type { AppSettings, Company } from '../api/types.js';
+import type { AppSettings, BankSyncState, Company } from '../api/types.js';
 import type { ScreenContext } from './context.js';
 import { activeSection, scrolledToBottom, scrollingAncestor } from './settings-spy.js';
 import { setUnsavedChanges, type UnsavedChanges } from '../state/unsaved.js';
@@ -77,6 +82,9 @@ const PASSWORD_FAILURE: Record<WcPasswordMode, string> = {
  * the database password, and the folder they live in. **This device** is
  * what this browser or window keeps for itself: the colour mode, how the
  * register edits a row, and the update check.
+ *
+ * **Bank sync** is here too: the bridge's credential lives in settings.json,
+ * but which bank account feeds which Nigel account is stored with the books.
  *
  * The letterhead is a draft against the stored values. While the two differ a
  * save bar holds Discard and Save; saving refreshes `/api/status`, which is
@@ -191,6 +199,14 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private securityPanel: SecurityPanel = null;
   @state() private dataDirError = '';
   @state() private colorMode: ColorMode = 'system';
+  @state() private bankSync: BankSyncState | null = null;
+  @state() private bankSyncLoadError = '';
+  /** Nigel account names a bank account can sync into. */
+  @state() private bankTargets: string[] = [];
+  @state() private syncBusy: SyncBusy = null;
+  @state() private syncOutcome: SyncOutcome | null = null;
+  @state() private syncNotices: string[] = [];
+  @state() private syncError = '';
   @state() private active = 'letterhead';
 
   private store: AppStore = getAppStore();
@@ -216,6 +232,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     window.addEventListener('beforeunload', this.onBeforeUnload);
     void this.loadAppSettings();
     void this.loadCompany();
+    void this.loadBankSync();
     this.colorMode = readMode();
   }
 
@@ -447,6 +464,87 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       this.savedFlash = false;
     }, SAVED_FLASH_MS);
   }
+
+  // -- bank sync ------------------------------------------------------------
+
+  private async loadBankSync(): Promise<void> {
+    this.bankSyncLoadError = '';
+    try {
+      const [state, accounts] = await Promise.all([
+        this.client.getBankSync(),
+        this.client.getAccounts(),
+      ]);
+      this.bankSync = state;
+      this.bankTargets = accounts.map((a) => a.name);
+    } catch (error) {
+      this.bankSyncLoadError =
+        error instanceof ApiError ? error.message : 'Could not load bank sync.';
+    }
+  }
+
+  private retryBankSync = () => {
+    void this.loadBankSync();
+  };
+
+  /**
+   * Every bank-sync call shares one shape: hold the controls, clear the last
+   * failure, and put a refusal beside the card in the server's own words — a
+   * revoked connection or a claimed token says what to do about it.
+   */
+  private async syncCall(busy: SyncBusy, work: () => Promise<void>): Promise<void> {
+    this.syncBusy = busy;
+    this.syncError = '';
+    try {
+      await work();
+    } catch (error) {
+      this.syncError =
+        error instanceof ApiError ? error.message : 'Could not reach the bank sync service.';
+    } finally {
+      this.syncBusy = null;
+    }
+  }
+
+  private handleSyncSetup = (event: CustomEvent<NcSyncSetupDetail>) =>
+    this.syncCall('setup', async () => {
+      const state = await this.client.setupBankSync(event.detail.token);
+      this.bankSync = state;
+      this.syncNotices = state.warnings;
+      this.syncOutcome = null;
+      this.toastOk('Connected to SimpleFIN.');
+    });
+
+  private handleSyncRefresh = () =>
+    this.syncCall('refresh', async () => {
+      const state = await this.client.refreshBankAccounts();
+      this.bankSync = state;
+      this.syncNotices = state.warnings;
+    });
+
+  private handleSyncMap = (event: CustomEvent<NcSyncMapDetail>) =>
+    this.syncCall('map', async () => {
+      try {
+        this.bankSync = await this.client.mapBankAccount(event.detail);
+      } catch (error) {
+        // The select already shows the choice that was refused; re-reading
+        // puts it back to what is stored.
+        void this.loadBankSync();
+        throw error;
+      }
+    });
+
+  private handleSyncRun = (event: CustomEvent<NcSyncRunDetail>) => {
+    const dryRun = event.detail.dryRun;
+    return this.syncCall(dryRun ? 'preview' : 'sync', async () => {
+      const result = await this.client.runBankSync({ dryRun });
+      this.syncOutcome = result;
+      this.syncNotices = [];
+      if (dryRun) return;
+      // The last-synced days moved, and new transactions change what the
+      // status line counts as flagged.
+      this.bankSync = await this.client.getBankSync();
+      await this.store.refreshStatus();
+    });
+  };
 
   // -- update check ---------------------------------------------------------
 
@@ -726,6 +824,31 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     `;
   }
 
+  private renderBankSync(): TemplateResult {
+    if (this.bankSyncLoadError) {
+      return html`<p class="error">${this.bankSyncLoadError}</p>
+        <div class="row">
+          <wa-button variant="brand" @click=${this.retryBankSync}>Retry</wa-button>
+        </div>`;
+    }
+    if (!this.bankSync) {
+      return html`<wc-spinner label="Loading bank sync"></wc-spinner>`;
+    }
+    return html`<wc-sync-settings
+      ?configured=${this.bankSync.configured}
+      .accounts=${this.bankSync.accounts}
+      .targets=${this.bankTargets}
+      .busy=${this.syncBusy}
+      .outcome=${this.syncOutcome}
+      .notices=${this.syncNotices}
+      error=${this.syncError}
+      @nc-sync-setup=${this.handleSyncSetup}
+      @nc-sync-refresh=${this.handleSyncRefresh}
+      @nc-sync-map=${this.handleSyncMap}
+      @nc-sync-run=${this.handleSyncRun}
+    ></wc-sync-settings>`;
+  }
+
   private renderUpdates(version: string, updateAvailable: string | null): TemplateResult {
     const current = `v${version.replace(/^v/, '')}`;
     return html`
@@ -764,6 +887,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
         items: [
           { id: 'letterhead', label: 'Letterhead' },
           { id: 'security', label: 'Security' },
+          { id: 'bank-sync', label: 'Bank sync' },
           { id: 'location', label: 'Location' },
         ],
       },
@@ -803,6 +927,14 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
 
           <wc-settings-section id="security" heading="Security">
             ${this.renderSecurity(encrypted)}
+          </wc-settings-section>
+
+          <wc-settings-section
+            id="bank-sync"
+            heading="Bank sync"
+            description="Bring transactions straight in from your bank through a SimpleFIN Bridge, instead of downloading statements. Your rules sort them as they land."
+          >
+            ${this.renderBankSync()}
           </wc-settings-section>
 
           <wc-settings-section

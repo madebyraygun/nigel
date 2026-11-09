@@ -1,91 +1,10 @@
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
-
 use base64::Engine;
 use chrono::TimeZone;
 use rusqlite::Connection;
 
+use super::testing::StubBridge;
 use super::*;
 use crate::db::{get_connection, init_db};
-
-/// What the stub saw of one request.
-#[derive(Debug, Clone)]
-struct Seen {
-    method: String,
-    target: String,
-    authorization: Option<String>,
-}
-
-/// A one-thread HTTP/1.1 bridge on loopback that answers each request with
-/// the next canned (status, body) and records what it was asked.
-struct StubBridge {
-    port: u16,
-    seen: Arc<Mutex<Vec<Seen>>>,
-}
-
-impl StubBridge {
-    fn start(responses: Vec<(u16, String)>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let log = Arc::clone(&seen);
-        std::thread::spawn(move || {
-            for (status, body) in responses {
-                let Ok((stream, _)) = listener.accept() else {
-                    return;
-                };
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut request_line = String::new();
-                reader.read_line(&mut request_line).unwrap();
-                let mut authorization = None;
-                let mut length = 0usize;
-                loop {
-                    let mut line = String::new();
-                    reader.read_line(&mut line).unwrap();
-                    let line = line.trim_end();
-                    if line.is_empty() {
-                        break;
-                    }
-                    let (name, value) = line.split_once(':').unwrap_or((line, ""));
-                    match name.to_ascii_lowercase().as_str() {
-                        "authorization" => authorization = Some(value.trim().to_string()),
-                        "content-length" => length = value.trim().parse().unwrap_or(0),
-                        _ => {}
-                    }
-                }
-                let mut body_in = vec![0; length];
-                reader.read_exact(&mut body_in).unwrap();
-                let mut parts = request_line.split_whitespace();
-                log.lock().unwrap().push(Seen {
-                    method: parts.next().unwrap_or("").to_string(),
-                    target: parts.next().unwrap_or("").to_string(),
-                    authorization,
-                });
-                let mut stream = stream;
-                write!(
-                    stream,
-                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            }
-        });
-        Self { port, seen }
-    }
-
-    fn access_url(&self) -> AccessUrl {
-        AccessUrl::parse(&format!(
-            "http://demo:s3cret@127.0.0.1:{}/simplefin",
-            self.port
-        ))
-        .unwrap()
-    }
-
-    fn seen(&self) -> Vec<Seen> {
-        self.seen.lock().unwrap().clone()
-    }
-}
 
 fn test_db() -> (tempfile::TempDir, Connection) {
     let dir = tempfile::tempdir().unwrap();

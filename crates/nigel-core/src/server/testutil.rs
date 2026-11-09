@@ -329,7 +329,7 @@ pub async fn ok_json(app: &Router, uri: &str, token: &str) -> serde_json::Value 
 /// Every route that reads the database, for tests that must hold across all of
 /// them — the locked guard especially, where a route mounted in the wrong place
 /// would silently answer while the database is still encrypted.
-pub const DATA_ROUTES: [&str; 27] = [
+pub const DATA_ROUTES: [&str; 28] = [
     "/api/settings/app",
     "/api/reports/pnl",
     "/api/reports/expenses",
@@ -357,6 +357,7 @@ pub const DATA_ROUTES: [&str; 27] = [
     "/api/documents",
     "/api/documents/1",
     "/api/document-kinds",
+    "/api/sync",
 ];
 
 /// The invoice and document preview routes. Kept out of [`DATA_ROUTES`] for
@@ -391,7 +392,7 @@ pub const EXPORT_ROUTES: [&str; 8] = [
 /// — `rules/test` and `imports/preview` are dry runs — and a rule stated as
 /// "the ones that write" invites the next dry run to be left out of a list the
 /// guard still has to cover.
-pub const WRITE_ROUTES: [(&str, &str, &str); 44] = [
+pub const WRITE_ROUTES: [(&str, &str, &str); 48] = [
     ("POST", "/api/clients", r#"{"name":"X"}"#),
     ("PATCH", "/api/clients/1", r#"{"name":"X"}"#),
     ("DELETE", "/api/clients/1", ""),
@@ -478,6 +479,16 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 44] = [
     ("POST", "/api/documents/sync", "{}"),
     ("POST", "/api/document-kinds/1/reactivate", "{}"),
     ("DELETE", "/api/imports/1", ""),
+    // Bridge calls happen in the handler, after both guards; a refused
+    // request never reaches the network.
+    ("POST", "/api/sync/setup", r#"{"token":"x"}"#),
+    ("POST", "/api/sync/accounts/refresh", "{}"),
+    (
+        "PUT",
+        "/api/sync/accounts/map",
+        r#"{"key":"x","account":null}"#,
+    ),
+    ("POST", "/api/sync/run", "{}"),
     // The guard runs before the extractors, so these bodies only have to reach
     // the router — the upload route never gets as far as wanting multipart.
     ("POST", "/api/imports/upload", "{}"),
