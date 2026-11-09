@@ -1193,6 +1193,7 @@ mod tests {
                 class: AccountClass::Asset,
                 balance: 5_000.0,
                 natural_balance: 5_000.0,
+                reported: None,
             }],
             total: 5_000.0,
             ytd_net_income: 4_670.0,

@@ -196,6 +196,26 @@ CREATE TABLE IF NOT EXISTS imports (
     FOREIGN KEY (account_id) REFERENCES accounts(id)
 );
 
+CREATE TABLE IF NOT EXISTS simplefin_accounts (
+    id INTEGER PRIMARY KEY,
+    sfin_key TEXT NOT NULL UNIQUE,
+    org_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    currency TEXT NOT NULL DEFAULT '',
+    account_id INTEGER UNIQUE REFERENCES accounts(id) ON DELETE SET NULL,
+    last_synced TEXT
+);
+
+CREATE TABLE IF NOT EXISTS account_balances (
+    id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    balance REAL NOT NULL,
+    as_of TEXT NOT NULL,
+    source TEXT NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, source, as_of)
+);
+
 CREATE TABLE IF NOT EXISTS import_rejects (
     id INTEGER PRIMARY KEY,
     import_id INTEGER NOT NULL,

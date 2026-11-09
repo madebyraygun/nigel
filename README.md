@@ -14,6 +14,7 @@ Nigel also includes a **demo mode** — `nigel demo` which generates more than a
 
 - **Interactive dashboard** — run `nigel` to access your dashboard with YTD financials, account balances, a monthly income/expense chart, and a command menu; browse, review, import, reconcile, manage accounts, categories, clients (`k`) and invoices (`n`), view rules, view and export reports, and switch data files.
 - **Bank imports** — CSV/XLSX parsers with format auto-detection; `--dry-run` to preview without writing
+- **Bank sync** — link a [SimpleFIN Bridge](https://www.simplefin.org/) with `nigel sync setup`, map its accounts with `nigel sync accounts`, and `nigel sync` pulls new transactions through the same import path as a file (rules, snapshot, import history, undo), matched by the bank's own transaction id so nothing imports twice. The balance the bank reports appears beside Nigel's in `nigel report balance`. See [docs/importers.md](docs/importers.md#simplefin-bridge)
 - **Generic CSV** — import any CSV with `--date-col`, `--desc-col`, `--amount-col`; save reusable profiles with `--save-profile`
 - **Payroll import** — XLSX payroll importer with auto-categorization
 - **Duplicate detection** — file-level checksums and transaction-level matching prevent double-imports

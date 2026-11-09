@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser};
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
     DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
-    InvoiceTemplateCommands, PasswordCommand, RulesCommands, UserCommands,
+    InvoiceTemplateCommands, PasswordCommand, RulesCommands, SyncCommands, UserCommands,
 };
 use nigel_core::error;
 
@@ -455,6 +455,17 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 }
                 InvoiceScheduleCommands::Run => cli::invoice_schedule::run(&cli::today()),
             },
+        },
+        Commands::Sync {
+            command,
+            since,
+            dry_run,
+        } => match command {
+            Some(SyncCommands::Setup { token }) => cli::sync::setup(token.as_deref()),
+            Some(SyncCommands::Accounts { map, unmap }) => {
+                cli::sync::accounts(map.as_deref(), unmap.as_deref())
+            }
+            None => cli::sync::run(since.as_deref(), dry_run),
         },
         Commands::Imports { command } => match command {
             ImportsCommands::List => cli::imports::list(),

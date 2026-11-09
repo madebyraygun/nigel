@@ -856,6 +856,10 @@ pub struct AccountBalance {
     pub balance: f64,
     /// The same figure through `natural_balance`: money owed reads positive.
     pub natural_balance: f64,
+    /// The latest balance the bank itself reported, in the same sign as
+    /// `balance`, when a bank feed has supplied one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reported: Option<crate::simplefin::ReportedBalance>,
 }
 
 #[derive(Serialize)]
@@ -901,6 +905,7 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
     let accounts = stmt
         .query_map([], |row| {
             Ok((
+                row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
@@ -908,9 +913,10 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut reported = crate::simplefin::latest_reported_balances(conn)?;
     let accounts: Vec<AccountBalance> = accounts
         .into_iter()
-        .map(|(name, account_type, class, balance)| {
+        .map(|(id, name, account_type, class, balance)| {
             let class = AccountClass::from_db(&class)?;
             Ok(AccountBalance {
                 name,
@@ -918,6 +924,7 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
                 class,
                 balance,
                 natural_balance: natural_balance(class, balance),
+                reported: reported.remove(&id),
             })
         })
         .collect::<Result<Vec<_>>>()?;

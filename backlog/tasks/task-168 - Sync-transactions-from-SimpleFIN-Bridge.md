@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-09 22:22'
-updated_date: '2026-11-09 22:26'
+updated_date: '2026-11-09 23:25'
 labels:
   - importer
   - enhancement
@@ -27,15 +27,15 @@ Relates to TASK-117 (shared external-ID dedup) and TASK-46 (balances).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `nigel sync setup <token>` exchanges a setup token for an access URL, stored with the other credentials and never logged or printed
-- [ ] #2 `nigel sync accounts` lists SimpleFIN accounts and maps each to a Nigel account; unmapped accounts are skipped
-- [ ] #3 `nigel sync [--since DATE] [--dry-run]` imports new transactions through the existing import path, so rules, snapshots, import history and undo all apply
-- [ ] #4 Transactions carry an `external_id`; one already imported by ID is never imported again, even if its description changes
-- [ ] #5 A first sync can start after the last CSV import date so overlapping rows are not duplicated
-- [ ] #6 Each account's reported balance is stored with its as-of date, and `report balance` can show it beside Nigel's computed figure
+- [x] #1 `nigel sync setup <token>` exchanges a setup token for an access URL, stored with the other credentials and never logged or printed
+- [x] #2 `nigel sync accounts` lists SimpleFIN accounts and maps each to a Nigel account; unmapped accounts are skipped
+- [x] #3 `nigel sync [--since DATE] [--dry-run]` imports new transactions through the existing import path, so rules, snapshots, import history and undo all apply
+- [x] #4 Transactions carry an `external_id`; one already imported by ID is never imported again, even if its description changes
+- [x] #5 A first sync can start after the last CSV import date so overlapping rows are not duplicated
+- [x] #6 Each account's reported balance is stored with its as-of date, and `report balance` can show it beside Nigel's computed figure
 - [ ] #7 Settings in the web app can paste a setup token, show linked accounts and run a sync
-- [ ] #8 The docs give an example timer unit that runs the sync, in the same shape as the existing schedule timers
-- [ ] #9 Tests use a stubbed SimpleFIN server and fictional data; docs/importers.md gains the source
+- [x] #8 The docs give an example timer unit that runs the sync, in the same shape as the existing schedule timers
+- [x] #9 Tests use a stubbed SimpleFIN server and fictional data; docs/importers.md gains the source
 <!-- AC:END -->
 
 ## Implementation Plan
