@@ -8,13 +8,17 @@ All importer code lives in `crates/nigel-core/src/importer.rs`. Nigel uses enum 
 CSV/XLSX file
   → ImporterKind::detect() inspects headers/structure
   → ImporterKind::parse() extracts ParseOutcome { rows, rejects }
-  → import_file() deduplicates and inserts into SQLite
+  → import_file() resolves the importer, parses, and hands a ParsedImport to
+  → import_parsed(), which deduplicates and inserts into SQLite
 ```
+
+A source that delivers transactions rather than a file builds its own `ParsedImport` and calls `import_parsed()` directly, so it gets the same `imports` row, rejects record and dedup as a file.
 
 Key types:
 
 - **`ImporterKind`** — enum with one variant per bank format
-- **`ParsedRow`** — intermediate representation: `{ date: String, description: String, amount: f64 }`
+- **`ParsedRow`** — intermediate representation: `{ date: String, description: String, amount: f64, external_id: Option<String> }`
+- **`ParsedImport`** — rows ready to become one import: the account, the name import history shows, the checksum, the format, and the `ParseOutcome`
 - **`ParseOutcome`** — what one parse produced: `{ rows: Vec<ParsedRow>, rejects: Vec<RejectedRow> }`
 - **`RejectedRow`** — a row that could not be read: `{ row_number: u64, content: String, reason: String }` — the 1-based line in the file, its fields rejoined with commas, and why. Stored in `import_rejects` and readable back per import
 - **`ImportResult`** — returned by `import_file()`: counts of imported/skipped/malformed rows
@@ -149,6 +153,7 @@ fn parse_chase_checking(file_path: &Path) -> Result<ParseOutcome> {
             date,
             description,
             amount,
+            external_id: None,
         });
     }
     Ok(out)
@@ -222,6 +227,11 @@ Every parser must produce a `ParseOutcome`. Each `ParsedRow` in `rows` carries:
 - **`date`** — `YYYY-MM-DD` format (use `parse_date_mdy` for MM/DD/YYYY sources, `excel_serial_to_date` for XLSX)
 - **`description`** — as-is from the source, trimmed
 - **`amount`** — negative = expense/debit, positive = income/credit. If the source uses separate debit/credit columns or a type indicator, normalize to this convention in the parser.
+- **`external_id`** — the source's own id for the transaction, when it has one (an OFX `FITID`, a feed's transaction id), prefixed with the source so ids from different feeds into one account cannot collide: `ofx:<FITID>`, `simplefin:<account id>:<id>`. `None` for formats without one.
+
+Duplicate detection follows from `external_id`. A row with one is a duplicate exactly when the account already holds that id or an earlier row of the same import carried it; the description is not consulted, so a bank that rewrites a description does not re-import the row. A row without one is matched on (date, amount, description) by multiplicity: if the account holds `m` transactions with that key, the first `m` such rows in the file are skipped and the rest import, so identical rows within one statement all land. The database enforces one transaction per (account, `external_id`).
+
+The match runs one way: a row without an id counts transactions that have one, but a row with an id never matches a transaction imported without one. A source with ids that starts on an account already fed by CSV must therefore start after that account's last imported date, not overlap it.
 
 A row the parser cannot read goes to `rejects` — `out.reject(&record, reason)`, or
 `out.reject_unreadable(&err)` when the CSV reader itself could not produce a record. The

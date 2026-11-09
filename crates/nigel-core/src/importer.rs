@@ -1,5 +1,5 @@
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -62,19 +62,35 @@ fn compute_checksum(file_path: &Path) -> Result<String> {
 
 /// Which parsed rows are already in the books, one flag per row.
 ///
+/// A row carrying an `external_id` is matched on that alone: it is held if the
+/// account already has a transaction with the id, or an earlier row of this
+/// file had it. The description plays no part, so a bank that rewrites one
+/// does not re-import the row.
+///
+/// A row without one falls back to its (date, amount, description) key.
 /// Identical rows are legitimate — two coffees on the same day — so a row is
 /// a duplicate only up to the number of copies the account already holds: a
 /// key with `m` matching transactions skips its first `m` rows in the file and
-/// imports the rest. Every count is read before anything is written, so the
-/// rows of this file never match each other, and a dry run gets the same
+/// imports the rest.
+///
+/// Every lookup is read before anything is written, so the rows of this file
+/// never match each other through the database, and a dry run gets the same
 /// answer the import acts on.
 fn rows_already_held(conn: &Connection, account_id: i64, rows: &[ParsedRow]) -> Result<Vec<bool>> {
-    let mut stmt = conn.prepare_cached(
+    let mut count_stmt = conn.prepare_cached(
         "SELECT COUNT(*) FROM transactions WHERE account_id = ?1 AND date = ?2 AND amount = ?3 AND description = ?4",
     )?;
+    let mut id_stmt = conn
+        .prepare_cached("SELECT 1 FROM transactions WHERE account_id = ?1 AND external_id = ?2")?;
     let mut held: HashMap<(&str, &str, u64), i64> = HashMap::new();
+    let mut seen_ids: HashSet<&str> = HashSet::new();
     let mut skip = Vec::with_capacity(rows.len());
     for row in rows {
+        if let Some(id) = row.external_id.as_deref() {
+            let repeat = !seen_ids.insert(id);
+            skip.push(repeat || id_stmt.exists(rusqlite::params![account_id, id])?);
+            continue;
+        }
         // `+ 0.0` folds -0.0 into 0.0, which SQL equality already treats as one.
         let key = (
             row.date.as_str(),
@@ -83,7 +99,7 @@ fn rows_already_held(conn: &Connection, account_id: i64, rows: &[ParsedRow]) -> 
         );
         let remaining = match held.entry(key) {
             Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => e.insert(stmt.query_row(
+            Entry::Vacant(e) => e.insert(count_stmt.query_row(
                 rusqlite::params![account_id, row.date, row.amount, row.description],
                 |r| r.get(0),
             )?),
@@ -423,6 +439,7 @@ pub fn parse_generic_csv(file_path: &Path, config: &GenericCsvConfig) -> Result<
             date,
             description,
             amount,
+            external_id: None,
         });
     }
     Ok(out)
@@ -513,22 +530,75 @@ pub fn import_file(
         ResolvedImporter::Generic(_, name) => name.clone(),
     };
 
-    let parsed = match &resolved {
-        ResolvedImporter::BuiltIn(kind) => kind.parse(file_path)?,
-        ResolvedImporter::Generic(config, _) => parse_generic_csv(file_path, config)?,
+    let parsed = ParsedImport {
+        account_id,
+        source_name: file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string(),
+        checksum,
+        format,
+        outcome: match &resolved {
+            ResolvedImporter::BuiltIn(kind) => kind.parse(file_path)?,
+            ResolvedImporter::Generic(config, _) => parse_generic_csv(file_path, config)?,
+        },
     };
-    let malformed = parsed.malformed();
+    let result = import_parsed(conn, &parsed, dry_run)?;
+
+    if !dry_run {
+        if let ResolvedImporter::BuiltIn(importer) = &resolved {
+            if importer.has_post_import() {
+                importer.post_import(conn, account_id, &parsed.outcome.rows)?;
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Rows from any source, ready to become one import: a parsed file, or a
+/// feed that delivers transactions rather than a file.
+pub struct ParsedImport {
+    pub account_id: i64,
+    /// What import history shows for this import: a filename, or a feed's
+    /// own label.
+    pub source_name: String,
+    /// Recorded on the `imports` row so the same bytes are answered as
+    /// already imported next time.
+    pub checksum: String,
+    /// The importer that produced the rows, reported back in the result.
+    pub format: String,
+    pub outcome: ParseOutcome,
+}
+
+/// Write a parsed import: its `imports` row, its rejects, and every row not
+/// already in the books. Runs in the caller's transaction, and writes nothing
+/// on a dry run.
+pub fn import_parsed(
+    conn: &Connection,
+    parsed: &ParsedImport,
+    dry_run: bool,
+) -> Result<ImportResult> {
+    let ParsedImport {
+        account_id,
+        source_name,
+        checksum,
+        format,
+        outcome,
+    } = parsed;
+    let account_id = *account_id;
+    let malformed = outcome.malformed();
 
     // A parse that read nothing is refused rather than recorded: an `imports`
     // row here would spend the file's checksum on an import that added no
     // transactions, and every corrected retry would answer "already imported".
     // A dry run is exempt — reporting that nothing would be imported is the
     // preview's job.
-    if !dry_run && parsed.rows.is_empty() {
+    if !dry_run && outcome.rows.is_empty() {
         return Err(NigelError::EmptyImport(EmptyImport {
-            format,
+            format: format.clone(),
             malformed,
-            reasons: parsed
+            reasons: outcome
                 .rejects
                 .iter()
                 .take(EmptyImport::REASON_LIMIT)
@@ -537,15 +607,12 @@ pub fn import_file(
         }));
     }
 
-    let ParseOutcome {
-        rows: parsed_rows,
-        rejects,
-    } = parsed;
+    let parsed_rows = &outcome.rows;
     let sample: Vec<ParsedRow> = parsed_rows.iter().take(5).cloned().collect();
-    let already_held = rows_already_held(conn, account_id, &parsed_rows)?;
+    let already_held = rows_already_held(conn, account_id, parsed_rows)?;
 
-    let mut imported = 0usize;
-    let mut skipped = 0usize;
+    let skipped = already_held.iter().filter(|held| **held).count();
+    let imported = already_held.len() - skipped;
     let mut created_import: Option<i64> = None;
 
     if !dry_run {
@@ -555,7 +622,7 @@ pub fn import_file(
         conn.execute(
             "INSERT INTO imports (filename, account_id, record_count, date_range_start, date_range_end, checksum, malformed_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                file_path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                source_name,
                 account_id,
                 parsed_rows.len() as i64,
                 min_date,
@@ -575,7 +642,7 @@ pub fn import_file(
                 "INSERT INTO import_rejects (import_id, row_number, content, reason) \
                  VALUES (?1, ?2, ?3, ?4)",
             )?;
-            for reject in &rejects {
+            for reject in &outcome.rejects {
                 stmt.execute(rusqlite::params![
                     import_id,
                     reject.row_number as i64,
@@ -585,26 +652,21 @@ pub fn import_file(
             }
         }
 
+        let mut stmt = conn.prepare_cached(
+            "INSERT INTO transactions (account_id, date, description, amount, import_id, external_id, is_flagged, flag_reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 'No matching rule')",
+        )?;
         for (row, held) in parsed_rows.iter().zip(&already_held) {
-            if *held {
-                skipped += 1;
-                continue;
-            }
-            conn.execute(
-                "INSERT INTO transactions (account_id, date, description, amount, import_id, is_flagged, flag_reason) VALUES (?1, ?2, ?3, ?4, ?5, 1, 'No matching rule')",
-                rusqlite::params![account_id, row.date, row.description, row.amount, import_id],
-            )?;
-            imported += 1;
-        }
-
-        if let ResolvedImporter::BuiltIn(importer) = &resolved {
-            if importer.has_post_import() {
-                importer.post_import(conn, account_id, &parsed_rows)?;
+            if !*held {
+                stmt.execute(rusqlite::params![
+                    account_id,
+                    row.date,
+                    row.description,
+                    row.amount,
+                    import_id,
+                    row.external_id,
+                ])?;
             }
         }
-    } else {
-        skipped = already_held.iter().filter(|held| **held).count();
-        imported = already_held.len() - skipped;
     }
 
     Ok(ImportResult {
@@ -613,7 +675,7 @@ pub fn import_file(
         malformed,
         duplicate_file: false,
         sample,
-        format: Some(format),
+        format: Some(format.clone()),
         import_id: created_import,
     })
 }
@@ -758,6 +820,7 @@ fn parse_bofa_checking(file_path: &Path) -> Result<ParseOutcome> {
             date,
             description,
             amount,
+            external_id: None,
         });
     }
     Ok(out)
@@ -915,6 +978,7 @@ fn parse_bofa_card_format(file_path: &Path, has_type_column: bool) -> Result<Par
             date,
             description,
             amount,
+            external_id: None,
         });
     }
     Ok(out)
@@ -1008,6 +1072,7 @@ fn parse_gusto_payroll(file_path: &Path) -> Result<Vec<ParsedRow>> {
             date: date.clone(),
             description: format!("Payroll \u{2014} Wages ({date})"),
             amount: -total.abs(),
+            external_id: None,
         });
     }
     for (date, total) in &taxes_by_date {
@@ -1015,6 +1080,7 @@ fn parse_gusto_payroll(file_path: &Path) -> Result<Vec<ParsedRow>> {
             date: date.clone(),
             description: format!("Payroll \u{2014} Employer Taxes ({date})"),
             amount: -total.abs(),
+            external_id: None,
         });
     }
     Ok(result)
@@ -1711,6 +1777,133 @@ BLUEPEAK DESIGN LLC,1234,01/17/2025,01/17/2025,-25.00,Travel,DELTA AIRLINES,789 
             (real.imported, real.skipped)
         );
         assert_eq!((real.imported, real.skipped), (4, 2));
+    }
+
+    fn feed_row(id: Option<&str>, date: &str, description: &str, amount: f64) -> ParsedRow {
+        ParsedRow {
+            date: date.to_string(),
+            description: description.to_string(),
+            amount,
+            external_id: id.map(str::to_string),
+        }
+    }
+
+    fn import_feed(
+        conn: &Connection,
+        checksum: &str,
+        rows: Vec<ParsedRow>,
+        dry_run: bool,
+    ) -> ImportResult {
+        let account_id: i64 = conn
+            .query_row(
+                "SELECT id FROM accounts WHERE name = 'Test Checking'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let parsed = ParsedImport {
+            account_id,
+            source_name: "Test feed".to_string(),
+            checksum: checksum.to_string(),
+            format: "test_feed".to_string(),
+            outcome: ParseOutcome {
+                rows,
+                rejects: Vec::new(),
+            },
+        };
+        import_parsed(conn, &parsed, dry_run).unwrap()
+    }
+
+    #[test]
+    fn rows_with_distinct_ids_import_even_when_otherwise_identical() {
+        let (_dir, conn) = test_db();
+        add_test_account(&conn);
+        let rows = vec![
+            feed_row(Some("t:1"), "2025-03-02", "JUNIPER LABS CAFE", -8.0),
+            feed_row(Some("t:2"), "2025-03-02", "JUNIPER LABS CAFE", -8.0),
+        ];
+        let result = import_feed(&conn, "a", rows, false);
+        assert_eq!((result.imported, result.skipped), (2, 0));
+    }
+
+    #[test]
+    fn an_id_already_held_is_skipped_even_when_its_description_changed() {
+        let (_dir, conn) = test_db();
+        add_test_account(&conn);
+        import_feed(
+            &conn,
+            "a",
+            vec![feed_row(
+                Some("t:1"),
+                "2025-03-02",
+                "PENDING CEDAR SYS",
+                -40.0,
+            )],
+            false,
+        );
+        let result = import_feed(
+            &conn,
+            "b",
+            vec![
+                feed_row(Some("t:1"), "2025-03-02", "CEDAR SYSTEMS INC", -40.0),
+                feed_row(Some("t:2"), "2025-03-03", "GLOBEX DELI", -14.5),
+            ],
+            false,
+        );
+        assert_eq!((result.imported, result.skipped), (1, 1));
+        let description: String = conn
+            .query_row(
+                "SELECT description FROM transactions WHERE external_id = 't:1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(description, "PENDING CEDAR SYS");
+    }
+
+    #[test]
+    fn an_id_repeated_within_one_feed_imports_once() {
+        let (_dir, conn) = test_db();
+        add_test_account(&conn);
+        let rows = vec![
+            feed_row(Some("t:1"), "2025-03-02", "GLOBEX DELI", -14.5),
+            feed_row(Some("t:1"), "2025-03-02", "GLOBEX DELI", -14.5),
+        ];
+        let preview = import_feed(&conn, "a", rows.clone(), true);
+        let real = import_feed(&conn, "a", rows, false);
+        assert_eq!((preview.imported, preview.skipped), (1, 1));
+        assert_eq!((real.imported, real.skipped), (1, 1));
+        assert_eq!(table_count(&conn, "transactions"), 1);
+    }
+
+    #[test]
+    fn a_row_without_an_id_still_counts_rows_that_have_one() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        import_feed(
+            &conn,
+            "a",
+            vec![feed_row(
+                Some("t:1"),
+                "2025-03-02",
+                "JUNIPER LABS CAFE",
+                -8.0,
+            )],
+            false,
+        );
+        let result = import_rows(&conn, dir.path(), "stmt.csv", &[COFFEE, COFFEE], false);
+        assert_eq!((result.imported, result.skipped), (1, 1));
+    }
+
+    #[test]
+    fn the_schema_refuses_a_second_transaction_with_the_same_id_in_one_account() {
+        let (_dir, conn) = test_db();
+        add_test_account(&conn);
+        let insert =
+            "INSERT INTO transactions (account_id, date, description, amount, external_id) \
+                      VALUES (1, '2025-03-02', 'X', -1.0, 't:1')";
+        conn.execute(insert, []).unwrap();
+        assert!(conn.execute(insert, []).is_err());
     }
 
     #[test]

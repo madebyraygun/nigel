@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     is_flagged INTEGER DEFAULT 0,
     flag_reason TEXT,
     import_id INTEGER,
+    external_id TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (account_id) REFERENCES accounts(id),
     FOREIGN KEY (category_id) REFERENCES categories(id),
