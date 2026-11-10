@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 
@@ -58,17 +60,38 @@ fn compute_checksum(file_path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn is_duplicate_row(conn: &Connection, account_id: i64, row: &ParsedRow) -> Result<bool> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT 1 FROM transactions WHERE account_id = ?1 AND date = ?2 AND amount = ?3 AND description = ?4",
-        )?;
-    Ok(stmt.exists(rusqlite::params![
-        account_id,
-        row.date,
-        row.amount,
-        row.description
-    ])?)
+/// Which parsed rows are already in the books, one flag per row.
+///
+/// Identical rows are legitimate — two coffees on the same day — so a row is
+/// a duplicate only up to the number of copies the account already holds: a
+/// key with `m` matching transactions skips its first `m` rows in the file and
+/// imports the rest. Every count is read before anything is written, so the
+/// rows of this file never match each other, and a dry run gets the same
+/// answer the import acts on.
+fn rows_already_held(conn: &Connection, account_id: i64, rows: &[ParsedRow]) -> Result<Vec<bool>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT COUNT(*) FROM transactions WHERE account_id = ?1 AND date = ?2 AND amount = ?3 AND description = ?4",
+    )?;
+    let mut held: HashMap<(&str, &str, u64), i64> = HashMap::new();
+    let mut skip = Vec::with_capacity(rows.len());
+    for row in rows {
+        // `+ 0.0` folds -0.0 into 0.0, which SQL equality already treats as one.
+        let key = (
+            row.date.as_str(),
+            row.description.as_str(),
+            (row.amount + 0.0).to_bits(),
+        );
+        let remaining = match held.entry(key) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(stmt.query_row(
+                rusqlite::params![account_id, row.date, row.amount, row.description],
+                |r| r.get(0),
+            )?),
+        };
+        skip.push(*remaining > 0);
+        *remaining -= 1;
+    }
+    Ok(skip)
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +542,7 @@ pub fn import_file(
         rejects,
     } = parsed;
     let sample: Vec<ParsedRow> = parsed_rows.iter().take(5).cloned().collect();
+    let already_held = rows_already_held(conn, account_id, &parsed_rows)?;
 
     let mut imported = 0usize;
     let mut skipped = 0usize;
@@ -561,8 +585,8 @@ pub fn import_file(
             }
         }
 
-        for row in &parsed_rows {
-            if is_duplicate_row(conn, account_id, row)? {
+        for (row, held) in parsed_rows.iter().zip(&already_held) {
+            if *held {
                 skipped += 1;
                 continue;
             }
@@ -579,13 +603,8 @@ pub fn import_file(
             }
         }
     } else {
-        for row in &parsed_rows {
-            if is_duplicate_row(conn, account_id, row)? {
-                skipped += 1;
-            } else {
-                imported += 1;
-            }
-        }
+        skipped = already_held.iter().filter(|held| **held).count();
+        imported = already_held.len() - skipped;
     }
 
     Ok(ImportResult {
@@ -1606,6 +1625,92 @@ BLUEPEAK DESIGN LLC,1234,01/17/2025,01/17/2025,-25.00,Travel,DELTA AIRLINES,789 
         .unwrap();
         assert_eq!(result.imported, 1);
         assert_eq!(result.skipped, 1);
+    }
+
+    fn import_rows(
+        conn: &Connection,
+        dir: &Path,
+        name: &str,
+        rows: &[(&str, &str, &str)],
+        dry_run: bool,
+    ) -> ImportResult {
+        let path = write_bofa_csv(dir, name, rows);
+        import_file(
+            conn,
+            &path,
+            "Test Checking",
+            Some("bofa_checking"),
+            dry_run,
+            None,
+        )
+        .unwrap()
+    }
+
+    const COFFEE: (&str, &str, &str) = ("03/02/2025", "JUNIPER LABS CAFE", "-8.00");
+    const FARE: (&str, &str, &str) = ("03/02/2025", "HARBOR & VALE TRANSIT", "-2.75");
+    const LUNCH: (&str, &str, &str) = ("03/03/2025", "GLOBEX DELI", "-14.50");
+
+    #[test]
+    fn identical_rows_in_one_file_all_import() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        let result = import_rows(
+            &conn,
+            dir.path(),
+            "stmt.csv",
+            &[COFFEE, COFFEE, COFFEE, LUNCH],
+            false,
+        );
+        assert_eq!((result.imported, result.skipped), (4, 0));
+        assert_eq!(table_count(&conn, "transactions"), 4);
+    }
+
+    #[test]
+    fn an_overlapping_file_skips_identical_rows_by_multiplicity() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        import_rows(&conn, dir.path(), "a.csv", &[COFFEE, COFFEE], false);
+        let result = import_rows(
+            &conn,
+            dir.path(),
+            "b.csv",
+            &[COFFEE, COFFEE, COFFEE, LUNCH],
+            false,
+        );
+        assert_eq!((result.imported, result.skipped), (2, 2));
+        assert_eq!(table_count(&conn, "transactions"), 4);
+    }
+
+    #[test]
+    fn a_mixed_overlap_imports_only_the_copies_the_books_lack() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        import_rows(&conn, dir.path(), "a.csv", &[COFFEE, FARE, FARE], false);
+        // COFFEE: 1 held, 2 in file → 1 new. FARE: 2 held, 1 in file → none.
+        let result = import_rows(
+            &conn,
+            dir.path(),
+            "b.csv",
+            &[COFFEE, FARE, COFFEE, LUNCH],
+            false,
+        );
+        assert_eq!((result.imported, result.skipped), (2, 2));
+        assert_eq!(table_count(&conn, "transactions"), 5);
+    }
+
+    #[test]
+    fn a_dry_run_reports_what_the_import_then_does() {
+        let (dir, conn) = test_db();
+        add_test_account(&conn);
+        import_rows(&conn, dir.path(), "a.csv", &[COFFEE, FARE], false);
+        let rows = [COFFEE, COFFEE, FARE, FARE, FARE, LUNCH];
+        let preview = import_rows(&conn, dir.path(), "b.csv", &rows, true);
+        let real = import_rows(&conn, dir.path(), "b.csv", &rows, false);
+        assert_eq!(
+            (preview.imported, preview.skipped),
+            (real.imported, real.skipped)
+        );
+        assert_eq!((real.imported, real.skipped), (4, 2));
     }
 
     #[test]

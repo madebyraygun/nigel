@@ -1,11 +1,11 @@
 ---
 id: TASK-169
 title: Identical rows in one file import as one (silent data loss)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-09 22:22'
-updated_date: '2026-11-09 22:26'
+updated_date: '2026-11-09 22:42'
 labels:
   - bug
   - importer
@@ -21,10 +21,10 @@ priority: high
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A file with N identical rows imports N transactions on first import
-- [ ] #2 Re-importing an overlapping file still skips rows already present, counting by multiplicity (file count vs database count per key)
-- [ ] #3 Dry run reports the same counts the real import produces
-- [ ] #4 Tests cover identical rows within one file, across two overlapping files, and mixed
+- [x] #1 A file with N identical rows imports N transactions on first import
+- [x] #2 Re-importing an overlapping file still skips rows already present, counting by multiplicity (file count vs database count per key)
+- [x] #3 Dry run reports the same counts the real import produces
+- [x] #4 Tests cover identical rows within one file, across two overlapping files, and mixed
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,3 +39,9 @@ priority: high
 7. Update the duplicate-detection line in docs/design-constraints.md to say matching is by multiplicity.
 8. cargo fmt --check, cargo test -p nigel-core and the full suite serially; open a PR.
 <!-- SECTION:PLAN:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Row dedup counts by multiplicity: rows_already_held reads each key's database count once before any insert, skips that many rows of the key in file order, and imports the rest. Real import and dry run share the same skip flags.
+<!-- SECTION:FINAL_SUMMARY:END -->
