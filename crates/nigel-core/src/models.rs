@@ -79,6 +79,11 @@ pub struct ParsedRow {
     pub date: String,
     pub description: String,
     pub amount: f64,
+    /// The source's own id for the transaction, namespaced by source
+    /// (`simplefin:<account>:<id>`, `ofx:<fitid>`). When present it is the
+    /// whole of duplicate detection; CSV formats carry none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
 }
 
 #[allow(dead_code)]

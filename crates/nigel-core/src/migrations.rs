@@ -540,6 +540,27 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 18,
+        description: "transactions.external_id: a source's own id for exact duplicate detection",
+        up: |conn| {
+            // v5's probe, for v5's reason: SQLite has no ADD COLUMN IF NOT
+            // EXISTS, and a replay must be harmless.
+            let has_column: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('transactions') WHERE name = 'external_id'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !has_column {
+                conn.execute_batch("ALTER TABLE transactions ADD COLUMN external_id TEXT")?;
+            }
+            conn.execute_batch(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_external_id
+                    ON transactions(account_id, external_id) WHERE external_id IS NOT NULL;",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
