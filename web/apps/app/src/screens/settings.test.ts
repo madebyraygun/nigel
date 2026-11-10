@@ -868,6 +868,7 @@ describe('settings screen', () => {
       currency: 'USD',
       account: null,
       lastSynced: null,
+      suppliesBalance: false,
     };
 
     function connectedClient(): FakeApiClient {
@@ -913,6 +914,11 @@ describe('settings screen', () => {
       await settle(el);
       expect(client.calls).toContain(`mapBankAccount:${LINKED.key}:Operating`);
       expect(card(el).accounts[0]?.account).toBe('Operating');
+      expect(card(el).accounts[0]?.suppliesBalance).toBe(true);
+
+      emit(el, 'nc-sync-map', { key: LINKED.key, account: 'Operating', suppliesBalance: false });
+      await settle(el);
+      expect(card(el).accounts[0]?.suppliesBalance).toBe(false);
 
       emit(el, 'nc-sync-map', { key: LINKED.key, account: null });
       await settle(el);

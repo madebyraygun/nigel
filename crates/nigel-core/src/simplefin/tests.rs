@@ -55,7 +55,7 @@ fn set(accounts: Vec<serde_json::Value>) -> AccountSet {
 
 fn link(conn: &Connection, set: &AccountSet, id: &str) {
     remember_accounts(conn, set).unwrap();
-    map_account(conn, &format!("harborvale.example/{id}"), "Operating").unwrap();
+    map_account(conn, &format!("harborvale.example/{id}"), "Operating", true).unwrap();
 }
 
 fn count(conn: &Connection, sql: &str) -> i64 {
@@ -442,19 +442,178 @@ fn bad_rows_are_rejects_and_bridge_errors_are_sanitized_warnings() {
 }
 
 #[test]
-fn one_nigel_account_takes_one_feed() {
+fn one_account_takes_several_feeds_but_one_balance_feed() {
     let (_dir, conn) = test_db();
     let feed = set(vec![
         account_json("1", "1.00", vec![]),
         account_json("2", "1.00", vec![]),
+        account_json("3", "1.00", vec![]),
     ]);
     link(&conn, &feed, "1");
-    let err = map_account(&conn, "harborvale.example/2", "Operating").unwrap_err();
-    assert!(err.to_string().contains("already fed"), "{err}");
-    unmap_account(&conn, "harborvale.example/1").unwrap();
-    map_account(&conn, "harborvale.example/2", "Operating").unwrap();
-    assert!(map_account(&conn, "nope/9", "Operating").is_err());
-    assert!(map_account(&conn, "harborvale.example/1", "Nope").is_err());
+
+    let err = map_account(&conn, "harborvale.example/2", "Operating", true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("harborvale.example/1"), "{err}");
+    assert!(err.contains("--no-balance"), "{err}");
+
+    map_account(&conn, "harborvale.example/2", "Operating", false).unwrap();
+    map_account(&conn, "harborvale.example/3", "Operating", false).unwrap();
+    let linked = list_accounts(&conn).unwrap();
+    let flags: Vec<(Option<&str>, bool)> = linked
+        .iter()
+        .map(|a| (a.account.as_deref(), a.supplies_balance))
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            (Some("Operating"), true),
+            (Some("Operating"), false),
+            (Some("Operating"), false),
+        ]
+    );
+    let json = serde_json::to_value(&linked[1]).unwrap();
+    assert_eq!(json["suppliesBalance"], false);
+
+    // Re-mapping the balance feed as transactions-only frees the balance for
+    // another, and re-mapping a key to the same account keeps its sync day.
+    conn.execute(
+        "UPDATE simplefin_accounts SET last_synced = '2025-03-01'",
+        [],
+    )
+    .unwrap();
+    map_account(&conn, "harborvale.example/1", "Operating", false).unwrap();
+    map_account(&conn, "harborvale.example/2", "Operating", true).unwrap();
+    let linked = list_accounts(&conn).unwrap();
+    assert!(!linked[0].supplies_balance && linked[1].supplies_balance);
+    assert!(linked
+        .iter()
+        .all(|a| a.last_synced.as_deref() == Some("2025-03-01")));
+
+    // Unmapping the balance feed leaves the others transactions-only, and an
+    // unmapped feed supplies nothing.
+    unmap_account(&conn, "harborvale.example/2").unwrap();
+    let linked = list_accounts(&conn).unwrap();
+    assert!(linked.iter().all(|a| !a.supplies_balance));
+    map_account(&conn, "harborvale.example/3", "Operating", true).unwrap();
+
+    assert!(map_account(&conn, "nope/9", "Operating", true).is_err());
+    assert!(map_account(&conn, "harborvale.example/1", "Nope", true).is_err());
+}
+
+/// A card program: the parent feed carries payments and the card's total
+/// balance, the cardholder feed carries that person's charges.
+fn card_program(parent: Vec<serde_json::Value>, cardholder: Vec<serde_json::Value>) -> AccountSet {
+    set(vec![
+        account_json("parent", "-500.00", parent),
+        account_json("holder", "-120.00", cardholder),
+    ])
+}
+
+fn link_card_program(conn: &Connection, feed: &AccountSet) {
+    remember_accounts(conn, feed).unwrap();
+    map_account(conn, "harborvale.example/parent", "Operating", true).unwrap();
+    map_account(conn, "harborvale.example/holder", "Operating", false).unwrap();
+}
+
+#[test]
+fn two_feeds_sync_into_one_account_with_one_balance() {
+    let (_dir, conn) = test_db();
+    // The same id, date, amount and description on both feeds: the external
+    // id carries the feed's key, so neither swallows the other's row.
+    let feed = card_program(
+        vec![
+            txn("1", "2025-03-02", "300.00", "PAYMENT THANK YOU"),
+            txn("2", "2025-03-03", "-9.00", "INITECH"),
+        ],
+        vec![
+            txn("1", "2025-03-01", "-45.00", "CEDAR SYSTEMS"),
+            txn("2", "2025-03-03", "-9.00", "INITECH"),
+        ],
+    );
+    link_card_program(&conn, &feed);
+
+    let report = apply(&conn, &feed, None, "2025-03-10", false).unwrap();
+    assert_eq!(report.accounts.len(), 2);
+    assert!(report.accounts.iter().all(|a| a.account == "Operating"));
+    assert_eq!(report.imported(), 4);
+    let parent = &report.accounts[0];
+    let holder = &report.accounts[1];
+    assert_eq!(parent.balance.as_ref().map(|b| b.balance), Some(-500.0));
+    assert_eq!(holder.balance, None);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM transactions"), 4);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM imports"), 2);
+
+    let stored: Vec<(f64, String)> = conn
+        .prepare("SELECT balance, source FROM account_balances")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(stored, vec![(-500.0, BALANCE_SOURCE.to_string())]);
+    let reported = latest_reported_balances(&conn).unwrap();
+    assert_eq!(reported[&1].balance, -500.0);
+
+    // Re-reading every row holds each by its own feed's id.
+    let since = parse_day("2025-03-01").unwrap();
+    let again = apply(&conn, &feed, Some(since), "2025-03-11", false).unwrap();
+    assert_eq!(again.imported(), 0);
+    assert_eq!(again.accounts.iter().map(|a| a.skipped).sum::<usize>(), 4);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM transactions"), 4);
+}
+
+#[test]
+fn a_feed_added_beside_another_starts_after_its_own_rows_not_the_others() {
+    let (_dir, conn) = test_db();
+    // A statement import, then the parent feed syncing past it.
+    conn.execute(
+        "INSERT INTO transactions (account_id, date, description, amount) \
+         VALUES (1, '2025-02-20', 'GLOBEX DELI', -14.50)",
+        [],
+    )
+    .unwrap();
+    let parent_only = set(vec![account_json(
+        "parent",
+        "-500.00",
+        vec![txn("p1", "2025-03-08", "300.00", "PAYMENT THANK YOU")],
+    )]);
+    remember_accounts(&conn, &parent_only).unwrap();
+    map_account(&conn, "harborvale.example/parent", "Operating", true).unwrap();
+    apply(&conn, &parent_only, None, "2025-03-10", false).unwrap();
+
+    // A key holding `_` must not let LIKE treat the other feed's ids as its
+    // own; the cardholder feed's key is a near miss of the parent's.
+    let feed = set(vec![
+        account_json(
+            "parent",
+            "-500.00",
+            vec![txn("p1", "2025-03-08", "300.00", "PAYMENT THANK YOU")],
+        ),
+        account_json(
+            "paren_",
+            "-120.00",
+            vec![
+                txn("h0", "2025-02-20", "-3.00", "ACME"),
+                txn("h1", "2025-02-25", "-45.00", "CEDAR SYSTEMS"),
+                txn("h2", "2025-03-09", "-12.00", "JUNIPER LABS"),
+            ],
+        ),
+    ]);
+    remember_accounts(&conn, &feed).unwrap();
+    map_account(&conn, "harborvale.example/paren_", "Operating", false).unwrap();
+
+    // The cardholder's first sync starts after the CSV row, not after the
+    // parent feed's newer payment, so its earlier charge is not skipped.
+    let report = apply(&conn, &feed, None, "2025-03-10", false).unwrap();
+    let holder = report
+        .accounts
+        .iter()
+        .find(|a| a.key == "harborvale.example/paren_")
+        .unwrap();
+    assert_eq!(holder.start.as_deref(), Some("2025-02-21"));
+    assert_eq!(holder.imported, 2);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM transactions"), 4);
 }
 
 #[test]
@@ -478,7 +637,7 @@ fn remapping_starts_the_new_account_after_its_own_history() {
         [],
     )
     .unwrap();
-    map_account(&conn, "harborvale.example/1", "Reserve").unwrap();
+    map_account(&conn, "harborvale.example/1", "Reserve", true).unwrap();
     assert_eq!(list_accounts(&conn).unwrap()[0].last_synced, None);
     let query = query_for(&conn, None).unwrap().unwrap();
     assert_eq!(

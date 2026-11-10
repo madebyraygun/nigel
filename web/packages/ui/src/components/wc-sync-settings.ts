@@ -1,9 +1,11 @@
 import { LitElement, html, css, nothing, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { live } from 'lit/directives/live.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
+import '@awesome.me/webawesome/dist/components/switch/switch.js';
 import { controlsCss } from '@nigel/theme';
 import '../icons/icons.js';
 import './wc-money.js';
@@ -18,6 +20,11 @@ export interface SyncLinkedAccount {
   /** The Nigel account it syncs into, or `null` when a sync skips it. */
   account: string | null;
   lastSynced: string | null;
+  /**
+   * Whether this feed supplies its Nigel account's bank-reported balance.
+   * One feed per account does; the rest bring in transactions only.
+   */
+  suppliesBalance: boolean;
 }
 
 export interface SyncAccountOutcome {
@@ -54,6 +61,8 @@ export interface NcSyncMapDetail {
   key: string;
   /** `null` stops syncing this bank account. */
   account: string | null;
+  /** Whether this feed supplies the account's bank-reported balance. */
+  suppliesBalance: boolean;
 }
 
 export interface NcSyncRunDetail {
@@ -179,6 +188,21 @@ export class WcSyncSettings extends LitElement {
       .accounts wa-select {
         flex: 0 1 16rem;
         min-width: 12rem;
+      }
+
+      .accounts .link {
+        display: grid;
+        gap: var(--wa-space-xs);
+        flex: 0 1 16rem;
+        min-width: 12rem;
+      }
+
+      .accounts .link wa-select {
+        flex: none;
+      }
+
+      .accounts wa-switch {
+        font-size: var(--nc-font-size-meta);
       }
 
       .actions {
@@ -316,9 +340,34 @@ export class WcSyncSettings extends LitElement {
     if (!this.busy) this.emit<NcSyncRunDetail>('nc-sync-run', { dryRun: false });
   };
 
+  /**
+   * A newly linked feed supplies the balance unless another feed already
+   * supplies that account's, so linking a cardholder's card beside the
+   * program's parent account does not ask for a second balance.
+   */
   private handleMap(key: string, event: Event): void {
     const value = (event.target as HTMLElement & { value: string }).value ?? '';
-    this.emit<NcSyncMapDetail>('nc-sync-map', { key, account: value === '' ? null : value });
+    const account = value === '' ? null : value;
+    const taken = this.accounts.some(
+      (other) => other.key !== key && other.account === account && other.suppliesBalance,
+    );
+    this.emit<NcSyncMapDetail>('nc-sync-map', {
+      key,
+      account,
+      suppliesBalance: account !== null && !taken,
+    });
+  }
+
+  /** Controlled: the switch stays where the stored link has it until the screen answers. */
+  private handleBalance(linked: SyncLinkedAccount, event: Event): void {
+    const control = event.target as HTMLElement & { checked: boolean };
+    const wanted = control.checked;
+    control.checked = linked.suppliesBalance;
+    this.emit<NcSyncMapDetail>('nc-sync-map', {
+      key: linked.key,
+      account: linked.account,
+      suppliesBalance: wanted,
+    });
   }
 
   private toggleReplace = (): void => {
@@ -427,17 +476,30 @@ export class WcSyncSettings extends LitElement {
                       : ''}
                 </p>
               </div>
-              <wa-select
-                label="Syncs into"
-                size="s"
-                data-key=${a.key}
-                value=${a.account ?? ''}
-                ?disabled=${disabled}
-                @change=${(event: Event) => this.handleMap(a.key, event)}
-              >
-                <wa-option value="">Not synced</wa-option>
-                ${this.targets.map((t) => html`<wa-option value=${t}>${t}</wa-option>`)}
-              </wa-select>
+              <div class="link">
+                <wa-select
+                  label="Syncs into"
+                  size="s"
+                  data-key=${a.key}
+                  value=${a.account ?? ''}
+                  ?disabled=${disabled}
+                  @change=${(event: Event) => this.handleMap(a.key, event)}
+                >
+                  <wa-option value="">Not synced</wa-option>
+                  ${this.targets.map((t) => html`<wa-option value=${t}>${t}</wa-option>`)}
+                </wa-select>
+                ${a.account
+                  ? html`<wa-switch
+                      size="small"
+                      data-balance=${a.key}
+                      .checked=${live(a.suppliesBalance)}
+                      ?disabled=${disabled}
+                      hint=${a.suppliesBalance ? '' : 'Transactions only'}
+                      @change=${(event: Event) => this.handleBalance(a, event)}
+                      >Use this feed’s balance</wa-switch
+                    >`
+                  : nothing}
+              </div>
             </li>
           `,
         )}

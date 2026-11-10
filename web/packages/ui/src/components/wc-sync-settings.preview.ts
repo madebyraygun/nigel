@@ -19,6 +19,7 @@ const ACCOUNTS: SyncLinkedAccount[] = [
     currency: 'USD',
     account: 'Operating',
     lastSynced: '2026-11-08',
+    suppliesBalance: true,
   },
   {
     key: 'harborvale.example/sav1',
@@ -27,6 +28,7 @@ const ACCOUNTS: SyncLinkedAccount[] = [
     currency: 'USD',
     account: 'Savings',
     lastSynced: null,
+    suppliesBalance: true,
   },
   {
     key: 'cedar.example/card9',
@@ -35,6 +37,29 @@ const ACCOUNTS: SyncLinkedAccount[] = [
     currency: 'USD',
     account: null,
     lastSynced: null,
+    suppliesBalance: false,
+  },
+];
+
+/** A card program: the parent carries payments and the balance, each cardholder their charges. */
+const CARD_PROGRAM: SyncLinkedAccount[] = [
+  {
+    key: 'cedar.example/program',
+    orgName: 'Cedar Systems Credit Union',
+    name: 'Business Card',
+    currency: 'USD',
+    account: 'Company Card',
+    lastSynced: '2026-11-08',
+    suppliesBalance: true,
+  },
+  {
+    key: 'cedar.example/holder1',
+    orgName: 'Cedar Systems Credit Union',
+    name: 'Cardholder 1',
+    currency: 'USD',
+    account: 'Company Card',
+    lastSynced: '2026-11-08',
+    suppliesBalance: false,
   },
 ];
 
@@ -109,6 +134,10 @@ const preview: Preview = {
         }),
     },
     { name: 'configured', render: () => sync() },
+    {
+      name: 'several feeds into one account',
+      render: () => sync({ accounts: CARD_PROGRAM }),
+    },
     { name: 'syncing', render: () => sync({ busy: 'sync' }) },
     { name: 'preview results', render: () => sync({ outcome: outcome(true) }) },
     { name: 'sync results', render: () => sync({ outcome: outcome(false) }) },

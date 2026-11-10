@@ -202,9 +202,11 @@ CREATE TABLE IF NOT EXISTS simplefin_accounts (
     org_name TEXT NOT NULL,
     name TEXT NOT NULL,
     currency TEXT NOT NULL DEFAULT '',
-    account_id INTEGER UNIQUE REFERENCES accounts(id) ON DELETE SET NULL,
+    account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+    supplies_balance INTEGER NOT NULL DEFAULT 1,
     last_synced TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_simplefin_accounts_account ON simplefin_accounts(account_id);
 
 CREATE TABLE IF NOT EXISTS account_balances (
     id INTEGER PRIMARY KEY,

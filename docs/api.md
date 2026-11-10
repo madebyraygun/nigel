@@ -2299,7 +2299,7 @@ behind the locked guard and needs an admin.
 | `/api/sync` | `GET` | — | `SyncState` |
 | `/api/sync/setup` | `POST` | `token` | `SyncState` |
 | `/api/sync/accounts/refresh` | `POST` | — | `SyncState` |
-| `/api/sync/accounts/map` | `PUT` | `key`, `account` | `SyncState` |
+| `/api/sync/accounts/map` | `PUT` | `key`, `account`, `suppliesBalance?` | `SyncState` |
 | `/api/sync/run` | `POST` | `dryRun?`, `since?` | `SyncRunResult` |
 
 The access URL a setup token is exchanged for is a credential. It is written to
@@ -2318,7 +2318,8 @@ quotes it.
       "name": "Checking",
       "currency": "USD",
       "account": "Operating",
-      "lastSynced": "2026-11-08"
+      "lastSynced": "2026-11-08",
+      "suppliesBalance": true
     }
   ],
   "warnings": []
@@ -2328,6 +2329,9 @@ quotes it.
 `configured` says whether an access URL is stored. `accounts` is every account
 the bridge has reported, from the database — `GET` makes no network call.
 `account` is the Nigel account it feeds, or `null` when a sync skips it.
+Several bridge accounts can feed one Nigel account; `suppliesBalance` is `true`
+for the one whose balance a sync records as that account's bank-reported
+balance, and `false` for a transactions-only feed or an unlinked one.
 `warnings` are messages the bridge sent with this answer, stripped of control
 characters; only `setup` and `refresh` talk to the bridge, so only they can
 carry any.
@@ -2353,12 +2357,16 @@ or a lapsed subscription is `400` saying which; an unreachable bridge is `502`.
 
 ### `PUT /api/sync/accounts/map`
 
-`{ "key": "harborvale.example/chk1", "account": "Operating" }` links a bridge
-account to a Nigel account; `"account": null` unlinks it. Either clears its
-last-sync day, so its next sync starts as a first one. An unknown `key` is
-`404`; an unknown `account` is `404` with `details.reason = "account_not_found"`;
-a Nigel account another bridge account already feeds is `400`, because two feeds
-into one account would double every transaction they share. No network call.
+`{ "key": "harborvale.example/chk1", "account": "Operating", "suppliesBalance": true }`
+links a bridge account to a Nigel account; `"account": null` unlinks it.
+`suppliesBalance` defaults to `true`; `false` links a transactions-only feed.
+Linking to a different account or unlinking clears its last-sync day, so its next
+sync starts as a first one; re-linking to the same account keeps it and only
+updates `suppliesBalance`. An unknown `key` is `404`; an unknown `account` is
+`404` with `details.reason = "account_not_found"`; asking a feed to supply the
+balance of an account another feed already supplies is `400`, with a message
+naming that feed, because a parent account's balance already includes its
+children's. No network call.
 
 ### `POST /api/sync/run`
 

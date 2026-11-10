@@ -438,6 +438,11 @@ export interface LinkedBankAccount {
   /** The Nigel account it syncs into, or `null` when a sync skips it. */
   account: string | null;
   lastSynced: string | null;
+  /**
+   * Whether this feed supplies the account's bank-reported balance. One feed
+   * per account does; the others bring in transactions only. False when unlinked.
+   */
+  suppliesBalance: boolean;
 }
 
 /** `GET /api/sync`, and the answer to every call that changes the links. */
@@ -452,6 +457,11 @@ export interface BankSyncState {
 export interface BankSyncMapRequest {
   key: string;
   account: string | null;
+  /**
+   * Whether this feed supplies the account's balance; absent means it does.
+   * Refused when another feed already supplies it.
+   */
+  suppliesBalance?: boolean;
 }
 
 /** `POST /api/sync/run`. */

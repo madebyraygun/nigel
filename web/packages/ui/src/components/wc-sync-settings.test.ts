@@ -19,6 +19,7 @@ const ACCOUNTS: SyncLinkedAccount[] = [
     currency: 'USD',
     account: 'Operating',
     lastSynced: '2026-11-08',
+    suppliesBalance: true,
   },
   {
     key: 'harborvale.example/sav1',
@@ -27,6 +28,7 @@ const ACCOUNTS: SyncLinkedAccount[] = [
     currency: 'USD',
     account: null,
     lastSynced: null,
+    suppliesBalance: false,
   },
 ];
 
@@ -118,9 +120,40 @@ describe('wc-sync-settings', () => {
     if (first) first.value = '';
     first?.dispatchEvent(new Event('change'));
     expect(seen).toEqual([
-      { key: 'harborvale.example/sav1', account: 'Savings' },
-      { key: 'harborvale.example/chk1', account: null },
+      { key: 'harborvale.example/sav1', account: 'Savings', suppliesBalance: true },
+      { key: 'harborvale.example/chk1', account: null, suppliesBalance: false },
     ]);
+  });
+
+  it('links a second feed into an account as transactions only', async () => {
+    const el = await mount({ configured: true, accounts: ACCOUNTS });
+    const seen = events<NcSyncMapDetail>(el, 'nc-sync-map');
+    const second = q<HTMLElement & { value: string }>(
+      el,
+      'wa-select[data-key="harborvale.example/sav1"]',
+    );
+    if (second) second.value = 'Operating';
+    second?.dispatchEvent(new Event('change'));
+    expect(seen).toEqual([
+      { key: 'harborvale.example/sav1', account: 'Operating', suppliesBalance: false },
+    ]);
+  });
+
+  it('offers the balance choice on a linked feed and asks for the flip without making it', async () => {
+    const el = await mount({ configured: true, accounts: ACCOUNTS });
+    expect(q(el, '[data-balance="harborvale.example/sav1"]')).toBeNull();
+    const control = q<HTMLElement & { checked: boolean }>(
+      el,
+      '[data-balance="harborvale.example/chk1"]',
+    );
+    expect(control?.checked).toBe(true);
+    const seen = events<NcSyncMapDetail>(el, 'nc-sync-map');
+    if (control) control.checked = false;
+    control?.dispatchEvent(new Event('change'));
+    expect(seen).toEqual([
+      { key: 'harborvale.example/chk1', account: 'Operating', suppliesBalance: false },
+    ]);
+    expect(control?.checked).toBe(true);
   });
 
   it('previews and syncs on request', async () => {
