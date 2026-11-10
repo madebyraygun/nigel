@@ -413,10 +413,20 @@ pub fn apply(
                     rusqlite::params![plan.account_id, b.balance, b.as_of, BALANCE_SOURCE],
                 )?;
             }
-            conn.execute(
-                "UPDATE simplefin_accounts SET last_synced = ?1 WHERE sfin_key = ?2",
-                rusqlite::params![today, key],
-            )?;
+            // Synced only as far as the bank has answered: the bridge's balance
+            // date stops moving while a connection is broken, so a stale feed
+            // leaves the next window reaching back over the days it never
+            // fetched. Capped at today, and never moved backwards.
+            let reported = (account.balance_date > 0)
+                .then(|| local_day(account.balance_date))
+                .flatten();
+            if let Some(through) = reported.map(|day| day.min(today.to_string())) {
+                conn.execute(
+                    "UPDATE simplefin_accounts SET last_synced = ?1 \
+                     WHERE sfin_key = ?2 AND (last_synced IS NULL OR last_synced < ?1)",
+                    rusqlite::params![through, key],
+                )?;
+            }
         }
 
         report.accounts.push(AccountSync {

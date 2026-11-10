@@ -374,18 +374,87 @@ fn a_first_sync_starts_after_the_last_csv_import() {
     );
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM transactions"), 2);
 
-    // With only feed rows in the account, the overlap reaches back a week.
+    // With only feed rows in the account, the overlap reaches back a week from
+    // the day the bank last reported (the feed's balance date, 2025-03-10).
     conn.execute("DELETE FROM transactions WHERE external_id IS NULL", [])
         .unwrap();
     let query = query_for(&conn, None).unwrap().unwrap();
     assert_eq!(
         query.start,
-        Some(local_midnight(parse_day("2025-03-04").unwrap()))
+        Some(local_midnight(parse_day("2025-03-03").unwrap()))
     );
     // --since overrides both.
     let since = parse_day("2025-01-01").unwrap();
     let query = query_for(&conn, Some(since)).unwrap().unwrap();
     assert_eq!(query.start, Some(local_midnight(since)));
+}
+
+/// The feed for account `id` as the bridge last refreshed it on `day`.
+fn reported_on(id: &str, day: Option<&str>, transactions: Vec<serde_json::Value>) -> AccountSet {
+    let mut account = account_json(id, "100.00", transactions);
+    account["balance-date"] = serde_json::json!(day.map_or(0, noon));
+    set(vec![account])
+}
+
+fn last_synced(conn: &Connection) -> Option<String> {
+    list_accounts(conn).unwrap()[0].last_synced.clone()
+}
+
+#[test]
+fn an_outage_does_not_move_the_sync_window_past_unfetched_days() {
+    let (_dir, conn) = test_db();
+    let fresh = reported_on(
+        "1",
+        Some("2025-03-10"),
+        vec![txn("a", "2025-03-09", "-5.00", "CAFE")],
+    );
+    link(&conn, &fresh, "1");
+    apply(&conn, &fresh, None, "2025-03-10", false).unwrap();
+    assert_eq!(last_synced(&conn).as_deref(), Some("2025-03-10"));
+
+    // The bank connection breaks: ten days of syncs come back stale, the
+    // bridge's balance date stuck where the bank last answered.
+    let mut stale = reported_on("1", Some("2025-03-10"), vec![]);
+    stale
+        .errors
+        .push("Harbor & Vale Bank needs attention".to_string());
+    for today in ["2025-03-15", "2025-03-20"] {
+        apply(&conn, &stale, None, today, false).unwrap();
+    }
+    assert_eq!(last_synced(&conn).as_deref(), Some("2025-03-10"));
+
+    // So the first sync after the repair still reaches back over the outage.
+    let query = query_for(&conn, None).unwrap().unwrap();
+    assert_eq!(
+        query.start,
+        Some(local_midnight(parse_day("2025-03-03").unwrap()))
+    );
+}
+
+#[test]
+fn the_sync_day_never_runs_ahead_of_today_or_backwards() {
+    let (_dir, conn) = test_db();
+    let ahead = reported_on("1", Some("2025-03-12"), vec![]);
+    link(&conn, &ahead, "1");
+    apply(&conn, &ahead, None, "2025-03-10", false).unwrap();
+    assert_eq!(last_synced(&conn).as_deref(), Some("2025-03-10"));
+
+    let older = reported_on("1", Some("2025-03-08"), vec![]);
+    apply(&conn, &older, None, "2025-03-11", false).unwrap();
+    assert_eq!(last_synced(&conn).as_deref(), Some("2025-03-10"));
+
+    let undated = reported_on("1", None, vec![]);
+    apply(&conn, &undated, None, "2025-03-12", false).unwrap();
+    assert_eq!(last_synced(&conn).as_deref(), Some("2025-03-10"));
+}
+
+#[test]
+fn a_first_sync_without_a_balance_date_records_no_sync_day() {
+    let (_dir, conn) = test_db();
+    let undated = reported_on("1", None, vec![txn("a", "2025-03-09", "-5.00", "CAFE")]);
+    link(&conn, &undated, "1");
+    apply(&conn, &undated, None, "2025-03-10", false).unwrap();
+    assert_eq!(last_synced(&conn), None);
 }
 
 #[test]
