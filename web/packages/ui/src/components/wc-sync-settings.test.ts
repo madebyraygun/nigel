@@ -85,6 +85,19 @@ describe('wc-sync-settings', () => {
     expect(q(el, '[data-token]')).toBeNull();
   });
 
+  it('closes the token form and empties it once a replacement token connects', async () => {
+    const el = await mount({ configured: true, accounts: ACCOUNTS });
+    q(el, '[aria-expanded]')?.click();
+    await el.updateComplete;
+    const field = q<HTMLElement & { value: string }>(el, '[data-token]');
+    expect(field).not.toBeNull();
+    if (field) field.value = 'spent-token';
+    el.connections = 1;
+    await el.updateComplete;
+    expect(field?.value).toBe('');
+    expect(q(el, '[data-token]')).toBeNull();
+  });
+
   it('lists each bank account with what it syncs into', async () => {
     const el = await mount({ configured: true, accounts: ACCOUNTS });
     const selects = [...(el.shadowRoot?.querySelectorAll('wa-select') ?? [])];

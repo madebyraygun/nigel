@@ -266,12 +266,22 @@ export class WcSyncSettings extends LitElement {
   @property({ type: String })
   error = '';
 
+  /**
+   * How many connects have succeeded. Replacing a token leaves `configured`
+   * true throughout, so this is what tells the card a new token went through
+   * and its spent value must leave the form.
+   */
+  @property({ type: Number })
+  connections = 0;
+
   /** A connected bridge is being swapped for another token. */
   @state()
   private replacing = false;
 
   protected willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has('configured') && this.configured) {
+    const connected = changed.has('configured') && this.configured;
+    const reconnected = changed.has('connections') && changed.get('connections') !== undefined;
+    if (connected || reconnected) {
       this.replacing = false;
       const field = this.tokenField();
       if (field) field.value = '';

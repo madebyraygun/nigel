@@ -206,6 +206,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
   @state() private syncBusy: SyncBusy = null;
   @state() private syncOutcome: SyncOutcome | null = null;
   @state() private syncNotices: string[] = [];
+  @state() private syncConnections = 0;
   @state() private syncError = '';
   @state() private active = 'letterhead';
 
@@ -510,6 +511,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       this.bankSync = state;
       this.syncNotices = state.warnings;
       this.syncOutcome = null;
+      this.syncConnections += 1;
       this.toastOk('Connected to SimpleFIN.');
     });
 
@@ -841,6 +843,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
       .busy=${this.syncBusy}
       .outcome=${this.syncOutcome}
       .notices=${this.syncNotices}
+      .connections=${this.syncConnections}
       error=${this.syncError}
       @nc-sync-setup=${this.handleSyncSetup}
       @nc-sync-refresh=${this.handleSyncRefresh}
