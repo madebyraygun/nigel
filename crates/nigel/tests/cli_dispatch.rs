@@ -5545,3 +5545,54 @@ fn report_json_with_view_mode_is_refused() {
         .assert()
         .failure();
 }
+
+#[test]
+fn invoice_list_json_includes_line_items() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let out = env
+        .cmd()
+        .args(["invoice", "list", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let invoices = v.as_array().unwrap();
+    assert_eq!(invoices.len(), 4);
+    for inv in invoices {
+        assert!(inv["number"].is_number() && inv["status"].is_string());
+        assert!(inv["issueDate"].is_string() && inv["clientName"].is_string());
+        let items = inv["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        assert!(items[0]["description"].is_string() && items[0]["lineTotal"].is_number());
+    }
+}
+
+#[test]
+fn invoice_list_json_on_empty_books_is_an_empty_array() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    let out = env
+        .cmd()
+        .args(["invoice", "list", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+}
+
+#[test]
+fn invoice_list_unknown_format_lists_table_and_json_only() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["invoice", "list", "--format", "pdf"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Unknown --format")
+                .and(predicate::str::contains("'table' or 'json'")),
+        );
+}

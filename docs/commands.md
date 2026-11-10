@@ -95,6 +95,7 @@ nigel invoice duplicate 1248 --issue 2026-09-01   # Copy with a given issue date
 nigel invoice void 1248                           # Cancel an invoice (confirms; --yes to skip)
 nigel invoice delete 1252                         # Delete an unsent draft (confirms; --yes to skip)
 nigel invoice list                                # Number, status, client, total, due date
+nigel invoice list --format json                  # JSON array of invoices, each with its line items
 nigel invoice show 1248                           # Line items, paid amount, payment link
 nigel invoice preview 1248                        # Render HTML/PDF locally, no network (<data_dir>/previews)
 nigel invoice preview 1248 --output-dir /tmp      # Write the preview somewhere else

@@ -381,7 +381,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ),
             InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
             InvoiceCommands::Delete { number, yes } => cli::invoice::delete(number, yes),
-            InvoiceCommands::List => cli::invoice::list(&cli::today()),
+            InvoiceCommands::List { format } => {
+                cli::invoice::list(format.as_deref(), &cli::today())
+            }
             InvoiceCommands::Show { number } => cli::invoice::show(number, &cli::today()),
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)

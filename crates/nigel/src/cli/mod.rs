@@ -587,7 +587,11 @@ pub enum InvoiceCommands {
         yes: bool,
     },
     /// List invoices.
-    List,
+    List {
+        /// Output format: table (default) or json (with line items)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Show one invoice by number.
     Show {
         /// Invoice number (shown in `nigel invoice list`)
