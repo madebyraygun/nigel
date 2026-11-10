@@ -48,7 +48,12 @@ pub fn setup(token: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn accounts(map: Option<&[String]>, unmap: Option<&str>, format: Option<&str>) -> Result<()> {
+pub fn accounts(
+    map: Option<&[String]>,
+    no_balance: bool,
+    unmap: Option<&str>,
+    format: Option<&str>,
+) -> Result<()> {
     match format {
         None | Some("table") | Some("json") => {}
         Some(other) => {
@@ -66,8 +71,12 @@ pub fn accounts(map: Option<&[String]>, unmap: Option<&str>, format: Option<&str
     }
     match (map, unmap) {
         (Some([key, account]), _) => {
-            simplefin::map_account(&conn, key, account)?;
-            println!("{key} now syncs into {account}.");
+            simplefin::map_account(&conn, key, account, !no_balance)?;
+            if no_balance {
+                println!("{key} now syncs its transactions into {account}, without its balance.");
+            } else {
+                println!("{key} now syncs into {account}, and supplies its balance.");
+            }
         }
         (_, Some(key)) => {
             simplefin::unmap_account(&conn, key)?;
@@ -97,14 +106,21 @@ pub fn accounts(map: Option<&[String]>, unmap: Option<&str>, format: Option<&str
         return Ok(());
     }
     for a in &linked {
-        let target = a.account.as_deref().unwrap_or("(not synced)");
+        let target = match (&a.account, a.supplies_balance) {
+            (None, _) => "(not synced)".to_string(),
+            (Some(name), true) => format!("{name} (balance)"),
+            (Some(name), false) => format!("{name} (transactions only)"),
+        };
         println!(
             "{:<40} {} — {} [{}] → {target}",
             a.key, a.org_name, a.name, a.currency
         );
     }
     if linked.iter().any(|a| a.account.is_none()) {
-        println!("\nMap one with: nigel sync accounts --map <KEY> <ACCOUNT>");
+        println!(
+            "\nMap one with: nigel sync accounts --map <KEY> <ACCOUNT> \
+             (add --no-balance for a feed whose account takes its balance from another)"
+        );
     }
     Ok(())
 }

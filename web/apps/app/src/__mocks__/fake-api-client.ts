@@ -1048,7 +1048,13 @@ export class FakeApiClient implements ApiClient {
     this.bankSync = {
       ...this.bankSync,
       accounts: this.bankSync.accounts.map((a) =>
-        a.key === input.key ? { ...a, account: input.account } : a,
+        a.key === input.key
+          ? {
+              ...a,
+              account: input.account,
+              suppliesBalance: input.account !== null && (input.suppliesBalance ?? true),
+            }
+          : a,
       ),
     };
     return this.bankSync;

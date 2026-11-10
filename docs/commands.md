@@ -25,7 +25,8 @@ nigel undo                                        # Undo the last import (with c
 nigel sync setup [<token>]                        # Claim a SimpleFIN setup token (read from stdin when omitted)
 nigel sync accounts                               # List SimpleFIN accounts and the Nigel accounts they feed
 nigel sync accounts --format json                # Linked accounts as JSON, read from the books without contacting the bridge
-nigel sync accounts --map <key> <account>         # Sync a SimpleFIN account into a Nigel account
+nigel sync accounts --map <key> <account>         # Sync a SimpleFIN account into a Nigel account, balance included
+nigel sync accounts --map <key> <account> --no-balance  # Add a transactions-only feed to an account another feed supplies the balance for
 nigel sync accounts --unmap <key>                 # Stop syncing it
 nigel sync [--since YYYY-MM-DD] [--dry-run]       # Import new transactions and balances from every linked account
 nigel imports list                                # Every import, newest first, with its row and dropped counts

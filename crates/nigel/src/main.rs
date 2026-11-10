@@ -479,9 +479,17 @@ fn dispatch(command: Commands) -> error::Result<()> {
             dry_run,
         } => match command {
             Some(SyncCommands::Setup { token }) => cli::sync::setup(token.as_deref()),
-            Some(SyncCommands::Accounts { map, unmap, format }) => {
-                cli::sync::accounts(map.as_deref(), unmap.as_deref(), format.as_deref())
-            }
+            Some(SyncCommands::Accounts {
+                map,
+                no_balance,
+                unmap,
+                format,
+            }) => cli::sync::accounts(
+                map.as_deref(),
+                no_balance,
+                unmap.as_deref(),
+                format.as_deref(),
+            ),
             None => cli::sync::run(since.as_deref(), dry_run),
         },
         Commands::Imports { command } => match command {

@@ -42,6 +42,10 @@ pub struct LinkedAccount {
     pub currency: String,
     /// The Nigel account it is mapped to, or `None` when sync skips it.
     pub account: Option<String>,
+    /// Whether a sync records this feed's balance as the account's
+    /// bank-reported balance. False for a transactions-only feed and for an
+    /// unmapped one.
+    pub supplies_balance: bool,
     /// The last day a sync of this account committed.
     pub last_synced: Option<String>,
 }
@@ -66,7 +70,8 @@ pub fn remember_accounts(conn: &Connection, set: &AccountSet) -> Result<()> {
 
 pub fn list_accounts(conn: &Connection) -> Result<Vec<LinkedAccount>> {
     let mut stmt = conn.prepare(
-        "SELECT s.sfin_key, s.org_name, s.name, s.currency, a.name, s.last_synced \
+        "SELECT s.sfin_key, s.org_name, s.name, s.currency, a.name, s.last_synced, \
+                a.id IS NOT NULL AND s.supplies_balance \
          FROM simplefin_accounts s LEFT JOIN accounts a ON a.id = s.account_id \
          ORDER BY s.org_name, s.name, s.sfin_key",
     )?;
@@ -79,15 +84,28 @@ pub fn list_accounts(conn: &Connection) -> Result<Vec<LinkedAccount>> {
                 currency: r.get(3)?,
                 account: r.get(4)?,
                 last_synced: r.get(5)?,
+                supplies_balance: r.get(6)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-/// Point a SimpleFIN account at a Nigel account. One feed per Nigel
-/// account: a second would double every transaction the two share.
-pub fn map_account(conn: &Connection, key: &str, account_name: &str) -> Result<()> {
+/// Point a SimpleFIN account at a Nigel account.
+///
+/// Several feeds may feed one account — a card program can carry payments on
+/// a parent feed and each cardholder's charges on a feed of its own — but only
+/// one supplies the bank-reported balance, because a parent's balance already
+/// includes its children's. Mapping a second balance feed is refused; a
+/// transactions-only feed (`supplies_balance` false) is always allowed.
+/// Re-mapping a key updates its flag, and moving it to another account
+/// clears its last sync so it starts as a first sync there.
+pub fn map_account(
+    conn: &Connection,
+    key: &str,
+    account_name: &str,
+    supplies_balance: bool,
+) -> Result<()> {
     let account_id: i64 = conn
         .query_row(
             "SELECT id FROM accounts WHERE name = ?1",
@@ -96,27 +114,37 @@ pub fn map_account(conn: &Connection, key: &str, account_name: &str) -> Result<(
         )
         .optional()?
         .ok_or_else(|| NigelError::UnknownAccount(account_name.to_string()))?;
-    let taken: Option<String> = conn
-        .query_row(
-            "SELECT sfin_key FROM simplefin_accounts WHERE account_id = ?1 AND sfin_key <> ?2",
-            rusqlite::params![account_id, key],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(other) = taken {
-        return Err(NigelError::Invalid(format!(
-            "{account_name} is already fed by SimpleFIN account {other}; unmap that one first"
-        )));
-    }
-    let changed = conn.execute(
-        "UPDATE simplefin_accounts SET account_id = ?1, \
-             last_synced = CASE WHEN account_id IS ?1 THEN last_synced END \
-         WHERE sfin_key = ?2",
-        rusqlite::params![account_id, key],
+    let known: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM simplefin_accounts WHERE sfin_key = ?1",
+        [key],
+        |r| r.get(0),
     )?;
-    if changed == 0 {
+    if !known {
         return Err(unknown_key(key));
     }
+    if supplies_balance {
+        let taken: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT sfin_key, org_name, name FROM simplefin_accounts \
+                 WHERE account_id = ?1 AND supplies_balance AND sfin_key <> ?2",
+                rusqlite::params![account_id, key],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        if let Some((other, org, name)) = taken {
+            return Err(NigelError::Invalid(format!(
+                "{account_name} already takes its balance from SimpleFIN account {other} \
+                 ({org} — {name}); map this one transactions-only (--no-balance) \
+                 to import its transactions without a second balance"
+            )));
+        }
+    }
+    conn.execute(
+        "UPDATE simplefin_accounts SET account_id = ?1, supplies_balance = ?2, \
+             last_synced = CASE WHEN account_id IS ?1 THEN last_synced END \
+         WHERE sfin_key = ?3",
+        rusqlite::params![account_id, supplies_balance, key],
+    )?;
     Ok(())
 }
 
@@ -142,6 +170,7 @@ struct Plan {
     key: String,
     account_id: i64,
     account_name: String,
+    supplies_balance: bool,
     start: Option<NaiveDate>,
 }
 
@@ -154,33 +183,44 @@ fn parse_day(day: &str) -> Result<NaiveDate> {
 ///
 /// `--since` wins. Otherwise a repeat sync re-reads from its last day minus
 /// [`RESYNC_OVERLAP_DAYS`], and a first sync starts the day after the
-/// account's latest transaction. Neither ever starts on or before the latest
+/// account's latest transaction that is not another feed's: a feed added
+/// beside one that already syncs must not skip its own earlier rows because
+/// the other feed's are newer. Neither ever starts on or before the latest
 /// transaction that came without an id — a CSV row — because a feed's row
 /// cannot be matched against one and would import twice. An account with no
 /// history at all takes whatever the bridge offers.
 fn plan(conn: &Connection, since: Option<NaiveDate>) -> Result<Vec<Plan>> {
     let mut stmt = conn.prepare(
-        "SELECT s.sfin_key, a.id, a.name, s.last_synced, \
-                (SELECT MAX(date) FROM transactions t WHERE t.account_id = a.id), \
+        // Compared by prefix with substr rather than LIKE: a key may hold `_`.
+        "SELECT s.sfin_key, a.id, a.name, s.supplies_balance, s.last_synced, \
+                (SELECT MAX(date) FROM transactions t WHERE t.account_id = a.id \
+                   AND (t.external_id IS NULL \
+                        OR substr(t.external_id, 1, length(?1)) <> ?1 \
+                        OR substr(t.external_id, 1, length(?1 || s.sfin_key || ':')) \
+                           = ?1 || s.sfin_key || ':')), \
                 (SELECT MAX(date) FROM transactions t \
                   WHERE t.account_id = a.id AND t.external_id IS NULL) \
          FROM simplefin_accounts s JOIN accounts a ON a.id = s.account_id \
          ORDER BY s.sfin_key",
     )?;
+    let feed_prefix = format!("{FORMAT}:");
     let rows = stmt
-        .query_map([], |r| {
+        .query_map([&feed_prefix], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
                 r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
+                r.get::<_, bool>(3)?,
                 r.get::<_, Option<String>>(4)?,
                 r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut plans = Vec::with_capacity(rows.len());
-    for (key, account_id, account_name, last_synced, latest, latest_without_id) in rows {
+    for (key, account_id, account_name, supplies_balance, last_synced, latest, latest_without_id) in
+        rows
+    {
         let start = if since.is_some() {
             since
         } else {
@@ -198,6 +238,7 @@ fn plan(conn: &Connection, since: Option<NaiveDate>) -> Result<Vec<Plan>> {
             key,
             account_id,
             account_name,
+            supplies_balance,
             start,
         });
     }
@@ -247,6 +288,7 @@ pub struct AccountSync {
     pub malformed: usize,
     /// The `imports` row written, or `None` for a dry run or nothing new.
     pub import_id: Option<i64>,
+    /// The bank-reported balance, from the account's balance feed only.
     pub balance: Option<ReportedBalance>,
 }
 
@@ -373,9 +415,14 @@ pub fn apply(
         };
 
         let outcome = outcome_for(account, plan.start);
-        let balance = parse_money(&account.balance).and_then(|balance| {
-            local_day(account.balance_date).map(|as_of| ReportedBalance { balance, as_of })
-        });
+        // A transactions-only feed's balance is part of the balance feed's
+        // (a cardholder's charges inside the card's total), so it is not
+        // recorded or reported.
+        let balance = parse_money(&account.balance)
+            .filter(|_| plan.supplies_balance)
+            .and_then(|balance| {
+                local_day(account.balance_date).map(|as_of| ReportedBalance { balance, as_of })
+            });
         let malformed = outcome.malformed();
         let parsed = ParsedImport {
             account_id: plan.account_id,

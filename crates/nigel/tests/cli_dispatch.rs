@@ -5708,6 +5708,98 @@ fn sync_accounts_json_lists_linked_accounts() {
     assert_eq!(rows[0]["account"], name.as_str());
     assert_eq!(rows[0]["lastSynced"], "2026-11-08");
     assert_eq!(rows[0]["orgName"], "Harbor & Vale Bank");
+    assert_eq!(rows[0]["suppliesBalance"], true);
+}
+
+#[test]
+fn sync_accounts_maps_a_transactions_only_feed_beside_the_balance_feed() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let name: String = env
+        .db()
+        .query_row("SELECT name FROM accounts ORDER BY id LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    env.db()
+        .execute_batch(
+            "INSERT INTO simplefin_accounts (sfin_key, org_name, name, currency) VALUES \
+             ('harborvale.example/card', 'Harbor & Vale Bank', 'Business Card', 'USD'), \
+             ('harborvale.example/holder', 'Harbor & Vale Bank', 'Cardholder', 'USD')",
+        )
+        .unwrap();
+    env.cmd()
+        .args([
+            "sync",
+            "accounts",
+            "--map",
+            "harborvale.example/card",
+            &name,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("{name} (balance)")));
+
+    env.cmd()
+        .args([
+            "sync",
+            "accounts",
+            "--map",
+            "harborvale.example/holder",
+            &name,
+        ])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("harborvale.example/card")
+                .and(predicate::str::contains("--no-balance")),
+        );
+
+    env.cmd()
+        .args([
+            "sync",
+            "accounts",
+            "--map",
+            "harborvale.example/holder",
+            &name,
+            "--no-balance",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("{name} (balance)")).and(
+            predicate::str::contains(format!("{name} (transactions only)")),
+        ));
+
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let flags: Vec<(&str, &str, bool)> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["key"].as_str().unwrap(),
+                a["account"].as_str().unwrap(),
+                a["suppliesBalance"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("harborvale.example/card", name.as_str(), true),
+            ("harborvale.example/holder", name.as_str(), false),
+        ]
+    );
+
+    env.cmd()
+        .args(["sync", "accounts", "--no-balance"])
+        .assert()
+        .failure();
 }
 
 #[test]

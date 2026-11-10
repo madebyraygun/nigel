@@ -213,6 +213,10 @@ pub struct MapRequest {
     key: String,
     /// The Nigel account to sync into, or `null` to stop syncing this one.
     account: Option<String>,
+    /// Whether this feed supplies the account's bank-reported balance.
+    /// Absent means it does; `false` maps a transactions-only feed.
+    #[serde(default)]
+    supplies_balance: Option<bool>,
 }
 
 async fn put_map(
@@ -222,9 +226,12 @@ async fn put_map(
     let configured = configured()?;
     let accounts = with_conn(&state, move |conn| {
         match request.account.as_deref().map(str::trim) {
-            Some(account) if !account.is_empty() => {
-                simplefin::map_account(conn, &request.key, account)?
-            }
+            Some(account) if !account.is_empty() => simplefin::map_account(
+                conn,
+                &request.key,
+                account,
+                request.supplies_balance.unwrap_or(true),
+            )?,
             _ => simplefin::unmap_account(conn, &request.key)?,
         }
         simplefin::list_accounts(conn)
@@ -403,7 +410,8 @@ mod tests {
             [format!("harborvale.example/{id}"), format!("Checking {id}")],
         )
         .unwrap();
-        crate::simplefin::map_account(&conn, &format!("harborvale.example/{id}"), account).unwrap();
+        crate::simplefin::map_account(&conn, &format!("harborvale.example/{id}"), account, true)
+            .unwrap();
     }
 
     fn count(db_path: &std::path::Path) -> i64 {
@@ -566,7 +574,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_second_feed_into_one_account_is_refused() {
+    async fn a_second_balance_feed_is_refused_and_a_transactions_only_feed_is_not() {
         let (_config, _dir, db_path) = fixture();
         let (app, token) = app_for(&db_path);
         link(&db_path, "1", "Operating");
@@ -580,10 +588,33 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(body["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("already fed"));
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("harborvale.example/1"), "{message}");
+        assert!(message.contains("transactions-only"), "{message}");
+
+        let (status, body) = put_json(
+            &app,
+            "/api/sync/accounts/map",
+            &token,
+            &json!({
+                "key": "harborvale.example/2",
+                "account": "Operating",
+                "suppliesBalance": false
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let accounts = body["accounts"].as_array().unwrap();
+        let feed = |key: &str| {
+            accounts
+                .iter()
+                .find(|a| a["key"] == key)
+                .unwrap_or_else(|| panic!("{key} missing from {body}"))
+        };
+        assert_eq!(feed("harborvale.example/1")["account"], "Operating");
+        assert_eq!(feed("harborvale.example/1")["suppliesBalance"], true);
+        assert_eq!(feed("harborvale.example/2")["account"], "Operating");
+        assert_eq!(feed("harborvale.example/2")["suppliesBalance"], false);
     }
 
     #[tokio::test]

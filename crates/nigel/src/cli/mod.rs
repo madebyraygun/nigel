@@ -274,6 +274,11 @@ pub enum SyncCommands {
         /// Map a SimpleFIN account (its key, from the list) to a Nigel account.
         #[arg(long, num_args = 2, value_names = ["KEY", "ACCOUNT"], conflicts_with = "unmap")]
         map: Option<Vec<String>>,
+        /// With --map: import this feed's transactions but not its balance,
+        /// for a feed whose account already takes its balance from another
+        /// feed (a cardholder's card under the program's parent account).
+        #[arg(long, requires = "map")]
+        no_balance: bool,
         /// Stop syncing a SimpleFIN account.
         #[arg(long, value_name = "KEY")]
         unmap: Option<String>,

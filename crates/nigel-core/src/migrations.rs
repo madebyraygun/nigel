@@ -589,6 +589,48 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 20,
+        description: "SimpleFIN: several feeds per account, one of them supplying the balance",
+        up: |conn| {
+            // SQLite cannot drop a UNIQUE constraint in place, so the table is
+            // rebuilt. It is a child of `accounts` and nothing references it,
+            // so the rebuild holds with `foreign_keys=ON`. Every existing
+            // mapping was its account's only feed, so each keeps supplying the
+            // balance.
+            let already: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('simplefin_accounts')
+                   WHERE name = 'supplies_balance'",
+                [],
+                |r| r.get(0),
+            )?;
+            if !already {
+                conn.execute_batch(
+                    "CREATE TABLE simplefin_accounts_v20 (
+                         id INTEGER PRIMARY KEY,
+                         sfin_key TEXT NOT NULL UNIQUE,
+                         org_name TEXT NOT NULL,
+                         name TEXT NOT NULL,
+                         currency TEXT NOT NULL DEFAULT '',
+                         account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+                         supplies_balance INTEGER NOT NULL DEFAULT 1,
+                         last_synced TEXT
+                     );
+                     INSERT INTO simplefin_accounts_v20
+                         (id, sfin_key, org_name, name, currency, account_id, supplies_balance, last_synced)
+                     SELECT id, sfin_key, org_name, name, currency, account_id, 1, last_synced
+                       FROM simplefin_accounts;
+                     DROP TABLE simplefin_accounts;
+                     ALTER TABLE simplefin_accounts_v20 RENAME TO simplefin_accounts;",
+                )?;
+            }
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_simplefin_accounts_account
+                     ON simplefin_accounts(account_id);",
+            )?;
+            Ok(())
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -1871,6 +1913,100 @@ mod tests {
         insert("a", "pat@example.com", "admin").unwrap();
         assert!(insert("b", "PAT@example.com", "admin").is_err());
         assert!(insert("c", "sam@example.com", "owner").is_err());
+    }
+
+    /// `simplefin_accounts` as v19 wrote it: one feed per account.
+    fn simplefin_db_at_v19() -> (tempfile::TempDir, Connection) {
+        let (dir, conn) = test_db();
+        conn.execute_batch(
+            "DROP TABLE simplefin_accounts;
+             CREATE TABLE simplefin_accounts (
+                 id INTEGER PRIMARY KEY,
+                 sfin_key TEXT NOT NULL UNIQUE,
+                 org_name TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 currency TEXT NOT NULL DEFAULT '',
+                 account_id INTEGER UNIQUE REFERENCES accounts(id) ON DELETE SET NULL,
+                 last_synced TEXT
+             );
+             INSERT INTO accounts (name, account_type) VALUES ('Harbor Card', 'credit_card');
+             INSERT INTO simplefin_accounts (sfin_key, org_name, name, currency, account_id, last_synced)
+                 VALUES ('bank.example:ACT-1', 'Example Bank', 'Card', 'USD', 1, '2026-03-01'),
+                        ('bank.example:ACT-2', 'Example Bank', 'Savings', 'USD', NULL, NULL);",
+        )
+        .unwrap();
+        set_metadata(&conn, "schema_version", "19").unwrap();
+        (dir, conn)
+    }
+
+    #[test]
+    fn v20_keeps_mappings_and_lets_a_second_feed_into_one_account() {
+        let (_dir, conn) = simplefin_db_at_v19();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+
+        let rows: Vec<(String, Option<i64>, bool, Option<String>)> = conn
+            .prepare(
+                "SELECT sfin_key, account_id, supplies_balance, last_synced
+                   FROM simplefin_accounts ORDER BY sfin_key",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "bank.example:ACT-1".to_string(),
+                    Some(1),
+                    true,
+                    Some("2026-03-01".to_string())
+                ),
+                ("bank.example:ACT-2".to_string(), None, true, None),
+            ]
+        );
+
+        conn.execute(
+            "UPDATE simplefin_accounts SET account_id = 1, supplies_balance = 0
+              WHERE sfin_key = 'bank.example:ACT-2'",
+            [],
+        )
+        .unwrap();
+        let fed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM simplefin_accounts WHERE account_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fed, 2);
+
+        // Deleting the account still releases its feeds.
+        conn.execute("DELETE FROM accounts WHERE id = 1", [])
+            .unwrap();
+        let mapped: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM simplefin_accounts WHERE account_id IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mapped, 0);
+    }
+
+    #[test]
+    fn v20_is_replayable() {
+        let (_dir, conn) = simplefin_db_at_v19();
+        run_migrations(&conn).unwrap();
+        set_metadata(&conn, "schema_version", "19").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        let feeds: i64 = conn
+            .query_row("SELECT COUNT(*) FROM simplefin_accounts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(feeds, 2);
     }
 
     #[test]
