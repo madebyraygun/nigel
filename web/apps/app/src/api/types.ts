@@ -428,6 +428,62 @@ export interface UpdateAppSettingsRequest {
   updateCheck: boolean;
 }
 
+/** A bank account a SimpleFIN bridge has reported, and the Nigel account it feeds. */
+export interface LinkedBankAccount {
+  /** Stable across syncs: the bank, then the bridge's account id. */
+  key: string;
+  orgName: string;
+  name: string;
+  currency: string;
+  /** The Nigel account it syncs into, or `null` when a sync skips it. */
+  account: string | null;
+  lastSynced: string | null;
+}
+
+/** `GET /api/sync`, and the answer to every call that changes the links. */
+export interface BankSyncState {
+  configured: boolean;
+  accounts: LinkedBankAccount[];
+  /** Messages the bridge sent with this answer, already sanitized. */
+  warnings: string[];
+}
+
+/** `PUT /api/sync/accounts/map`. `account: null` stops syncing that bank account. */
+export interface BankSyncMapRequest {
+  key: string;
+  account: string | null;
+}
+
+/** `POST /api/sync/run`. */
+export interface BankSyncRunRequest {
+  dryRun?: boolean;
+  /** `YYYY-MM-DD`. */
+  since?: string;
+}
+
+export interface BankAccountSync {
+  key: string;
+  label: string;
+  account: string;
+  start: string | null;
+  imported: number;
+  skipped: number;
+  malformed: number;
+  /** The `imports` row written, or `null` for a preview or nothing new. */
+  importId: number | null;
+  balance: { balance: number; asOf: string } | null;
+}
+
+export interface BankSyncRunResult {
+  accounts: BankAccountSync[];
+  unmapped: string[];
+  warnings: string[];
+  dryRun: boolean;
+  categorized: number | null;
+  stillFlagged: number | null;
+  snapshot: string | null;
+}
+
 /**
  * `GET`/`PUT /api/settings/company` — the whole letterhead, which both
  * client-facing documents draw their sender block from.

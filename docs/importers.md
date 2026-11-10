@@ -296,5 +296,7 @@ nigel sync                    # snapshot, import, categorize
 - **Balances.** Each account's `balance` and `balance-date` are stored in `account_balances`, and `nigel report balance` shows the latest beside the computed figure.
 - **Errors.** A 403 means the access was revoked or expired — run `nigel sync setup` again; a 402 means the bridge subscription lapsed. Messages the bridge sends in `errors` are stripped of control characters and printed as warnings.
 
+The web app does the same from **Settings → Bank sync**, over the [`/api/sync` routes](api.md#bank-sync).
+
 Running it on a schedule is a matter of the host's scheduler; [the runbook](runbooks/schedule-simplefin-sync.md) has a systemd timer.
 

@@ -355,3 +355,13 @@ export {
   type Direction,
   type SnakeState,
 } from './snake-engine.js';
+export {
+  WcSyncSettings,
+  type NcSyncMapDetail,
+  type NcSyncRunDetail,
+  type NcSyncSetupDetail,
+  type SyncAccountOutcome,
+  type SyncBusy,
+  type SyncLinkedAccount,
+  type SyncOutcome,
+} from './wc-sync-settings.js';

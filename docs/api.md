@@ -300,7 +300,7 @@ structured context to give:
 | `payload_too_large` | 413 | An upload exceeded the size limit |
 | `locked` | 423 | The database is encrypted and not yet unlocked |
 | `internal` | 500 | Unexpected server-side failure |
-| `upstream_failed` | 502 | Stripe, R2 or Mailgun refused or could not be reached |
+| `upstream_failed` | 502 | Stripe, R2, Mailgun or a SimpleFIN bridge refused or could not be reached; `details.service` names it |
 | `feature_disabled` | 501 | The build lacks the required cargo feature |
 
 ## Endpoints
@@ -1115,6 +1115,10 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/documents/:id/signing-record` | `POST` | `{}` | `DocumentActionResult` with `published` |
 | `/api/document-kinds/:id/reactivate` | `POST` | — | `DocumentKind`; `409 already_active` for an active kind, `404 kind_not_found` for none |
 | `/api/documents/sync` | `POST` | — | `DocumentSyncReport` |
+| `/api/sync/setup` | `POST` | `token` | `SyncState` |
+| `/api/sync/accounts/refresh` | `POST` | — | `SyncState` |
+| `/api/sync/accounts/map` | `PUT` | `key`, `account` (`null` to stop syncing) | `SyncState` |
+| `/api/sync/run` | `POST` | `dryRun?`, `since?` | `SyncRunResult` |
 
 ### Write conventions
 
@@ -2283,6 +2287,127 @@ The other five could:
 - `password/change` and `password/remove` carry the current password in the
   body, so they would function while locked — and would then be an unthrottled
   password oracle reachable without ever passing the unlock screen.
+
+## Bank sync
+
+The web side of `nigel sync`: connect a [SimpleFIN Bridge](importers.md#simplefin-bridge),
+link its accounts to Nigel accounts, and pull their transactions. Every route is
+behind the locked guard and needs an admin.
+
+| Route | Method | Body | Response |
+|---|---|---|---|
+| `/api/sync` | `GET` | — | `SyncState` |
+| `/api/sync/setup` | `POST` | `token` | `SyncState` |
+| `/api/sync/accounts/refresh` | `POST` | — | `SyncState` |
+| `/api/sync/accounts/map` | `PUT` | `key`, `account` | `SyncState` |
+| `/api/sync/run` | `POST` | `dryRun?`, `since?` | `SyncRunResult` |
+
+The access URL a setup token is exchanged for is a credential. It is written to
+`settings.json` and goes nowhere else: no response carries it, and no error
+quotes it.
+
+### `SyncState`
+
+```json
+{
+  "configured": true,
+  "accounts": [
+    {
+      "key": "harborvale.example/chk1",
+      "orgName": "Harbor & Vale Bank",
+      "name": "Checking",
+      "currency": "USD",
+      "account": "Operating",
+      "lastSynced": "2026-11-08"
+    }
+  ],
+  "warnings": []
+}
+```
+
+`configured` says whether an access URL is stored. `accounts` is every account
+the bridge has reported, from the database — `GET` makes no network call.
+`account` is the Nigel account it feeds, or `null` when a sync skips it.
+`warnings` are messages the bridge sent with this answer, stripped of control
+characters; only `setup` and `refresh` talk to the bridge, so only they can
+carry any.
+
+### `POST /api/sync/setup`
+
+`{ "token": "<base64 setup token>" }`. Claims the token, stores the access URL
+(replacing any previous one), then reads the bridge's accounts and balances
+without transactions. An empty token, one that is not a setup token, a claim URL
+that is not HTTPS (loopback excepted), and a token the bridge refuses — already
+claimed or unknown — are `400` with the reason. A bridge that cannot be reached
+is `502 upstream_failed`, `service: "simplefin"`.
+
+A token can be claimed once, so when the claim succeeds and the account read
+after it does not, the connection is kept and the read's failure comes back as
+a warning rather than an error.
+
+### `POST /api/sync/accounts/refresh`
+
+Reads the bridge's accounts and balances (no transactions) and records any it
+has not seen, keeping every existing link. Not set up is `400`; revoked access
+or a lapsed subscription is `400` saying which; an unreachable bridge is `502`.
+
+### `PUT /api/sync/accounts/map`
+
+`{ "key": "harborvale.example/chk1", "account": "Operating" }` links a bridge
+account to a Nigel account; `"account": null` unlinks it. Either clears its
+last-sync day, so its next sync starts as a first one. An unknown `key` is
+`404`; an unknown `account` is `404` with `details.reason = "account_not_found"`;
+a Nigel account another bridge account already feeds is `400`, because two feeds
+into one account would double every transaction they share. No network call.
+
+### `POST /api/sync/run`
+
+`{ "dryRun": true, "since": "2026-10-01" }`, both optional. `since` reads every
+linked account from that day instead of where each left off. The sequence is
+`nigel sync`'s: a counting pass that writes nothing; then, unless `dryRun`, a
+pre-sync snapshot into `<data-dir>/snapshots/` only when something will be
+imported, and the import, the reported balances and auto-categorization in one
+transaction.
+
+```json
+{
+  "accounts": [
+    {
+      "key": "harborvale.example/chk1",
+      "label": "Harbor & Vale Bank — Checking",
+      "account": "Operating",
+      "start": "2026-11-01",
+      "imported": 4,
+      "skipped": 2,
+      "malformed": 0,
+      "importId": 12,
+      "balance": { "balance": 1250.0, "asOf": "2026-11-08" }
+    }
+  ],
+  "unmapped": ["Harbor & Vale Bank — Savings"],
+  "warnings": [],
+  "dryRun": false,
+  "categorized": 3,
+  "stillFlagged": 1,
+  "snapshot": "/home/you/Documents/nigel/snapshots/pre-sync-20261109-120000.db"
+}
+```
+
+`imported` and `skipped` are what a dry run *would* do. `importId` is the
+`imports` row an account's new transactions landed in — what
+`DELETE /api/imports/:id` undoes — and `null` for a dry run or an account with
+nothing new. `balance` is what the bank reported, or `null`. `categorized` and
+`stillFlagged` are `null` unless the sync imported something; `stillFlagged`
+counts the whole ledger. `snapshot` is `null` when none was taken.
+
+Not set up is `400`; no linked account is `400` with
+`details.reason = "nothing_linked"`; a `since` that is not `YYYY-MM-DD` is `400`.
+Bridge failures answer as `refresh` does.
+
+The bridge is called on the blocking pool *before* the database guard is taken,
+so a slow bridge — it assembles the answer from the banks while the request
+waits, up to two minutes — never holds off an encrypt, a decrypt or a
+data-directory switch.
 
 ## Static assets
 

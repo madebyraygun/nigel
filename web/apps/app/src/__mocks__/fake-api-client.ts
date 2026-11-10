@@ -18,6 +18,10 @@ import type {
   AccountPatch,
   AgingReport,
   AppSettings,
+  BankSyncMapRequest,
+  BankSyncRunRequest,
+  BankSyncRunResult,
+  BankSyncState,
   BalanceReport,
   CashflowReport,
   CategorizeResult,
@@ -1001,6 +1005,59 @@ export class FakeApiClient implements ApiClient {
     if (this.settingsError) throw this.settingsError;
     this.status = { ...this.status, encrypted: false, locked: false };
     return { encrypted: false, locked: false };
+  }
+
+  // -- bank sync ------------------------------------------------------------
+
+  bankSync: BankSyncState = { configured: false, accounts: [], warnings: [] };
+  bankSyncRun: BankSyncRunResult = {
+    accounts: [],
+    unmapped: [],
+    warnings: [],
+    dryRun: false,
+    categorized: null,
+    stillFlagged: null,
+    snapshot: null,
+  };
+  /** Thrown by every bank-sync call but the read. */
+  bankSyncError: Error | null = null;
+  bankSyncLoadError: Error | null = null;
+
+  async getBankSync(): Promise<BankSyncState> {
+    this.calls.push('getBankSync');
+    if (this.bankSyncLoadError) throw this.bankSyncLoadError;
+    return this.bankSync;
+  }
+
+  async setupBankSync(token: string): Promise<BankSyncState> {
+    this.calls.push(`setupBankSync:${token}`);
+    if (this.bankSyncError) throw this.bankSyncError;
+    this.bankSync = { ...this.bankSync, configured: true };
+    return this.bankSync;
+  }
+
+  async refreshBankAccounts(): Promise<BankSyncState> {
+    this.calls.push('refreshBankAccounts');
+    if (this.bankSyncError) throw this.bankSyncError;
+    return this.bankSync;
+  }
+
+  async mapBankAccount(input: BankSyncMapRequest): Promise<BankSyncState> {
+    this.calls.push(`mapBankAccount:${input.key}:${input.account ?? 'null'}`);
+    if (this.bankSyncError) throw this.bankSyncError;
+    this.bankSync = {
+      ...this.bankSync,
+      accounts: this.bankSync.accounts.map((a) =>
+        a.key === input.key ? { ...a, account: input.account } : a,
+      ),
+    };
+    return this.bankSync;
+  }
+
+  async runBankSync(input: BankSyncRunRequest = {}): Promise<BankSyncRunResult> {
+    this.calls.push(`runBankSync:${input.dryRun ? 'dry' : 'real'}`);
+    if (this.bankSyncError) throw this.bankSyncError;
+    return { ...this.bankSyncRun, dryRun: input.dryRun ?? false };
   }
 
   // -- reconcile and undo ---------------------------------------------------
