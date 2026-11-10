@@ -956,7 +956,7 @@ pub struct ReportOutputArgs {
     /// Mode: view (default, interactive) or export (write to file)
     #[arg(long)]
     pub mode: Option<String>,
-    /// Export format: pdf (default) or text
+    /// Export format: pdf (default), text, or json (register and balance only)
     #[arg(long)]
     pub format: Option<String>,
     /// Output file path (implies --mode export)

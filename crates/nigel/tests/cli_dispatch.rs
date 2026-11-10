@@ -5407,3 +5407,121 @@ fn user_add_refuses_an_email_with_control_characters_without_echoing_them() {
         .unwrap();
     assert_eq!(users, 0);
 }
+
+fn json_register(env: &TestEnv, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec!["report", "register"];
+    args.extend_from_slice(extra);
+    args.extend_from_slice(&["--mode", "export", "--format", "json"]);
+    let out = env.cmd().args(&args).assert().success();
+    serde_json::from_slice(&out.get_output().stdout).expect("stdout is JSON")
+}
+
+#[test]
+fn report_register_json_to_stdout() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let year = chrono::Local::now().format("%Y").to_string();
+    let v = json_register(&env, &["--year", &year]);
+    let rows = v["rows"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows[0]["accountName"].is_string() && rows[0]["amount"].is_number());
+    assert!(v["total"].is_number());
+}
+
+#[test]
+fn report_register_json_window_crosses_a_year() {
+    use chrono::Datelike;
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let this_year = chrono::Local::now().year();
+    let from = format!("{}-12-01", this_year - 1);
+    let to = format!("{this_year}-01-31");
+    let v = json_register(&env, &["--from", &from, "--to", &to]);
+    let dates: Vec<&str> = v["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["date"].as_str().unwrap())
+        .collect();
+    assert!(dates
+        .iter()
+        .any(|d| d.starts_with(&format!("{}-", this_year - 1))));
+    assert!(dates
+        .iter()
+        .any(|d| d.starts_with(&format!("{this_year}-"))));
+}
+
+#[test]
+fn report_register_json_on_encrypted_books() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.encrypt("fixture-password");
+    let out = env
+        .cmd()
+        .env("NIGEL_DB_PASSWORD", "fixture-password")
+        .args(["report", "register", "--mode", "export", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("Password"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(v["rows"].is_array());
+}
+
+#[test]
+fn report_balance_json_to_file() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let path = env.home.path().join("b.json");
+    env.cmd()
+        .args([
+            "report",
+            "balance",
+            "--mode",
+            "export",
+            "--format",
+            "json",
+            "--output",
+            &path.to_string_lossy(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wrote"));
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v["accounts"][0]["naturalBalance"].is_number());
+}
+
+#[test]
+fn report_register_json_on_empty_books_is_valid() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    let v = json_register(&env, &[]);
+    assert_eq!(v, serde_json::json!({"rows": [], "total": 0.0}));
+}
+
+#[test]
+fn report_pnl_json_is_refused() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["report", "pnl", "--mode", "export", "--format", "json"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "JSON export is available for register and balance.",
+        ));
+}
+
+#[test]
+fn report_json_with_view_mode_is_refused() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["report", "register", "--mode", "view", "--format", "json"])
+        .assert()
+        .failure();
+}

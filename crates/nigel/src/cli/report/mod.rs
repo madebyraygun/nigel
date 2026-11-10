@@ -23,10 +23,25 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
         }
     }
     if let Some(ref format) = args.format {
-        if format != "pdf" && format != "text" {
+        if format != "pdf" && format != "text" && format != "json" {
             return Err(nigel_core::error::NigelError::Other(format!(
-                "Unknown --format '{format}'. Expected 'pdf' or 'text'."
+                "Unknown --format '{format}'. Expected 'pdf', 'text', or 'json'."
             )));
+        }
+        if format == "json" {
+            if args.mode.as_deref() == Some("view") {
+                return Err(nigel_core::error::NigelError::Other(
+                    "--format json requires --mode export.".into(),
+                ));
+            }
+            if !matches!(
+                cmd,
+                ReportCommands::Register { .. } | ReportCommands::Balance { .. }
+            ) {
+                return Err(nigel_core::error::NigelError::Other(
+                    "JSON export is available for register and balance.".into(),
+                ));
+            }
         }
     }
 
@@ -95,14 +110,67 @@ pub(crate) fn dispatch_text(cmd: &ReportCommands) -> Result<String> {
 }
 
 fn dispatch_export(cmd: ReportCommands, args: ReportOutputArgs) -> Result<()> {
-    let is_text = args.format.as_deref() == Some("text");
+    if args.format.as_deref() == Some("json") {
+        return export_json(&cmd, args.output);
+    }
 
-    if is_text {
+    if args.format.as_deref() == Some("text") {
         return export_text(cmd, args.output);
     }
 
     // PDF export
     dispatch_pdf_export(cmd, args.output)
+}
+
+fn export_json(cmd: &ReportCommands, output: Option<String>) -> Result<()> {
+    let conn =
+        nigel_core::db::get_connection(&nigel_core::settings::try_data_dir()?.join("nigel.db"))?;
+    let json = match cmd {
+        ReportCommands::Register {
+            month,
+            year,
+            from_date,
+            to_date,
+            filters,
+            ..
+        } => {
+            let resolved = filters.resolve(&conn)?;
+            let (month_year, month_num) = nigel_core::reports::parse_month_opt(month);
+            let report = nigel_core::reports::get_register(
+                &conn,
+                year.or(month_year),
+                month_num,
+                from_date.as_deref(),
+                to_date.as_deref(),
+                &resolved,
+            )?;
+            serde_json::to_string_pretty(&report)
+        }
+        ReportCommands::Balance { .. } => {
+            serde_json::to_string_pretty(&nigel_core::reports::get_balance(&conn)?)
+        }
+        _ => {
+            return Err(nigel_core::error::NigelError::Other(
+                "JSON export is available for register and balance.".into(),
+            ))
+        }
+    }
+    .map_err(|e| nigel_core::error::NigelError::Other(e.to_string()))?;
+    drop(conn);
+
+    match output {
+        None => println!("{json}"),
+        Some(path) => {
+            let p = PathBuf::from(&path);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&p, &json)?;
+            nigel_core::settings::restrict_file_permissions(&p)?;
+            println!("Wrote {}", p.display());
+        }
+    }
+    Ok(())
 }
 
 fn export_text(cmd: ReportCommands, output: Option<String>) -> Result<()> {
