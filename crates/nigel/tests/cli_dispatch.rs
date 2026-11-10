@@ -5596,3 +5596,60 @@ fn invoice_list_unknown_format_lists_table_and_json_only() {
                 .and(predicate::str::contains("'table' or 'json'")),
         );
 }
+
+#[test]
+fn sync_accounts_json_reads_the_books_without_a_bridge() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+}
+
+#[test]
+fn sync_accounts_json_lists_linked_accounts() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let name: String = env
+        .db()
+        .query_row("SELECT name FROM accounts ORDER BY id LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    env.db()
+        .execute(
+            "INSERT INTO simplefin_accounts (sfin_key, org_name, name, currency, account_id, last_synced) \
+             VALUES ('harborvale.example/chk1', 'Harbor & Vale Bank', 'Checking', 'USD', \
+             (SELECT id FROM accounts WHERE name = ?1), '2026-11-08')",
+            [&name],
+        )
+        .unwrap();
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("://"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["account"], name.as_str());
+    assert_eq!(rows[0]["lastSynced"], "2026-11-08");
+    assert_eq!(rows[0]["orgName"], "Harbor & Vale Bank");
+}
+
+#[test]
+fn sync_accounts_rejects_unknown_format() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["sync", "accounts", "--format", "xml"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Expected 'table' or 'json'"));
+}

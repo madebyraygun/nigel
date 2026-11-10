@@ -284,6 +284,7 @@ When `--format` is not specified, `get_for_file()` narrows candidates by `accoun
 ```bash
 nigel sync setup              # paste the setup token; the access URL goes to settings.json
 nigel sync accounts           # list the bridge's accounts
+nigel sync accounts --format json  # linked accounts as JSON, from the books only (no bridge call)
 nigel sync accounts --map harborvale.example/chk1 "Operating"
 nigel sync --dry-run          # what a sync would import
 nigel sync                    # snapshot, import, categorize

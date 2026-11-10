@@ -277,6 +277,10 @@ pub enum SyncCommands {
         /// Stop syncing a SimpleFIN account.
         #[arg(long, value_name = "KEY")]
         unmap: Option<String>,
+        /// Output format: table (default) or json. JSON reads the database
+        /// only and does not contact the bridge.
+        #[arg(long, conflicts_with_all = ["map", "unmap"])]
+        format: Option<String>,
     },
 }
 

@@ -24,6 +24,7 @@ nigel import <file> --account <name> --format chase      # Use saved profile
 nigel undo                                        # Undo the last import (with confirmation)
 nigel sync setup [<token>]                        # Claim a SimpleFIN setup token (read from stdin when omitted)
 nigel sync accounts                               # List SimpleFIN accounts and the Nigel accounts they feed
+nigel sync accounts --format json                # Linked accounts as JSON, read from the books without contacting the bridge
 nigel sync accounts --map <key> <account>         # Sync a SimpleFIN account into a Nigel account
 nigel sync accounts --unmap <key>                 # Stop syncing it
 nigel sync [--since YYYY-MM-DD] [--dry-run]       # Import new transactions and balances from every linked account
