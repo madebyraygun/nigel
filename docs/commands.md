@@ -67,8 +67,8 @@ nigel report aging                                # A/R aging buckets and open i
 nigel report pnl --year 2025 --mode export        # Export as PDF
 nigel report pnl --year 2025 --mode export --format text  # Export as text file
 nigel report pnl --year 2025 --output ~/report.pdf  # --output implies export
-nigel report register --year 2025 --mode export --format json  # Register as JSON on stdout
-nigel report balance --mode export --format json --output ~/balance.json  # Balance sheet as JSON file
+nigel report register --year 2025 --format json  # Register as JSON on stdout (JSON implies --mode export)
+nigel report balance --format json --output ~/balance.json  # Balance sheet as JSON file
 nigel report all --year 2025                      # Bulk export all reports (PDF)
 nigel report all --year 2025 --format text        # Bulk export as text files
 nigel report all --year 2025 --output-dir ~/exports/  # Custom output directory

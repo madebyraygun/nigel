@@ -748,7 +748,8 @@ pub fn get_register(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let total: f64 = rows.iter().map(|r| r.amount).sum();
+    // `+ 0.0` turns the empty sum's -0.0 into 0.0.
+    let total: f64 = rows.iter().map(|r| r.amount).sum::<f64>() + 0.0;
     Ok(RegisterReport { rows, total })
 }
 
@@ -929,7 +930,8 @@ pub fn get_balance(conn: &Connection) -> Result<BalanceReport> {
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let total: f64 = accounts.iter().map(|a| a.balance).sum();
+    // `+ 0.0` turns the empty sum's -0.0 into 0.0.
+    let total: f64 = accounts.iter().map(|a| a.balance).sum::<f64>() + 0.0;
 
     // Revenue and spending, plus anything not yet categorized: a review
     // backlog belongs in the headline figure, not hidden behind it. Equity

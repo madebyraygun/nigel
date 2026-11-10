@@ -56,7 +56,10 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
         return dispatch_export(cmd, args);
     }
 
-    if args.output.is_some() || args.mode.as_deref() == Some("export") {
+    if args.output.is_some()
+        || args.mode.as_deref() == Some("export")
+        || args.format.as_deref() == Some("json")
+    {
         dispatch_export(cmd, args)
     } else if args.mode.as_deref() == Some("view") || std::io::stdout().is_terminal() {
         dispatch_view(cmd)

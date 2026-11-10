@@ -3,7 +3,8 @@ use clap::{CommandFactory, Parser};
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
     DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
-    InvoiceTemplateCommands, PasswordCommand, RulesCommands, SyncCommands, UserCommands,
+    InvoiceTemplateCommands, PasswordCommand, ReportCommands, RulesCommands, SyncCommands,
+    UserCommands,
 };
 use nigel_core::error;
 
@@ -134,16 +135,30 @@ fn runs_without_settings(command: Option<&Commands>) -> bool {
 
 /// Commands built for cron and launchd, which must never reach a prompt.
 fn is_unattended(command: &Commands) -> bool {
-    matches!(
-        command,
+    let json = |f: &Option<String>| f.as_deref() == Some("json");
+    match command {
         Commands::Invoice {
-            command: InvoiceCommands::Schedule {
-                command: InvoiceScheduleCommands::Run
-            }
-        } | Commands::Document {
-            command: DocumentCommands::Sync
+            command:
+                InvoiceCommands::Schedule {
+                    command: InvoiceScheduleCommands::Run,
+                },
         }
-    )
+        | Commands::Document {
+            command: DocumentCommands::Sync,
+        } => true,
+        Commands::Invoice {
+            command: InvoiceCommands::List { format },
+        } => json(format),
+        Commands::Sync {
+            command: Some(SyncCommands::Accounts { format, .. }),
+            ..
+        } => json(format),
+        Commands::Report {
+            command:
+                ReportCommands::Register { output, .. } | ReportCommands::Balance { output, .. },
+        } => json(&output.format),
+        _ => false,
+    }
 }
 
 fn dispatch(command: Commands) -> error::Result<()> {
