@@ -328,12 +328,38 @@ pub fn format_invoice_show(
     out
 }
 
-pub fn list(today: &str) -> Result<()> {
+#[derive(serde::Serialize)]
+struct InvoiceWithItems {
+    #[serde(flatten)]
+    row: InvoiceListRow,
+    items: Vec<nigel_core::models::InvoiceLineItem>,
+}
+
+pub fn list(format: Option<&str>, today: &str) -> Result<()> {
+    match format {
+        None | Some("table") | Some("json") => {}
+        Some(other) => {
+            return Err(nigel_core::error::NigelError::Other(format!(
+                "Unknown --format '{other}'. Expected 'table' or 'json'."
+            )));
+        }
+    }
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
-    println!(
-        "{}",
-        format_invoice_list(&list_invoices(&conn, None, None, today)?)
-    );
+    let rows = list_invoices(&conn, None, None, today)?;
+    if format == Some("json") {
+        let with_items = rows
+            .into_iter()
+            .map(|row| {
+                let items = line_items(&conn, row.id)?;
+                Ok(InvoiceWithItems { row, items })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let json = serde_json::to_string_pretty(&with_items)
+            .map_err(|e| nigel_core::error::NigelError::Other(e.to_string()))?;
+        println!("{json}");
+    } else {
+        println!("{}", format_invoice_list(&rows));
+    }
     Ok(())
 }
 

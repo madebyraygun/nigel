@@ -3,7 +3,8 @@ use clap::{CommandFactory, Parser};
 use nigel::cli::{
     self, AccountsCommands, BrowseCommands, CategoriesCommands, Cli, ClientCommands, Commands,
     DocumentCommands, ImportsCommands, InvoiceCommands, InvoiceScheduleCommands,
-    InvoiceTemplateCommands, PasswordCommand, RulesCommands, SyncCommands, UserCommands,
+    InvoiceTemplateCommands, PasswordCommand, ReportCommands, RulesCommands, SyncCommands,
+    UserCommands,
 };
 use nigel_core::error;
 
@@ -134,16 +135,30 @@ fn runs_without_settings(command: Option<&Commands>) -> bool {
 
 /// Commands built for cron and launchd, which must never reach a prompt.
 fn is_unattended(command: &Commands) -> bool {
-    matches!(
-        command,
+    let json = |f: &Option<String>| f.as_deref() == Some("json");
+    match command {
         Commands::Invoice {
-            command: InvoiceCommands::Schedule {
-                command: InvoiceScheduleCommands::Run
-            }
-        } | Commands::Document {
-            command: DocumentCommands::Sync
+            command:
+                InvoiceCommands::Schedule {
+                    command: InvoiceScheduleCommands::Run,
+                },
         }
-    )
+        | Commands::Document {
+            command: DocumentCommands::Sync,
+        } => true,
+        Commands::Invoice {
+            command: InvoiceCommands::List { format },
+        } => json(format),
+        Commands::Sync {
+            command: Some(SyncCommands::Accounts { format, .. }),
+            ..
+        } => json(format),
+        Commands::Report {
+            command:
+                ReportCommands::Register { output, .. } | ReportCommands::Balance { output, .. },
+        } => json(&output.format),
+        _ => false,
+    }
 }
 
 fn dispatch(command: Commands) -> error::Result<()> {
@@ -381,7 +396,9 @@ fn dispatch(command: Commands) -> error::Result<()> {
             ),
             InvoiceCommands::Void { number, yes } => cli::invoice::void(number, yes, &cli::today()),
             InvoiceCommands::Delete { number, yes } => cli::invoice::delete(number, yes),
-            InvoiceCommands::List => cli::invoice::list(&cli::today()),
+            InvoiceCommands::List { format } => {
+                cli::invoice::list(format.as_deref(), &cli::today())
+            }
             InvoiceCommands::Show { number } => cli::invoice::show(number, &cli::today()),
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)
@@ -462,8 +479,8 @@ fn dispatch(command: Commands) -> error::Result<()> {
             dry_run,
         } => match command {
             Some(SyncCommands::Setup { token }) => cli::sync::setup(token.as_deref()),
-            Some(SyncCommands::Accounts { map, unmap }) => {
-                cli::sync::accounts(map.as_deref(), unmap.as_deref())
+            Some(SyncCommands::Accounts { map, unmap, format }) => {
+                cli::sync::accounts(map.as_deref(), unmap.as_deref(), format.as_deref())
             }
             None => cli::sync::run(since.as_deref(), dry_run),
         },

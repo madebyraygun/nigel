@@ -277,6 +277,10 @@ pub enum SyncCommands {
         /// Stop syncing a SimpleFIN account.
         #[arg(long, value_name = "KEY")]
         unmap: Option<String>,
+        /// Output format: table (default) or json. JSON reads the database
+        /// only and does not contact the bridge.
+        #[arg(long, conflicts_with_all = ["map", "unmap"])]
+        format: Option<String>,
     },
 }
 
@@ -587,7 +591,11 @@ pub enum InvoiceCommands {
         yes: bool,
     },
     /// List invoices.
-    List,
+    List {
+        /// Output format: table (default) or json (with line items)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Show one invoice by number.
     Show {
         /// Invoice number (shown in `nigel invoice list`)
@@ -956,7 +964,7 @@ pub struct ReportOutputArgs {
     /// Mode: view (default, interactive) or export (write to file)
     #[arg(long)]
     pub mode: Option<String>,
-    /// Export format: pdf (default) or text
+    /// Export format: pdf (default), text, or json (register and balance only)
     #[arg(long)]
     pub format: Option<String>,
     /// Output file path (implies --mode export)

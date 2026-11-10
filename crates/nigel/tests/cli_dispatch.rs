@@ -706,6 +706,26 @@ fn report_invalid_format() {
 }
 
 #[test]
+fn unknown_format_error_lists_json_only_where_accepted() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+
+    env.cmd()
+        .args(["report", "pnl", "--format", "bogus"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Unknown --format")
+                .and(predicate::str::contains("json").not()),
+        );
+    env.cmd()
+        .args(["report", "register", "--format", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown --format").and(predicate::str::contains("json")));
+}
+
+#[test]
 fn init_without_db_then_status() {
     let env = TestEnv::new();
 
@@ -5406,4 +5426,326 @@ fn user_add_refuses_an_email_with_control_characters_without_echoing_them() {
         .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
         .unwrap();
     assert_eq!(users, 0);
+}
+
+fn json_register(env: &TestEnv, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec!["report", "register"];
+    args.extend_from_slice(extra);
+    args.extend_from_slice(&["--mode", "export", "--format", "json"]);
+    let out = env.cmd().args(&args).assert().success();
+    serde_json::from_slice(&out.get_output().stdout).expect("stdout is JSON")
+}
+
+#[test]
+fn report_register_json_to_stdout() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let year = chrono::Local::now().format("%Y").to_string();
+    let v = json_register(&env, &["--year", &year]);
+    let rows = v["rows"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    assert!(rows[0]["accountName"].is_string() && rows[0]["amount"].is_number());
+    assert!(v["total"].is_number());
+}
+
+#[test]
+fn report_register_json_window_crosses_a_year() {
+    use chrono::Datelike;
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let this_year = chrono::Local::now().year();
+    let from = format!("{}-12-01", this_year - 1);
+    let to = format!("{this_year}-01-31");
+    let v = json_register(&env, &["--from", &from, "--to", &to]);
+    let dates: Vec<&str> = v["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["date"].as_str().unwrap())
+        .collect();
+    assert!(dates
+        .iter()
+        .any(|d| d.starts_with(&format!("{}-", this_year - 1))));
+    assert!(dates
+        .iter()
+        .any(|d| d.starts_with(&format!("{this_year}-"))));
+}
+
+#[test]
+fn report_register_json_on_encrypted_books() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.encrypt("fixture-password");
+    let out = env
+        .cmd()
+        .env("NIGEL_DB_PASSWORD", "fixture-password")
+        .args(["report", "register", "--mode", "export", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("Password"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(v["rows"].is_array());
+}
+
+#[test]
+fn report_balance_json_to_file() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let path = env.home.path().join("b.json");
+    env.cmd()
+        .args([
+            "report",
+            "balance",
+            "--mode",
+            "export",
+            "--format",
+            "json",
+            "--output",
+            &path.to_string_lossy(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wrote"));
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v["accounts"][0]["naturalBalance"].is_number());
+}
+
+#[test]
+fn report_register_json_on_empty_books_is_valid() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    let v = json_register(&env, &[]);
+    assert_eq!(v, serde_json::json!({"rows": [], "total": 0.0}));
+    let out = env
+        .cmd()
+        .args(["report", "register", "--mode", "export", "--format", "json"])
+        .assert()
+        .success();
+    let raw = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(raw.contains("\"total\": 0.0"), "raw: {raw}");
+    assert!(!raw.contains("-0.0"), "raw: {raw}");
+}
+
+#[test]
+fn report_pnl_json_is_refused() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["report", "pnl", "--mode", "export", "--format", "json"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "JSON export is available for register and balance.",
+        ));
+}
+
+#[test]
+fn report_json_with_view_mode_is_refused() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["report", "register", "--mode", "view", "--format", "json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "--format json requires --mode export.",
+        ));
+}
+
+#[test]
+fn report_json_without_mode_implies_export() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let year = chrono::Local::now().format("%Y").to_string();
+    let out = env
+        .cmd()
+        .args(["report", "register", "--year", &year, "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(v["rows"].is_array());
+    let out = env
+        .cmd()
+        .args(["report", "balance", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert!(v["accounts"].is_array());
+}
+
+#[test]
+fn report_register_json_on_encrypted_books_without_password_fails_clearly() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.encrypt("hunter2");
+    env.cmd()
+        .args(["report", "register", "--format", "json"])
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("NIGEL_DB_PASSWORD"));
+}
+
+#[test]
+fn report_register_json_on_encrypted_books_with_wrong_password_fails() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.encrypt("hunter2");
+    env.cmd()
+        .args(["report", "register", "--format", "json"])
+        .env("NIGEL_DB_PASSWORD", "not-the-password")
+        .write_stdin("")
+        .timeout(TEST_TIMEOUT)
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty())
+        .stderr(
+            predicate::str::contains("NIGEL_DB_PASSWORD did not unlock")
+                .and(predicate::str::contains("not-the-password").not()),
+        );
+}
+
+#[test]
+fn invoice_list_json_includes_line_items() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let out = env
+        .cmd()
+        .args(["invoice", "list", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    let invoices = v.as_array().unwrap();
+    assert_eq!(invoices.len(), 4);
+    for inv in invoices {
+        assert!(inv["number"].is_number() && inv["status"].is_string());
+        assert!(inv["issueDate"].is_string() && inv["clientName"].is_string());
+        let items = inv["items"].as_array().unwrap();
+        assert!(!items.is_empty());
+        assert!(items[0]["description"].is_string() && items[0]["lineTotal"].is_number());
+    }
+}
+
+#[test]
+fn invoice_list_json_on_empty_books_is_an_empty_array() {
+    let env = TestEnv::new();
+    env.cmd()
+        .args(["init", "--data-dir", &env.data_dir().to_string_lossy()])
+        .assert()
+        .success();
+    let out = env
+        .cmd()
+        .args(["invoice", "list", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+}
+
+#[test]
+fn invoice_list_unknown_format_lists_table_and_json_only() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["invoice", "list", "--format", "pdf"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Unknown --format")
+                .and(predicate::str::contains("'table' or 'json'")),
+        );
+}
+
+#[test]
+fn sync_accounts_json_reads_the_books_without_a_bridge() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v, serde_json::json!([]));
+}
+
+#[test]
+fn sync_accounts_json_lists_linked_accounts() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let name: String = env
+        .db()
+        .query_row("SELECT name FROM accounts ORDER BY id LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    env.db()
+        .execute(
+            "INSERT INTO simplefin_accounts (sfin_key, org_name, name, currency, account_id, last_synced) \
+             VALUES ('harborvale.example/chk1', 'Harbor & Vale Bank', 'Checking', 'USD', \
+             (SELECT id FROM accounts WHERE name = ?1), '2026-11-08')",
+            [&name],
+        )
+        .unwrap();
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("://"));
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["account"], name.as_str());
+    assert_eq!(rows[0]["lastSynced"], "2026-11-08");
+    assert_eq!(rows[0]["orgName"], "Harbor & Vale Bank");
+}
+
+#[test]
+fn sync_accounts_json_never_prints_the_access_url() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    let path = env.home.path().join(".config/nigel/settings.json");
+    let mut settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    settings["simplefin_access_url"] = "https://demo:s3cret-token@bridge.example/simplefin".into();
+    std::fs::write(&path, settings.to_string()).unwrap();
+    env.db()
+        .execute(
+            "INSERT INTO simplefin_accounts (sfin_key, org_name, name, currency, account_id, last_synced) \
+             VALUES ('harborvale.example/chk1', 'Harbor & Vale Bank', 'Checking', 'USD', \
+             (SELECT id FROM accounts ORDER BY id LIMIT 1), '2026-11-08')",
+            [],
+        )
+        .unwrap();
+    let out = env
+        .cmd()
+        .args(["sync", "accounts", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.contains("s3cret-token"), "stdout: {stdout}");
+    assert!(!stdout.contains("bridge.example"), "stdout: {stdout}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn sync_accounts_rejects_unknown_format() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+    env.cmd()
+        .args(["sync", "accounts", "--format", "xml"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Expected 'table' or 'json'"));
 }

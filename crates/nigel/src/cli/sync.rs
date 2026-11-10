@@ -48,8 +48,22 @@ pub fn setup(token: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn accounts(map: Option<&[String]>, unmap: Option<&str>) -> Result<()> {
+pub fn accounts(map: Option<&[String]>, unmap: Option<&str>, format: Option<&str>) -> Result<()> {
+    match format {
+        None | Some("table") | Some("json") => {}
+        Some(other) => {
+            return Err(NigelError::Other(format!(
+                "Unknown --format '{other}'. Expected 'table' or 'json'."
+            )));
+        }
+    }
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
+    if format == Some("json") {
+        let json = serde_json::to_string_pretty(&simplefin::list_accounts(&conn)?)
+            .map_err(|e| NigelError::Other(e.to_string()))?;
+        println!("{json}");
+        return Ok(());
+    }
     match (map, unmap) {
         (Some([key, account]), _) => {
             simplefin::map_account(&conn, key, account)?;

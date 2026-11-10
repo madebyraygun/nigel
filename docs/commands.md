@@ -24,6 +24,7 @@ nigel import <file> --account <name> --format chase      # Use saved profile
 nigel undo                                        # Undo the last import (with confirmation)
 nigel sync setup [<token>]                        # Claim a SimpleFIN setup token (read from stdin when omitted)
 nigel sync accounts                               # List SimpleFIN accounts and the Nigel accounts they feed
+nigel sync accounts --format json                # Linked accounts as JSON, read from the books without contacting the bridge
 nigel sync accounts --map <key> <account>         # Sync a SimpleFIN account into a Nigel account
 nigel sync accounts --unmap <key>                 # Stop syncing it
 nigel sync [--since YYYY-MM-DD] [--dry-run]       # Import new transactions and balances from every linked account
@@ -66,6 +67,8 @@ nigel report aging                                # A/R aging buckets and open i
 nigel report pnl --year 2025 --mode export        # Export as PDF
 nigel report pnl --year 2025 --mode export --format text  # Export as text file
 nigel report pnl --year 2025 --output ~/report.pdf  # --output implies export
+nigel report register --year 2025 --format json  # Register as JSON on stdout (JSON implies --mode export)
+nigel report balance --format json --output ~/balance.json  # Balance sheet as JSON file
 nigel report all --year 2025                      # Bulk export all reports (PDF)
 nigel report all --year 2025 --format text        # Bulk export as text files
 nigel report all --year 2025 --output-dir ~/exports/  # Custom output directory
@@ -93,6 +96,7 @@ nigel invoice duplicate 1248 --issue 2026-09-01   # Copy with a given issue date
 nigel invoice void 1248                           # Cancel an invoice (confirms; --yes to skip)
 nigel invoice delete 1252                         # Delete an unsent draft (confirms; --yes to skip)
 nigel invoice list                                # Number, status, client, total, due date
+nigel invoice list --format json                  # JSON array of invoices, each with its line items
 nigel invoice show 1248                           # Line items, paid amount, payment link
 nigel invoice preview 1248                        # Render HTML/PDF locally, no network (<data_dir>/previews)
 nigel invoice preview 1248 --output-dir /tmp      # Write the preview somewhere else
