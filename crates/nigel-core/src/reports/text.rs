@@ -304,24 +304,41 @@ pub fn format_flagged(rows: &[reports::FlaggedTransaction]) -> String {
 
 pub fn format_balance(data: &reports::BalanceReport) -> String {
     let mut table = Table::new();
-    table.set_header(vec!["Account", "Type", "Balance"]);
+    let any_reported = data.accounts.iter().any(|a| a.reported.is_some());
+    let mut header = vec!["Account", "Type", "Balance"];
+    if any_reported {
+        header.push("Bank reported");
+    }
+    table.set_header(header);
     for a in &data.accounts {
         let bal = if a.balance >= 0.0 {
             money(a.balance).green().to_string()
         } else {
             money(a.balance).red().to_string()
         };
-        table.add_row(vec![
+        let mut row = vec![
             Cell::new(&a.name),
             Cell::new(&a.account_type),
             Cell::new(bal),
-        ]);
+        ];
+        if any_reported {
+            row.push(Cell::new(
+                a.reported.as_ref().map_or_else(String::new, |r| {
+                    format!("{} (as of {})", money(r.balance), r.as_of)
+                }),
+            ));
+        }
+        table.add_row(row);
     }
-    table.add_row(vec![
+    let mut total = vec![
         Cell::new("Total".bold()),
         Cell::new(""),
         Cell::new(money(data.total)),
-    ]);
+    ];
+    if any_reported {
+        total.push(Cell::new(""));
+    }
+    table.add_row(total);
     let mut out = format!(
         "Cash Position\n{table}\n\nYTD Net Income: {}",
         money(data.ytd_net_income)
@@ -692,6 +709,7 @@ mod tests {
                 class: AccountClass::Asset,
                 balance: 5_000.0,
                 natural_balance: 5_000.0,
+                reported: None,
             }],
             total: 5_000.0,
             ytd_net_income: 4_670.0,

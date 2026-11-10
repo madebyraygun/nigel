@@ -39,6 +39,7 @@ pub mod settings_manager;
 pub mod snake;
 pub mod splash;
 pub mod status;
+pub mod sync;
 pub mod undo;
 pub mod undo_manager;
 pub mod update;
@@ -123,6 +124,19 @@ pub enum Commands {
     Invoice {
         #[command(subcommand)]
         command: InvoiceCommands,
+    },
+    /// Sync transactions and balances from a SimpleFIN bridge.
+    #[command(args_conflicts_with_subcommands = true)]
+    Sync {
+        #[command(subcommand)]
+        command: Option<SyncCommands>,
+        /// First day to read (YYYY-MM-DD). Defaults to the day after each
+        /// account's latest transaction, or a week before its last sync.
+        #[arg(long)]
+        since: Option<String>,
+        /// Show what would be imported without writing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Inspect import history and the rows an import dropped.
     Imports {
@@ -244,6 +258,25 @@ pub enum Commands {
     Completions {
         /// Shell: bash, zsh, fish, powershell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SyncCommands {
+    /// Claim a SimpleFIN setup token and store the access it grants.
+    Setup {
+        /// The setup token from the bridge. Read from standard input when
+        /// omitted, which keeps it out of shell history.
+        token: Option<String>,
+    },
+    /// List SimpleFIN accounts and the Nigel accounts they feed.
+    Accounts {
+        /// Map a SimpleFIN account (its key, from the list) to a Nigel account.
+        #[arg(long, num_args = 2, value_names = ["KEY", "ACCOUNT"], conflicts_with = "unmap")]
+        map: Option<Vec<String>>,
+        /// Stop syncing a SimpleFIN account.
+        #[arg(long, value_name = "KEY")]
+        unmap: Option<String>,
     },
 }
 

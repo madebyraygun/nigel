@@ -276,3 +276,25 @@ Feature gating is only needed for importers that pull in heavy or optional depen
 ## Account Type Matching
 
 When `--format` is not specified, `get_for_file()` narrows candidates by `account_types()` then runs `detect()`. If your importer shares an account type with an existing one (e.g., two checking importers), make sure `detect()` returns `true` only for files that actually match your format. The first importer whose `detect()` returns `true` wins.
+
+## SimpleFIN Bridge
+
+[SimpleFIN Bridge](https://www.simplefin.org/protocol-v1.html) is a read-only aggregator: a one-time setup token is claimed for an access URL, and that URL returns accounts, balances and transactions as JSON. It is not an `ImporterKind` — there is no file to detect — but a feed that builds a `ParsedImport` per account and hands it to `import_parsed()`. Code lives in `crates/nigel-core/src/simplefin/`.
+
+```bash
+nigel sync setup              # paste the setup token; the access URL goes to settings.json
+nigel sync accounts           # list the bridge's accounts
+nigel sync accounts --map harborvale.example/chk1 "Operating"
+nigel sync --dry-run          # what a sync would import
+nigel sync                    # snapshot, import, categorize
+```
+
+- **Rows.** `posted` becomes the local calendar day, the `amount` string is rounded to cents (positive is money in, matching Nigel's sign), and `description` is kept as sent. Pending transactions and those with no posted time are skipped until they post. A transaction whose amount or time cannot be read is a reject: recorded on the account's import when the sync adds something, and reported in the summary either way.
+- **Dedup.** Each row's `external_id` is `simplefin:<org>/<account id>:<transaction id>` — the protocol guarantees ids are unique within an account, not across them. A transaction already imported by id is never imported again, whatever its description says now.
+- **Window.** A first sync of an account starts the day after its latest transaction. Later syncs re-read a week before the account's sync day, and the transaction id absorbs that overlap. The sync day is the bridge's balance date for the account (when the bank last answered), capped at today and never moved backwards, so while a bank connection is broken the window stays anchored before the outage and the first sync after the repair fetches the missed days. Neither ever reaches back to the latest transaction imported from a file, whose rows carry no id a feed's row could match. Mapping or unmapping an account resets it to a first sync. `--since` overrides all of this, so a `--since` that reaches into days a CSV already covered imports those days twice. One request covers every mapped account; each account trims its own rows to its start day.
+- **History.** Each account with something new becomes one `imports` row named `SimpleFIN: <bank> — <account>`, so `nigel imports list` and `nigel undo` treat it like a file. An account with nothing new writes none.
+- **Balances.** Each account's `balance` and `balance-date` are stored in `account_balances`, and `nigel report balance` shows the latest beside the computed figure.
+- **Errors.** A 403 means the access was revoked or expired — run `nigel sync setup` again; a 402 means the bridge subscription lapsed. Messages the bridge sends in `errors` are stripped of control characters and printed as warnings.
+
+Running it on a schedule is a matter of the host's scheduler; [the runbook](runbooks/schedule-simplefin-sync.md) has a systemd timer.
+

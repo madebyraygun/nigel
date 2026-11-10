@@ -51,6 +51,10 @@ pub struct Settings {
     pub server_public_url: Option<String>,
     #[serde(default)]
     pub client_ip_header: Option<String>,
+    /// The SimpleFIN access URL. A credential: it embeds the bridge's Basic
+    /// Auth user and password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simplefin_access_url: Option<String>,
 }
 
 impl Default for Settings {
@@ -77,6 +81,7 @@ impl Default for Settings {
             document_response_url: None,
             server_public_url: None,
             client_ip_header: None,
+            simplefin_access_url: None,
         }
     }
 }
