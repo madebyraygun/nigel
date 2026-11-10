@@ -706,6 +706,26 @@ fn report_invalid_format() {
 }
 
 #[test]
+fn unknown_format_error_lists_json_only_where_accepted() {
+    let env = TestEnv::new();
+    env.init_and_demo();
+
+    env.cmd()
+        .args(["report", "pnl", "--format", "bogus"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Unknown --format")
+                .and(predicate::str::contains("json").not()),
+        );
+    env.cmd()
+        .args(["report", "register", "--format", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown --format").and(predicate::str::contains("json")));
+}
+
+#[test]
 fn init_without_db_then_status() {
     let env = TestEnv::new();
 

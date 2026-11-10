@@ -23,9 +23,18 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
         }
     }
     if let Some(ref format) = args.format {
+        let takes_json = matches!(
+            cmd,
+            ReportCommands::Register { .. } | ReportCommands::Balance { .. }
+        );
         if format != "pdf" && format != "text" && format != "json" {
+            let expected = if takes_json {
+                "'pdf', 'text', or 'json'"
+            } else {
+                "'pdf' or 'text'"
+            };
             return Err(nigel_core::error::NigelError::Other(format!(
-                "Unknown --format '{format}'. Expected 'pdf', 'text', or 'json'."
+                "Unknown --format '{format}'. Expected {expected}."
             )));
         }
         if format == "json" {
@@ -34,10 +43,7 @@ pub fn dispatch(cmd: ReportCommands) -> Result<()> {
                     "--format json requires --mode export.".into(),
                 ));
             }
-            if !matches!(
-                cmd,
-                ReportCommands::Register { .. } | ReportCommands::Balance { .. }
-            ) {
+            if !takes_json {
                 return Err(nigel_core::error::NigelError::Other(
                     "JSON export is available for register and balance.".into(),
                 ));
