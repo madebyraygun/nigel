@@ -14,9 +14,10 @@ use rusqlite::Connection;
 
 use super::model::{DocumentStatus, Method, SignatureRole};
 use super::render::attachment_name;
-use super::store::{get_document, latest_sent_version, signatures, write_version_file};
+use super::store::{
+    get_document, latest_sent_version, signatures, version_client_name, write_version_file,
+};
 use crate::error::{NigelError, Result};
-use crate::invoicing::clients::get_client;
 
 /// One signature as the record prints it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +123,7 @@ pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<Signi
             "Document #{id} is executed but has no sent version."
         ))
     })?;
-    let client = get_client(conn, document.client_id)?;
+    let client = version_client_name(conn, &document, &version)?;
     let mut stamps = signatures(conn, version.id)?;
     stamps.sort_by_key(|s| match s.role {
         SignatureRole::Client => 0,
@@ -136,7 +137,7 @@ pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<Signi
         company: plain_text(company),
         title: plain_text(&document.title),
         kind: plain_text(&document.kind),
-        client: plain_text(&client.name),
+        client: plain_text(&client),
         version: version.number,
         checksum: version.checksum,
         signatures: stamps
@@ -302,6 +303,24 @@ mod tests {
         assert!(record.signatures.iter().all(|s| s.ip.is_none()));
     }
 
+    #[test]
+    fn the_record_names_the_client_as_it_was_when_the_version_was_sent() {
+        let (dir, conn) = test_conn();
+        let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
+        let client_id = get_document(&conn, id).unwrap().client_id;
+        conn.execute(
+            "UPDATE clients SET name = 'Cedar Holdings' WHERE id = ?1",
+            [client_id],
+        )
+        .unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
+        assert_eq!(
+            signing_record(&conn, id, "Initech").unwrap().client,
+            "Cedar Systems"
+        );
+    }
+
     #[cfg(feature = "pdf")]
     #[test]
     fn the_pdf_prints_every_field_with_recipient_text_as_plain_text() {
@@ -346,6 +365,7 @@ mod tests {
             "2026-10-06 17:04:11 UTC",
             "203.0.113.7",
             "Mozilla/5.0 (X11)Firefox/131.0",
+            "On behalf of",
             "Countersignature",
             "Sam Example",
             "Title",

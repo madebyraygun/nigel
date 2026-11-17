@@ -636,6 +636,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "documents: an optional title beside a signature's name",
         up: |conn| add_column_if_missing(conn, "document_signatures", "title", "TEXT"),
     },
+    Migration {
+        version: 22,
+        description: "documents: the client name a version was sent on behalf of",
+        up: |conn| add_column_if_missing(conn, "document_versions", "client_name", "TEXT"),
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -2042,6 +2047,22 @@ mod tests {
             )
             .unwrap();
         assert!(has_title);
+    }
+
+    #[test]
+    fn v22_gives_versions_a_client_name_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) = 1 FROM pragma_table_info('document_versions') WHERE name = 'client_name'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has);
     }
 
     #[test]

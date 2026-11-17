@@ -179,8 +179,12 @@ pub fn mark_sent(conn: &Connection, version_id: i64, today: &str) -> Result<()> 
     let today = validate_date(today, "send date")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE document_versions SET sent_at = ?2 WHERE id = ?1",
-        params![version_id, today],
+        "UPDATE document_versions
+            SET sent_at = ?2,
+                client_name = (SELECT c.name FROM documents d JOIN clients c ON c.id = d.client_id
+                                WHERE d.id = ?3)
+          WHERE id = ?1",
+        params![version_id, today, document_id],
     )?;
     touch(&tx, document_id, &today)?;
     tx.commit()?;

@@ -46,12 +46,21 @@ pub struct Stamp<'a> {
 }
 
 impl Stamp<'_> {
-    /// `Pat Example on 2026-10-06`, or `Pat Example, Director of Operations,
-    /// on 2026-10-06` with a title, escaped.
-    fn by(&self) -> String {
-        match self.title {
-            Some(title) => format!("{}, {}, on {}", esc(self.name), esc(title), esc(self.date)),
-            None => format!("{} on {}", esc(self.name), esc(self.date)),
+    /// `Pat Example on 2026-10-06`, with the title and the organization they
+    /// signed for when there are any: `Pat Example, Director of Operations, on
+    /// behalf of Cedar Systems, on 2026-10-06`. Escaped.
+    fn by(&self, on_behalf_of: Option<&str>) -> String {
+        let mut who = esc(self.name);
+        if let Some(title) = self.title {
+            who.push_str(&format!(", {}", esc(title)));
+        }
+        if let Some(client) = on_behalf_of.filter(|c| !c.is_empty()) {
+            who.push_str(&format!(", on behalf of {}", esc(client)));
+        }
+        if who.contains(", ") {
+            format!("{who}, on {}", esc(self.date))
+        } else {
+            format!("{who} on {}", esc(self.date))
         }
     }
 }
@@ -133,6 +142,7 @@ input[type=text],textarea{display:block;width:100%;margin-top:.35rem;padding:.55
 input[type=text]:focus,textarea:focus{outline:2px solid #111;outline-offset:1px}\
 textarea{resize:vertical;min-height:7rem}\
 .optional{color:#666}\
+.behalf{margin:-.25rem 0 .9rem;font-size:.9rem;color:#333}\
 .check{display:flex;gap:.5rem;align-items:flex-start}.check input{margin-top:.25rem}\
 .button,button{display:inline-block;padding:.6rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:1px solid #111;cursor:pointer;text-decoration:none}\
 .primary{background:#111;color:#fff}.secondary{background:#fff;color:#111}\
@@ -190,6 +200,17 @@ fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
     }
 }
 
+/// The line under the signature fields saying whom the signer signs for.
+fn on_behalf_line(client: &str) -> String {
+    if client.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<p class=\"behalf\">Signing on behalf of <strong>{}</strong></p>",
+        esc(client)
+    )
+}
+
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
     let mut out = String::from("<div class=\"forms\">\n");
     if recipient.role == RecipientRole::Signer {
@@ -197,9 +218,11 @@ fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -
             "<form method=\"post\" hidden {} class=\"card\"><h2>Accept</h2>\
 <label>Your full name <input type=\"text\" name=\"typedName\" required maxlength=\"200\" autocomplete=\"name\"></label>\
 <label>Your title <span class=\"optional\">(optional)</span> <input type=\"text\" name=\"title\" maxlength=\"200\" autocomplete=\"organization-title\"></label>\
+{behalf}\
 <label class=\"check\"><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
 <button type=\"submit\" class=\"primary\">Accept</button><p data-status role=\"status\" class=\"status\"></p></form>\n",
-            data_attrs(ctx, recipient, endpoint, "accept")
+            data_attrs(ctx, recipient, endpoint, "accept"),
+            behalf = on_behalf_line(ctx.client_name),
         ));
     }
     out.push_str(&format!(
@@ -307,17 +330,18 @@ fn state_section(
             "<p class=\"notice\">This version has been superseded by version {latest} and no longer takes responses.</p>\n"
         ),
         PageState::ChangesRequested { requests } => changes_requested(requests),
-        PageState::Accepted(client) => {
-            format!("<p class=\"notice success\">Accepted by {}.</p>\n", client.by())
-        }
+        PageState::Accepted(client) => format!(
+            "<p class=\"notice success\">Accepted by {}.</p>\n",
+            client.by(Some(ctx.client_name))
+        ),
         PageState::Executed {
             client,
             countersign,
             ..
         } => format!(
             "<p class=\"notice success\">Accepted by {}.<br>Countersigned by {}.</p>\n",
-            client.by(),
-            countersign.by()
+            client.by(Some(ctx.client_name)),
+            countersign.by(None)
         ),
         PageState::Declined => "<p class=\"notice\">This document was declined.</p>\n".into(),
     }
@@ -427,14 +451,28 @@ pub fn signed_subject(company: &str, title: &str) -> String {
 
 /// One signature as the confirmation lists it: `Accepted by Pat Example,
 /// Director of Operations, on 2026-10-06.`
-pub fn signed_by_line(role: SignatureRole, name: &str, title: Option<&str>, date: &str) -> String {
+pub fn signed_by_line(
+    role: SignatureRole,
+    name: &str,
+    title: Option<&str>,
+    on_behalf_of: Option<&str>,
+    date: &str,
+) -> String {
     let verb = match role {
         SignatureRole::Client => "Accepted",
         SignatureRole::Countersign => "Countersigned",
     };
-    match title {
-        Some(title) => format!("{verb} by {name}, {title}, on {date}."),
-        None => format!("{verb} by {name} on {date}."),
+    let mut who = name.to_string();
+    if let Some(title) = title {
+        who.push_str(&format!(", {title}"));
+    }
+    if let Some(client) = on_behalf_of.filter(|c| !c.is_empty()) {
+        who.push_str(&format!(", on behalf of {client}"));
+    }
+    if who.contains(", ") {
+        format!("{verb} by {who}, on {date}.")
+    } else {
+        format!("{verb} by {who} on {date}.")
     }
 }
 
@@ -606,6 +644,10 @@ mod tests {
         ));
         assert!(!signer.contains("name=\"title\" required"));
         assert!(signer.contains(
+            "<p class=\"behalf\">Signing on behalf of <strong>Cedar Systems</strong></p>"
+        ));
+        assert!(!collab.contains("on behalf of"));
+        assert!(signer.contains(
             "against this exact file (checksum sha256:ab). Your typed name is your electronic signature on this document."
         ));
         assert!(!collab.contains("electronic signature"));
@@ -632,7 +674,7 @@ mod tests {
             },
         );
         assert!(page.contains(
-            "Accepted by Pat Example, Director &lt;of&gt; Operations, on 2026-10-06.<br>Countersigned by Sam Example on 2026-10-07."
+            "Accepted by Pat Example, Director &lt;of&gt; Operations, on behalf of Cedar Systems, on 2026-10-06.<br>Countersigned by Sam Example on 2026-10-07."
         ));
     }
 
@@ -683,7 +725,9 @@ mod tests {
                 date: "2026-10-06",
             }),
         );
-        assert!(accepted.contains("Accepted by Pat Example on 2026-10-06"));
+        assert!(
+            accepted.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
+        );
     }
 
     #[test]
@@ -825,7 +869,7 @@ mod tests {
             signing_record_href: None,
         });
         assert!(
-            executed.contains("Accepted by Pat Example on 2026-10-06")
+            executed.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
                 && executed.contains("Countersigned by Sam Example on 2026-10-07")
         );
         assert!(!executed.contains("signing record"));
@@ -890,14 +934,21 @@ mod tests {
                         SignatureRole::Client,
                         "Pat Example",
                         Some("Director of Operations"),
+                        Some("Cedar Systems"),
                         "2026-10-06"
                     ),
-                    signed_by_line(SignatureRole::Countersign, "Sam Example", None, "2026-10-07"),
+                    signed_by_line(
+                        SignatureRole::Countersign,
+                        "Sam Example",
+                        None,
+                        None,
+                        "2026-10-07"
+                    ),
                 ],
                 Some("https://docs.example.test/d/doc/rs/index.html"),
                 true
             ),
-            "Hello Pat Example,\n\nThis document is now fully signed; the signed copy and its signing record are attached.\n\nWebsite rebuild (version 2)\nAccepted by Pat Example, Director of Operations, on 2026-10-06.\nCountersigned by Sam Example on 2026-10-07.\nhttps://docs.example.test/d/doc/rs/index.html\n"
+            "Hello Pat Example,\n\nThis document is now fully signed; the signed copy and its signing record are attached.\n\nWebsite rebuild (version 2)\nAccepted by Pat Example, Director of Operations, on behalf of Cedar Systems, on 2026-10-06.\nCountersigned by Sam Example on 2026-10-07.\nhttps://docs.example.test/d/doc/rs/index.html\n"
         );
         assert_eq!(
             render_signed_email_text("Pat Example", "Website rebuild", 2, &[], None, false),

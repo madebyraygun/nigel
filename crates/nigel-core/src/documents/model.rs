@@ -159,6 +159,11 @@ pub struct DocumentVersion {
     pub checksum: String,
     pub sent_at: Option<String>,
     pub created_at: String,
+    /// The client's name when this version was sent, which its pages and
+    /// signing record name the signer as acting on behalf of. `None` before
+    /// it is sent.
+    #[serde(skip_serializing)]
+    pub client_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

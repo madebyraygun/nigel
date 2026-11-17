@@ -13,6 +13,7 @@ use crate::documents::model::{
 };
 use crate::documents::status;
 use crate::error::{NigelError, Result};
+use crate::invoicing::clients::get_client;
 use crate::invoicing::invoices::validate_date;
 
 pub const MIN_PDF_BYTES: usize = 8;
@@ -200,10 +201,26 @@ fn version_from_row(r: &Row<'_>) -> rusqlite::Result<DocumentVersion> {
         checksum: r.get(4)?,
         sent_at: r.get(5)?,
         created_at: r.get(6)?,
+        client_name: r.get(7)?,
     })
 }
 
-const VERSION_COLUMNS: &str = "id, document_id, number, file_path, checksum, sent_at, created_at";
+const VERSION_COLUMNS: &str =
+    "id, document_id, number, file_path, checksum, sent_at, created_at, client_name";
+
+/// The client name a sent version's pages and record print: the one frozen at
+/// send, or the client's current name for a version sent before names were
+/// frozen.
+pub fn version_client_name(
+    conn: &Connection,
+    document: &Document,
+    version: &DocumentVersion,
+) -> Result<String> {
+    match &version.client_name {
+        Some(name) => Ok(name.clone()),
+        None => Ok(get_client(conn, document.client_id)?.name),
+    }
+}
 
 pub fn versions(conn: &Connection, document_id: i64) -> Result<Vec<DocumentVersion>> {
     let mut stmt = conn.prepare(&format!(

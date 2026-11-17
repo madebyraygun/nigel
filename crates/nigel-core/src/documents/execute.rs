@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use super::lifecycle::republish_linking_record;
-use super::model::RecipientRole;
+use super::model::{RecipientRole, SignatureRole};
 use super::render::{
     attachment_name, relative_signing_record_href, render_signed_email_text, signed_by_line,
     signed_subject,
@@ -19,7 +19,10 @@ use super::signing_record::{
     generate_signing_record, plain_text, signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE,
     RECORD_UNAVAILABLE,
 };
-use super::store::{get_document, latest_sent_version, read_version_pdf, recipients, signatures};
+use super::store::{
+    get_document, latest_sent_version, read_version_pdf, recipients, signatures,
+    version_client_name,
+};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource, Unavailable,
@@ -228,6 +231,7 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             .ok_or_else(|| NigelError::Other(format!("Document #{id} has no sent version.")))?;
         let pdf = read_version_pdf(data_dir, &version)?;
         let frozen = recipients(conn, version.id)?;
+        let client = plain_text(&version_client_name(conn, &document, &version)?);
         let signed_by = signatures(conn, version.id)?
             .iter()
             .map(|s| {
@@ -235,6 +239,7 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
                     s.role,
                     &plain_text(&s.name),
                     s.title.as_deref().map(plain_text).as_deref(),
+                    (s.role == SignatureRole::Client).then_some(client.as_str()),
                     s.signed_at.get(..10).unwrap_or(&s.signed_at),
                 )
             })

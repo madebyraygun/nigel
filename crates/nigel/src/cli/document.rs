@@ -1148,6 +1148,7 @@ mod tests {
                 checksum: checksum.into(),
                 sent_at: sent_at.map(Into::into),
                 created_at: "2026-10-05T09:00:00Z".into(),
+                client_name: None,
             };
         let recipient = |id: i64, role: RecipientRole, name: &str, email: &str| Recipient {
             id,

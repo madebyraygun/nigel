@@ -1684,6 +1684,12 @@ pub fn render_signing_record(
         if let Some(title) = &signature.title {
             pdf.record_row("Title", title);
         }
+        if signature.role == SignatureRole::Client && !record.client.is_empty() {
+            pdf.record_row("On behalf of", &record.client);
+        }
+        if signature.role == SignatureRole::Client && !record.client.is_empty() {
+            pdf.record_row("On behalf of", &record.client);
+        }
         if let Some(typed) = &signature.typed_name {
             pdf.record_row("Typed name", typed);
         }

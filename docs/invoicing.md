@@ -1672,7 +1672,11 @@ address and browser, bound to the SHA-256 checksum of the exact PDF they were
 shown. The signer's page tells them their typed name is their signature on the
 document. The form also asks for an optional **title**, the role the signer signs
 in ("Director of Operations"); it is recorded beside the name and shown wherever
-the signature is. Nigel does not verify who typed the name — anyone holding the link
+the signature is. Under the fields the form says **Signing on behalf of** the
+client, and the stamped page, the signing record and the confirmation email name
+the signer as acting on the client's behalf. The client's name is the one it
+had when the version was sent, so renaming the client later changes no published
+page or record. Nigel does not verify who typed the name — anyone holding the link
 can — and it is not a qualified (eIDAS) signature, so a contract that needs
 identity verification or a qualified signature belongs in a service that
 provides it.
@@ -1923,7 +1927,8 @@ signed PDF itself never changes: every signature is bound to its SHA-256
 checksum, and the record names that checksum so anyone can verify the copy they
 hold. It shows the document's title, kind, client, version and checksum, then
 the client's acceptance and your countersignature, each with the name, the
-title when one was given, the typed name, the method (`online` or `manual`), the time, and for an online
+title when one was given (and for the acceptance, the client it was given on
+behalf of), the typed name, the method (`online` or `manual`), the time, and for an online
 acceptance the IP address and browser. Text a recipient supplied — the typed
 name, the browser string — is printed as plain text with control characters
 removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.

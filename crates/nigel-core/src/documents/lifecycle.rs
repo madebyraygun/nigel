@@ -11,10 +11,11 @@ use super::render::{
     relative_pdf_href, render_recipient_page, withdrawn_page_html, PageContext, PageRecipient,
     PageState, RequestedChange, Stamp,
 };
-use super::store::{change_requests, get_document, recipients, signatures, versions};
+use super::store::{
+    change_requests, get_document, recipients, signatures, version_client_name, versions,
+};
 use super::wire::{manifest_for, ManifestState};
 use crate::error::Result;
-use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, ResponseSource};
 
 #[derive(Debug, Clone)]
@@ -266,8 +267,8 @@ fn republish_version<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
-    let client_name = match get_client(conn, document.client_id) {
-        Ok(c) => c.name,
+    let client_name = match version_client_name(conn, document, version) {
+        Ok(name) => name,
         Err(e) => return vec![format!("Warning: could not load the client ({e}).")],
     };
     let href = relative_pdf_href(version.number);
@@ -716,6 +717,12 @@ mod tests {
     fn accepting_republishes_every_page_stamped_and_without_a_form() {
         let (dir, conn) = test_conn();
         let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
+        let client_id = get_document(&conn, id).unwrap().client_id;
+        conn.execute(
+            "UPDATE clients SET name = 'Cedar Holdings' WHERE id = ?1",
+            [client_id],
+        )
+        .unwrap();
         record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         assert!(republish_after_change(&conn, id, "Initech", Some(&p), Some(&s)).is_empty());
         let doc = get_document(&conn, id).unwrap();
@@ -726,7 +733,10 @@ mod tests {
         for r in recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap() {
             let page = p.page(&doc.token, &r.token).unwrap();
             assert!(
-                page.contains("Accepted by Pat Example on 2026-10-06") && !page.contains("<form")
+                page.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
+                    && !page.contains("Cedar Holdings")
+                    && !page.contains("<form"),
+                "a rename after the send leaves the page naming the client it was sent for"
             );
         }
     }
