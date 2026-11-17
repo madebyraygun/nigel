@@ -50,7 +50,8 @@ use crate::documents::send::{
     SendContext,
 };
 use crate::documents::signing_record::{
-    generate_signing_record, read_executed_copy, read_signing_record, KeptRecord, PDF_UNAVAILABLE,
+    generate_signing_record, merge_kept_record, read_executed_copy, read_signing_record,
+    KeptRecord, PDF_UNAVAILABLE,
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
@@ -882,14 +883,17 @@ async fn countersign(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RepublishRequest {}
 
-/// The document after its signing record was regenerated, and whether the
-/// record reached the public bucket.
+/// The document after its signing record was regenerated. `published` is
+/// whether everything regenerated reached the public bucket: the record, and
+/// the executed copy when one was made; `executedCopyPublished` is the copy
+/// alone.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SigningRecordResult {
     #[serde(flatten)]
     result: ActionResult,
     published: bool,
+    executed_copy_published: bool,
 }
 
 /// `POST /api/documents/{id}/signing-record` — regenerate an executed
@@ -920,13 +924,14 @@ async fn republish_signing_record(
                 other => other.into(),
             })?;
             Ok(SigningRecordResult {
+                published: regenerated.fully_published(),
+                executed_copy_published: regenerated.executed_published,
                 result: ActionResult::after_commit(
                     conn,
                     &state.data_dir(),
                     id,
                     regenerated.warnings,
                 ),
-                published: regenerated.published,
             })
         }
     })
@@ -1164,11 +1169,20 @@ async fn signing_record_pdf(
 
 /// `GET /api/documents/{id}/executed.pdf` — the executed version's executed
 /// copy: the signed PDF with the full signing record appended. The copy kept at
-/// countersign, made first when there is none yet.
+/// countersign when there is one; otherwise the signed PDF merged in memory
+/// with the kept record, writing nothing; otherwise, when no record was ever
+/// kept, the record and copy are generated and kept first.
 async fn executed_copy_pdf(
     State(state): State<AppState>,
     ApiPath(id): ApiPath<i64>,
 ) -> ApiResult<Response> {
+    let unavailable = |why: String| -> ApiError {
+        crate::error::NigelError::Conflict {
+            code: "executed_copy_unavailable",
+            message: format!("No executed copy could be made, because {why}."),
+        }
+        .into()
+    };
     let copy = with_conn_api(&state, {
         let state = state.clone();
         move |conn| {
@@ -1176,6 +1190,13 @@ async fn executed_copy_pdf(
             let data_dir = state.data_dir();
             if let Some(copy) = read_executed_copy(conn, &data_dir, id)? {
                 return Ok(copy);
+            }
+            if let Some(record) = read_signing_record(conn, &data_dir, id)? {
+                return match merge_kept_record(conn, &data_dir, id, &record)? {
+                    Some(Ok(copy)) => Ok(copy),
+                    Some(Err(why)) => Err(unavailable(why)),
+                    None => Err(ApiError::feature_disabled(PDF_UNAVAILABLE)),
+                };
             }
             let record = generate_signing_record(conn, &data_dir, id, &company_name(conn))?
                 .ok_or_else(|| ApiError::feature_disabled(PDF_UNAVAILABLE))?;
@@ -1185,11 +1206,7 @@ async fn executed_copy_pdf(
                     filename: copy.filename,
                     bytes: copy.bytes,
                 }),
-                Err(why) => Err(crate::error::NigelError::Conflict {
-                    code: "executed_copy_unavailable",
-                    message: format!("No executed copy could be made, because {why}."),
-                }
-                .into()),
+                Err(why) => Err(unavailable(why)),
             }
         }
     })
@@ -2526,5 +2543,127 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{json}");
         assert_eq!(json["error"]["code"], "upstream_failed", "{json}");
         assert_eq!(json["error"]["details"]["service"], "r2", "{json}");
+    }
+
+    #[tokio::test]
+    async fn accept_and_countersign_store_a_title_and_refuse_an_over_long_one() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+
+        let accepted = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/accept"),
+            serde_json::json!({ "name": "Pat Example", "title": "Director of Operations", "date": "2026-10-06" }),
+        )
+        .await;
+        assert_eq!(
+            accepted["versions"][0]["signatures"][0]["title"], "Director of Operations",
+            "{accepted}"
+        );
+
+        let long = "x".repeat(crate::documents::model::SIGNER_TEXT_MAX_CHARS + 1);
+        let (status, body) = post_json(
+            &app,
+            &format!("/api/documents/{id}/countersign"),
+            &token,
+            &serde_json::json!({ "name": "Sam Example", "title": long, "date": "2026-10-07" }),
+        )
+        .await;
+        assert!(status.is_client_error(), "{status}: {body}");
+
+        let executed = post_ok(
+            &app,
+            &token,
+            &format!("/api/documents/{id}/countersign"),
+            serde_json::json!({ "name": "Sam Example", "title": "Managing Partner", "date": "2026-10-07" }),
+        )
+        .await;
+        let titles: Vec<_> = executed["versions"][0]["signatures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["title"].clone())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                serde_json::json!("Director of Operations"),
+                serde_json::json!("Managing Partner")
+            ],
+            "{executed}"
+        );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[tokio::test]
+    async fn the_executed_copy_download_merges_the_kept_record_without_writing_anything() {
+        use crate::documents::signing_record::{executed_copy_rel, signing_record_rel};
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let data_dir = db_path.parent().unwrap().to_path_buf();
+        let id = sent_document(&db_path);
+        let (app, token) = app_for(&db_path);
+        let uri = format!("/api/documents/{id}/executed.pdf");
+
+        let (status, body) = get_json(&app, &uri, &token).await;
+        assert!(
+            status.is_client_error(),
+            "not yet executed: {status} {body}"
+        );
+        let (status, _) = get_json(&app, "/api/documents/999/executed.pdf", &token).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        for (step, name) in [("accept", "Pat Example"), ("countersign", "Sam Example")] {
+            post_ok(
+                &app,
+                &token,
+                &format!("/api/documents/{id}/{step}"),
+                serde_json::json!({ "name": name, "date": "2026-10-07" }),
+            )
+            .await;
+        }
+        std::fs::remove_file(data_dir.join(executed_copy_rel(id, 1))).unwrap();
+        let record_path = data_dir.join(signing_record_rel(id, 1));
+        let kept_record = std::fs::read(&record_path).unwrap();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let version = crate::documents::store::latest_version(&conn, id).unwrap();
+        let signed = std::fs::read(data_dir.join(&version.file_path)).unwrap();
+
+        let response = get_response(&app, &uri, &token).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            header_str(&response, header::CONTENT_DISPOSITION),
+            "inline; filename=\"Website-rebuild-v1-executed.pdf\""
+        );
+        assert_eq!(
+            body_bytes(response).await,
+            crate::pdf::append_pdf(&signed, &kept_record).unwrap()
+        );
+        assert_eq!(std::fs::read(&record_path).unwrap(), kept_record);
+        assert!(!data_dir.join(executed_copy_rel(id, 1)).exists());
+        let after = crate::documents::store::latest_version(&conn, id).unwrap();
+        assert_eq!(
+            (&after.executed_checksum, &after.executed_public_checksum),
+            (
+                &version.executed_checksum,
+                &version.executed_public_checksum
+            )
+        );
+
+        std::fs::write(
+            data_dir.join(&version.file_path),
+            b"%PDF-1.4\nnot a pdf\n%%EOF\n",
+        )
+        .unwrap();
+        let (status, body) = get_json(&app, &uri, &token).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(
+            body["error"]["details"]["reason"], "executed_copy_unavailable",
+            "{body}"
+        );
+        assert_eq!(std::fs::read(&record_path).unwrap(), kept_record);
     }
 }

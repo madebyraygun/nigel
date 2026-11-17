@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
+use crate::documents::signing_record::Redacted;
 use crate::documents::wire::{manifest_key, response_key, Manifest};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher, ResponseSource};
@@ -552,7 +553,7 @@ impl DocumentPublisher for R2Publisher {
         token: &str,
         version: i64,
         filename: &str,
-        pdf: &[u8],
+        pdf: &Redacted,
     ) -> Result<String> {
         put_object(
             &self.account_id,
@@ -560,7 +561,7 @@ impl DocumentPublisher for R2Publisher {
             &self.secret_key,
             &self.bucket,
             &document_signing_record_key(token, version),
-            pdf,
+            pdf.as_bytes(),
             "application/pdf",
             Some(&inline_disposition(filename)),
         )?;
@@ -576,7 +577,7 @@ impl DocumentPublisher for R2Publisher {
         token: &str,
         version: i64,
         filename: &str,
-        pdf: &[u8],
+        pdf: &Redacted,
     ) -> Result<String> {
         put_object(
             &self.account_id,
@@ -584,7 +585,7 @@ impl DocumentPublisher for R2Publisher {
             &self.secret_key,
             &self.bucket,
             &document_executed_copy_key(token, version),
-            pdf,
+            pdf.as_bytes(),
             "application/pdf",
             Some(&inline_disposition(filename)),
         )?;

@@ -1715,22 +1715,27 @@ pub fn render_signing_record(
 /// checksum, and this is a separate file. Page attributes a page inherits from
 /// its page tree (resources, media box, crop box, rotation) are copied onto the
 /// page, since each file's page tree is replaced by one tree over both.
-/// Refused for an encrypted PDF or one that does not parse.
+/// Only pages and what they reference are carried over: document-level
+/// entries of either file (outlines, form fields and the AcroForm, the names
+/// tree, Info metadata) are not. Refused for an encrypted PDF, one that does
+/// not parse, one with no pages, or a result whose page count is not the two
+/// counts added together.
 pub fn append_pdf(signed: &[u8], appendix: &[u8]) -> Result<Vec<u8>> {
     use printpdf::lopdf::{dictionary, Document, Object, ObjectId};
 
     const INHERITED: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
-    let unreadable =
-        |e: printpdf::lopdf::Error| NigelError::Other(format!("the PDF could not be read ({e})"));
 
     let mut next_id = 1;
     let mut pages: Vec<ObjectId> = Vec::new();
+    let mut counts = Vec::new();
     let mut objects = std::collections::BTreeMap::new();
-    for bytes in [signed, appendix] {
-        let mut doc = Document::load_mem(bytes).map_err(unreadable)?;
+    for (bytes, which) in [(signed, "the signed PDF"), (appendix, "the signing record")] {
+        let mut doc = Document::load_mem(bytes)
+            .map_err(|e| NigelError::Other(format!("{which} could not be read ({e})")))?;
         if doc.is_encrypted() {
-            return Err(NigelError::Other("the PDF is encrypted".into()));
+            return Err(NigelError::Other(format!("{which} is encrypted")));
         }
+        let before = pages.len();
         doc.renumber_objects_with(next_id);
         next_id = doc.max_id + 1;
         for page_id in doc.get_pages().into_values() {
@@ -1760,6 +1765,10 @@ pub fn append_pdf(signed: &[u8], appendix: &[u8]) -> Result<Vec<u8>> {
             }
             pages.push(page_id);
         }
+        if pages.len() == before {
+            return Err(NigelError::Other(format!("{which} has no pages")));
+        }
+        counts.push(pages.len() - before);
         objects.extend(doc.objects);
     }
 
@@ -1801,6 +1810,17 @@ pub fn append_pdf(signed: &[u8], appendix: &[u8]) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     out.save_to(&mut bytes)
         .map_err(|e| NigelError::Other(format!("the PDF could not be written ({e})")))?;
+    let written = Document::load_mem(&bytes)
+        .map_err(|e| NigelError::Other(format!("the combined PDF could not be read back ({e})")))?
+        .get_pages()
+        .len();
+    let expected: usize = counts.iter().sum();
+    if written != expected {
+        return Err(NigelError::Other(format!(
+            "the combined PDF has {written} pages, not the {} of the signed PDF and {} of the signing record",
+            counts[0], counts[1]
+        )));
+    }
     Ok(bytes)
 }
 
@@ -3673,5 +3693,140 @@ mod tests {
         let report = get_k1_prep(&conn, Some(2025)).unwrap();
         let bytes = render_k1(&report, "Test Corp", "FY 2025").unwrap();
         assert!(bytes.starts_with(b"%PDF"));
+    }
+
+    /// A PDF whose pages sit two levels down a page tree and carry no
+    /// resources, media box or rotation of their own: all three are on the
+    /// root, for the pages to inherit. Each page draws its label.
+    fn two_level_tree_pdf(labels: &[&str]) -> Vec<u8> {
+        use printpdf::lopdf::{dictionary, Document, Object, Stream};
+        let mut doc = Document::with_version("1.5");
+        let root_id = doc.new_object_id();
+        let mid_id = doc.new_object_id();
+        let font_id = doc.add_object(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        });
+        let mut kids = Vec::new();
+        for label in labels {
+            let content = format!("BT /F1 12 Tf 20 20 Td ({label}) Tj ET");
+            let content_id = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => mid_id,
+                "Contents" => content_id,
+            })));
+        }
+        doc.objects.insert(
+            mid_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Parent" => root_id,
+                "Kids" => kids,
+                "Count" => labels.len() as i64,
+            }),
+        );
+        doc.objects.insert(
+            root_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(mid_id)],
+                "Count" => labels.len() as i64,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+                "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+                "Rotate" => 90,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => root_id,
+        });
+        doc.trailer.set("Root", catalog_id);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn append_pdf_puts_the_signed_pages_first_with_what_they_inherited() {
+        use printpdf::lopdf::{Document, Object};
+        let signed = two_level_tree_pdf(&["signed-1", "signed-2", "signed-3"]);
+        let record = two_level_tree_pdf(&["record-1"]);
+        let merged = append_pdf(&signed, &record).unwrap();
+
+        let streams = page_streams(&merged);
+        let order: Vec<_> = ["signed-1", "signed-2", "signed-3", "record-1"]
+            .iter()
+            .map(|label| streams.iter().position(|s| s.contains(label)))
+            .collect();
+        assert_eq!(order, [Some(0), Some(1), Some(2), Some(3)], "{streams:?}");
+
+        let doc = Document::load_mem(&merged).unwrap();
+        for page_id in doc.get_pages().values() {
+            let page = doc.get_dictionary(*page_id).unwrap();
+            assert!(page.has(b"Resources"), "{page:?}");
+            assert_eq!(
+                page.get(b"MediaBox").unwrap().as_array().unwrap().len(),
+                4,
+                "{page:?}"
+            );
+            assert_eq!(page.get(b"Rotate").unwrap().as_i64().unwrap(), 90);
+        }
+
+        let catalogs: Vec<_> = doc
+            .objects
+            .values()
+            .filter(|o| o.type_name().ok() == Some("Catalog"))
+            .collect();
+        assert_eq!(catalogs.len(), 1);
+        let catalog = doc.catalog().unwrap();
+        let pages_id = catalog.get(b"Pages").unwrap().as_reference().unwrap();
+        let count = doc
+            .get_dictionary(pages_id)
+            .unwrap()
+            .get(b"Count")
+            .and_then(Object::as_i64)
+            .unwrap();
+        assert_eq!(count, 4);
+        assert_eq!(doc.get_pages().len(), 4);
+    }
+
+    #[test]
+    fn append_pdf_refuses_an_encrypted_input_and_names_it() {
+        use printpdf::lopdf::{dictionary, Document};
+        let mut doc = Document::load_mem(&two_level_tree_pdf(&["signed-1"])).unwrap();
+        let encrypt = doc.add_object(dictionary! { "Filter" => "Standard", "V" => 1, "R" => 2 });
+        doc.trailer.set("Encrypt", encrypt);
+        let mut encrypted = Vec::new();
+        doc.save_to(&mut encrypted).unwrap();
+        let record = two_level_tree_pdf(&["record-1"]);
+
+        let err = append_pdf(&encrypted, &record).unwrap_err().to_string();
+        assert!(err.contains("the signed PDF"), "{err}");
+        let err = append_pdf(&record, &encrypted).unwrap_err().to_string();
+        assert!(err.contains("the signing record"), "{err}");
+    }
+
+    #[test]
+    fn append_pdf_refuses_an_input_with_no_pages() {
+        let empty = two_level_tree_pdf(&[]);
+        let record = two_level_tree_pdf(&["record-1"]);
+        let err = append_pdf(&empty, &record).unwrap_err().to_string();
+        assert!(err.contains("the signed PDF has no pages"), "{err}");
+        let err = append_pdf(&record, &empty).unwrap_err().to_string();
+        assert!(err.contains("the signing record has no pages"), "{err}");
+    }
+
+    #[test]
+    fn append_pdf_names_the_input_that_does_not_parse() {
+        let record = two_level_tree_pdf(&["record-1"]);
+        let err = append_pdf(b"not a pdf", &record).unwrap_err().to_string();
+        assert!(err.starts_with("the signed PDF could not be read"), "{err}");
+        let err = append_pdf(&record, b"not a pdf").unwrap_err().to_string();
+        assert!(
+            err.starts_with("the signing record could not be read"),
+            "{err}"
+        );
     }
 }

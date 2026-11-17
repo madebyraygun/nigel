@@ -197,7 +197,7 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
         let kind = match r.action {
             ResponseAction::Accept => ResponseKind::Accept {
                 typed_name: r.typed_name.as_deref().unwrap_or_default().trim(),
-                title: r.title.as_deref(),
+                title: checked.title.as_deref(),
             },
             ResponseAction::RequestChanges => ResponseKind::RequestChanges {
                 note: r.note.as_deref().unwrap_or_default(),
@@ -243,12 +243,13 @@ const USER_AGENT_MAX_CHARS: usize = 512;
 /// What survives of a response's metadata once it is fit to store.
 struct Checked {
     received_at: String,
+    title: Option<String>,
     ip: Option<String>,
     user_agent: Option<String>,
 }
 
 /// Refuses a response that does not answer exactly this version for exactly
-/// this recipient, or that carries a name or note unfit to record, no consent
+/// this recipient, or that carries a name, title or note unfit to record, no consent
 /// or an unreadable `receivedAt`. An address
 /// that is not an IP, or an over-long or control-laden user agent, is dropped
 /// rather than refused. Nothing the response carries is echoed beyond what
@@ -272,6 +273,7 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
     if r.recipient_token != f.recipient.token {
         return refuse("it names a different recipient.".into());
     }
+    let mut title = None;
     match r.action {
         ResponseAction::Accept => {
             if r.consent != Some(true) {
@@ -289,8 +291,9 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
             if typed.chars().any(char::is_control) {
                 return refuse("the typed name carries control characters.".into());
             }
-            if let Err(e) = clean_title(r.title.as_deref()) {
-                return refuse(e.to_string());
+            match clean_title(r.title.as_deref()) {
+                Ok(t) => title = t,
+                Err(e) => return refuse(e.to_string()),
             }
         }
         ResponseAction::RequestChanges => {
@@ -318,6 +321,7 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
         .map(str::to_string);
     Ok(Checked {
         received_at,
+        title,
         ip,
         user_agent,
     })

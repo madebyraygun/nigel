@@ -1,6 +1,7 @@
 import {
   FetchApiClient,
   MENU_COMMAND_IDS,
+  filenameFrom,
   type FetchApiClientOptions,
   type ApiClient,
   type DragDropEvent,
@@ -239,12 +240,6 @@ export function fileManagerLabel(userAgent: string): string {
   if (/Mac OS X|Macintosh/.test(userAgent)) return 'Reveal in Finder';
   if (/Windows/.test(userAgent)) return 'Show in Explorer';
   return 'Open folder';
-}
-
-/** The name the server chose, or the caller's fallback. */
-function filenameFrom(disposition: string | null, fallback: string): string {
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '');
-  return match ? decodeURIComponent(match[1]) : fallback;
 }
 
 /** `tauri://drag-drop` carries `{paths, position}`; a drag of nothing carries no paths. */

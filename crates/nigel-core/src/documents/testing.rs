@@ -146,11 +146,11 @@ impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
         token: &str,
         version: i64,
         _filename: &str,
-        pdf: &[u8],
+        pdf: &crate::documents::signing_record::Redacted,
     ) -> crate::error::Result<String> {
         self.write(
             crate::invoicing::r2::document_signing_record_key(token, version),
-            pdf,
+            pdf.as_bytes(),
         )?;
         Ok(crate::invoicing::r2::document_signing_record_url(
             Self::BASE,
@@ -164,11 +164,11 @@ impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
         token: &str,
         version: i64,
         _filename: &str,
-        pdf: &[u8],
+        pdf: &crate::documents::signing_record::Redacted,
     ) -> crate::error::Result<String> {
         self.write(
             crate::invoicing::r2::document_executed_copy_key(token, version),
-            pdf,
+            pdf.as_bytes(),
         )?;
         Ok(crate::invoicing::r2::document_executed_copy_url(
             Self::BASE,

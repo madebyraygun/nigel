@@ -151,7 +151,7 @@ pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<Signi
             "Document #{id} is executed but has no sent version."
         ))
     })?;
-    let client = version_client_name(conn, &document, &version)?;
+    let client = version_client_name(&document, &version)?;
     let mut stamps = signatures(conn, version.id)?;
     stamps.sort_by_key(|s| match s.role {
         SignatureRole::Client => 0,
@@ -198,6 +198,22 @@ pub fn render_signing_record(record: &SigningRecord) -> Option<Result<Vec<u8>>> 
     }
 }
 
+/// Bytes that carry the redacted signing record and nothing from the full one:
+/// the only bytes that may be published or sent to a collaborator. Only this
+/// module makes one, from a record rendered with [`SigningRecord::redacted`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redacted(Vec<u8>);
+
+impl Redacted {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+}
+
 /// A generated record in both variants. `bytes` is the full record, which is
 /// the one written to the data directory; `redacted` is the one published and
 /// sent to collaborators. `executed` is the signed PDF with each variant
@@ -207,7 +223,7 @@ pub struct GeneratedRecord {
     pub version: i64,
     pub filename: String,
     pub bytes: Vec<u8>,
-    pub redacted: Vec<u8>,
+    pub redacted: Redacted,
     pub executed: std::result::Result<ExecutedCopy, String>,
 }
 
@@ -218,13 +234,13 @@ pub struct GeneratedRecord {
 pub struct ExecutedCopy {
     pub filename: String,
     pub bytes: Vec<u8>,
-    pub redacted: Vec<u8>,
+    pub redacted: Redacted,
 }
 
 /// The warning an executed copy that could not be made becomes.
 pub fn executed_copy_warning(why: &str) -> String {
     format!(
-        "Warning: no executed copy was made, because {why}. The signed PDF and the signing record are still sent and published as two files."
+        "Warning: no executed copy was made, because {why}. The signed PDF and the signing record remain separate files, and anything emailed or published carries them as two files."
     )
 }
 
@@ -249,11 +265,21 @@ pub fn generate_signing_record(
         return Ok(None);
     };
     let bytes = bytes?;
-    let redacted = render_signing_record(&record.redacted())
-        .expect("rendered once, so the pdf feature is on")?;
+    let redacted = Redacted(
+        render_signing_record(&record.redacted())
+            .expect("rendered once, so the pdf feature is on")?,
+    );
     write_version_file(data_dir, &signing_record_rel(id, record.version), &bytes)?;
     let title = get_document(conn, id)?.title;
-    let executed = make_executed_copy(conn, data_dir, id, &title, &bytes, &redacted)?;
+    let executed = make_executed_copy(
+        conn,
+        data_dir,
+        id,
+        record.version,
+        &title,
+        &bytes,
+        &redacted,
+    );
     Ok(Some(GeneratedRecord {
         version: record.version,
         filename: signing_record_name(&title, record.version),
@@ -264,51 +290,135 @@ pub fn generate_signing_record(
 }
 
 /// Append each record variant to the signed PDF, keep the full copy and store
-/// both checksums on the version. A signed PDF that cannot be read or merged
-/// (an encrypted file, say) is an `Err` reason, not a failure: the record
-/// itself stands.
+/// its checksum on the version. The public copy's checksum is stored only once
+/// it is published ([`set_executed_public_checksum`]). Every failure here is
+/// an `Err` reason, never an error: the record itself stands. On any failure
+/// the kept copy is removed and both checksums are cleared, so no stale copy or
+/// checksum outlives a copy that could not be made.
 fn make_executed_copy(
     conn: &Connection,
     data_dir: &Path,
     id: i64,
+    version: i64,
     title: &str,
     record: &[u8],
-    redacted: &[u8],
-) -> Result<std::result::Result<ExecutedCopy, String>> {
+    redacted: &Redacted,
+) -> std::result::Result<ExecutedCopy, String> {
+    let made = (|| {
+        let signed = latest_sent_version(conn, id)
+            .and_then(|v| {
+                v.ok_or_else(|| NigelError::Other(format!("document #{id} has no sent version")))
+            })
+            .and_then(|v| read_version_pdf(data_dir, &v))
+            .map_err(|e| format!("the signed PDF could not be read ({e})"))?;
+        let combine = |appendix: &[u8]| {
+            append_record(&signed, appendix)
+                .expect("a record was rendered, so the pdf feature is on")
+                .map_err(|e| format!("the signed PDF could not be combined with the record: {e}"))
+        };
+        let bytes = combine(record)?;
+        let public = Redacted(combine(redacted.as_bytes())?);
+        write_version_file(data_dir, &executed_copy_rel(id, version), &bytes)
+            .map_err(|e| format!("the executed copy could not be written ({e})"))?;
+        conn.execute(
+            "UPDATE document_versions SET executed_checksum = ?3
+             WHERE document_id = ?1 AND number = ?2",
+            rusqlite::params![id, version, checksum_of(&bytes)],
+        )
+        .map_err(|e| format!("the executed copy's checksum could not be stored ({e})"))?;
+        Ok(ExecutedCopy {
+            filename: executed_copy_name(title, version),
+            bytes,
+            redacted: public,
+        })
+    })();
+    made.map_err(|why| discard_executed_copy(conn, data_dir, id, version, why))
+}
+
+/// Remove a version's kept executed copy and clear both its checksums, best
+/// effort, and answer `why` with anything that could not be cleaned up.
+fn discard_executed_copy(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    version: i64,
+    why: String,
+) -> String {
+    let mut leftovers = Vec::new();
+    match std::fs::remove_file(data_dir.join(executed_copy_rel(id, version))) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => leftovers.push(format!(
+            "an earlier executed copy could not be removed ({e})"
+        )),
+    }
+    if let Err(e) = conn.execute(
+        "UPDATE document_versions
+         SET executed_checksum = NULL, executed_public_checksum = NULL
+         WHERE document_id = ?1 AND number = ?2",
+        rusqlite::params![id, version],
+    ) {
+        leftovers.push(format!(
+            "the executed copy's checksums could not be cleared ({e})"
+        ));
+    }
+    if leftovers.is_empty() {
+        why
+    } else {
+        format!("{why}; also, {}", leftovers.join(" and "))
+    }
+}
+
+/// Store the checksum of the executed copy just published, or clear it with
+/// `None` when the publish failed. Set only while the full copy's checksum is
+/// set, so a public checksum never stands without a kept copy.
+pub fn set_executed_public_checksum(
+    conn: &Connection,
+    id: i64,
+    version: i64,
+    checksum: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE document_versions SET executed_public_checksum = ?3
+         WHERE document_id = ?1 AND number = ?2
+           AND (?3 IS NULL OR executed_checksum IS NOT NULL)",
+        rusqlite::params![id, version, checksum],
+    )?;
+    Ok(())
+}
+
+/// The signed PDF with the kept full record appended, made in memory and
+/// written nowhere: the kept record and the checksums stay as they are.
+/// `None` in a build without the `pdf` feature; `Some(Err)` is why the two
+/// could not be combined.
+pub fn merge_kept_record(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    record: &KeptRecord,
+) -> Result<Option<std::result::Result<KeptRecord, String>>> {
+    let document = get_document(conn, id)?;
     let version = latest_sent_version(conn, id)?.ok_or_else(|| {
         NigelError::Other(format!(
-            "Document #{id} is executed but has no sent version."
+            "Document #{id} has a signing record but no sent version."
         ))
     })?;
     let signed = match read_version_pdf(data_dir, &version) {
         Ok(signed) => signed,
-        Err(e) => return Ok(Err(format!("the signed PDF could not be read ({e})"))),
+        Err(e) => return Ok(Some(Err(format!("the signed PDF could not be read ({e})")))),
     };
-    let merged = append_record(&signed, record)
-        .expect("a record was rendered, so the pdf feature is on")
-        .and_then(|full| {
-            let public = append_record(&signed, redacted)
-                .expect("a record was rendered, so the pdf feature is on")?;
-            Ok((full, public))
-        });
-    let (bytes, public) = match merged {
-        Ok(both) => both,
-        Err(e) => {
-            return Ok(Err(format!(
-                "the signed PDF could not be combined with the record: {e}"
-            )))
-        }
+    let Some(merged) = append_record(&signed, &record.bytes) else {
+        return Ok(None);
     };
-    write_version_file(data_dir, &executed_copy_rel(id, version.number), &bytes)?;
-    conn.execute(
-        "UPDATE document_versions SET executed_checksum = ?2, executed_public_checksum = ?3 WHERE id = ?1",
-        rusqlite::params![version.id, checksum_of(&bytes), checksum_of(&public)],
-    )?;
-    Ok(Ok(ExecutedCopy {
-        filename: executed_copy_name(title, version.number),
-        bytes,
-        redacted: public,
-    }))
+    Ok(Some(
+        merged
+            .map(|bytes| KeptRecord {
+                version: version.number,
+                filename: executed_copy_name(&document.title, version.number),
+                bytes,
+            })
+            .map_err(|e| format!("the signed PDF could not be combined with the record: {e}")),
+    ))
 }
 
 /// The kept executed copy of an executed document, or `None` when none has
@@ -560,5 +670,54 @@ mod tests {
             crate::documents::model::checksum_of(&signed),
             version.checksum
         );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_merge_that_fails_on_a_rerun_removes_the_earlier_copy_and_clears_both_checksums() {
+        use crate::documents::store::latest_version;
+        let (dir, conn) = test_conn();
+        let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
+        let first = generate_signing_record(&conn, dir.path(), id, "Initech")
+            .unwrap()
+            .unwrap();
+        let copy = first.executed.expect("the first run makes a copy");
+        set_executed_public_checksum(&conn, id, 1, Some(&checksum_of(copy.redacted.as_bytes())))
+            .unwrap();
+        let version = latest_version(&conn, id).unwrap();
+        assert!(version.executed_checksum.is_some() && version.executed_public_checksum.is_some());
+        assert!(dir.path().join(executed_copy_rel(id, 1)).exists());
+
+        std::fs::write(
+            dir.path().join(&version.file_path),
+            b"%PDF-1.4\nnot really a pdf\n%%EOF\n",
+        )
+        .unwrap();
+        let again = generate_signing_record(&conn, dir.path(), id, "Initech")
+            .unwrap()
+            .unwrap();
+        let why = again.executed.unwrap_err();
+        assert!(why.starts_with("the signed PDF could not be"), "{why}");
+        assert!(!dir.path().join(executed_copy_rel(id, 1)).exists());
+        let version = latest_version(&conn, id).unwrap();
+        assert_eq!(
+            (version.executed_checksum, version.executed_public_checksum),
+            (None, None)
+        );
+        assert!(
+            dir.path().join(signing_record_rel(id, 1)).exists(),
+            "the record stands"
+        );
+    }
+
+    #[test]
+    fn a_public_checksum_is_never_stored_without_the_full_one() {
+        let (dir, conn) = test_conn();
+        let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
+        set_executed_public_checksum(&conn, id, 1, Some("sha256:aa")).unwrap();
+        let version = crate::documents::store::latest_version(&conn, id).unwrap();
+        assert_eq!(version.executed_public_checksum, None);
     }
 }

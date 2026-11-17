@@ -160,16 +160,17 @@ pub struct DocumentVersion {
     pub sent_at: Option<String>,
     pub created_at: String,
     /// The client's name when this version was sent, which its pages and
-    /// signing record name the signer as acting on behalf of. `None` before
-    /// it is sent.
+    /// signing record name the signer as acting on behalf of. `None` until
+    /// the version is sent.
     #[serde(skip_serializing)]
     pub client_name: Option<String>,
     /// The checksum of the executed copy kept in the data directory: the
-    /// signed PDF with the full signing record appended. `None` until one is
-    /// made.
+    /// signed PDF with the full signing record appended. Set when the
+    /// executed copy is made; `None` until then.
     pub executed_checksum: Option<String>,
     /// The checksum of the executed copy published beside the version, with
-    /// the redacted record appended.
+    /// the redacted record appended. Set only once that copy is published,
+    /// so it is present only when `executed_checksum` is.
     pub executed_public_checksum: Option<String>,
 }
 
@@ -276,6 +277,8 @@ impl NewRecipient {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseKind<'a> {
+    /// An acceptance, its typed name and title already trimmed and checked:
+    /// a blank title is `None`.
     Accept {
         typed_name: &'a str,
         title: Option<&'a str>,
@@ -287,7 +290,7 @@ pub enum ResponseKind<'a> {
 
 pub const CHECKSUM_PREFIX: &str = "sha256:";
 pub const NOTE_MAX_CHARS: usize = 4000;
-/// The longest typed name or signer title an acceptance records.
+/// The longest typed name or title a signature records.
 pub const SIGNER_TEXT_MAX_CHARS: usize = 200;
 
 pub fn gen_document_token() -> String {

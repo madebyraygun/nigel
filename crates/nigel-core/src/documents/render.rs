@@ -46,22 +46,30 @@ pub struct Stamp<'a> {
 }
 
 impl Stamp<'_> {
-    /// `Pat Example on 2026-10-06`, with the title and the organization they
-    /// signed for when there are any: `Pat Example, Director of Operations, on
-    /// behalf of Cedar Systems, on 2026-10-06`. Escaped.
+    /// [`signed_by`], escaped.
     fn by(&self, on_behalf_of: Option<&str>) -> String {
-        let mut who = esc(self.name);
-        if let Some(title) = self.title {
-            who.push_str(&format!(", {}", esc(title)));
-        }
-        if let Some(client) = on_behalf_of.filter(|c| !c.is_empty()) {
-            who.push_str(&format!(", on behalf of {}", esc(client)));
-        }
-        if who.contains(", ") {
-            format!("{who}, on {}", esc(self.date))
-        } else {
-            format!("{who} on {}", esc(self.date))
-        }
+        esc(&signed_by(self.name, self.title, on_behalf_of, self.date))
+    }
+}
+
+/// Who signed and when, as plain text: `Pat Example on 2026-10-06`, or with a
+/// title or the organization they signed for, each set off by commas:
+/// `Pat Example, Director of Operations, on behalf of Cedar Systems, on
+/// 2026-10-06`.
+fn signed_by(name: &str, title: Option<&str>, on_behalf_of: Option<&str>, date: &str) -> String {
+    let title = title.filter(|t| !t.is_empty());
+    let on_behalf_of = on_behalf_of.filter(|c| !c.is_empty());
+    let mut who = name.to_string();
+    if let Some(title) = title {
+        who.push_str(&format!(", {title}"));
+    }
+    if let Some(client) = on_behalf_of {
+        who.push_str(&format!(", on behalf of {client}"));
+    }
+    if title.is_some() || on_behalf_of.is_some() {
+        format!("{who}, on {date}")
+    } else {
+        format!("{who} on {date}")
     }
 }
 
@@ -490,7 +498,7 @@ pub enum Attached {
 }
 
 /// One signature as the confirmation lists it: `Accepted by Pat Example,
-/// Director of Operations, on 2026-10-06.`
+/// Director of Operations, on behalf of Cedar Systems, on 2026-10-06.`
 pub fn signed_by_line(
     role: SignatureRole,
     name: &str,
@@ -502,18 +510,7 @@ pub fn signed_by_line(
         SignatureRole::Client => "Accepted",
         SignatureRole::Countersign => "Countersigned",
     };
-    let mut who = name.to_string();
-    if let Some(title) = title {
-        who.push_str(&format!(", {title}"));
-    }
-    if let Some(client) = on_behalf_of.filter(|c| !c.is_empty()) {
-        who.push_str(&format!(", on behalf of {client}"));
-    }
-    if who.contains(", ") {
-        format!("{verb} by {who}, on {date}.")
-    } else {
-        format!("{verb} by {who} on {date}.")
-    }
+    format!("{verb} by {}.", signed_by(name, title, on_behalf_of, date))
 }
 
 /// The confirmation's plain-text body: a greeting, one sentence that the
@@ -957,6 +954,38 @@ mod tests {
         ] {
             assert!(!render_recipient_page(&ctx(), &SIGNER, &state).contains("signing record"));
         }
+    }
+
+    #[test]
+    fn a_comma_in_the_signer_name_does_not_move_the_date_comma() {
+        assert_eq!(
+            signed_by_line(
+                SignatureRole::Countersign,
+                "Example, Pat",
+                None,
+                None,
+                "2026-10-07"
+            ),
+            "Countersigned by Example, Pat on 2026-10-07."
+        );
+        assert_eq!(
+            Stamp {
+                name: "Example, Pat",
+                title: None,
+                date: "2026-10-07",
+            }
+            .by(None),
+            "Example, Pat on 2026-10-07"
+        );
+        assert_eq!(
+            Stamp {
+                name: "Example, Pat",
+                title: Some("R&D"),
+                date: "2026-10-07",
+            }
+            .by(None),
+            "Example, Pat, R&amp;D, on 2026-10-07"
+        );
     }
 
     #[test]

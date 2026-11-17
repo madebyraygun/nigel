@@ -872,6 +872,68 @@ describe('FetchApiClient', () => {
       expect(await client.documentPreviewHtml(7)).toBe('<h1>Website rebuild</h1>');
       expect(fetchImpl.mock.calls[0][0]).toBe('/api/documents/7/preview');
     });
+
+    it('downloads the executed copy through a blob link', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        new Response('%PDF-1.7', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment; filename="proposal-v2-executed.pdf"',
+          },
+        }),
+      );
+      const blobUrls = URL as unknown as Record<string, unknown>;
+      blobUrls.createObjectURL = vi.fn().mockReturnValue('blob:executed');
+      blobUrls.revokeObjectURL = vi.fn();
+      const clicked: HTMLAnchorElement[] = [];
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(function (this: HTMLAnchorElement) {
+          clicked.push(this);
+        });
+
+      const target = clientFor(fetchImpl).documentExecutedCopyTarget(7);
+      expect(target.kind).toBe('action');
+      if (target.kind !== 'action') return;
+      await target.run();
+
+      expect(fetchImpl.mock.calls[0][0]).toBe('/api/documents/7/executed.pdf');
+      expect(clicked).toHaveLength(1);
+      expect(clicked[0].href).toBe('blob:executed');
+      expect(clicked[0].download).toBe('proposal-v2-executed.pdf');
+      expect(clicked[0].isConnected).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(blobUrls.revokeObjectURL).toHaveBeenCalledWith('blob:executed');
+      click.mockRestore();
+      delete blobUrls.createObjectURL;
+      delete blobUrls.revokeObjectURL;
+    });
+
+    it('raises the server’s refusal instead of saving it as the executed copy', async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValue(
+          envelope(
+            'executed_copy_unavailable',
+            'The signed PDF is encrypted, so no executed copy can be made.',
+            undefined,
+            409,
+          ),
+        );
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click');
+
+      const target = clientFor(fetchImpl).documentExecutedCopyTarget(7);
+      if (target.kind !== 'action') throw new Error('expected an action');
+      const error = await target.run().catch((e) => e);
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.status).toBe(409);
+      expect(error.rawCode).toBe('executed_copy_unavailable');
+      expect(error.message).toBe('The signed PDF is encrypted, so no executed copy can be made.');
+      expect(click).not.toHaveBeenCalled();
+      click.mockRestore();
+    });
   });
 });
 

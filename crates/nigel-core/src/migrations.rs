@@ -639,7 +639,19 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 22,
         description: "documents: the client name a version was sent on behalf of",
-        up: |conn| add_column_if_missing(conn, "document_versions", "client_name", "TEXT"),
+        up: |conn| {
+            add_column_if_missing(conn, "document_versions", "client_name", "TEXT")?;
+            // A sent version without a name takes its client's current one;
+            // a named one is left alone, so a replay changes nothing.
+            conn.execute_batch(
+                "UPDATE document_versions
+                    SET client_name = (SELECT c.name FROM documents d
+                                         JOIN clients c ON c.id = d.client_id
+                                        WHERE d.id = document_versions.document_id)
+                  WHERE sent_at IS NOT NULL AND client_name IS NULL;",
+            )?;
+            Ok(())
+        },
     },
     Migration {
         version: 23,
@@ -2051,6 +2063,8 @@ mod tests {
         let (_dir, conn) = test_db();
         set_metadata(&conn, "schema_version", "20").unwrap();
         run_migrations(&conn).unwrap();
+        set_metadata(&conn, "schema_version", "20").unwrap();
+        run_migrations(&conn).unwrap();
         assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
         let has_title: bool = conn
             .query_row(
@@ -2076,6 +2090,45 @@ mod tests {
             )
             .unwrap();
         assert!(has);
+    }
+
+    #[test]
+    fn v22_names_each_sent_version_after_its_client_and_leaves_drafts_unnamed() {
+        let (_dir, conn) = test_db();
+        let kind: i64 = conn
+            .query_row("SELECT id FROM document_kinds LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO clients (id, name) VALUES (1, 'Cedar Systems');
+             INSERT INTO documents (id, client_id, kind_id, title, token, created_at, updated_at)
+                  VALUES (1, 1, {kind}, 'SOW', 'tok', '2026-10-01', '2026-10-01');
+             INSERT INTO document_versions (document_id, number, file_path, checksum, sent_at, created_at, client_name)
+                  VALUES (1, 1, 'v1.pdf', 'sha256:a', '2026-10-02', '2026-10-01', NULL),
+                         (1, 2, 'v2.pdf', 'sha256:b', '2026-10-03', '2026-10-03', 'Cedar Holdings'),
+                         (1, 3, 'v3.pdf', 'sha256:c', NULL, '2026-10-04', NULL);"
+        ))
+        .unwrap();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        conn.execute("UPDATE clients SET name = 'Renamed' WHERE id = 1", [])
+            .unwrap();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        let names: Vec<Option<String>> = conn
+            .prepare("SELECT client_name FROM document_versions ORDER BY number")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            names,
+            [
+                Some("Cedar Systems".into()),
+                Some("Cedar Holdings".into()),
+                None
+            ]
+        );
     }
 
     #[test]

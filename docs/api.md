@@ -999,8 +999,11 @@ metadata. `checksum` always carries the `sha256:` prefix.
 
 - **`executedChecksum`** and **`executedPublicChecksum`** are the checksums of
   an executed version's two executed copies — the signed PDF with the full or
-  the redacted signing record appended — and `null` until they are made. They
-  are not the version's `checksum`, which stays the signed PDF's.
+  the redacted signing record appended. `executedChecksum` is set when the full
+  copy is written to the data directory and `executedPublicChecksum` once the
+  redacted copy is published; both are `null` otherwise, and both are cleared
+  when no executed copy could be made. They are not the version's `checksum`,
+  which stays the signed PDF's.
 - **`fileMissing`** is `true` on a version whose PDF is absent from the data
   directory, as after a restore from a backup that lacked the documents folder.
   Fetching such a version's PDF or sending it answers `409` `file_missing`.
@@ -1055,9 +1058,10 @@ and a build without the `pdf` feature is `501 feature_disabled`. It makes no
 network call.
 
 `executed.pdf` is the executed copy: the signed PDF with that full record
-appended, named `<Title>-v<n>-executed.pdf` and served the same way, generated
-with the record when there is no copy yet. A signed PDF that cannot be combined
-(an encrypted file) is `409` `executed_copy_unavailable`; see
+appended, named `<Title>-v<n>-executed.pdf` and served `inline` from the copy
+kept in the data directory. When no copy is kept but a signing record is, it is
+built in memory from the kept record and nothing is written. An encrypted or
+unreadable signed PDF is `409` `executed_copy_unavailable`; see
 [Documents](invoicing.md#the-executed-copy).
 
 ### Not-found reasons
@@ -1854,19 +1858,23 @@ commit fails, the `200` carries only `warnings`, one of which says to refresh. T
 and hold the database while they do, each bounded by the 30s call timeout.
 
 `countersign` does more after the commit, in order: it generates the signing
-record and publishes it beside the version's PDF, republishes the pages with a
-link to it, then emails every recipient of the executed version the signed PDF
-and the record — see [Documents](invoicing.md#documents). A record that could
+record and the executed copy and publishes them beside the version's PDF,
+republishes the pages with links to them, then emails every recipient of the
+executed version the executed copy, or the signed PDF and the record as two
+files when no executed copy could be made — see
+[Documents](invoicing.md#documents). A record that could
 not be published, R2 or Mailgun unset, partly set or refused, a message Mailgun
 refused or one over its 25 MB limit is a sentence in `warnings`, one per
 situation, ending with what to do; the document stays `executed`.
 
 `POST /api/documents/{id}/signing-record` takes `{}` and regenerates an
-executed document's signing record: it writes the full local copy, publishes
-the redacted copy, and republishes the pages linking it. It emails nobody. It answers the document,
-`warnings` and `published`, which is `true` only when the record reached the
-public bucket; an R2 that is unset or a failed upload is a `200` with
-`published: false` and the reason in `warnings`. A document that is not
+executed document's signing record and executed copy: it rewrites the full
+record and the full executed copy in the data directory, publishes the redacted
+ones, and republishes the pages linking them. It emails nobody. It answers the
+document, `warnings` and `published`, which is `true` only when the record and,
+when one was made, the executed copy reached the public bucket; an R2 that is
+unset or a failed upload of either is a `200` with `published: false` and the
+reason in `warnings`. A document that is not
 executed is `409` `document_not_executed`, a missing one `404`, and a build
 without the `pdf` feature `501 feature_disabled`. It may make network calls, as
 the routes above do.

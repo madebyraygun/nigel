@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(accept.action, ResponseAction::Accept);
         assert_eq!(
             accept.title, None,
-            "a Worker older than the title field writes none"
+            "a response without a title parses as none"
         );
         let titled: DocumentResponse = serde_json::from_value(serde_json::json!({
             "action": "accept", "version": 2, "checksum": "sha256:ab", "recipientToken": "t1",

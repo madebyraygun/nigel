@@ -607,9 +607,28 @@ describe('nigel-documents-screen', () => {
     expect(link.textContent?.trim()).toBe('Download signing record');
     expect(find(el, '[data-pdf-link]').nextElementSibling).toBe(link);
     const copy = find(el, '[data-executed-copy-link]');
-    expect(copy.getAttribute('href')).toBe('/document-executed/12.pdf');
+    expect(copy.hasAttribute('href')).toBe(false);
     expect(copy.textContent?.trim()).toBe('Download executed copy');
     expect(copy.nextElementSibling).toBe(find(el, '[data-pdf-link]'));
+  });
+
+  it('downloads the executed copy and shows why the server refused one', async () => {
+    const fake = withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') }));
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-executed-copy-link]').click();
+    await settle(el);
+    expect(fake.calls).toContain('downloadExecutedCopy:12');
+    expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
+
+    fake.executedCopyError = conflictError('executed_copy_unavailable', {
+      message: 'The signed PDF is encrypted, so no executed copy can be made.',
+    });
+    find(el, '[data-executed-copy-link]').click();
+    await settle(el);
+    expect(find(el, '[data-action-error]').getAttribute('message')).toBe(
+      'Couldn’t save the executed copy. The signed PDF is encrypted, so no executed copy can be made.',
+    );
   });
 
   it('send posts the recipient editor’s value', async () => {

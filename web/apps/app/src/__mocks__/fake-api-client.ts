@@ -12,7 +12,7 @@ import type {
   ShellChrome,
   ReportDateParams,
   YearParams,
-} from '../api/client.js';
+} from "../api/client.js";
 import type {
   Account,
   AccountPatch,
@@ -109,9 +109,9 @@ import type {
   UploadResponse,
   PayResult,
   VoidResult,
-} from '../api/types.js';
-import { DOCUMENT_SEND_STEPS, UPLOAD_NOT_FOUND } from '../api/types.js';
-import { ApiError } from '../api/client.js';
+} from "../api/types.js";
+import { DOCUMENT_SEND_STEPS, UPLOAD_NOT_FOUND } from "../api/types.js";
+import { ApiError } from "../api/client.js";
 
 /**
  * The query a register request would carry, in a stable key order so a test
@@ -119,7 +119,7 @@ import { ApiError } from '../api/client.js';
  */
 function registerQuery(params: RegisterParams): string {
   const search = new URLSearchParams();
-  for (const key of ['year', 'month', 'from', 'to', 'account'] as const) {
+  for (const key of ["year", "month", "from", "to", "account"] as const) {
     const value = params[key];
     if (value !== undefined) search.set(key, String(value));
   }
@@ -173,7 +173,7 @@ export const EMPTY_K1: K1PrepReport = {
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  userName: 'Tester',
+  userName: "Tester",
   updateCheck: true,
   lastUpdateCheck: null,
 };
@@ -192,18 +192,18 @@ export const EMPTY_IMPORT_CONFIRMATION: ImportConfirmation = {
   ...EMPTY_IMPORT_PREVIEW,
   categorized: 0,
   stillFlagged: 0,
-  snapshot: '/tmp/nigel/snapshots/pre-import-20250401-120000.db',
+  snapshot: "/tmp/nigel/snapshots/pre-import-20250401-120000.db",
 };
 
 export const UNLOCKED_STATUS: StatusResponse = {
   initialized: true,
   encrypted: false,
   locked: false,
-  companyName: 'Test Consultancy',
-  profile: 'business',
-  version: '0.0.0-test',
-  dataDir: '/tmp/nigel',
-  dataDirDisplay: '/tmp/nigel',
+  companyName: "Test Consultancy",
+  profile: "business",
+  version: "0.0.0-test",
+  dataDir: "/tmp/nigel",
+  dataDirDisplay: "/tmp/nigel",
   pdfExport: true,
   updateAvailable: null,
 };
@@ -232,13 +232,13 @@ export const UNINITIALIZED_STATUS: StatusResponse = {
 
 /** No open receivables — the five buckets exist even when they are all zero. */
 export const EMPTY_AGING: AgingReport = {
-  asOf: '2026-03-15',
+  asOf: "2026-03-15",
   buckets: [
-    { label: 'current', count: 0, total: 0 },
-    { label: '1-30', count: 0, total: 0 },
-    { label: '31-60', count: 0, total: 0 },
-    { label: '61-90', count: 0, total: 0 },
-    { label: '90+', count: 0, total: 0 },
+    { label: "current", count: 0, total: 0 },
+    { label: "1-30", count: 0, total: 0 },
+    { label: "31-60", count: 0, total: 0 },
+    { label: "61-90", count: 0, total: 0 },
+    { label: "90+", count: 0, total: 0 },
   ],
   invoices: [],
   outstanding: 0,
@@ -255,9 +255,9 @@ function sortRules(rules: RuleRow[]): RuleRow[] {
  * could ever return.
  */
 function classForAccountType(accountType: string): string {
-  return accountType === 'credit_card' || accountType === 'line_of_credit'
-    ? 'liability'
-    : 'asset';
+  return accountType === "credit_card" || accountType === "line_of_credit"
+    ? "liability"
+    : "asset";
 }
 
 /**
@@ -269,12 +269,12 @@ function classForAccountType(accountType: string): string {
  */
 export function conflictError(
   reason: string,
-  extra: Omit<ConflictDetails, 'reason'> & { message?: string } = {},
+  extra: Omit<ConflictDetails, "reason"> & { message?: string } = {},
 ): ApiError {
   const { message, ...details } = extra;
   return new ApiError({
-    code: 'conflict',
-    rawCode: 'conflict',
+    code: "conflict",
+    rawCode: "conflict",
     message: message ?? `Refused: ${reason}`,
     status: 409,
     details: { reason, ...details },
@@ -284,8 +284,8 @@ export function conflictError(
 /** A 404 exactly as the server shapes one, for the missing-row paths. */
 export function notFoundError(message: string): ApiError {
   return new ApiError({
-    code: 'not_found',
-    rawCode: 'not_found',
+    code: "not_found",
+    rawCode: "not_found",
     message,
     status: 404,
   });
@@ -296,75 +296,86 @@ export function notFoundError(message: string): ApiError {
  * server's guard table, so the fake's `can*` flags and refusals agree with it.
  */
 const DOCUMENT_GUARDS = {
-  edit: ['draft'],
-  send: ['draft'],
-  revise: ['sent', 'changes_requested'],
-  accept: ['sent', 'changes_requested'],
-  requestChanges: ['sent'],
-  decline: ['sent', 'changes_requested'],
-  countersign: ['accepted'],
-  withdraw: ['draft', 'sent', 'changes_requested'],
+  edit: ["draft"],
+  send: ["draft"],
+  revise: ["sent", "changes_requested"],
+  accept: ["sent", "changes_requested"],
+  requestChanges: ["sent"],
+  decline: ["sent", "changes_requested"],
+  countersign: ["accepted"],
+  withdraw: ["draft", "sent", "changes_requested"],
 } as const satisfies Record<string, readonly DocumentStatus[]>;
 
 type DocumentAction = keyof typeof DOCUMENT_GUARDS;
 
-function documentAllows(status: DocumentStatus, action: DocumentAction): boolean {
-  return (DOCUMENT_GUARDS[action] as readonly DocumentStatus[]).includes(status);
+function documentAllows(
+  status: DocumentStatus,
+  action: DocumentAction,
+): boolean {
+  return (DOCUMENT_GUARDS[action] as readonly DocumentStatus[]).includes(
+    status,
+  );
 }
 
 /** The eight `can*` flags for a status, from the one table. */
-export function documentFlags(status: DocumentStatus): Pick<
+export function documentFlags(
+  status: DocumentStatus,
+): Pick<
   DocumentDetail,
-  | 'canEdit'
-  | 'canSend'
-  | 'canRevise'
-  | 'canAccept'
-  | 'canRequestChanges'
-  | 'canDecline'
-  | 'canCountersign'
-  | 'canWithdraw'
-  | 'canRepublishSigningRecord'
+  | "canEdit"
+  | "canSend"
+  | "canRevise"
+  | "canAccept"
+  | "canRequestChanges"
+  | "canDecline"
+  | "canCountersign"
+  | "canWithdraw"
+  | "canRepublishSigningRecord"
 > {
   return {
-    canEdit: documentAllows(status, 'edit'),
-    canSend: documentAllows(status, 'send'),
-    canRevise: documentAllows(status, 'revise'),
-    canAccept: documentAllows(status, 'accept'),
-    canRequestChanges: documentAllows(status, 'requestChanges'),
-    canDecline: documentAllows(status, 'decline'),
-    canCountersign: documentAllows(status, 'countersign'),
-    canWithdraw: documentAllows(status, 'withdraw'),
-    canRepublishSigningRecord: status === 'executed',
+    canEdit: documentAllows(status, "edit"),
+    canSend: documentAllows(status, "send"),
+    canRevise: documentAllows(status, "revise"),
+    canAccept: documentAllows(status, "accept"),
+    canRequestChanges: documentAllows(status, "requestChanges"),
+    canDecline: documentAllows(status, "decline"),
+    canCountersign: documentAllows(status, "countersign"),
+    canWithdraw: documentAllows(status, "withdraw"),
+    canRepublishSigningRecord: status === "executed",
   };
 }
 
 /** The reason code the server's `ensure_allowed` answers for a status. */
 function documentRefusal(id: number, status: DocumentStatus): ApiError {
-  if (status === 'withdrawn' || status === 'executed' || status === 'declined') {
-    return conflictError('document_terminal', {
+  if (
+    status === "withdrawn" ||
+    status === "executed" ||
+    status === "declined"
+  ) {
+    return conflictError("document_terminal", {
       message: `Document #${id} is ${status} — nothing more can be done to it.`,
       status,
     });
   }
-  if (status === 'accepted') {
-    return conflictError('document_accepted', {
+  if (status === "accepted") {
+    return conflictError("document_accepted", {
       message: `Document #${id} is ${status} — the only step left is to countersign it.`,
       status,
     });
   }
-  return conflictError('document_wrong_state', {
+  return conflictError("document_wrong_state", {
     message: `Document #${id} is ${status} and cannot do that.`,
     status,
   });
 }
 
 export const DEFAULT_DOCUMENT_KINDS: DocumentKind[] = [
-  { id: 1, name: 'Proposal', active: true, position: 0 },
-  { id: 2, name: 'Estimate', active: true, position: 1 },
-  { id: 3, name: 'Agreement', active: true, position: 2 },
+  { id: 1, name: "Proposal", active: true, position: 0 },
+  { id: 2, name: "Estimate", active: true, position: 1 },
+  { id: 3, name: "Agreement", active: true, position: 2 },
 ];
 
-const FAKE_DOCUMENT_DAY = '2026-10-05';
+const FAKE_DOCUMENT_DAY = "2026-10-05";
 
 /**
  * An ApiClient that never touches the network.
@@ -381,12 +392,12 @@ export class FakeApiClient implements ApiClient {
   readonly calls: string[] = [];
 
   async ping(): Promise<PingResponse> {
-    this.calls.push('ping');
+    this.calls.push("ping");
     return { ok: true, version: this.status.version };
   }
 
   async getStatus(): Promise<StatusResponse> {
-    this.calls.push('getStatus');
+    this.calls.push("getStatus");
     if (this.statusError) throw this.statusError;
     return this.status;
   }
@@ -428,30 +439,32 @@ export class FakeApiClient implements ApiClient {
   cashflowError: Error | null = null;
   flaggedError: Error | null = null;
 
-  async getPnl(params: ReportDateParams = {}): Promise<ReportEnvelope<PnlReport>> {
-    this.calls.push(`getPnl:${params.year ?? ''}`);
+  async getPnl(
+    params: ReportDateParams = {},
+  ): Promise<ReportEnvelope<PnlReport>> {
+    this.calls.push(`getPnl:${params.year ?? ""}`);
     if (this.pnlError) throw this.pnlError;
-    return { granularity: 'monthAndYear', report: this.pnl };
+    return { granularity: "monthAndYear", report: this.pnl };
   }
 
   async getBalance(): Promise<ReportEnvelope<BalanceReport>> {
-    this.calls.push('getBalance');
+    this.calls.push("getBalance");
     if (this.balanceError) throw this.balanceError;
-    return { granularity: 'none', report: this.balance };
+    return { granularity: "none", report: this.balance };
   }
 
   async getCashflow(
     params: CashflowParams = {},
   ): Promise<ReportEnvelope<CashflowReport>> {
-    this.calls.push(`getCashflow:${params.year ?? ''}`);
+    this.calls.push(`getCashflow:${params.year ?? ""}`);
     if (this.cashflowError) throw this.cashflowError;
-    return { granularity: 'monthAndYear', report: this.cashflow };
+    return { granularity: "monthAndYear", report: this.cashflow };
   }
 
   async getFlagged(): Promise<ReportEnvelope<FlaggedTransaction[]>> {
-    this.calls.push('getFlagged');
+    this.calls.push("getFlagged");
     if (this.flaggedError) throw this.flaggedError;
-    return { granularity: 'none', report: this.flagged };
+    return { granularity: "none", report: this.flagged };
   }
 
   expenses: ExpenseBreakdown = EMPTY_EXPENSES;
@@ -467,19 +480,19 @@ export class FakeApiClient implements ApiClient {
   ): Promise<ReportEnvelope<ExpenseBreakdown>> {
     this.calls.push(`getExpenses:${registerQuery(params)}`);
     if (this.expensesError) throw this.expensesError;
-    return { granularity: 'monthAndYear', report: this.expenses };
+    return { granularity: "monthAndYear", report: this.expenses };
   }
 
   async getTax(params: YearParams = {}): Promise<ReportEnvelope<TaxSummary>> {
     this.calls.push(`getTax:${registerQuery(params)}`);
     if (this.taxError) throw this.taxError;
-    return { granularity: 'yearOnly', report: this.tax };
+    return { granularity: "yearOnly", report: this.tax };
   }
 
   async getK1(params: YearParams = {}): Promise<ReportEnvelope<K1PrepReport>> {
     this.calls.push(`getK1:${registerQuery(params)}`);
     if (this.k1Error) throw this.k1Error;
-    return { granularity: 'yearOnly', report: this.k1 };
+    return { granularity: "yearOnly", report: this.k1 };
   }
 
   /**
@@ -496,9 +509,13 @@ export class FakeApiClient implements ApiClient {
    * would put an entry in the log on every render and make "issued exactly one
    * request" impossible to assert.
    */
-  exportUrl(report: ReportSlug, format: ExportFormat, params: ExportParams = {}): string {
+  exportUrl(
+    report: ReportSlug,
+    format: ExportFormat,
+    params: ExportParams = {},
+  ): string {
     const search = new URLSearchParams({ format });
-    for (const key of ['year', 'month', 'from', 'to', 'account'] as const) {
+    for (const key of ["year", "month", "from", "to", "account"] as const) {
       const value = params[key];
       if (value !== undefined) search.set(key, String(value));
     }
@@ -510,11 +527,11 @@ export class FakeApiClient implements ApiClient {
     format: ExportFormat,
     params: ExportParams = {},
   ): ExportTarget {
-    return { kind: 'href', href: this.exportUrl(report, format, params) };
+    return { kind: "href", href: this.exportUrl(report, format, params) };
   }
 
   /** A browser by default; the native-mode screen tests swap this. */
-  importSourceValue: ImportSource = { kind: 'browser' };
+  importSourceValue: ImportSource = { kind: "browser" };
 
   importSource(): ImportSource {
     return this.importSourceValue;
@@ -534,7 +551,7 @@ export class FakeApiClient implements ApiClient {
   }
 
   /** No menu bar by default; the shell-mode tests swap this. */
-  menuSourceValue: MenuSource = { kind: 'none' };
+  menuSourceValue: MenuSource = { kind: "none" };
 
   menuSource(): MenuSource {
     return this.menuSourceValue;
@@ -562,22 +579,25 @@ export class FakeApiClient implements ApiClient {
     // The whole query, not just the year: the deep-link tests assert on it.
     this.calls.push(`getRegister:${registerQuery(params)}`);
     if (this.registerError) throw this.registerError;
-    return { granularity: 'monthAndYear', report: this.register };
+    return { granularity: "monthAndYear", report: this.register };
   }
 
   async getAccounts(): Promise<Account[]> {
-    this.calls.push('getAccounts');
+    this.calls.push("getAccounts");
     if (this.accountsError) throw this.accountsError;
     return this.accounts;
   }
 
   async getCategories(): Promise<CategoryRow[]> {
-    this.calls.push('getCategories');
+    this.calls.push("getCategories");
     if (this.categoriesError) throw this.categoriesError;
     return this.categories;
   }
 
-  async patchTransaction(id: number, changes: TransactionPatch): Promise<RegisterRow> {
+  async patchTransaction(
+    id: number,
+    changes: TransactionPatch,
+  ): Promise<RegisterRow> {
     this.calls.push(`patchTransaction:${id}:${JSON.stringify(changes)}`);
     if (this.patchError) throw this.patchError;
 
@@ -587,7 +607,8 @@ export class FakeApiClient implements ApiClient {
     if (changes.categoryId !== undefined) {
       row.categoryId = changes.categoryId;
       row.category =
-        this.categories.find((c) => c.id === changes.categoryId)?.name ?? row.category;
+        this.categories.find((c) => c.id === changes.categoryId)?.name ??
+        row.category;
     }
     if (changes.vendor !== undefined) row.vendor = changes.vendor;
     if (changes.flag !== undefined) row.isFlagged = changes.flag;
@@ -599,7 +620,7 @@ export class FakeApiClient implements ApiClient {
   categorizeError: Error | null = null;
 
   async categorize(): Promise<CategorizeResult> {
-    this.calls.push('categorize');
+    this.calls.push("categorize");
     if (this.categorizeError) throw this.categorizeError;
     return this.categorizeResult;
   }
@@ -626,7 +647,7 @@ export class FakeApiClient implements ApiClient {
   private nextRuleId = 100;
 
   async getReviewQueue(): Promise<FlaggedTxn[]> {
-    this.calls.push('getReviewQueue');
+    this.calls.push("getReviewQueue");
     if (this.queueError) throw this.queueError;
     return this.reviewQueue;
   }
@@ -651,12 +672,16 @@ export class FakeApiClient implements ApiClient {
     if (row) {
       row.categoryId = input.categoryId;
       row.category =
-        this.categories.find((c) => c.id === input.categoryId)?.name ?? row.category;
+        this.categories.find((c) => c.id === input.categoryId)?.name ??
+        row.category;
       row.vendor = input.vendor ?? null;
       row.isFlagged = false;
     }
 
-    return { transactionId: id, ruleId: input.createRule ? this.nextRuleId++ : null };
+    return {
+      transactionId: id,
+      ruleId: input.createRule ? this.nextRuleId++ : null,
+    };
   }
 
   async undoReview(id: number, input: ReviewUndoRequest): Promise<RegisterRow> {
@@ -703,7 +728,7 @@ export class FakeApiClient implements ApiClient {
   private nextId = 900;
 
   async getRules(): Promise<RuleRow[]> {
-    this.calls.push('getRules');
+    this.calls.push("getRules");
     if (this.rulesError) throw this.rulesError;
     return this.rules;
   }
@@ -751,7 +776,9 @@ export class FakeApiClient implements ApiClient {
       id: this.nextId++,
       name: input.name,
       categoryType: input.categoryType,
-      class: input.class ?? (input.categoryType === 'income' ? 'revenue' : 'expense'),
+      class:
+        input.class ??
+        (input.categoryType === "income" ? "revenue" : "expense"),
       taxLine: input.taxLine ?? null,
       formLine: input.formLine ?? null,
     };
@@ -768,7 +795,8 @@ export class FakeApiClient implements ApiClient {
 
     // Absent keeps, null clears — the double_option semantics the route has.
     if (input.name !== undefined) category.name = input.name;
-    if (input.categoryType !== undefined) category.categoryType = input.categoryType;
+    if (input.categoryType !== undefined)
+      category.categoryType = input.categoryType;
     if (input.class !== undefined) category.class = input.class;
     if (input.taxLine !== undefined) category.taxLine = input.taxLine;
     if (input.formLine !== undefined) category.formLine = input.formLine;
@@ -792,10 +820,11 @@ export class FakeApiClient implements ApiClient {
     const rule: RuleRow = {
       id: this.nextId++,
       pattern: input.pattern,
-      matchType: input.matchType ?? 'contains',
+      matchType: input.matchType ?? "contains",
       vendor: input.vendor ?? null,
       category:
-        this.categories.find((c) => c.id === input.categoryId)?.name ?? 'Unknown',
+        this.categories.find((c) => c.id === input.categoryId)?.name ??
+        "Unknown",
       categoryId: input.categoryId,
       priority: input.priority ?? 0,
       hitCount: 0,
@@ -818,7 +847,8 @@ export class FakeApiClient implements ApiClient {
     if (input.categoryId !== undefined) {
       rule.categoryId = input.categoryId;
       rule.category =
-        this.categories.find((c) => c.id === input.categoryId)?.name ?? rule.category;
+        this.categories.find((c) => c.id === input.categoryId)?.name ??
+        rule.category;
     }
 
     // A priority edit reorders the list, which is the reason the screens
@@ -886,7 +916,9 @@ export class FakeApiClient implements ApiClient {
     return { ...this.importPreview };
   }
 
-  async confirmImport(input: ConfirmImportRequest): Promise<ImportConfirmation> {
+  async confirmImport(
+    input: ConfirmImportRequest,
+  ): Promise<ImportConfirmation> {
     this.calls.push(`confirmImport:${JSON.stringify(input)}`);
     if (this.confirmErrorOnce) {
       const error = this.confirmErrorOnce;
@@ -900,7 +932,9 @@ export class FakeApiClient implements ApiClient {
     this.liveUploads.delete(input.uploadId);
     if (input.saveProfile && input.mapping) {
       this.csvProfiles = [
-        ...this.csvProfiles.filter((profile) => profile.name !== input.saveProfile),
+        ...this.csvProfiles.filter(
+          (profile) => profile.name !== input.saveProfile,
+        ),
         { name: input.saveProfile, config: input.mapping },
       ];
     }
@@ -909,13 +943,13 @@ export class FakeApiClient implements ApiClient {
   }
 
   async getImportFormats(): Promise<ImporterFormat[]> {
-    this.calls.push('getImportFormats');
+    this.calls.push("getImportFormats");
     if (this.formatsError) throw this.formatsError;
     return this.importFormats;
   }
 
   async getCsvProfiles(): Promise<CsvProfile[]> {
-    this.calls.push('getCsvProfiles');
+    this.calls.push("getCsvProfiles");
     if (this.csvProfilesError) throw this.csvProfilesError;
     return this.csvProfiles;
   }
@@ -923,9 +957,9 @@ export class FakeApiClient implements ApiClient {
   private assertUploadLives(uploadId: string): void {
     if (this.liveUploads.has(uploadId)) return;
     throw new ApiError({
-      code: 'not_found',
-      rawCode: 'not_found',
-      message: 'That upload is no longer here. Choose the file again.',
+      code: "not_found",
+      rawCode: "not_found",
+      message: "That upload is no longer here. Choose the file again.",
       status: 404,
       details: { reason: UPLOAD_NOT_FOUND },
     });
@@ -940,11 +974,11 @@ export class FakeApiClient implements ApiClient {
   appSettings: AppSettings = DEFAULT_APP_SETTINGS;
   settingsError: Error | null = null;
   company: Company = {
-    name: 'Test Consultancy',
-    address: '',
-    phone: '',
-    logo: '',
-    paymentInstructions: '',
+    name: "Test Consultancy",
+    address: "",
+    phone: "",
+    logo: "",
+    paymentInstructions: "",
   } satisfies Company;
   /** Only `setCompany` throws this, so a save failure can be told from a load one. */
   companyError: Error | null = null;
@@ -952,27 +986,29 @@ export class FakeApiClient implements ApiClient {
   companyLoadError: Error | null = null;
 
   async getAppSettings(): Promise<AppSettings> {
-    this.calls.push('getAppSettings');
+    this.calls.push("getAppSettings");
     if (this.settingsError) throw this.settingsError;
     return this.appSettings;
   }
 
-  async updateAppSettings(input: UpdateAppSettingsRequest): Promise<AppSettings> {
-    this.calls.push('updateAppSettings');
+  async updateAppSettings(
+    input: UpdateAppSettingsRequest,
+  ): Promise<AppSettings> {
+    this.calls.push("updateAppSettings");
     if (this.settingsError) throw this.settingsError;
     this.appSettings = { ...this.appSettings, updateCheck: input.updateCheck };
     return this.appSettings;
   }
 
   async getCompany(): Promise<Company> {
-    this.calls.push('getCompany');
+    this.calls.push("getCompany");
     if (this.companyLoadError) throw this.companyLoadError;
     if (this.settingsError) throw this.settingsError;
     return this.company;
   }
 
   async setCompany(input: Company): Promise<Company> {
-    this.calls.push('setCompany');
+    this.calls.push("setCompany");
     if (this.companyError) throw this.companyError;
     if (this.settingsError) throw this.settingsError;
     this.company = { ...input };
@@ -981,27 +1017,33 @@ export class FakeApiClient implements ApiClient {
   }
 
   async setDataDir(path: string): Promise<StatusResponse> {
-    this.calls.push('setDataDir');
+    this.calls.push("setDataDir");
     if (this.settingsError) throw this.settingsError;
     this.status = { ...this.status, dataDir: path, dataDirDisplay: path };
     return this.status;
   }
 
-  async setPassword(_input: SetPasswordRequest): Promise<PasswordStateResponse> {
-    this.calls.push('setPassword');
+  async setPassword(
+    _input: SetPasswordRequest,
+  ): Promise<PasswordStateResponse> {
+    this.calls.push("setPassword");
     if (this.settingsError) throw this.settingsError;
     this.status = { ...this.status, encrypted: true, locked: false };
     return { encrypted: true, locked: false };
   }
 
-  async changePassword(_input: ChangePasswordRequest): Promise<PasswordStateResponse> {
-    this.calls.push('changePassword');
+  async changePassword(
+    _input: ChangePasswordRequest,
+  ): Promise<PasswordStateResponse> {
+    this.calls.push("changePassword");
     if (this.settingsError) throw this.settingsError;
     return { encrypted: true, locked: false };
   }
 
-  async removePassword(_input: RemovePasswordRequest): Promise<PasswordStateResponse> {
-    this.calls.push('removePassword');
+  async removePassword(
+    _input: RemovePasswordRequest,
+  ): Promise<PasswordStateResponse> {
+    this.calls.push("removePassword");
     if (this.settingsError) throw this.settingsError;
     this.status = { ...this.status, encrypted: false, locked: false };
     return { encrypted: false, locked: false };
@@ -1024,7 +1066,7 @@ export class FakeApiClient implements ApiClient {
   bankSyncLoadError: Error | null = null;
 
   async getBankSync(): Promise<BankSyncState> {
-    this.calls.push('getBankSync');
+    this.calls.push("getBankSync");
     if (this.bankSyncLoadError) throw this.bankSyncLoadError;
     return this.bankSync;
   }
@@ -1037,13 +1079,13 @@ export class FakeApiClient implements ApiClient {
   }
 
   async refreshBankAccounts(): Promise<BankSyncState> {
-    this.calls.push('refreshBankAccounts');
+    this.calls.push("refreshBankAccounts");
     if (this.bankSyncError) throw this.bankSyncError;
     return this.bankSync;
   }
 
   async mapBankAccount(input: BankSyncMapRequest): Promise<BankSyncState> {
-    this.calls.push(`mapBankAccount:${input.key}:${input.account ?? 'null'}`);
+    this.calls.push(`mapBankAccount:${input.key}:${input.account ?? "null"}`);
     if (this.bankSyncError) throw this.bankSyncError;
     this.bankSync = {
       ...this.bankSync,
@@ -1052,7 +1094,8 @@ export class FakeApiClient implements ApiClient {
           ? {
               ...a,
               account: input.account,
-              suppliesBalance: input.account !== null && (input.suppliesBalance ?? true),
+              suppliesBalance:
+                input.account !== null && (input.suppliesBalance ?? true),
             }
           : a,
       ),
@@ -1060,8 +1103,10 @@ export class FakeApiClient implements ApiClient {
     return this.bankSync;
   }
 
-  async runBankSync(input: BankSyncRunRequest = {}): Promise<BankSyncRunResult> {
-    this.calls.push(`runBankSync:${input.dryRun ? 'dry' : 'real'}`);
+  async runBankSync(
+    input: BankSyncRunRequest = {},
+  ): Promise<BankSyncRunResult> {
+    this.calls.push(`runBankSync:${input.dryRun ? "dry" : "real"}`);
     if (this.bankSyncError) throw this.bankSyncError;
     return { ...this.bankSyncRun, dryRun: input.dryRun ?? false };
   }
@@ -1089,7 +1134,7 @@ export class FakeApiClient implements ApiClient {
   private nextReconciliationId = 700;
 
   async getImports(): Promise<ImportListItem[]> {
-    this.calls.push('getImports');
+    this.calls.push("getImports");
     if (this.importsError) throw this.importsError;
     return this.imports;
   }
@@ -1111,7 +1156,7 @@ export class FakeApiClient implements ApiClient {
     this.assertAccountExists(input.account);
 
     if (this.emptyMonths.has(`${input.account}|${input.month}`)) {
-      throw conflictError('no_transactions', {
+      throw conflictError("no_transactions", {
         message: `No transactions for ${input.account} in ${input.month}`,
         account: input.account,
         month: input.month,
@@ -1134,7 +1179,7 @@ export class FakeApiClient implements ApiClient {
         statementBalance: input.statementBalance,
         calculatedBalance,
         isReconciled,
-        reconciledAt: isReconciled ? '2025-03-01 12:00:00' : null,
+        reconciledAt: isReconciled ? "2025-03-01 12:00:00" : null,
         notes: null,
       },
       ...this.reconciliations,
@@ -1152,16 +1197,21 @@ export class FakeApiClient implements ApiClient {
     options: ReconciliationParams = {},
   ): Promise<ReconciliationRecord[]> {
     const search = new URLSearchParams();
-    if (options.account !== undefined) search.set('account', options.account);
+    if (options.account !== undefined) search.set("account", options.account);
     this.calls.push(`getReconciliations:${search.toString()}`);
     if (this.reconciliationsError) throw this.reconciliationsError;
 
-    if (options.account !== undefined) this.assertAccountExists(options.account);
+    if (options.account !== undefined)
+      this.assertAccountExists(options.account);
     const rows =
       options.account === undefined
         ? this.reconciliations
-        : this.reconciliations.filter((row) => row.accountName === options.account);
-    return [...rows].sort((a, b) => b.month.localeCompare(a.month) || b.id - a.id);
+        : this.reconciliations.filter(
+            (row) => row.accountName === options.account,
+          );
+    return [...rows].sort(
+      (a, b) => b.month.localeCompare(a.month) || b.id - a.id,
+    );
   }
 
   /** The server's `ensure_account_exists`: a wrong question, not an empty answer. */
@@ -1235,7 +1285,7 @@ export class FakeApiClient implements ApiClient {
   private nextClientId = 900;
 
   async getClients(includeArchived = false): Promise<Client[]> {
-    this.calls.push(includeArchived ? 'getClients:all' : 'getClients');
+    this.calls.push(includeArchived ? "getClients:all" : "getClients");
     if (this.clientsError) throw this.clientsError;
     return [...this.clients]
       .filter((client) => includeArchived || client.archivedAt === null)
@@ -1245,7 +1295,7 @@ export class FakeApiClient implements ApiClient {
   async archiveClient(id: number): Promise<Client> {
     this.calls.push(`archiveClient:${id}`);
     if (this.archiveClientError) throw this.archiveClientError;
-    return this.setArchived(id, '2026-08-11');
+    return this.setArchived(id, "2026-08-11");
   }
 
   async unarchiveClient(id: number): Promise<Client> {
@@ -1321,7 +1371,8 @@ export class FakeApiClient implements ApiClient {
       isBilling: index === billingIndex,
       position: index,
     }));
-    const email = this.clientContacts[id].find((c) => c.isBilling)?.email ?? null;
+    const email =
+      this.clientContacts[id].find((c) => c.isBilling)?.email ?? null;
     this.clients = this.clients.map((c) => (c.id === id ? { ...c, email } : c));
   }
 
@@ -1373,7 +1424,7 @@ export class FakeApiClient implements ApiClient {
 
     const count = this.clientInvoiceCounts[id] ?? 0;
     if (count > 0) {
-      throw conflictError('has_invoices', {
+      throw conflictError("has_invoices", {
         message: `Cannot delete: client has ${count} invoices`,
         count,
       });
@@ -1387,7 +1438,7 @@ export class FakeApiClient implements ApiClient {
 
   private assertNameFree(name: string): void {
     if (!this.takenClientNames.has(name)) return;
-    throw conflictError('duplicate_name', {
+    throw conflictError("duplicate_name", {
       message: `A client named "${name}" already exists`,
       name,
     });
@@ -1395,16 +1446,18 @@ export class FakeApiClient implements ApiClient {
 
   async getInvoices(params: InvoiceListParams = {}): Promise<InvoiceListRow[]> {
     const search = new URLSearchParams();
-    if (params.status !== undefined) search.set('status', params.status);
-    if (params.clientId !== undefined) search.set('clientId', String(params.clientId));
+    if (params.status !== undefined) search.set("status", params.status);
+    if (params.clientId !== undefined)
+      search.set("clientId", String(params.clientId));
     this.calls.push(`getInvoices:${search.toString()}`);
     if (this.invoicesError) throw this.invoicesError;
 
-    const open = new Set(['sent', 'partial', 'overdue']);
+    const open = new Set(["sent", "partial", "overdue"]);
     return this.invoices.filter((row) => {
-      if (params.clientId !== undefined && row.clientId !== params.clientId) return false;
+      if (params.clientId !== undefined && row.clientId !== params.clientId)
+        return false;
       if (params.status === undefined) return true;
-      if (params.status === 'open') return open.has(row.status);
+      if (params.status === "open") return open.has(row.status);
       return row.status === params.status;
     });
   }
@@ -1416,13 +1469,13 @@ export class FakeApiClient implements ApiClient {
   }
 
   async getAging(params: AgingParams = {}): Promise<AgingReport> {
-    this.calls.push(`getAging:${params.asOf ?? ''}`);
+    this.calls.push(`getAging:${params.asOf ?? ""}`);
     if (this.agingError) throw this.agingError;
     return this.aging;
   }
 
   async getNextInvoiceNumber(): Promise<NextInvoiceNumber> {
-    this.calls.push('getNextInvoiceNumber');
+    this.calls.push("getNextInvoiceNumber");
     if (this.nextNumberError) throw this.nextNumberError;
     return { number: this.nextInvoiceNumber };
   }
@@ -1443,8 +1496,8 @@ export class FakeApiClient implements ApiClient {
       id: number,
       number,
       clientId: input.clientId,
-      status: 'draft',
-      currency: input.currency ?? 'USD',
+      status: "draft",
+      currency: input.currency ?? "USD",
       issueDate: input.issueDate,
       dueDate: input.dueDate ?? null,
       subtotal: total,
@@ -1475,20 +1528,26 @@ export class FakeApiClient implements ApiClient {
       canVoid: true,
       canPay: true,
       canDelete: true,
-      asOf: '2026-03-15',
+      asOf: "2026-03-15",
       deleteBlocked: null,
     };
     this.invoiceDetails[number] = created;
     return created;
   }
 
-  async updateInvoice(number: number, input: InvoicePatch): Promise<InvoiceDetail> {
+  async updateInvoice(
+    number: number,
+    input: InvoicePatch,
+  ): Promise<InvoiceDetail> {
     this.calls.push(`updateInvoice:${number}:${JSON.stringify(input)}`);
     if (this.updateInvoiceError) throw this.updateInvoiceError;
 
     const current = this.detail(number);
     const items = input.items ?? current.items;
-    const total = items.reduce((sum, item) => sum + item.quantity * item.unitAmount, 0);
+    const total = items.reduce(
+      (sum, item) => sum + item.quantity * item.unitAmount,
+      0,
+    );
     const updated: InvoiceDetail = {
       ...current,
       ...(input.issueDate === undefined ? {} : { issueDate: input.issueDate }),
@@ -1519,17 +1578,17 @@ export class FakeApiClient implements ApiClient {
 
     const updated: InvoiceDetail = {
       ...this.detail(number),
-      status: 'void',
-      voidedAt: '2026-03-15',
+      status: "void",
+      voidedAt: "2026-03-15",
       canEdit: false,
       canSend: false,
       canVoid: false,
       canPay: false,
       canDelete: false,
       deleteBlocked: {
-        reason: 'not_deletable',
+        reason: "not_deletable",
         message:
-          'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+          "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
       },
     };
     this.invoiceDetails[number] = updated;
@@ -1545,7 +1604,7 @@ export class FakeApiClient implements ApiClient {
       ...source,
       id: this.nextInvoiceNumber,
       number: this.nextInvoiceNumber,
-      status: 'draft',
+      status: "draft",
       publishedAt: null,
       voidedAt: null,
       stripePaymentLinkId: null,
@@ -1571,8 +1630,8 @@ export class FakeApiClient implements ApiClient {
     if (this.deleteInvoiceError) throw this.deleteInvoiceError;
 
     const detail = this.detail(number);
-    if (detail.deleteBlocked?.reason === 'from_schedule') {
-      throw conflictError('from_schedule', {
+    if (detail.deleteBlocked?.reason === "from_schedule") {
+      throw conflictError("from_schedule", {
         message: detail.deleteBlocked.message,
         status: detail.status,
         canVoid: detail.canVoid,
@@ -1581,9 +1640,9 @@ export class FakeApiClient implements ApiClient {
     if (!detail.canDelete) {
       // The shape the route sends: the code and the sentence are the data
       // layer's, plus the two facts the sentence branches on.
-      throw conflictError('not_deletable', {
+      throw conflictError("not_deletable", {
         message:
-          'Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted',
+          "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted",
         status: detail.status,
         canVoid: detail.canVoid,
       });
@@ -1593,7 +1652,10 @@ export class FakeApiClient implements ApiClient {
     return { id: detail.id, deleted: true };
   }
 
-  async payInvoice(number: number, input: PayInvoiceRequest): Promise<PayResult> {
+  async payInvoice(
+    number: number,
+    input: PayInvoiceRequest,
+  ): Promise<PayResult> {
     this.calls.push(`payInvoice:${number}:${JSON.stringify(input)}`);
     if (this.payInvoiceError) throw this.payInvoiceError;
 
@@ -1605,7 +1667,7 @@ export class FakeApiClient implements ApiClient {
       ...current,
       paid,
       balance,
-      status: balance <= 0.005 ? 'paid' : 'partial',
+      status: balance <= 0.005 ? "paid" : "partial",
       canPay: balance > 0.005,
       payments: [
         ...current.payments,
@@ -1614,7 +1676,7 @@ export class FakeApiClient implements ApiClient {
           invoiceId: current.id,
           amount,
           paidDate: input.date,
-          method: input.method ?? 'direct_deposit',
+          method: input.method ?? "direct_deposit",
           stripeCheckoutSessionId: null,
         },
       ],
@@ -1630,25 +1692,25 @@ export class FakeApiClient implements ApiClient {
 
     const sent: InvoiceDetail = {
       ...this.detail(number),
-      status: 'sent',
-      publishedAt: '2026-03-15 09:00:00',
+      status: "sent",
+      publishedAt: "2026-03-15 09:00:00",
       canEdit: false,
       publicUrl: `https://billing.example.test/i/token${number}/index.html`,
     };
     this.invoiceDetails[number] = sent;
     return {
       invoice: sent,
-      publicUrl: sent.publicUrl ?? '',
-      paymentLinkUrl: 'https://buy.stripe.test/link',
+      publicUrl: sent.publicUrl ?? "",
+      paymentLinkUrl: "https://buy.stripe.test/link",
       steps: [
-        { step: 'config', outcome: 'ok' },
-        { step: 'load', outcome: 'ok' },
-        { step: 'precheck', outcome: 'ok' },
-        { step: 'payment_link', outcome: 'ok' },
-        { step: 'render', outcome: 'ok' },
-        { step: 'publish', outcome: 'ok' },
-        { step: 'email', outcome: 'ok' },
-        { step: 'record', outcome: 'ok' },
+        { step: "config", outcome: "ok" },
+        { step: "load", outcome: "ok" },
+        { step: "precheck", outcome: "ok" },
+        { step: "payment_link", outcome: "ok" },
+        { step: "render", outcome: "ok" },
+        { step: "publish", outcome: "ok" },
+        { step: "email", outcome: "ok" },
+        { step: "record", outcome: "ok" },
       ],
       configWarnings: this.sendConfigWarnings,
       warnings: this.sendWarnings,
@@ -1656,17 +1718,17 @@ export class FakeApiClient implements ApiClient {
   }
 
   async syncInvoices(): Promise<SyncResult> {
-    this.calls.push('syncInvoices');
+    this.calls.push("syncInvoices");
     if (this.syncError) throw this.syncError;
     return this.syncResult;
   }
 
-  invoicePreviewUrl(number: number, format: 'html' | 'pdf'): string {
+  invoicePreviewUrl(number: number, format: "html" | "pdf"): string {
     return `/preview/${number}.${format}`;
   }
 
   invoicePreviewTarget(number: number): ExportTarget {
-    return { kind: 'href', href: this.invoicePreviewUrl(number, 'pdf') };
+    return { kind: "href", href: this.invoicePreviewUrl(number, "pdf") };
   }
 
   async invoicePreviewHtml(number: number): Promise<string> {
@@ -1719,22 +1781,27 @@ export class FakeApiClient implements ApiClient {
   signingRecordPublished = true;
   syncDocumentsError: Error | null = null;
   documentPreviewHtmlError: Error | null = null;
+  executedCopyError: Error | null = null;
 
   private nextDocumentId = 700;
   private nextDocumentRowId = 1;
 
-  async getDocuments(params: DocumentListParams = {}): Promise<DocumentListRow[]> {
+  async getDocuments(
+    params: DocumentListParams = {},
+  ): Promise<DocumentListRow[]> {
     const search = new URLSearchParams();
-    if (params.clientId !== undefined) search.set('clientId', String(params.clientId));
-    if (params.status !== undefined) search.set('status', params.status);
-    if (params.kind !== undefined) search.set('kind', params.kind);
+    if (params.clientId !== undefined)
+      search.set("clientId", String(params.clientId));
+    if (params.status !== undefined) search.set("status", params.status);
+    if (params.kind !== undefined) search.set("kind", params.kind);
     this.calls.push(`getDocuments:${search.toString()}`);
     if (this.documentsError) throw this.documentsError;
     return this.documents.filter(
       (row) =>
         (params.clientId === undefined || row.clientId === params.clientId) &&
         (params.status === undefined || row.status === params.status) &&
-        (params.kind === undefined || row.kind.toLowerCase() === params.kind.toLowerCase()),
+        (params.kind === undefined ||
+          row.kind.toLowerCase() === params.kind.toLowerCase()),
     );
   }
 
@@ -1745,7 +1812,7 @@ export class FakeApiClient implements ApiClient {
   }
 
   async getDocumentKinds(includeInactive = false): Promise<DocumentKind[]> {
-    this.calls.push('getDocumentKinds');
+    this.calls.push("getDocumentKinds");
     if (this.documentKindsError) throw this.documentKindsError;
     return this.documentKinds.filter((kind) => includeInactive || kind.active);
   }
@@ -1755,12 +1822,14 @@ export class FakeApiClient implements ApiClient {
     const kind = this.documentKinds.find((k) => k.id === id);
     if (!kind) throw notFoundError(`Document kind not found: id ${id}`);
     if (kind.active) {
-      throw conflictError('already_active', {
-        message: 'That document kind is already active.',
+      throw conflictError("already_active", {
+        message: "That document kind is already active.",
       });
     }
     const updated: DocumentKind = { ...kind, active: true };
-    this.documentKinds = this.documentKinds.map((k) => (k.id === id ? updated : k));
+    this.documentKinds = this.documentKinds.map((k) =>
+      k.id === id ? updated : k,
+    );
     return updated;
   }
 
@@ -1790,37 +1859,47 @@ export class FakeApiClient implements ApiClient {
       withdrawnAt: null,
       createdAt: FAKE_DOCUMENT_DAY,
       updatedAt: FAKE_DOCUMENT_DAY,
-      status: 'draft',
+      status: "draft",
       clientName: client.name,
       versions: [this.newVersion(id, 1)],
-      ...documentFlags('draft'),
+      ...documentFlags("draft"),
     };
     this.documentDetails[id] = created;
     this.documents = [this.listRow(created), ...this.documents];
     return created;
   }
 
-  async updateDocument(id: number, input: DocumentPatch): Promise<DocumentDetail> {
+  async updateDocument(
+    id: number,
+    input: DocumentPatch,
+  ): Promise<DocumentDetail> {
     this.calls.push(`updateDocument:${id}:${JSON.stringify(input)}`);
     if (this.updateDocumentError) throw this.updateDocumentError;
-    const kind = input.kind === undefined ? undefined : this.activeKind(input.kind);
-    return this.transition(id, 'edit', (current) => ({
+    const kind =
+      input.kind === undefined ? undefined : this.activeKind(input.kind);
+    return this.transition(id, "edit", (current) => ({
       ...current,
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(kind === undefined ? {} : { kind: kind.name, kindId: kind.id }),
     }));
   }
 
-  async sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult> {
+  async sendDocument(
+    id: number,
+    input: DocumentSendRequest,
+  ): Promise<DocumentSendResult> {
     this.calls.push(`sendDocument:${id}:${JSON.stringify(input)}`);
     if (this.sendDocumentError) throw this.sendDocumentError;
 
     const recipients = [
-      { ...input.signer, role: 'signer' as const },
-      ...input.collaborators.map((c) => ({ ...c, role: 'collaborator' as const })),
+      { ...input.signer, role: "signer" as const },
+      ...input.collaborators.map((c) => ({
+        ...c,
+        role: "collaborator" as const,
+      })),
     ];
-    const document = this.transition(id, 'send', (current) =>
-      this.withLatest(current, 'sent', (version) => ({
+    const document = this.transition(id, "send", (current) =>
+      this.withLatest(current, "sent", (version) => ({
         ...version,
         sentAt: FAKE_DOCUMENT_DAY,
         recipients: recipients.map((recipient, position) => ({
@@ -1836,15 +1915,18 @@ export class FakeApiClient implements ApiClient {
     );
     const sent = document.versions[document.versions.length - 1];
     const reloadWarning =
-      'Warning: that went through, but Nigel could not reload the document (Database error: database is locked); refresh to see it.';
+      "Warning: that went through, but Nigel could not reload the document (Database error: database is locked); refresh to see it.";
     return {
       document: this.sendDocumentReloadFails ? null : document,
-      steps: DOCUMENT_SEND_STEPS.map((step) => ({ step, outcome: 'ok' as const })),
+      steps: DOCUMENT_SEND_STEPS.map((step) => ({
+        step,
+        outcome: "ok" as const,
+      })),
       links: sent.recipients.map((recipient) => ({
         role: recipient.role,
         name: recipient.name,
         email: recipient.email,
-        url: recipient.pageUrl ?? '',
+        url: recipient.pageUrl ?? "",
       })),
       configWarnings: this.documentSendConfigWarnings,
       warnings: this.sendDocumentReloadFails
@@ -1857,20 +1939,26 @@ export class FakeApiClient implements ApiClient {
     this.calls.push(`reviseDocument:${id}:${file.name}`);
     if (this.reviseDocumentError) throw this.reviseDocumentError;
     return this.withWarnings(
-      this.transition(id, 'revise', (current) => ({
+      this.transition(id, "revise", (current) => ({
         ...current,
-        status: 'draft',
-        versions: [...current.versions, this.newVersion(id, current.versions.length + 1)],
+        status: "draft",
+        versions: [
+          ...current.versions,
+          this.newVersion(id, current.versions.length + 1),
+        ],
       })),
     );
   }
 
-  async acceptDocument(id: number, input: ManualAcceptRequest): Promise<DocumentActionResult> {
+  async acceptDocument(
+    id: number,
+    input: ManualAcceptRequest,
+  ): Promise<DocumentActionResult> {
     this.calls.push(`acceptDocument:${id}:${JSON.stringify(input)}`);
     if (this.acceptDocumentError) throw this.acceptDocumentError;
     return this.withWarnings(
-      this.transition(id, 'accept', (current) =>
-        this.withSignature(current, 'accepted', 'client', input),
+      this.transition(id, "accept", (current) =>
+        this.withSignature(current, "accepted", "client", input),
       ),
     );
   }
@@ -1880,10 +1968,11 @@ export class FakeApiClient implements ApiClient {
     input: ManualChangeRequestInput,
   ): Promise<DocumentActionResult> {
     this.calls.push(`requestDocumentChanges:${id}:${JSON.stringify(input)}`);
-    if (this.requestDocumentChangesError) throw this.requestDocumentChangesError;
+    if (this.requestDocumentChangesError)
+      throw this.requestDocumentChangesError;
     return this.withWarnings(
-      this.transition(id, 'requestChanges', (current) =>
-        this.withLatest(current, 'changes_requested', (version) => ({
+      this.transition(id, "requestChanges", (current) =>
+        this.withLatest(current, "changes_requested", (version) => ({
           ...version,
           changeRequests: [
             ...version.changeRequests,
@@ -1893,7 +1982,7 @@ export class FakeApiClient implements ApiClient {
               recipientId: null,
               name: input.name,
               email: null,
-              method: 'manual',
+              method: "manual",
               requestedAt: input.date ?? FAKE_DOCUMENT_DAY,
               note: input.note,
               ip: null,
@@ -1906,13 +1995,16 @@ export class FakeApiClient implements ApiClient {
     );
   }
 
-  async declineDocument(id: number, input: DeclineRequest): Promise<DocumentActionResult> {
+  async declineDocument(
+    id: number,
+    input: DeclineRequest,
+  ): Promise<DocumentActionResult> {
     this.calls.push(`declineDocument:${id}:${JSON.stringify(input)}`);
     if (this.declineDocumentError) throw this.declineDocumentError;
     return this.withWarnings(
-      this.transition(id, 'decline', (current) => ({
+      this.transition(id, "decline", (current) => ({
         ...current,
-        status: 'declined',
+        status: "declined",
         declinedAt: input.date ?? FAKE_DOCUMENT_DAY,
         declineNote: input.note ?? null,
       })),
@@ -1926,50 +2018,61 @@ export class FakeApiClient implements ApiClient {
     this.calls.push(`countersignDocument:${id}:${JSON.stringify(input)}`);
     if (this.countersignDocumentError) throw this.countersignDocumentError;
     return this.withWarnings(
-      this.transition(id, 'countersign', (current) =>
-        this.withSignature(current, 'executed', 'countersign', input),
+      this.transition(id, "countersign", (current) =>
+        this.withSignature(current, "executed", "countersign", input),
       ),
     );
   }
 
   async republishSigningRecord(id: number): Promise<SigningRecordResult> {
     this.calls.push(`republishSigningRecord:${id}`);
-    if (this.republishSigningRecordError) throw this.republishSigningRecordError;
-    return { ...this.withWarnings(this.document(id)), published: this.signingRecordPublished };
+    if (this.republishSigningRecordError)
+      throw this.republishSigningRecordError;
+    return {
+      ...this.withWarnings(this.document(id)),
+      published: this.signingRecordPublished,
+      executedCopyPublished: this.signingRecordPublished,
+    };
   }
 
   async withdrawDocument(id: number): Promise<DocumentActionResult> {
     this.calls.push(`withdrawDocument:${id}`);
     if (this.withdrawDocumentError) throw this.withdrawDocumentError;
     return this.withWarnings(
-      this.transition(id, 'withdraw', (current) => ({
+      this.transition(id, "withdraw", (current) => ({
         ...current,
-        status: 'withdrawn',
+        status: "withdrawn",
         withdrawnAt: FAKE_DOCUMENT_DAY,
       })),
     );
   }
 
   async syncDocuments(): Promise<DocumentSyncResult> {
-    this.calls.push('syncDocuments');
+    this.calls.push("syncDocuments");
     if (this.syncDocumentsError) throw this.syncDocumentsError;
     return this.documentSyncResult;
   }
 
-  documentPreviewUrl(id: number, format: 'html' | 'pdf'): string {
+  documentPreviewUrl(id: number, format: "html" | "pdf"): string {
     return `/document-preview/${id}.${format}`;
   }
 
   documentPreviewTarget(id: number): ExportTarget {
-    return { kind: 'href', href: this.documentPreviewUrl(id, 'pdf') };
+    return { kind: "href", href: this.documentPreviewUrl(id, "pdf") };
   }
 
   documentSigningRecordTarget(id: number): ExportTarget {
-    return { kind: 'href', href: `/document-signing-record/${id}.pdf` };
+    return { kind: "href", href: `/document-signing-record/${id}.pdf` };
   }
 
   documentExecutedCopyTarget(id: number): ExportTarget {
-    return { kind: 'href', href: `/document-executed/${id}.pdf` };
+    return {
+      kind: "action",
+      run: async () => {
+        this.calls.push(`downloadExecutedCopy:${id}`);
+        if (this.executedCopyError) throw this.executedCopyError;
+      },
+    };
   }
 
   async documentPreviewHtml(id: number): Promise<string> {
@@ -1987,7 +2090,9 @@ export class FakeApiClient implements ApiClient {
   private activeKind(name: string): DocumentKind {
     const kind = this.documentKinds.find((k) => k.name === name);
     if (kind?.active) return kind;
-    throw conflictError('kind_inactive', { message: `No active document kind named ${name}` });
+    throw conflictError("kind_inactive", {
+      message: `No active document kind named ${name}`,
+    });
   }
 
   /**
@@ -2000,7 +2105,8 @@ export class FakeApiClient implements ApiClient {
     apply: (current: DocumentDetail) => DocumentDetail,
   ): DocumentDetail {
     const current = this.document(id);
-    if (!documentAllows(current.status, action)) throw documentRefusal(id, current.status);
+    if (!documentAllows(current.status, action))
+      throw documentRefusal(id, current.status);
     const next = apply(current);
     const updated: DocumentDetail = {
       ...next,
@@ -2009,7 +2115,9 @@ export class FakeApiClient implements ApiClient {
     };
     this.documentDetails[id] = updated;
     const row = this.listRow(updated);
-    this.documents = this.documents.map((candidate) => (candidate.id === id ? row : candidate));
+    this.documents = this.documents.map((candidate) =>
+      candidate.id === id ? row : candidate,
+    );
     return updated;
   }
 
@@ -2031,7 +2139,7 @@ export class FakeApiClient implements ApiClient {
   private withSignature(
     current: DocumentDetail,
     status: DocumentStatus,
-    role: 'client' | 'countersign',
+    role: "client" | "countersign",
     input: { name: string; date?: string },
   ): DocumentDetail {
     return this.withLatest(current, status, (version) => ({
@@ -2045,7 +2153,7 @@ export class FakeApiClient implements ApiClient {
           role,
           name: input.name,
           email: null,
-          method: 'manual',
+          method: "manual",
           signedAt: input.date ?? FAKE_DOCUMENT_DAY,
           typedName: null,
           title: null,
@@ -2061,12 +2169,15 @@ export class FakeApiClient implements ApiClient {
     return { ...document, warnings: this.documentWarnings };
   }
 
-  private newVersion(documentId: number, number: number): DocumentVersionDetail {
+  private newVersion(
+    documentId: number,
+    number: number,
+  ): DocumentVersionDetail {
     return {
       id: this.nextDocumentRowId++,
       documentId,
       number,
-      checksum: `sha256:${String(documentId * 100 + number).padStart(64, '0')}`,
+      checksum: `sha256:${String(documentId * 100 + number).padStart(64, "0")}`,
       sentAt: null,
       createdAt: FAKE_DOCUMENT_DAY,
       recipients: [],

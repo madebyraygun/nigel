@@ -106,7 +106,7 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
-    republish_linking_record(
+    republish_with_links(
         conn,
         id,
         company,
@@ -116,9 +116,9 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     )
 }
 
-/// [`republish_after_change`], with an executed page linking the signing
-/// record at `signing_record_href`.
-pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
+/// [`republish_after_change`], with an executed page linking the published
+/// signing record and executed copy in `links`.
+pub(crate) fn republish_with_links<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     id: i64,
     company: &str,
@@ -274,7 +274,7 @@ fn republish_version<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
-    let client_name = match version_client_name(conn, document, version) {
+    let client_name = match version_client_name(document, version) {
         Ok(name) => name,
         Err(e) => return vec![format!("Warning: could not load the client ({e}).")],
     };

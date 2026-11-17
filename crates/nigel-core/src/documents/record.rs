@@ -174,17 +174,15 @@ pub fn unfreeze(conn: &Connection, version_id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn mark_sent(conn: &Connection, version_id: i64, today: &str) -> Result<()> {
+/// Record the version as sent, freezing `client_name` as the name its pages
+/// were rendered with.
+pub fn mark_sent(conn: &Connection, version_id: i64, client_name: &str, today: &str) -> Result<()> {
     let document_id = ensure_latest_unsent(conn, version_id)?;
     let today = validate_date(today, "send date")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE document_versions
-            SET sent_at = ?2,
-                client_name = (SELECT c.name FROM documents d JOIN clients c ON c.id = d.client_id
-                                WHERE d.id = ?3)
-          WHERE id = ?1",
-        params![version_id, today, document_id],
+        "UPDATE document_versions SET sent_at = ?2, client_name = ?3 WHERE id = ?1",
+        params![version_id, today, client_name],
     )?;
     touch(&tx, document_id, &today)?;
     tx.commit()?;
@@ -445,7 +443,6 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
                 });
             }
             ensure_open_online(document_id, status, Action::Accept)?;
-            let title = clean_title(title)?;
             let inserted = tx.execute(
                 "INSERT INTO document_signatures (version_id, recipient_id, role, name, email, method, signed_at, typed_name, title, ip, user_agent, checksum)
                  VALUES (?1, ?2, 'client', ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -509,7 +506,7 @@ mod tests {
             ],
         )
         .unwrap();
-        mark_sent(conn, v.id, "2026-10-02").unwrap();
+        mark_sent(conn, v.id, "Cedar Systems", "2026-10-02").unwrap();
         (id, v.id, recipients[0].id, recipients[1].id)
     }
 
@@ -916,7 +913,7 @@ mod tests {
             )],
         )
         .unwrap();
-        mark_sent(&conn, v2.id, "2026-10-08").unwrap();
+        mark_sent(&conn, v2.id, "Cedar Systems", "2026-10-08").unwrap();
         let r = OnlineResponse {
             version_id: v,
             recipient_id: signer,
@@ -1025,6 +1022,18 @@ mod tests {
             .map(|s| s.title)
             .collect();
         assert_eq!(titles, [Some("Director of Operations".into()), None]);
+    }
+
+    #[test]
+    fn a_title_is_measured_in_characters_up_to_the_limit() {
+        let at_limit = "D".repeat(SIGNER_TEXT_MAX_CHARS);
+        let multibyte = "é".repeat(SIGNER_TEXT_MAX_CHARS);
+        assert_eq!(clean_title(Some(&at_limit)).unwrap(), Some(at_limit));
+        assert_eq!(clean_title(Some(&multibyte)).unwrap(), Some(multibyte));
+        assert!(matches!(
+            clean_title(Some(&"é".repeat(SIGNER_TEXT_MAX_CHARS + 1))),
+            Err(NigelError::Invalid(_))
+        ));
     }
 
     #[test]

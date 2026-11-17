@@ -659,9 +659,17 @@ pub fn report_regenerated(id: i64, regenerated: &RegeneratedRecord) -> (Vec<Stri
     {
         lines.push("Wrote it locally; R2 is not configured, so it was not published.".into());
     }
+    if regenerated.executed_published {
+        lines.push("Published the executed copy beside it.".into());
+    }
     let outcome = if regenerated.failed() {
+        let what = if regenerated.published {
+            "executed copy"
+        } else {
+            "signing record"
+        };
         Err(NigelError::Other(format!(
-            "The signing record for document #{id} was not published."
+            "The {what} for document #{id} was not published."
         )))
     } else {
         Ok(())
@@ -1369,6 +1377,7 @@ mod tests {
             executed_path: None,
             filename: "Website-rebuild-v1-signing-record.pdf".into(),
             published,
+            executed_published: false,
             unavailable: state.map(|state| Unavailable {
                 service: "R2",
                 keys: &["r2_bucket"],
@@ -1402,5 +1411,28 @@ mod tests {
         );
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(outcome.is_err(), "a partly configured R2 is an error");
+
+        let copy = |executed_published: bool| RegeneratedRecord {
+            executed_path: Some("/data/documents/3/v1-executed.pdf".into()),
+            executed_published,
+            ..record(true, None)
+        };
+        let (lines, outcome) = report_regenerated(3, &copy(false));
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("Published the executed copy")),
+            "{lines:?}"
+        );
+        assert_eq!(
+            outcome.unwrap_err().to_string(),
+            "The executed copy for document #3 was not published."
+        );
+        let (lines, outcome) = report_regenerated(3, &copy(true));
+        assert_eq!(
+            lines.last().unwrap(),
+            "Published the executed copy beside it."
+        );
+        assert!(outcome.is_ok());
     }
 }

@@ -481,7 +481,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     }
     trace.done(Step::Email);
 
-    mark_sent(conn, version.id, ctx.today).map_err(|e| (Step::Record, e))?;
+    mark_sent(conn, version.id, &client.name, ctx.today).map_err(|e| (Step::Record, e))?;
     trace.done(Step::Record);
 
     let warnings =
@@ -717,6 +717,56 @@ mod tests {
         assert_eq!(mails[0].attachments[0].0, "Website-rebuild-v1.pdf");
         for (mail, link) in mails.iter().zip(&out.links) {
             assert!(mail.text.contains(&link.url) && link.url.ends_with("/index.html"));
+        }
+    }
+
+    #[test]
+    fn each_sent_version_keeps_the_client_name_its_pages_printed() {
+        let (dir, conn) = test_conn();
+        let client = seed_client(&conn, "Cedar Systems");
+        let id = seed_document(&conn, dir.path(), client, "Website rebuild");
+        let (p, m, s) = (
+            FakeDocumentPublisher::default(),
+            FakeMailer::default(),
+            FakeResponseSource::default(),
+        );
+        send_document(&conn, id, &[pat()], &ctx(dir.path()), &p, &m, &s).unwrap();
+        conn.execute(
+            "UPDATE clients SET name = 'Cedar Holdings' WHERE id = ?1",
+            [client],
+        )
+        .unwrap();
+        crate::documents::record::add_version(
+            &conn,
+            dir.path(),
+            id,
+            &crate::documents::testing::fixture_pdf("v2"),
+            "2026-10-06",
+        )
+        .unwrap();
+        send_document(&conn, id, &[pat()], &ctx(dir.path()), &p, &m, &s).unwrap();
+        let names: Vec<_> = crate::documents::store::versions(&conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|v| (v.number, v.client_name))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (1, Some("Cedar Systems".into())),
+                (2, Some("Cedar Holdings".into()))
+            ]
+        );
+        let token = get_document(&conn, id).unwrap().token;
+        for (version, printed, not) in [
+            (1, "Cedar Systems", "Cedar Holdings"),
+            (2, "Cedar Holdings", "Cedar Systems"),
+        ] {
+            let v = &crate::documents::store::versions(&conn, id).unwrap()[version - 1];
+            for r in recipients(&conn, v.id).unwrap() {
+                let page = p.page(&token, &r.token).unwrap();
+                assert!(page.contains(printed) && !page.contains(not), "v{version}");
+            }
         }
     }
 

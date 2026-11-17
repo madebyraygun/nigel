@@ -1688,6 +1688,7 @@ export type DocumentActionResult = Partial<DocumentDetail> & {
 /** `POST /api/documents/{id}/signing-record`: the action's result, and whether the record reached the public bucket. */
 export type SigningRecordResult = DocumentActionResult & {
   published: boolean;
+  executedCopyPublished: boolean;
 };
 
 export interface DocumentSyncLine {
