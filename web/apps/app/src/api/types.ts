@@ -1530,6 +1530,10 @@ export interface DocumentVersionDetail {
   checksum: string;
   sentAt: string | null;
   createdAt: string;
+  /** The executed copy kept locally: the signed PDF with the full signing record appended. */
+  executedChecksum: string | null;
+  /** The executed copy published beside the version, with the redacted record appended. */
+  executedPublicChecksum: string | null;
   recipients: DocumentRecipient[];
   signatures: DocumentSignature[];
   changeRequests: DocumentChangeRequest[];

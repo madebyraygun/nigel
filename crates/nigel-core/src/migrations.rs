@@ -641,6 +641,19 @@ const MIGRATIONS: &[Migration] = &[
         description: "documents: the client name a version was sent on behalf of",
         up: |conn| add_column_if_missing(conn, "document_versions", "client_name", "TEXT"),
     },
+    Migration {
+        version: 23,
+        description: "documents: the checksums of an executed version's executed copies",
+        up: |conn| {
+            add_column_if_missing(conn, "document_versions", "executed_checksum", "TEXT")?;
+            add_column_if_missing(
+                conn,
+                "document_versions",
+                "executed_public_checksum",
+                "TEXT",
+            )
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -2063,6 +2076,23 @@ mod tests {
             )
             .unwrap();
         assert!(has);
+    }
+
+    #[test]
+    fn v23_gives_versions_executed_copy_checksums_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "22").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('document_versions')
+                  WHERE name IN ('executed_checksum', 'executed_public_checksum')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 2);
     }
 
     #[test]

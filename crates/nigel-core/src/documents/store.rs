@@ -202,11 +202,13 @@ fn version_from_row(r: &Row<'_>) -> rusqlite::Result<DocumentVersion> {
         sent_at: r.get(5)?,
         created_at: r.get(6)?,
         client_name: r.get(7)?,
+        executed_checksum: r.get(8)?,
+        executed_public_checksum: r.get(9)?,
     })
 }
 
-const VERSION_COLUMNS: &str =
-    "id, document_id, number, file_path, checksum, sent_at, created_at, client_name";
+const VERSION_COLUMNS: &str = "id, document_id, number, file_path, checksum, sent_at, created_at, \
+     client_name, executed_checksum, executed_public_checksum";
 
 /// The client name a sent version's pages and record print: the one frozen at
 /// send, or the client's current name for a version sent before names were

@@ -946,6 +946,7 @@ needs, and with `includeInactive=true` also lists the deactivated kinds, which
 | `GET /api/documents/{id}/preview` | `text/html; charset=utf-8` |
 | `GET /api/documents/{id}/preview.pdf` | `application/pdf` |
 | `GET /api/documents/{id}/signing-record.pdf` | `application/pdf` |
+| `GET /api/documents/{id}/executed.pdf` | `application/pdf` |
 | `GET /api/document-kinds` | `DocumentKind[]`, active kinds only; every kind with `includeInactive=true` (`true` or `false`, anything else is `400`) |
 
 `GET /api/documents` takes `clientId`, `status` and `kind`, all optional and
@@ -973,6 +974,7 @@ client's name, every version, and what may be done to it next:
   "versions": [
     { "id": 5, "documentId": 3, "number": 2, "checksum": "sha256:9c1f…",
       "sentAt": "2026-10-02", "createdAt": "2026-10-02",
+      "executedChecksum": null, "executedPublicChecksum": null,
       "recipients": [
         { "id": 8, "versionId": 5, "role": "signer", "name": "Pat Example",
           "email": "pat@acme.test", "position": 0,
@@ -995,6 +997,10 @@ and `userAgent`. A change request carries
 `name`, `note`, `requestedAt`, `method`, `checksum` and the same online
 metadata. `checksum` always carries the `sha256:` prefix.
 
+- **`executedChecksum`** and **`executedPublicChecksum`** are the checksums of
+  an executed version's two executed copies — the signed PDF with the full or
+  the redacted signing record appended — and `null` until they are made. They
+  are not the version's `checksum`, which stays the signed PDF's.
 - **`fileMissing`** is `true` on a version whose PDF is absent from the data
   directory, as after a restore from a backup that lacked the documents folder.
   Fetching such a version's PDF or sending it answers `409` `file_missing`.
@@ -1047,6 +1053,12 @@ the data directory, `inline`, named
 kept first. A document that is not executed is `409` `document_not_executed`,
 and a build without the `pdf` feature is `501 feature_disabled`. It makes no
 network call.
+
+`executed.pdf` is the executed copy: the signed PDF with that full record
+appended, named `<Title>-v<n>-executed.pdf` and served the same way, generated
+with the record when there is no copy yet. A signed PDF that cannot be combined
+(an encrypted file) is `409` `executed_copy_unavailable`; see
+[Documents](invoicing.md#the-executed-copy).
 
 ### Not-found reasons
 

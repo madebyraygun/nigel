@@ -48,6 +48,16 @@ pub trait DocumentPublisher {
         filename: &str,
         pdf: &[u8],
     ) -> Result<String>;
+    /// Write an executed version's signed PDF with its signing record
+    /// appended, beside its PDF, saved as `filename` when downloaded, and
+    /// answer its address.
+    fn publish_executed_copy(
+        &self,
+        token: &str,
+        version: i64,
+        filename: &str,
+        pdf: &[u8],
+    ) -> Result<String>;
     /// The address every published document object is served under.
     fn public_base(&self) -> &str;
 }

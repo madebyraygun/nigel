@@ -1644,9 +1644,10 @@ pub fn render_signing_record(
     pdf.table_row_wrapped(
         NOTE_COLS,
         &[
-            "Every signature below is bound to the file with this checksum. This record \
-           is a separate file; the signed document is unchanged, and any copy whose \
-           SHA-256 checksum matches is the file that was signed.",
+            "Every signature below is bound to the signed document with this checksum. \
+             The signed document is unchanged: any copy of it whose SHA-256 checksum \
+             matches is the file that was signed. An executed copy, which ends with \
+             this record, is a separate file with its own checksum.",
         ],
         false,
         SUBTITLE_SIZE - 1.0,
@@ -1687,9 +1688,6 @@ pub fn render_signing_record(
         if signature.role == SignatureRole::Client && !record.client.is_empty() {
             pdf.record_row("On behalf of", &record.client);
         }
-        if signature.role == SignatureRole::Client && !record.client.is_empty() {
-            pdf.record_row("On behalf of", &record.client);
-        }
         if let Some(typed) = &signature.typed_name {
             pdf.record_row("Typed name", typed);
         }
@@ -1710,6 +1708,100 @@ pub fn render_signing_record(
     }
 
     pdf.into_bytes()
+}
+
+/// `signed` with every page of `appendix` added after its last page, as one new
+/// PDF. Neither input is changed: the signed file keeps its own bytes and
+/// checksum, and this is a separate file. Page attributes a page inherits from
+/// its page tree (resources, media box, crop box, rotation) are copied onto the
+/// page, since each file's page tree is replaced by one tree over both.
+/// Refused for an encrypted PDF or one that does not parse.
+pub fn append_pdf(signed: &[u8], appendix: &[u8]) -> Result<Vec<u8>> {
+    use printpdf::lopdf::{dictionary, Document, Object, ObjectId};
+
+    const INHERITED: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate"];
+    let unreadable =
+        |e: printpdf::lopdf::Error| NigelError::Other(format!("the PDF could not be read ({e})"));
+
+    let mut next_id = 1;
+    let mut pages: Vec<ObjectId> = Vec::new();
+    let mut objects = std::collections::BTreeMap::new();
+    for bytes in [signed, appendix] {
+        let mut doc = Document::load_mem(bytes).map_err(unreadable)?;
+        if doc.is_encrypted() {
+            return Err(NigelError::Other("the PDF is encrypted".into()));
+        }
+        doc.renumber_objects_with(next_id);
+        next_id = doc.max_id + 1;
+        for page_id in doc.get_pages().into_values() {
+            let mut inherited = Vec::new();
+            let mut parent = doc
+                .get_dictionary(page_id)
+                .and_then(|page| page.get(b"Parent"))
+                .and_then(Object::as_reference)
+                .ok();
+            while let Some(node_id) = parent {
+                let Ok(node) = doc.get_dictionary(node_id) else {
+                    break;
+                };
+                for key in INHERITED {
+                    if let Ok(value) = node.get(key) {
+                        inherited.push((key, value.clone()));
+                    }
+                }
+                parent = node.get(b"Parent").and_then(Object::as_reference).ok();
+            }
+            if let Ok(page) = doc.get_dictionary_mut(page_id) {
+                for (key, value) in inherited {
+                    if !page.has(key) {
+                        page.set(key, value);
+                    }
+                }
+            }
+            pages.push(page_id);
+        }
+        objects.extend(doc.objects);
+    }
+
+    let mut out = Document::with_version("1.7");
+    let pages_id = (next_id, 0);
+    let catalog_id = (next_id + 1, 0);
+    for (id, object) in objects {
+        match object.type_name().unwrap_or_default() {
+            "Catalog" | "Pages" | "Outlines" | "Outline" => {}
+            _ => {
+                out.objects.insert(id, object);
+            }
+        }
+    }
+    for page_id in &pages {
+        if let Ok(Object::Dictionary(page)) = out.get_object_mut(*page_id) {
+            page.set("Parent", pages_id);
+        }
+    }
+    out.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => pages.iter().map(|id| Object::Reference(*id)).collect::<Vec<_>>(),
+            "Count" => pages.len() as i64,
+        }),
+    );
+    out.objects.insert(
+        catalog_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        }),
+    );
+    out.trailer.set("Root", catalog_id);
+    out.max_id = next_id + 1;
+    out.prune_objects();
+    out.compress();
+    let mut bytes = Vec::new();
+    out.save_to(&mut bytes)
+        .map_err(|e| NigelError::Other(format!("the PDF could not be written ({e})")))?;
+    Ok(bytes)
 }
 
 /// A real PNG, painted by `image` so a decoder has something genuine to read.

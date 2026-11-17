@@ -12,10 +12,12 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+use super::model::checksum_of;
 use super::model::{DocumentStatus, Method, SignatureRole};
 use super::render::attachment_name;
 use super::store::{
-    get_document, latest_sent_version, signatures, version_client_name, write_version_file,
+    get_document, latest_sent_version, read_version_pdf, signatures, version_client_name,
+    write_version_file,
 };
 use crate::error::{NigelError, Result};
 
@@ -105,6 +107,32 @@ pub fn signing_record_rel(document_id: i64, version: i64) -> String {
     format!("documents/{document_id}/v{version}-signing-record.pdf")
 }
 
+/// The executed copy's download name, e.g. `Website-rebuild-v3-executed.pdf`.
+pub fn executed_copy_name(title: &str, version: i64) -> String {
+    let pdf = attachment_name(title, version);
+    let stem = pdf.strip_suffix(".pdf").unwrap_or(&pdf);
+    format!("{stem}-executed.pdf")
+}
+
+/// Where the full executed copy is kept, relative to the data directory.
+pub fn executed_copy_rel(document_id: i64, version: i64) -> String {
+    format!("documents/{document_id}/v{version}-executed.pdf")
+}
+
+/// The signed PDF with a record appended, or `None` in a build without the
+/// `pdf` feature.
+fn append_record(signed: &[u8], record: &[u8]) -> Option<Result<Vec<u8>>> {
+    #[cfg(feature = "pdf")]
+    {
+        Some(crate::pdf::append_pdf(signed, record))
+    }
+    #[cfg(not(feature = "pdf"))]
+    {
+        let _ = (signed, record);
+        None
+    }
+}
+
 /// The record for an executed document's signed version. Refused for a
 /// document that is not executed.
 pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<SigningRecord> {
@@ -172,13 +200,32 @@ pub fn render_signing_record(record: &SigningRecord) -> Option<Result<Vec<u8>>> 
 
 /// A generated record in both variants. `bytes` is the full record, which is
 /// the one written to the data directory; `redacted` is the one published and
-/// sent to collaborators.
+/// sent to collaborators. `executed` is the signed PDF with each variant
+/// appended, or why it could not be made.
 #[derive(Debug, Clone)]
 pub struct GeneratedRecord {
     pub version: i64,
     pub filename: String,
     pub bytes: Vec<u8>,
     pub redacted: Vec<u8>,
+    pub executed: std::result::Result<ExecutedCopy, String>,
+}
+
+/// The executed copy in both variants, matching the record's: `bytes` carries
+/// the full record and is the one kept; `redacted` is the one published and
+/// sent to collaborators.
+#[derive(Debug, Clone)]
+pub struct ExecutedCopy {
+    pub filename: String,
+    pub bytes: Vec<u8>,
+    pub redacted: Vec<u8>,
+}
+
+/// The warning an executed copy that could not be made becomes.
+pub fn executed_copy_warning(why: &str) -> String {
+    format!(
+        "Warning: no executed copy was made, because {why}. The signed PDF and the signing record are still sent and published as two files."
+    )
 }
 
 /// The full record as kept in the data directory.
@@ -206,12 +253,85 @@ pub fn generate_signing_record(
         .expect("rendered once, so the pdf feature is on")?;
     write_version_file(data_dir, &signing_record_rel(id, record.version), &bytes)?;
     let title = get_document(conn, id)?.title;
+    let executed = make_executed_copy(conn, data_dir, id, &title, &bytes, &redacted)?;
     Ok(Some(GeneratedRecord {
         version: record.version,
         filename: signing_record_name(&title, record.version),
         bytes,
         redacted,
+        executed,
     }))
+}
+
+/// Append each record variant to the signed PDF, keep the full copy and store
+/// both checksums on the version. A signed PDF that cannot be read or merged
+/// (an encrypted file, say) is an `Err` reason, not a failure: the record
+/// itself stands.
+fn make_executed_copy(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    title: &str,
+    record: &[u8],
+    redacted: &[u8],
+) -> Result<std::result::Result<ExecutedCopy, String>> {
+    let version = latest_sent_version(conn, id)?.ok_or_else(|| {
+        NigelError::Other(format!(
+            "Document #{id} is executed but has no sent version."
+        ))
+    })?;
+    let signed = match read_version_pdf(data_dir, &version) {
+        Ok(signed) => signed,
+        Err(e) => return Ok(Err(format!("the signed PDF could not be read ({e})"))),
+    };
+    let merged = append_record(&signed, record)
+        .expect("a record was rendered, so the pdf feature is on")
+        .and_then(|full| {
+            let public = append_record(&signed, redacted)
+                .expect("a record was rendered, so the pdf feature is on")?;
+            Ok((full, public))
+        });
+    let (bytes, public) = match merged {
+        Ok(both) => both,
+        Err(e) => {
+            return Ok(Err(format!(
+                "the signed PDF could not be combined with the record: {e}"
+            )))
+        }
+    };
+    write_version_file(data_dir, &executed_copy_rel(id, version.number), &bytes)?;
+    conn.execute(
+        "UPDATE document_versions SET executed_checksum = ?2, executed_public_checksum = ?3 WHERE id = ?1",
+        rusqlite::params![version.id, checksum_of(&bytes), checksum_of(&public)],
+    )?;
+    Ok(Ok(ExecutedCopy {
+        filename: executed_copy_name(title, version.number),
+        bytes,
+        redacted: public,
+    }))
+}
+
+/// The kept executed copy of an executed document, or `None` when none has
+/// been made.
+pub fn read_executed_copy(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+) -> Result<Option<KeptRecord>> {
+    let document = get_document(conn, id)?;
+    let Some(version) = latest_sent_version(conn, id)? else {
+        return Ok(None);
+    };
+    let path = data_dir.join(executed_copy_rel(id, version.number));
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(KeptRecord {
+            version: version.number,
+            filename: executed_copy_name(&document.title, version.number),
+            bytes,
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The local copy of an executed document's full record, or `None` when none
@@ -376,6 +496,7 @@ mod tests {
             assert!(text.contains(expected), "{expected:?} missing from {text}");
         }
         assert!(text.find("Client acceptance") < text.find("Countersignature"));
+        assert_eq!(text.matches("On behalf of").count(), 1, "{text}");
         assert!(!text.contains('\u{1b}') && !text.contains('\u{7}'));
         assert_eq!(
             crate::pdf::page_streams(&bytes).len(),

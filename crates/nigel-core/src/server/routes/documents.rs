@@ -50,7 +50,7 @@ use crate::documents::send::{
     SendContext,
 };
 use crate::documents::signing_record::{
-    generate_signing_record, read_signing_record, KeptRecord, PDF_UNAVAILABLE,
+    generate_signing_record, read_executed_copy, read_signing_record, KeptRecord, PDF_UNAVAILABLE,
 };
 use crate::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents, read_version_pdf,
@@ -101,6 +101,7 @@ pub fn routes() -> Router<AppState> {
             "/documents/{id}/signing-record",
             post(republish_signing_record),
         )
+        .route("/documents/{id}/executed.pdf", get(executed_copy_pdf))
         .route("/document-kinds", get(kinds))
         .route("/document-kinds/{id}/reactivate", post(reactivate))
 }
@@ -1161,6 +1162,52 @@ async fn signing_record_pdf(
         .into_response())
 }
 
+/// `GET /api/documents/{id}/executed.pdf` — the executed version's executed
+/// copy: the signed PDF with the full signing record appended. The copy kept at
+/// countersign, made first when there is none yet.
+async fn executed_copy_pdf(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Response> {
+    let copy = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| {
+            get_document(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
+            let data_dir = state.data_dir();
+            if let Some(copy) = read_executed_copy(conn, &data_dir, id)? {
+                return Ok(copy);
+            }
+            let record = generate_signing_record(conn, &data_dir, id, &company_name(conn))?
+                .ok_or_else(|| ApiError::feature_disabled(PDF_UNAVAILABLE))?;
+            match record.executed {
+                Ok(copy) => Ok(KeptRecord {
+                    version: record.version,
+                    filename: copy.filename,
+                    bytes: copy.bytes,
+                }),
+                Err(why) => Err(crate::error::NigelError::Conflict {
+                    code: "executed_copy_unavailable",
+                    message: format!("No executed copy could be made, because {why}."),
+                }
+                .into()),
+            }
+        }
+    })
+    .await?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("inline; filename=\"{}\"", copy.filename),
+            ),
+        ],
+        Body::from(copy.bytes),
+    )
+        .into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::documents::testing::{
@@ -2180,6 +2227,27 @@ mod tests {
             "inline; filename=\"Website-rebuild-v1-signing-record.pdf\""
         );
         assert_eq!(body_bytes(response).await, kept);
+
+        let copy = get_response(&app, &format!("/api/documents/{id}/executed.pdf"), &token).await;
+        assert_eq!(copy.status(), StatusCode::OK);
+        assert_eq!(
+            header_str(&copy, header::CONTENT_DISPOSITION),
+            "inline; filename=\"Website-rebuild-v1-executed.pdf\""
+        );
+        let kept_copy = std::fs::read(
+            db_path
+                .parent()
+                .unwrap()
+                .join(crate::documents::signing_record::executed_copy_rel(id, 1)),
+        )
+        .expect("the countersign kept an executed copy");
+        assert_eq!(body_bytes(copy).await, kept_copy);
+        let detail = ok_json(&app, &format!("/api/documents/{id}"), &token).await;
+        assert_eq!(
+            detail["versions"][0]["executedChecksum"],
+            crate::documents::model::checksum_of(&kept_copy),
+            "{detail}"
+        );
 
         let (status, _) = get_json(&app, "/api/documents/999/signing-record.pdf", &token).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

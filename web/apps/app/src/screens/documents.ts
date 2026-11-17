@@ -588,6 +588,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   private handlePdf = (event: Event): Promise<void> =>
     this.saveTarget(event, (id) => this.client.documentPreviewTarget(id), 'the PDF');
 
+  private handleExecutedCopy = (event: Event): Promise<void> =>
+    this.saveTarget(
+      event,
+      (id) => this.client.documentExecutedCopyTarget(id),
+      'the executed copy',
+    );
+
   private handleSigningRecord = (event: Event): Promise<void> =>
     this.saveTarget(
       event,
@@ -1139,7 +1146,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           >
             ${this.previewOpen ? 'Hide preview' : 'Show preview'}
           </wa-button>
-          ${this.renderPdfLink(detail)} ${this.renderSigningRecordLink(detail)}
+          ${this.renderExecutedCopyLink(detail)} ${this.renderPdfLink(detail)}
+          ${this.renderSigningRecordLink(detail)}
         </div>
         ${this.previewOpen ? this.renderPreview(detail) : nothing}
       </wc-panel>
@@ -1278,6 +1286,21 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       @click=${this.handlePdf}
     >
       Download PDF
+    </wa-button>`;
+  }
+
+  /** An executed document's executed copy: the signed PDF with the signing record at the end. */
+  private renderExecutedCopyLink(detail: DocumentDetail) {
+    if (detail.status !== 'executed') return nothing;
+    const target = this.client.documentExecutedCopyTarget(detail.id);
+    return html`<wa-button
+      data-executed-copy-link
+      variant="brand"
+      href=${target.kind === 'href' ? target.href : nothing}
+      download=${target.kind === 'href' ? '' : nothing}
+      @click=${this.handleExecutedCopy}
+    >
+      Download executed copy
     </wa-button>`;
   }
 

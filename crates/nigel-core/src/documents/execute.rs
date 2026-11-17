@@ -12,12 +12,12 @@ use rusqlite::Connection;
 use super::lifecycle::republish_linking_record;
 use super::model::{RecipientRole, SignatureRole};
 use super::render::{
-    attachment_name, relative_signing_record_href, render_signed_email_text, signed_by_line,
-    signed_subject,
+    attachment_name, relative_executed_copy_href, relative_signing_record_href,
+    render_signed_email_text, signed_by_line, signed_subject, Attached, ExecutedLinks,
 };
 use super::signing_record::{
-    generate_signing_record, plain_text, signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE,
-    RECORD_UNAVAILABLE,
+    executed_copy_rel, executed_copy_warning, generate_signing_record, plain_text,
+    signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE, RECORD_UNAVAILABLE,
 };
 use super::store::{
     get_document, latest_sent_version, read_version_pdf, recipients, signatures,
@@ -54,7 +54,12 @@ pub fn complete_execution<P: DocumentPublisher, R: ResponseSource, M: Mailer>(
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     let record = match generate_signing_record(conn, data_dir, id, company) {
-        Ok(Some(record)) => Some(record),
+        Ok(Some(record)) => {
+            if let Err(why) = &record.executed {
+                warnings.push(executed_copy_warning(why));
+            }
+            Some(record)
+        }
         Ok(None) => {
             warnings.push(RECORD_UNAVAILABLE.to_string());
             None
@@ -94,6 +99,8 @@ pub fn complete_execution<P: DocumentPublisher, R: ResponseSource, M: Mailer>(
 #[derive(Debug)]
 pub struct RegeneratedRecord {
     pub path: PathBuf,
+    /// Where the executed copy was written, when one could be made.
+    pub executed_path: Option<PathBuf>,
     pub filename: String,
     /// The record itself reached the public bucket.
     pub published: bool,
@@ -125,6 +132,9 @@ pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
     let record = generate_signing_record(conn, data_dir, id, company)?
         .ok_or_else(|| NigelError::Invalid(PDF_UNAVAILABLE.to_string()))?;
     let mut warnings = Vec::new();
+    if let Err(why) = &record.executed {
+        warnings.push(executed_copy_warning(why));
+    }
     let published = publish_record_and_pages(
         conn,
         id,
@@ -136,6 +146,10 @@ pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
     );
     Ok(RegeneratedRecord {
         path: data_dir.join(signing_record_rel(id, record.version)),
+        executed_path: record
+            .executed
+            .is_ok()
+            .then(|| data_dir.join(executed_copy_rel(id, record.version))),
         filename: record.filename,
         published,
         unavailable: publisher.err().cloned(),
@@ -143,8 +157,8 @@ pub fn regenerate_signing_record<P: DocumentPublisher, R: ResponseSource>(
     })
 }
 
-/// Publish the record, then the pages: a page links the record only once the
-/// record is up, so no page ever points at an object that is not there.
+/// Publish the record and the executed copy, then the pages: a page links each
+/// only once it is up, so no page ever points at an object that is not there.
 /// Answers whether the record was published.
 fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
@@ -156,6 +170,7 @@ fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
     warnings: &mut Vec<String>,
 ) -> bool {
     let mut published = false;
+    let mut copy_published = false;
     match (record, publisher) {
         (Some(record), Ok(publisher)) => {
             let uploaded = get_document(conn, id).and_then(|document| {
@@ -173,6 +188,23 @@ fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
                     republish_hint(id)
                 )),
             }
+            if let Ok(copy) = &record.executed {
+                let uploaded = get_document(conn, id).and_then(|document| {
+                    publisher.publish_executed_copy(
+                        &document.token,
+                        record.version,
+                        &copy.filename,
+                        &copy.redacted,
+                    )
+                });
+                match uploaded {
+                    Ok(_) => copy_published = true,
+                    Err(e) => warnings.push(format!(
+                        "Warning: the countersignature is recorded, but the executed copy could not be published ({e}). {}",
+                        republish_hint(id)
+                    )),
+                }
+            }
         }
         (Some(_), Err(unavailable)) => warnings.push(format!(
             "Warning: {}, so the signing record was not published; it is kept in the data directory. To publish it, {}. {}",
@@ -182,15 +214,13 @@ fn publish_record_and_pages<P: DocumentPublisher, R: ResponseSource>(
         )),
         (None, _) => {}
     }
-    let href = record.map(|r| relative_signing_record_href(r.version));
-    let page_warnings = republish_linking_record(
-        conn,
-        id,
-        company,
-        href.as_deref().filter(|_| published),
-        publisher.ok(),
-        source,
-    );
+    let record_href = record.map(|r| relative_signing_record_href(r.version));
+    let copy_href = record.map(|r| relative_executed_copy_href(r.version));
+    let links = ExecutedLinks {
+        executed_copy: copy_href.as_deref().filter(|_| copy_published),
+        signing_record: record_href.as_deref().filter(|_| published),
+    };
+    let page_warnings = republish_linking_record(conn, id, company, links, publisher.ok(), source);
     warnings.extend(
         page_warnings
             .into_iter()
@@ -263,7 +293,18 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
         return;
     }
     let pdf_name = attachment_name(&document.title, version.number);
+    let executed = record.and_then(|r| r.executed.as_ref().ok());
     let attachments_for = |role: RecipientRole| {
+        if let Some(copy) = executed {
+            return vec![Attachment {
+                filename: &copy.filename,
+                content_type: "application/pdf",
+                bytes: match role {
+                    RecipientRole::Signer => &copy.bytes,
+                    RecipientRole::Collaborator => &copy.redacted,
+                },
+            }];
+        }
         let mut attachments = vec![Attachment {
             filename: &pdf_name,
             content_type: "application/pdf",
@@ -302,7 +343,11 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             version.number,
             &signed_by,
             url.as_deref(),
-            record.is_some(),
+            match (executed, record) {
+                (Some(_), _) => Attached::ExecutedCopy,
+                (None, Some(_)) => Attached::SignedAndRecord,
+                (None, None) => Attached::SignedOnly,
+            },
         );
         let to = format_address(Some(&r.name), &r.email);
         let sent = mailer.send(&OutgoingMail {
@@ -337,6 +382,7 @@ mod tests {
     use super::*;
     use crate::documents::model::DocumentStatus;
     use crate::documents::record::{record_countersign, record_manual_accept};
+    use crate::documents::signing_record::executed_copy_rel;
     use crate::documents::store::{latest_version, signatures};
     use crate::documents::testing::{
         sent_document_with_fakes, test_conn, FakeDocumentPublisher, FakeMailer, FakeResponseSource,
@@ -387,12 +433,18 @@ mod tests {
         let keys = p.keys()[before..].to_vec();
         let record_key = document_signing_record_key(&document.token, 1);
         assert_eq!(keys[0], record_key, "{keys:?}");
-        assert!(keys[1..].iter().all(|k| k.ends_with("/index.html")));
-        assert_eq!(keys.len(), 3);
+        assert_eq!(
+            keys[1],
+            crate::invoicing::r2::document_executed_copy_key(&document.token, 1)
+        );
+        assert!(keys[2..].iter().all(|k| k.ends_with("/index.html")));
+        assert_eq!(keys.len(), 4);
         for r in recipients(&conn, version.id).unwrap() {
             let page = p.page(&document.token, &r.token).unwrap();
             assert!(page.contains(
-                "<a class=\"button secondary\" href=\"../v1/signing-record.pdf\">Download the signing record</a>"
+                "<a class=\"button primary\" href=\"../v1/executed.pdf\">Download the executed copy</a>\
+<a class=\"button secondary\" href=\"../v1/document.pdf\">Download the PDF</a>\
+<a class=\"button secondary\" href=\"../v1/signing-record.pdf\">Download the signing record</a>"
             ));
         }
         let published = p.objects.borrow()[before].1.clone();
@@ -410,24 +462,97 @@ mod tests {
             crate::documents::model::checksum_of(&signed_before),
             version.checksum
         );
+        let kept = std::fs::read(dir.path().join(executed_copy_rel(id, 1))).unwrap();
+        let version = latest_version(&conn, id).unwrap();
+        assert_eq!(
+            version.executed_checksum,
+            Some(crate::documents::model::checksum_of(&kept))
+        );
+        let public = p.objects.borrow()[before + 1].1.clone();
+        assert_eq!(
+            version.executed_public_checksum,
+            Some(crate::documents::model::checksum_of(&public))
+        );
+        assert_ne!(version.executed_checksum, Some(version.checksum.clone()));
+    }
+
+    /// The executed copy is the signed PDF's pages, unchanged, followed by the
+    /// record's, and the record it carries names the signed file's checksum.
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn the_executed_copy_appends_the_record_to_the_signed_pages() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = executed(&conn, dir.path());
+        let m = FakeMailer::default();
+        complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
+        let version = latest_version(&conn, id).unwrap();
+        let signed = std::fs::read(dir.path().join(&version.file_path)).unwrap();
+        let record = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
+        let copy = std::fs::read(dir.path().join(executed_copy_rel(id, 1))).unwrap();
+        let pages = |bytes: &[u8]| {
+            printpdf::lopdf::Document::load_mem(bytes)
+                .unwrap()
+                .get_pages()
+                .len()
+        };
+        assert_eq!(pages(&copy), pages(&signed) + pages(&record));
+        let text = crate::pdf::extract_text(&copy);
+        assert!(
+            text.contains("Signing record") && text.contains(&version.checksum),
+            "{text}"
+        );
+        assert_eq!(
+            crate::documents::model::checksum_of(&signed),
+            version.checksum,
+            "the signed PDF is unchanged"
+        );
+    }
+
+    #[test]
+    fn a_signed_pdf_that_cannot_be_merged_sends_the_two_files_and_says_why() {
+        let (dir, conn) = test_conn();
+        let (id, p, s) = executed(&conn, dir.path());
+        let version = latest_version(&conn, id).unwrap();
+        std::fs::write(
+            dir.path().join(&version.file_path),
+            b"%PDF-1.4\nnot really a pdf\n%%EOF\n",
+        )
+        .unwrap();
+        let m = FakeMailer::default();
+        let warnings =
+            complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
+        if cfg!(feature = "pdf") {
+            assert!(
+                warnings
+                    .iter()
+                    .any(|w| w.starts_with("Warning: no executed copy was made")),
+                "{warnings:?}"
+            );
+            assert!(m
+                .sent
+                .borrow()
+                .iter()
+                .all(|mail| mail.attachments.len() == 2));
+        }
+        assert!(!dir.path().join(executed_copy_rel(id, 1)).exists());
+        assert!(!p.keys().iter().any(|k| k.ends_with("executed.pdf")));
     }
 
     #[cfg(feature = "pdf")]
     #[test]
-    fn every_recipient_gets_the_signed_copy_and_the_record() {
+    fn every_recipient_gets_the_executed_copy() {
         let (dir, conn) = test_conn();
         let (id, p, s) = executed(&conn, dir.path());
         let document = get_document(&conn, id).unwrap();
         let version = latest_version(&conn, id).unwrap();
-        let signed = std::fs::read(dir.path().join(&version.file_path)).unwrap();
         let m = FakeMailer::default();
         complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));
-        let full = std::fs::read(dir.path().join(signing_record_rel(id, 1))).unwrap();
+        let full = std::fs::read(dir.path().join(executed_copy_rel(id, 1))).unwrap();
         let redacted = p
             .objects
             .borrow()
             .iter()
-            .find(|(k, _)| k.ends_with("signing-record.pdf"))
+            .find(|(k, _)| k.ends_with("executed.pdf"))
             .map(|(_, b)| b.clone())
             .unwrap();
         let sent = m.sent.borrow();
@@ -436,20 +561,15 @@ mod tests {
         for (mail, r) in sent.iter().zip(&frozen) {
             assert_eq!(mail.to, format_address(Some(&r.name), &r.email));
             assert_eq!(mail.subject, "Signed: Website rebuild for Initech");
-            let record = match r.role {
+            let copy = match r.role {
                 crate::documents::model::RecipientRole::Signer => &full,
                 crate::documents::model::RecipientRole::Collaborator => &redacted,
             };
             assert_eq!(
                 mail.attachments,
-                vec![
-                    ("Website-rebuild-v1.pdf".to_string(), signed.clone()),
-                    (
-                        "Website-rebuild-v1-signing-record.pdf".to_string(),
-                        record.clone()
-                    ),
-                ]
+                vec![("Website-rebuild-v1-executed.pdf".to_string(), copy.clone())]
             );
+            assert!(mail.text.contains("the executed copy"));
             assert!(mail.text.starts_with(&format!("Hello {},", r.name)));
             assert!(mail.text.contains("This document is now fully signed"));
             assert!(mail.text.contains("Website rebuild (version 1)"));
@@ -612,16 +732,33 @@ mod tests {
         let frozen = recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap();
         let sent = m.sent.borrow();
         assert_eq!(sent.len(), 2);
+        let copy_key = crate::invoicing::r2::document_executed_copy_key(&document.token, 1);
+        let public_copy = p
+            .objects
+            .borrow()
+            .iter()
+            .find(|(k, _)| *k == copy_key)
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            !has_network(&public_copy),
+            "the public executed copy is redacted"
+        );
+        let kept_copy = std::fs::read(dir.path().join(executed_copy_rel(id, 1))).unwrap();
+        assert!(
+            has_network(&kept_copy),
+            "the operator's executed copy is full"
+        );
         for (mail, r) in sent.iter().zip(&frozen) {
-            let record = &mail.attachments[1].1;
+            let copy = &mail.attachments[0].1;
             match r.role {
                 RecipientRole::Signer => {
-                    assert!(has_network(record), "{} gets the full record", r.name);
-                    assert_eq!(record, &kept);
+                    assert!(has_network(copy), "{} gets the full record", r.name);
+                    assert_eq!(copy, &kept_copy);
                 }
                 RecipientRole::Collaborator => {
-                    assert!(!has_network(record), "{} gets the redacted one", r.name);
-                    assert_eq!(record, &public);
+                    assert!(!has_network(copy), "{} gets the redacted one", r.name);
+                    assert_eq!(copy, &public_copy);
                 }
             }
         }

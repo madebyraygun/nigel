@@ -1,9 +1,11 @@
 ---
 id: TASK-109.23
 title: 'Documents: an optional title on the signing form'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-17 21:22'
+updated_date: '2026-11-17 22:08'
 labels:
   - documents
   - signing
@@ -24,9 +26,15 @@ The Worker in workers/document-response refuses unknown fields today, so this ne
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The accept form has an optional Title field, validated like the typed name (plain text, a length cap, control characters refused) by both the Worker and Nigel
-- [ ] #2 An acceptance with a title records it, and one without records none; responses and R2 objects written before the change still sync
-- [ ] #3 document accept and document countersign take --title; the API and the web UI's acceptance and countersign dialogs take the same field
-- [ ] #4 The stamped page, both signing record variants and the confirmation email show the title beside the name when there is one
-- [ ] #5 docs/invoicing.md and docs/api.md describe the field; the Worker's deploy notes say a redeploy is needed
+- [x] #1 The accept form has an optional Title field, validated like the typed name (plain text, a length cap, control characters refused) by both the Worker and Nigel
+- [x] #2 An acceptance with a title records it, and one without records none; responses and R2 objects written before the change still sync
+- [x] #3 document accept and document countersign take --title; the API and the web UI's acceptance and countersign dialogs take the same field
+- [x] #4 The stamped page, both signing record variants and the confirmation email show the title beside the name when there is one
+- [x] #5 docs/invoicing.md and docs/api.md describe the field; the Worker's deploy notes say a redeploy is needed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The description's premise was wrong: the Worker ignores fields it does not know rather than refusing them, so the new page works against the deployed Worker. Titles typed online are recorded only after the Worker is redeployed.
+<!-- SECTION:NOTES:END -->

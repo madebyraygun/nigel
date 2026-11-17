@@ -32,6 +32,8 @@ function version(overrides: Partial<DocumentVersionDetail>): DocumentVersionDeta
     signatures: [],
     changeRequests: [],
     fileMissing: false,
+    executedChecksum: null,
+    executedPublicChecksum: null,
     ...overrides,
   };
 }

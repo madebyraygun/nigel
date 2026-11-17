@@ -65,6 +65,15 @@ impl Stamp<'_> {
     }
 }
 
+/// What an executed page links beside the PDF, each relative to the page and
+/// set only once that object is published.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExecutedLinks<'a> {
+    /// The signed PDF with the redacted signing record appended.
+    pub executed_copy: Option<&'a str>,
+    pub signing_record: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PageState<'a> {
     Open {
@@ -80,12 +89,10 @@ pub enum PageState<'a> {
         requests: &'a [RequestedChange],
     },
     Accepted(Stamp<'a>),
-    /// `signing_record_href` is the record's address relative to the page,
-    /// set only once the record is published beside the PDF.
     Executed {
         client: Stamp<'a>,
         countersign: Stamp<'a>,
-        signing_record_href: Option<&'a str>,
+        links: ExecutedLinks<'a>,
     },
     Declined,
 }
@@ -160,6 +167,10 @@ pub fn relative_pdf_href(version: i64) -> String {
 
 pub fn relative_signing_record_href(version: i64) -> String {
     format!("../v{version}/signing-record.pdf")
+}
+
+pub fn relative_executed_copy_href(version: i64) -> String {
+    format!("../v{version}/executed.pdf")
 }
 
 fn page_shell(title: &str, body: &str) -> String {
@@ -359,7 +370,7 @@ pub fn render_recipient_page(
 <tr><th>Client</th><td>{client}</td></tr>\
 <tr><th>Checksum</th><td class=\"mono\">{checksum}</td></tr></table>\n\
 <div class=\"doc\"><object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object></div>\n\
-<p class=\"download\"><a class=\"button secondary\" href=\"{href}\">Download the PDF</a>{record}</p>\n\
+<p class=\"download\">{executed}<a class=\"button secondary\" href=\"{href}\">Download the PDF</a>{record}</p>\n\
 <section class=\"respond\">\n{signing}{section}</section>",
         company = esc(ctx.company),
         title = esc(ctx.title),
@@ -373,9 +384,27 @@ pub fn render_recipient_page(
             .unwrap_or_default(),
         name = esc(recipient.name),
         href = esc(ctx.pdf_href),
+        executed = match state {
+            PageState::Executed {
+                links:
+                    ExecutedLinks {
+                        executed_copy: Some(copy),
+                        ..
+                    },
+                ..
+            } => format!(
+                "<a class=\"button primary\" href=\"{}\">Download the executed copy</a>",
+                esc(copy)
+            ),
+            _ => String::new(),
+        },
         record = match state {
             PageState::Executed {
-                signing_record_href: Some(record),
+                links:
+                    ExecutedLinks {
+                        signing_record: Some(record),
+                        ..
+                    },
                 ..
             } => format!(
                 "<a class=\"button secondary\" href=\"{}\">Download the signing record</a>",
@@ -449,6 +478,17 @@ pub fn signed_subject(company: &str, title: &str) -> String {
     }
 }
 
+/// What a confirmation carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attached {
+    /// One file: the signed PDF with the signing record appended.
+    ExecutedCopy,
+    /// The signed PDF and the signing record as two files.
+    SignedAndRecord,
+    /// The signed PDF alone, when no record could be made.
+    SignedOnly,
+}
+
 /// One signature as the confirmation lists it: `Accepted by Pat Example,
 /// Director of Operations, on 2026-10-06.`
 pub fn signed_by_line(
@@ -485,12 +525,14 @@ pub fn render_signed_email_text(
     version: i64,
     signed_by: &[String],
     url: Option<&str>,
-    with_record: bool,
+    attached: Attached,
 ) -> String {
-    let attached = if with_record {
-        "the signed copy and its signing record are attached"
-    } else {
-        "the signed copy is attached"
+    let attached = match attached {
+        Attached::ExecutedCopy => {
+            "the executed copy, the signed document with its signing record at the end, is attached"
+        }
+        Attached::SignedAndRecord => "the signed copy and its signing record are attached",
+        Attached::SignedOnly => "the signed copy is attached",
     };
     let link = url.map(|u| format!("{u}\n")).unwrap_or_default();
     let signed = signed_by
@@ -670,7 +712,7 @@ mod tests {
                     title: None,
                     date: "2026-10-07",
                 },
-                signing_record_href: None,
+                links: ExecutedLinks::default(),
             },
         );
         assert!(page.contains(
@@ -708,7 +750,7 @@ mod tests {
                     title: None,
                     date: "2026-10-07",
                 },
-                signing_record_href: None,
+                links: ExecutedLinks::default(),
             },
         ] {
             assert!(
@@ -866,7 +908,7 @@ mod tests {
                 title: None,
                 date: "2026-10-07",
             },
-            signing_record_href: None,
+            links: ExecutedLinks::default(),
         });
         assert!(
             executed.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
@@ -895,7 +937,10 @@ mod tests {
                     title: None,
                     date: "2026-10-07",
                 },
-                signing_record_href: Some(&href),
+                links: ExecutedLinks {
+                    executed_copy: None,
+                    signing_record: Some(&href),
+                },
             },
         );
         assert!(page.contains(
@@ -946,12 +991,19 @@ mod tests {
                     ),
                 ],
                 Some("https://docs.example.test/d/doc/rs/index.html"),
-                true
+                Attached::SignedAndRecord
             ),
             "Hello Pat Example,\n\nThis document is now fully signed; the signed copy and its signing record are attached.\n\nWebsite rebuild (version 2)\nAccepted by Pat Example, Director of Operations, on behalf of Cedar Systems, on 2026-10-06.\nCountersigned by Sam Example on 2026-10-07.\nhttps://docs.example.test/d/doc/rs/index.html\n"
         );
         assert_eq!(
-            render_signed_email_text("Pat Example", "Website rebuild", 2, &[], None, false),
+            render_signed_email_text(
+                "Pat Example",
+                "Website rebuild",
+                2,
+                &[],
+                None,
+                Attached::SignedOnly
+            ),
             "Hello Pat Example,\n\nThis document is now fully signed; the signed copy is attached.\n\nWebsite rebuild (version 2)\n"
         );
     }

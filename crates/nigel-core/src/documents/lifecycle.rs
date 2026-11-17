@@ -8,8 +8,8 @@ use rusqlite::Connection;
 use super::model::{Document, DocumentStatus, DocumentVersion, SignatureRole};
 use super::record::{add_version, record_withdrawal};
 use super::render::{
-    relative_pdf_href, render_recipient_page, withdrawn_page_html, PageContext, PageRecipient,
-    PageState, RequestedChange, Stamp,
+    relative_pdf_href, render_recipient_page, withdrawn_page_html, ExecutedLinks, PageContext,
+    PageRecipient, PageState, RequestedChange, Stamp,
 };
 use super::store::{
     change_requests, get_document, recipients, signatures, version_client_name, versions,
@@ -106,7 +106,14 @@ pub fn republish_after_change<P: DocumentPublisher, R: ResponseSource>(
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
-    republish_linking_record(conn, id, company, None, publisher, source)
+    republish_linking_record(
+        conn,
+        id,
+        company,
+        ExecutedLinks::default(),
+        publisher,
+        source,
+    )
 }
 
 /// [`republish_after_change`], with an executed page linking the signing
@@ -115,7 +122,7 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
     conn: &Connection,
     id: i64,
     company: &str,
-    signing_record_href: Option<&str>,
+    links: ExecutedLinks<'_>,
     publisher: Option<&P>,
     source: Option<&R>,
 ) -> Vec<String> {
@@ -166,7 +173,7 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
             Some(countersign) => PageState::Executed {
                 client,
                 countersign,
-                signing_record_href,
+                links,
             },
             None => return Vec::new(),
         },

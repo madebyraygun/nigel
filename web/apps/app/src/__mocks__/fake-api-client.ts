@@ -1968,6 +1968,10 @@ export class FakeApiClient implements ApiClient {
     return { kind: 'href', href: `/document-signing-record/${id}.pdf` };
   }
 
+  documentExecutedCopyTarget(id: number): ExportTarget {
+    return { kind: 'href', href: `/document-executed/${id}.pdf` };
+  }
+
   async documentPreviewHtml(id: number): Promise<string> {
     this.calls.push(`documentPreviewHtml:${id}`);
     if (this.documentPreviewHtmlError) throw this.documentPreviewHtmlError;
@@ -2069,6 +2073,8 @@ export class FakeApiClient implements ApiClient {
       signatures: [],
       changeRequests: [],
       fileMissing: false,
+      executedChecksum: null,
+      executedPublicChecksum: null,
     };
   }
 

@@ -1741,6 +1741,7 @@ pair is the capability in a recipient's link.
 |---|---|---|
 | `d/{token}/v{n}/document.pdf` | public | Nigel, once per version, never changed |
 | `d/{token}/v{n}/signing-record.pdf` | public | Nigel, when that version is countersigned, and again by `document signing-record`; the redacted record, without IP address or browser |
+| `d/{token}/v{n}/executed.pdf` | public | Nigel, beside the record: the signed PDF with the redacted record appended |
 | `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
 | `d/{token}/manifest.json` | private | Nigel |
 | `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
@@ -1889,16 +1890,18 @@ signed in; `countersign` takes `--title` too. `decline` is terminal.
 
 1. **The signing record** is generated in its two variants (below): the full
    one is kept in the data directory and the redacted one is published beside
-   the version's PDF.
-2. **The pages** are republished showing both signatures, with a **Download the
-   signing record** button beside **Download the PDF** once the record is
-   published.
+   the version's PDF. So is the **executed copy** of each, the signed PDF with
+   that record appended (below).
+2. **The pages** are republished showing both signatures, with **Download the
+   executed copy**, **Download the PDF** and **Download the signing record**
+   buttons, each once its file is published.
 3. **A confirmation email** goes to every recipient of the executed version, one
    message each, with the subject `Signed: <title> for <company>` (just
    `Signed: <title>` when no business name is set), a short plain-text body
-   with their page link, and two attachments: the signed PDF and the signing
-   record — the full record for the signer, the redacted one for each
-   collaborator. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
+   naming who signed, with their page link, and the executed copy attached —
+   the one with the full record for the signer, the redacted one for each
+   collaborator. When no executed copy could be made, the signed PDF and the
+   signing record are attached as two files instead. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
    nothing from R2 except for the page link, which is left out when R2 is not
    configured.
 
@@ -1946,6 +1949,29 @@ anyone holding a page link:
 Both name the same checksum and the same signatures, so either verifies the
 signed file.
 
+#### The executed copy
+
+The **executed copy** is the signed PDF with the signing record appended as its
+last pages, in one file, as e-signature services hand back an executed document.
+It is downloaded as `<Title>-v<n>-executed.pdf`.
+
+The signed PDF stays exactly as it was sent. Appending pages changes a file's
+bytes, so the executed copy is a **new file with its own checksum**, never a
+replacement: the signatures stay bound to the signed PDF's checksum, which the
+appended record names, and a reader verifies the original pages against that.
+A file cannot name its own checksum, so Nigel stores the executed copy's on the
+version; `nigel document show` prints it beside the version, and the web UI and
+the API carry it as `executedChecksum`.
+
+There are two, matching the record's variants: the full one is kept in the data
+directory beside the record (**Download executed copy** in the web UI and `GET
+/api/documents/{id}/executed.pdf`) and emailed to the signer; the redacted one
+is published as `d/{token}/v{n}/executed.pdf` and emailed to collaborators.
+
+A signed PDF that cannot be combined — an encrypted file, say — makes no
+executed copy. The countersignature stands, the warning says why, and the
+signed PDF and the record go out as two files.
+
 The record needs the `pdf` feature, which the release builds have. A build
 without it skips the record with a warning and emails the signed PDF alone.
 
@@ -1957,8 +1983,9 @@ the web UI:
 nigel document signing-record 3
 ```
 
-It writes the full local copy and, when R2 is configured, uploads the redacted
-copy and republishes the pages linking it. It emails nobody. It says `Published it as …` only when
+It writes the full local copy and the executed copies (making them for a
+document executed before executed copies existed) and, when R2 is configured,
+uploads the redacted ones and republishes the pages linking them. It emails nobody. It says `Published it as …` only when
 the upload succeeded, says the record was written locally when R2 is not
 configured, and exits non-zero when R2 is configured, even partly, and the
 record was not published.

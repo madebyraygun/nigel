@@ -644,6 +644,12 @@ pub fn report_regenerated(id: i64, regenerated: &RegeneratedRecord) -> (Vec<Stri
         "Wrote the signing record for document #{id}: {}",
         regenerated.path.display()
     )];
+    if let Some(path) = &regenerated.executed_path {
+        lines.push(format!(
+            "Wrote the executed copy, the signed PDF with the record appended: {}",
+            path.display()
+        ));
+    }
     if regenerated.published {
         lines.push(format!("Published it as {}.", regenerated.filename));
     } else if regenerated
@@ -751,6 +757,11 @@ pub fn format_document_show(
             "Version {}  {}  {state}\n",
             version.number, version.checksum
         ));
+        if let Some(executed) = &version.executed_checksum {
+            out.push_str(&format!(
+                "  executed copy  {executed}  (the signed PDF with its signing record appended)\n"
+            ));
+        }
         if file_missing(version) {
             out.push_str(&format!(
                 "  PDF MISSING: {} is not on disk; restore it from a backup that includes the documents folder\n",
@@ -1149,6 +1160,8 @@ mod tests {
                 sent_at: sent_at.map(Into::into),
                 created_at: "2026-10-05T09:00:00Z".into(),
                 client_name: None,
+                executed_checksum: None,
+                executed_public_checksum: None,
             };
         let recipient = |id: i64, role: RecipientRole, name: &str, email: &str| Recipient {
             id,
@@ -1228,6 +1241,16 @@ mod tests {
             user_agent: None,
             checksum: "sha256:dd".into(),
         }
+    }
+
+    #[test]
+    fn show_prints_an_executed_copy_checksum_beside_its_version() {
+        let mut record = fixture_record();
+        record.versions[0].version.executed_checksum = Some("sha256:ee".into());
+        let out = format_document_show(&record, |_| false);
+        assert!(out.contains(
+            "  executed copy  sha256:ee  (the signed PDF with its signing record appended)\n"
+        ));
     }
 
     #[test]
@@ -1343,6 +1366,7 @@ mod tests {
         use nigel_core::invoicing::gateway::{Unavailable, UnavailableState};
         let record = |published: bool, state: Option<UnavailableState>| RegeneratedRecord {
             path: std::path::PathBuf::from("/data/documents/3/v1-signing-record.pdf"),
+            executed_path: None,
             filename: "Website-rebuild-v1-signing-record.pdf".into(),
             published,
             unavailable: state.map(|state| Unavailable {

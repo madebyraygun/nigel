@@ -1,9 +1,11 @@
 ---
 id: TASK-109.25
 title: 'Documents: an executed copy with the signing record appended'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-17 21:22'
+updated_date: '2026-11-17 22:08'
 labels:
   - documents
   - signing
@@ -24,10 +26,10 @@ The executed copy becomes the default download and the confirmation email's atta
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Countersigning produces an executed copy: the signed PDF's pages followed by the signing record's pages, stored beside the version with its own checksum
-- [ ] #2 The signed PDF's bytes and checksum are unchanged, and the appended record names the signed PDF's checksum
-- [ ] #3 There are two copies, matching the two record variants: the full one for the signer and operator, the redacted one for collaborators and the public page
-- [ ] #4 The recipient page, the web UI, the API and the confirmation email offer the executed copy; the separate signed PDF and signing record stay downloadable
-- [ ] #5 document signing-record regenerates and republishes the executed copy too; documents executed before this change get one the next time it runs
-- [ ] #6 Tests cover the merge (page count, the original pages unchanged, the checksum named) and the publish; docs/invoicing.md and docs/api.md describe it
+- [x] #1 Countersigning produces an executed copy: the signed PDF's pages followed by the signing record's pages, stored beside the version with its own checksum
+- [x] #2 The signed PDF's bytes and checksum are unchanged, and the appended record names the signed PDF's checksum
+- [x] #3 There are two copies, matching the two record variants: the full one for the signer and operator, the redacted one for collaborators and the public page
+- [x] #4 The recipient page, the web UI, the API and the confirmation email offer the executed copy; the separate signed PDF and signing record stay downloadable
+- [x] #5 document signing-record regenerates and republishes the executed copy too; documents executed before this change get one the next time it runs
+- [x] #6 Tests cover the merge (page count, the original pages unchanged, the checksum named) and the publish; docs/invoicing.md and docs/api.md describe it
 <!-- AC:END -->

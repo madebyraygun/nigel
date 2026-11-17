@@ -123,6 +123,10 @@ export class DesktopApiClient extends FetchApiClient {
     return this.save(this.documentSigningRecordUrl(id), `document-${id}-signing-record.pdf`);
   }
 
+  override documentExecutedCopyTarget(id: number): ExportTarget {
+    return this.save(this.documentExecutedCopyUrl(id), `document-${id}-executed.pdf`);
+  }
+
   override shellChrome(): ShellChrome | null {
     return {
       // Fire-and-forget like the drag subscription: a refused invoke leaves

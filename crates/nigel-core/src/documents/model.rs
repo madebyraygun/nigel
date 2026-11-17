@@ -164,6 +164,13 @@ pub struct DocumentVersion {
     /// it is sent.
     #[serde(skip_serializing)]
     pub client_name: Option<String>,
+    /// The checksum of the executed copy kept in the data directory: the
+    /// signed PDF with the full signing record appended. `None` until one is
+    /// made.
+    pub executed_checksum: Option<String>,
+    /// The checksum of the executed copy published beside the version, with
+    /// the redacted record appended.
+    pub executed_public_checksum: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
