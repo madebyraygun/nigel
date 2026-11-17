@@ -110,6 +110,17 @@ describe('the page Nigel publishes, posting to this Worker', () => {
     });
   });
 
+  it('posts a title the signer gives, and the Worker records it', async () => {
+    const { forms, posted } = load(signer.token);
+    const accept = forms.find((f) => f.dataset.action === 'accept')!;
+    accept.values = { typedName: signer.name, title: ' Director of Operations ', consent: 'on' };
+    await submit(accept);
+
+    expect((posted[0] as { title?: string }).title).toBe('Director of Operations');
+    const record = JSON.parse(bucket.objects.get(responseKey(fixture.token, fixture.version, signer.token))!);
+    expect(record.title).toBe('Director of Operations');
+  });
+
   it("posts a change request the Worker records for the collaborator's own token", async () => {
     const { forms, received, posted } = load(collaborator.token);
     expect(forms.map((f) => f.dataset.action)).toEqual(['request_changes']);

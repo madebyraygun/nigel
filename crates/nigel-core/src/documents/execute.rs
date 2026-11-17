@@ -12,13 +12,14 @@ use rusqlite::Connection;
 use super::lifecycle::republish_linking_record;
 use super::model::RecipientRole;
 use super::render::{
-    attachment_name, relative_signing_record_href, render_signed_email_text, signed_subject,
+    attachment_name, relative_signing_record_href, render_signed_email_text, signed_by_line,
+    signed_subject,
 };
 use super::signing_record::{
-    generate_signing_record, signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE,
+    generate_signing_record, plain_text, signing_record_rel, GeneratedRecord, PDF_UNAVAILABLE,
     RECORD_UNAVAILABLE,
 };
-use super::store::{get_document, latest_sent_version, read_version_pdf, recipients};
+use super::store::{get_document, latest_sent_version, read_version_pdf, recipients, signatures};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource, Unavailable,
@@ -227,9 +228,20 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             .ok_or_else(|| NigelError::Other(format!("Document #{id} has no sent version.")))?;
         let pdf = read_version_pdf(data_dir, &version)?;
         let frozen = recipients(conn, version.id)?;
-        Ok((document, version, pdf, frozen))
+        let signed_by = signatures(conn, version.id)?
+            .iter()
+            .map(|s| {
+                signed_by_line(
+                    s.role,
+                    &plain_text(&s.name),
+                    s.title.as_deref().map(plain_text).as_deref(),
+                    s.signed_at.get(..10).unwrap_or(&s.signed_at),
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok((document, version, pdf, frozen, signed_by))
     };
-    let (document, version, pdf, frozen) = match load() {
+    let (document, version, pdf, frozen, signed_by) = match load() {
         Ok(loaded) => loaded,
         Err(e) => {
             warnings.push(format!(
@@ -283,6 +295,7 @@ fn email_signed_copies<P: DocumentPublisher, M: Mailer>(
             &r.name,
             &document.title,
             version.number,
+            &signed_by,
             url.as_deref(),
             record.is_some(),
         );
@@ -329,8 +342,8 @@ mod tests {
 
     fn executed(conn: &Connection, dir: &Path) -> (i64, FakeDocumentPublisher, FakeResponseSource) {
         let (id, p, s) = sent_document_with_fakes(conn, dir);
-        record_manual_accept(conn, id, "Pat Example", "2026-10-06").unwrap();
-        record_countersign(conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_manual_accept(conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(conn, id, "Sam Example", None, "2026-10-07").unwrap();
         (id, p, s)
     }
 
@@ -566,7 +579,7 @@ mod tests {
         let (dir, conn) = test_conn();
         let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
         accept_online(&conn, id, "Pat Example", "Mozilla/5.0 (X11) Firefox/131.0");
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         let m = FakeMailer::default();
         let warnings =
             complete_execution(&conn, dir.path(), id, "Initech", Ok(&p), Some(&s), Ok(&m));

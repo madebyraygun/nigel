@@ -339,7 +339,10 @@ pub fn accept_online(conn: &rusqlite::Connection, id: i64, typed_name: &str, use
         &crate::documents::record::OnlineResponse {
             version_id: version.id,
             recipient_id: signer.id,
-            kind: crate::documents::model::ResponseKind::Accept { typed_name },
+            kind: crate::documents::model::ResponseKind::Accept {
+                typed_name,
+                title: None,
+            },
             received_at: "2026-10-06T17:04:11Z",
             ip: Some("203.0.113.7"),
             user_agent: Some(user_agent),

@@ -2044,6 +2044,7 @@ export class FakeApiClient implements ApiClient {
           method: 'manual',
           signedAt: input.date ?? FAKE_DOCUMENT_DAY,
           typedName: null,
+          title: null,
           ip: null,
           userAgent: null,
           checksum: version.checksum,

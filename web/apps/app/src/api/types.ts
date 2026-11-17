@@ -1503,6 +1503,7 @@ export interface DocumentSignature {
   method: 'online' | 'manual';
   signedAt: string;
   typedName: string | null;
+  title: string | null;
   ip: string | null;
   userAgent: string | null;
   checksum: string;
@@ -1648,6 +1649,8 @@ export interface DocumentSendErrorDetails {
 /** A response given outside the published page. `date` defaults to today. */
 export interface ManualAcceptRequest {
   name: string;
+  /** The role they sign in, e.g. "Director of Operations". */
+  title?: string;
   date?: string;
 }
 
@@ -1664,6 +1667,7 @@ export interface DeclineRequest {
 
 export interface CountersignRequest {
   name: string;
+  title?: string;
   date?: string;
 }
 

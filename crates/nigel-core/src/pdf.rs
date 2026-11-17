@@ -1681,6 +1681,9 @@ pub fn render_signing_record(
         });
         pdf.y += 1.0;
         pdf.record_row("Name", &signature.name);
+        if let Some(title) = &signature.title {
+            pdf.record_row("Title", title);
+        }
         if let Some(typed) = &signature.typed_name {
             pdf.record_row("Typed name", typed);
         }

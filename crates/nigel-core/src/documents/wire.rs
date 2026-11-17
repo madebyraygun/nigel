@@ -46,6 +46,8 @@ pub struct DocumentResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consent: Option<bool>,
     #[serde(default)]
     pub note: Option<String>,
@@ -122,6 +124,17 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(accept.action, ResponseAction::Accept);
+        assert_eq!(
+            accept.title, None,
+            "a Worker older than the title field writes none"
+        );
+        let titled: DocumentResponse = serde_json::from_value(serde_json::json!({
+            "action": "accept", "version": 2, "checksum": "sha256:ab", "recipientToken": "t1",
+            "typedName": "Pat Example", "title": "Director of Operations", "consent": true,
+            "receivedAt": "2026-10-05T17:04:11Z"
+        }))
+        .unwrap();
+        assert_eq!(titled.title.as_deref(), Some("Director of Operations"));
         let changes: DocumentResponse = serde_json::from_value(serde_json::json!({
             "action": "request_changes", "version": 2, "checksum": "sha256:ab", "recipientToken": "t2",
             "note": "Fix the dates", "receivedAt": "2026-10-05T17:04:11Z"

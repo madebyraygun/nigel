@@ -745,6 +745,9 @@ pub enum DocumentCommands {
         id: i64,
         #[arg(long)]
         name: String,
+        /// The role they sign in, e.g. "Director of Operations"
+        #[arg(long)]
+        title: Option<String>,
         #[arg(long)]
         date: Option<String>,
     },
@@ -775,6 +778,9 @@ pub enum DocumentCommands {
         id: i64,
         #[arg(long)]
         name: String,
+        /// The role they sign in, e.g. "Director of Operations"
+        #[arg(long)]
+        title: Option<String>,
         #[arg(long)]
         date: Option<String>,
     },

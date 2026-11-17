@@ -579,9 +579,9 @@ pub fn sync() -> Result<()> {
     Ok(())
 }
 
-pub fn accept(id: i64, name: &str, date: &str) -> Result<()> {
+pub fn accept(id: i64, name: &str, title: Option<&str>, date: &str) -> Result<()> {
     record_then_republish(id, date, |conn, at| {
-        record_manual_accept(conn, id, name, at)
+        record_manual_accept(conn, id, name, title, at)
     })
 }
 
@@ -598,11 +598,11 @@ pub fn decline(id: i64, note: Option<&str>, date: &str) -> Result<()> {
 /// Countersign, then publish the signing record, republish the pages and
 /// email the signed copy. Everything after the countersignature is a warning
 /// when it fails, never an error.
-pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
+pub fn countersign(id: i64, name: &str, title: Option<&str>, date: &str) -> Result<()> {
     let date = validate_moment(date, "date")?;
     let data_dir = get_data_dir();
     let conn = get_connection(&data_dir.join("nigel.db"))?;
-    record_countersign(&conn, id, name, &date)?;
+    record_countersign(&conn, id, name, title, &date)?;
     println!("Recorded: document #{id} is executed.");
     let warnings = complete_execution_configured(
         &conn,
@@ -770,8 +770,13 @@ pub fn format_document_show(
                 SignatureRole::Client => "accepted",
                 SignatureRole::Countersign => "countersigned",
             };
+            let title = signature
+                .title
+                .as_deref()
+                .map(|t| format!(", {}", printable(t)))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "  {verb} by {} ({}) at {}",
+                "  {verb} by {}{title} ({}) at {}",
                 printable(&signature.name),
                 signature.method.as_str(),
                 signature.signed_at
@@ -928,6 +933,7 @@ mod tests {
                 checksum: v.checksum.clone(),
                 recipient_token: signer.token.clone(),
                 typed_name: Some("Pat Example".into()),
+                title: None,
                 consent: Some(true),
                 note: None,
                 received_at: "2026-10-05T17:04:11Z".into(),
@@ -1216,6 +1222,7 @@ mod tests {
             method,
             signed_at: "2026-10-06T10:00:00Z".into(),
             typed_name: (method == Method::Online).then(|| "Pat E.".into()),
+            title: None,
             ip: (method == Method::Online).then(|| "203.0.113.9".into()),
             user_agent: None,
             checksum: "sha256:dd".into(),

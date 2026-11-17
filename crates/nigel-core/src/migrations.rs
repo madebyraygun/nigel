@@ -631,9 +631,28 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 21,
+        description: "documents: an optional title beside a signature's name",
+        up: |conn| add_column_if_missing(conn, "document_signatures", "title", "TEXT"),
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// `ALTER TABLE … ADD COLUMN` once: SQLite has no `ADD COLUMN IF NOT EXISTS`,
+/// so the probe is what makes a replayed migration a no-op.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let present: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?;
+    if !present {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
+    Ok(())
+}
 
 /// A version holding more than one signer keeps the first in the frozen order
 /// and records the rest as collaborators, so v16's index can be built. The
@@ -2007,6 +2026,22 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM simplefin_accounts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(feeds, 2);
+    }
+
+    #[test]
+    fn v21_gives_signatures_a_title_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "20").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        let has_title: bool = conn
+            .query_row(
+                "SELECT COUNT(*) = 1 FROM pragma_table_info('document_signatures') WHERE name = 'title'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has_title);
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub struct RecordedSignature {
     pub role: SignatureRole,
     pub name: String,
     pub typed_name: Option<String>,
+    pub title: Option<String>,
     pub method: Method,
     pub signed_at: String,
     pub ip: Option<String>,
@@ -144,6 +145,7 @@ pub fn signing_record(conn: &Connection, id: i64, company: &str) -> Result<Signi
                 role: s.role,
                 name: plain_text(&s.name),
                 typed_name: s.typed_name.map(|t| plain_text(&t)),
+                title: s.title.map(|t| plain_text(&t)),
                 method: s.method,
                 signed_at: plain_text(&s.signed_at),
                 ip: online(s.method, s.ip),
@@ -265,7 +267,7 @@ mod tests {
     fn a_record_is_refused_until_the_document_is_executed() {
         let (dir, conn) = test_conn();
         let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         let err = signing_record(&conn, id, "Initech").unwrap_err();
         assert!(
             matches!(
@@ -283,8 +285,8 @@ mod tests {
     fn the_record_lists_the_acceptance_then_the_countersignature() {
         let (dir, conn) = test_conn();
         let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         let record = signing_record(&conn, id, "Initech").unwrap();
         assert_eq!(
             (
@@ -312,7 +314,14 @@ mod tests {
             "Pat\u{1b}[31m Example\r\n",
             "Mozilla/5.0 (X11)\u{7}\u{2028}Firefox/131.0",
         );
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_countersign(
+            &conn,
+            id,
+            "Sam Example",
+            Some("Managing Partner"),
+            "2026-10-07",
+        )
+        .unwrap();
         let record = signing_record(&conn, id, "Initech").unwrap();
         let client = &record.signatures[0];
         assert_eq!(client.typed_name.as_deref(), Some("Pat[31m Example"));
@@ -339,6 +348,8 @@ mod tests {
             "Mozilla/5.0 (X11)Firefox/131.0",
             "Countersignature",
             "Sam Example",
+            "Title",
+            "Managing Partner",
             "Manual",
             "2026-10-07",
         ] {
@@ -385,8 +396,8 @@ mod tests {
     fn generating_writes_the_local_copy_beside_the_version_pdf_and_leaves_it_alone() {
         let (dir, conn) = test_conn();
         let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         let version = crate::documents::store::latest_version(&conn, id).unwrap();
         let signed = std::fs::read(dir.path().join(&version.file_path)).unwrap();
 

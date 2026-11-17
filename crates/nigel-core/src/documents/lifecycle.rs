@@ -9,7 +9,7 @@ use super::model::{Document, DocumentStatus, DocumentVersion, SignatureRole};
 use super::record::{add_version, record_withdrawal};
 use super::render::{
     relative_pdf_href, render_recipient_page, withdrawn_page_html, PageContext, PageRecipient,
-    PageState, RequestedChange,
+    PageState, RequestedChange, Stamp,
 };
 use super::store::{change_requests, get_document, recipients, signatures, versions};
 use super::wire::{manifest_for, ManifestState};
@@ -89,8 +89,9 @@ pub fn withdraw_with_teardown<P: DocumentPublisher, R: ResponseSource>(
     Ok(warnings)
 }
 
-type Stamp = (SignatureRole, String, String);
-type Loaded = (Document, DocumentVersion, Vec<Stamp>, Vec<RequestedChange>);
+/// A stored signature reduced to what a page prints: role, name, title, date.
+type Signed = (SignatureRole, String, Option<String>, String);
+type Loaded = (Document, DocumentVersion, Vec<Signed>, Vec<RequestedChange>);
 
 /// Close the manifest and rewrite every page of the latest sent version to
 /// show the document's current state, then every page of the earlier sent
@@ -124,7 +125,14 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
         };
         let stamps = signatures(conn, version.id)?
             .into_iter()
-            .map(|s| (s.role, s.name, s.signed_at.chars().take(10).collect()))
+            .map(|s| {
+                (
+                    s.role,
+                    s.name,
+                    s.title,
+                    s.signed_at.chars().take(10).collect(),
+                )
+            })
             .collect();
         let requests = change_requests(conn, version.id)?
             .into_iter()
@@ -144,11 +152,15 @@ pub(crate) fn republish_linking_record<P: DocumentPublisher, R: ResponseSource>(
     let stamp = |role: SignatureRole| {
         stamps
             .iter()
-            .find(|(r, _, _)| *r == role)
-            .map(|(_, name, date)| (name.as_str(), date.as_str()))
+            .find(|(r, ..)| *r == role)
+            .map(|(_, name, title, date)| Stamp {
+                name,
+                title: title.as_deref(),
+                date,
+            })
     };
     let state = match (document.status, stamp(SignatureRole::Client)) {
-        (DocumentStatus::Accepted, Some((name, date))) => PageState::Accepted { name, date },
+        (DocumentStatus::Accepted, Some(client)) => PageState::Accepted(client),
         (DocumentStatus::Executed, Some(client)) => match stamp(SignatureRole::Countersign) {
             Some(countersign) => PageState::Executed {
                 client,
@@ -528,7 +540,7 @@ mod tests {
             .contains("being revised"));
 
         p.fail_when_key_contains = None;
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-09").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-09").unwrap();
         let warnings = republish_after_change(&conn, id, "Initech", Some(&p), Some(&s));
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(p
@@ -704,7 +716,7 @@ mod tests {
     fn accepting_republishes_every_page_stamped_and_without_a_form() {
         let (dir, conn) = test_conn();
         let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         assert!(republish_after_change(&conn, id, "Initech", Some(&p), Some(&s)).is_empty());
         let doc = get_document(&conn, id).unwrap();
         assert_eq!(
@@ -723,8 +735,8 @@ mod tests {
     fn countersigning_stamps_both_signatures() {
         let (dir, conn) = test_conn();
         let (id, p, s) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         republish_after_change(&conn, id, "Initech", Some(&p), Some(&s));
         let doc = get_document(&conn, id).unwrap();
         let signer = &recipients(&conn, latest_version(&conn, id).unwrap().id).unwrap()[0];
@@ -740,7 +752,7 @@ mod tests {
     fn a_failed_republish_never_loses_the_signature() {
         let (dir, conn) = test_conn();
         let (id, _, s) = sent_document_with_fakes(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         let failing = FakeDocumentPublisher {
             fail_when_key_contains: Some("index.html".into()),
             ..Default::default()

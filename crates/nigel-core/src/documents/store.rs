@@ -275,7 +275,7 @@ pub fn recipients(conn: &Connection, version_id: i64) -> Result<Vec<Recipient>> 
 pub fn signatures(conn: &Connection, version_id: i64) -> Result<Vec<Signature>> {
     let mut stmt = conn.prepare(
         "SELECT id, version_id, recipient_id, role, name, email, method, signed_at,
-                typed_name, ip, user_agent, checksum
+                typed_name, ip, user_agent, checksum, title
            FROM document_signatures WHERE version_id = ?1 ORDER BY id",
     )?;
     let rows = stmt
@@ -296,6 +296,7 @@ pub fn signatures(conn: &Connection, version_id: i64) -> Result<Vec<Signature>> 
                 ip: r.get(9)?,
                 user_agent: r.get(10)?,
                 checksum: r.get(11)?,
+                title: r.get(12)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

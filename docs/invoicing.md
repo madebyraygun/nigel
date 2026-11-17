@@ -1670,7 +1670,9 @@ An acceptance is a **simple electronic signature with an audit trail**: the
 signer's typed name, their consent to sign electronically, the time, their IP
 address and browser, bound to the SHA-256 checksum of the exact PDF they were
 shown. The signer's page tells them their typed name is their signature on the
-document. Nigel does not verify who typed the name — anyone holding the link
+document. The form also asks for an optional **title**, the role the signer signs
+in ("Director of Operations"); it is recorded beside the name and shown wherever
+the signature is. Nigel does not verify who typed the name — anyone holding the link
 can — and it is not a qualified (eIDAS) signature, so a contract that needs
 identity verification or a qualified signature belongs in a service that
 provides it.
@@ -1777,6 +1779,7 @@ A **response** is what the Worker writes when a recipient answers:
   "checksum": "sha256:9c1f…",
   "recipientToken": "…",
   "typedName": "Pat Example",
+  "title": "Director of Operations",
   "consent": true,
   "note": null,
   "receivedAt": "2026-10-05T17:04:11Z",
@@ -1786,13 +1789,17 @@ A **response** is what the Worker writes when a recipient answers:
 ```
 
 `action` is `accept` or `request_changes`; a change request has a `note` of 1 to
-4000 characters of plain text and no `typedName` or `consent`. The Worker
+4000 characters of plain text and no `typedName` or `consent`. `title` is
+optional and written only when the signer gave one: at most 200 characters of
+plain text, trimmed, which Nigel checks again on sync. A Worker deployed before
+the field existed ignores it, so a page can carry the field before the Worker is
+redeployed; until it is, titles typed online are not recorded. The Worker
 refuses a request when the document is unknown (404), the manifest is `closed`
 or the recipient already answered that version (409), the version was already
 accepted (409 `accepted`) or someone requested changes on it (409
 `changes_requested`), the link is not a recipient's or a collaborator tries to
 accept (403), the version or checksum is stale (409), the typed name is blank or
-not plain text, consent is missing or the note is unusable (422), or the
+not plain text, the title is over 200 characters or not plain text, consent is missing or the note is unusable (422), or the
 recipient is over 10 requests a minute (429). The typed name is recorded as
 typed; it does not have to match the signer's name on file.
 
@@ -1846,10 +1853,10 @@ links no longer take responses — tell those people to disregard the email.
 
 ```bash
 nigel document revise 3 --file ~/proposal-v2.pdf
-nigel document accept 3 --name "Pat Example"
+nigel document accept 3 --name "Pat Example" --title "Director of Operations"
 nigel document request-changes 3 --name "Pat Example" --note "Move the start date"
 nigel document decline 3 --note "Going another way"
-nigel document countersign 3 --name "Sam Example"
+nigel document countersign 3 --name "Sam Example" --title "Managing Partner"
 nigel document withdraw 3
 ```
 
@@ -1870,7 +1877,8 @@ versions as superseded again, which repairs it. It works from `sent` and
 the response page. Each takes `--date` (default: today; `YYYY-MM-DD` or an RFC 3339
 timestamp), is recorded with the method `manual`, closes the manifest and
 rewrites the recipients' pages to show the outcome. `accept` records the named
-signer's assent against the version's checksum. `decline` is terminal.
+signer's assent against the version's checksum, with `--title` for the role they
+signed in; `countersign` takes `--title` too. `decline` is terminal.
 
 `countersign` records your own signature on an `accepted` document and makes it
 `executed`. Then, in order:
@@ -1915,7 +1923,7 @@ signed PDF itself never changes: every signature is bound to its SHA-256
 checksum, and the record names that checksum so anyone can verify the copy they
 hold. It shows the document's title, kind, client, version and checksum, then
 the client's acceptance and your countersignature, each with the name, the
-typed name, the method (`online` or `manual`), the time, and for an online
+title when one was given, the typed name, the method (`online` or `manual`), the time, and for an online
 acceptance the IP address and browser. Text a recipient supplied — the typed
 name, the browser string — is printed as plain text with control characters
 removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.

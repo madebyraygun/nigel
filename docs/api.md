@@ -989,8 +989,9 @@ client's name, every version, and what may be done to it next:
 ```
 
 A signature carries `role` (`client` or `countersign`), `method` (`online` or
-`manual`), `name`, `signedAt`, the `checksum` it was given on and, for an online
-one, `typedName`, `email`, `ip` and `userAgent`. A change request carries
+`manual`), `name`, `title` (the role they signed in, or `null`), `signedAt`, the
+`checksum` it was given on and, for an online one, `typedName`, `email`, `ip`
+and `userAgent`. A change request carries
 `name`, `note`, `requestedAt`, `method`, `checksum` and the same online
 metadata. `checksum` always carries the `sha256:` prefix.
 
@@ -1107,10 +1108,10 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/documents/:id` | `PATCH` | `title?`, `kind?` | `DocumentDetail` |
 | `/api/documents/:id/revise` | `POST` | multipart: `file` | `DocumentActionResult` |
 | `/api/documents/:id/send` | `POST` | `confirm` (must be `true`), `signer?`, `collaborators?` | `DocumentSendResult` |
-| `/api/documents/:id/accept` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/accept` | `POST` | `name`, `title?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/request-changes` | `POST` | `name`, `note`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/decline` | `POST` | `note?`, `date?` | `DocumentActionResult` |
-| `/api/documents/:id/countersign` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/countersign` | `POST` | `name`, `title?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/withdraw` | `POST` | `{}` | `DocumentActionResult` |
 | `/api/documents/:id/signing-record` | `POST` | `{}` | `DocumentActionResult` with `published` |
 | `/api/document-kinds/:id/reactivate` | `POST` | — | `DocumentKind`; `409 already_active` for an active kind, `404 kind_not_found` for none |

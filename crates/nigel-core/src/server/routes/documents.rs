@@ -744,6 +744,7 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AcceptRequest {
     name: String,
+    title: Option<String>,
     date: Option<String>,
 }
 
@@ -809,7 +810,7 @@ async fn accept(
 ) -> ApiResult<Json<ActionResult>> {
     let date = response_date(request.date)?;
     record_and_republish(&state, id, move |conn| {
-        record_manual_accept(conn, id, &request.name, &date)
+        record_manual_accept(conn, id, &request.name, request.title.as_deref(), &date)
     })
     .await
 }
@@ -855,7 +856,7 @@ async fn countersign(
     let result = with_conn_api(&state, {
         let state = state.clone();
         move |conn| {
-            record_countersign(conn, id, &request.name, &date)
+            record_countersign(conn, id, &request.name, request.title.as_deref(), &date)
                 .map_err(|e| not_found_because(e, "document_not_found"))?;
             let warnings = complete_execution_configured(
                 conn,
@@ -2110,7 +2111,7 @@ mod tests {
         let conn = crate::db::open_connection(&db_path, None).unwrap();
         let (id, _, _) = sent_document_with_fakes(&conn, db_path.parent().unwrap());
         crate::documents::testing::accept_online(&conn, id, "Pat Example", "Mozilla/5.0 (X11)");
-        crate::documents::record::record_countersign(&conn, id, "Sam Example", "2026-10-07")
+        crate::documents::record::record_countersign(&conn, id, "Sam Example", None, "2026-10-07")
             .unwrap();
         drop(conn);
         let (app, token) = app_for(&db_path);
@@ -2390,6 +2391,7 @@ mod tests {
                 checksum: version.checksum.clone(),
                 recipient_token: signer.token.clone(),
                 typed_name: Some("Pat Example".into()),
+                title: None,
                 consent: Some(true),
                 note: None,
                 received_at: "2026-10-05T17:04:11Z".into(),

@@ -186,6 +186,8 @@ pub struct Signature {
     pub method: Method,
     pub signed_at: String,
     pub typed_name: Option<String>,
+    /// The role the signer signs in, e.g. "Director of Operations".
+    pub title: Option<String>,
     pub ip: Option<String>,
     pub user_agent: Option<String>,
     pub checksum: String,
@@ -262,12 +264,19 @@ impl NewRecipient {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResponseKind<'a> {
-    Accept { typed_name: &'a str },
-    RequestChanges { note: &'a str },
+    Accept {
+        typed_name: &'a str,
+        title: Option<&'a str>,
+    },
+    RequestChanges {
+        note: &'a str,
+    },
 }
 
 pub const CHECKSUM_PREFIX: &str = "sha256:";
 pub const NOTE_MAX_CHARS: usize = 4000;
+/// The longest typed name or signer title an acceptance records.
+pub const SIGNER_TEXT_MAX_CHARS: usize = 200;
 
 pub fn gen_document_token() -> String {
     let mut bytes = [0u8; 16];
