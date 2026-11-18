@@ -1,9 +1,10 @@
 ---
 id: TASK-181
-title: Custom greeting on invoice and document emails
+title: Custom greeting and email preview on invoice and document sends
 status: To Do
 assignee: []
 created_date: '2026-11-18 21:36'
+updated_date: '2026-11-18 21:39'
 labels: []
 dependencies: []
 ---
@@ -24,4 +25,8 @@ Let the operator open an outgoing invoice or document email with their own words
 - [ ] #6 The greeting is length-limited and trimmed, and it never appears on the published page or the PDF.
 - [ ] #7 The greeting actually sent is stored with the invoice send or document version, and `show` displays it.
 - [ ] #8 Tests cover default, override, cleared and scheduled sends for both kinds. docs/invoicing.md, docs/api.md and docs/commands.md are updated.
+- [ ] #9 The send dialog shows a live preview of the email that will go out: recipient(s), subject, plain-text body including the greeting, and attachment names. It updates as the greeting is edited.
+- [ ] #10 The preview comes from a server endpoint (POST /api/invoices/{id}/email-preview, POST /api/documents/{id}/email-preview, taking the draft greeting and recipients) that calls the same body and subject functions as the real send. It publishes, charges and emails nothing.
+- [ ] #11 Links that only exist after a send, such as the invoice's Pay now URL and each document recipient's personal link, are shown as a clearly marked placeholder in the preview.
+- [ ] #12 `nigel invoice send` and `nigel document send` print the email preview before their confirmation prompt.
 <!-- AC:END -->
