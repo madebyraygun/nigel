@@ -1623,8 +1623,8 @@ That is why the route's error body has to stay legible.
 #### The email greeting
 
 Both send routes take an optional `greeting`, the opening paragraph of the
-email — the first paragraph of an invoice email, and the paragraph after
-`Hello {name},` in each document email. It goes in the email body only, never on
+email — the first paragraph of an invoice email, and in place of the
+`Hello {name},` line in each document email. It goes in the email body only, never on
 the published page or in the PDF.
 
 | `greeting` in the body | What the email carries |

@@ -738,7 +738,8 @@ describe('nigel-documents-screen', () => {
       );
       const emails = emailPreview(el)?.emails ?? [];
       expect(emails.map((email) => email.role)).toEqual(['signer']);
-      expect(emails[0].body).toContain(`Hello Pat Example,\n\n${GREETING}`);
+      expect(emails[0].body.startsWith(`${GREETING}\n\n`)).toBe(true);
+      expect(emails[0].body).not.toContain("Hello Pat Example,");
       expect(emailPreview(el)?.placeholders).toEqual(['[link created when sent]']);
     });
 

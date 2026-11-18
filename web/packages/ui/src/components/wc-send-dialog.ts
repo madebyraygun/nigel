@@ -271,6 +271,7 @@ export class WcSendDialog extends LitElement {
         display: flex;
         justify-content: flex-end;
         gap: var(--wa-space-s);
+        padding-block-start: var(--wa-space-m);
       }
 
       /* The mark beside a step is decoration; this is what says what it means. */
@@ -620,7 +621,7 @@ export class WcSendDialog extends LitElement {
           @input=${this.handleMessageInput}
         ></wa-textarea>
         <div class="message-row">
-          <p class="caveat">Opens the email. Leave it empty to send without one.</p>
+          <p class="caveat">Optional.</p>
           <wa-button
             data-message-clear
             size="s"

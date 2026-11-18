@@ -2803,14 +2803,15 @@ mod tests {
         for email in emails {
             let text = email["body"].as_str().unwrap();
             assert!(
-                text.contains("\n\nThanks for the call, Cedar Systems.\n\n"),
+                text.starts_with("Thanks for the call, Cedar Systems.\n\n"),
                 "{text}"
             );
             assert!(text.contains("[link created when sent]"), "{text}");
         }
-        assert!(emails[0]["body"].as_str().unwrap().starts_with(
-            "Hello Pat Example,\n\nThanks for the call, Cedar Systems.\n\nPlease review"
-        ));
+        assert!(emails[0]["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Thanks for the call, Cedar Systems.\n\nPlease review"));
         assert_eq!(
             body["placeholders"],
             serde_json::json!(["[link created when sent]"])
@@ -2827,7 +2828,7 @@ mod tests {
             body["emails"][0]["body"]
                 .as_str()
                 .unwrap()
-                .starts_with("Hello Pat Example,\n\nOver to you, Juniper Labs.\n\nPlease review"),
+                .starts_with("Over to you, Juniper Labs.\n\nPlease review"),
             "{body}"
         );
 
@@ -2946,10 +2947,15 @@ mod tests {
                 "{requested:?}: {json}"
             );
             for mail in mailer.sent.borrow().iter() {
-                let after_salutation = mail.text.split_once(",\n\n").unwrap().1;
-                let ask = after_salutation
-                    .strip_prefix(&expected.map(|t| format!("{t}\n\n")).unwrap_or_default())
-                    .unwrap_or_else(|| panic!("{requested:?}: {}", mail.text));
+                let ask = match expected {
+                    Some(text) => mail.text.strip_prefix(&format!("{text}\n\n")),
+                    None => mail
+                        .text
+                        .strip_prefix("Hello ")
+                        .and_then(|rest| rest.split_once(",\n\n"))
+                        .map(|(_, ask)| ask),
+                }
+                .unwrap_or_else(|| panic!("{requested:?}: {}", mail.text));
                 assert!(
                     ask.starts_with("Please review") || ask.starts_with("The attached"),
                     "{requested:?}: {}",

@@ -151,12 +151,6 @@ export class WcEmailPreview extends LitElement {
       color: var(--wa-color-text);
     }
 
-    .note {
-      margin: var(--wa-space-xs) 0 0;
-      color: var(--wa-color-muted);
-      font-size: var(--wa-font-size-s);
-    }
-
     .loading {
       display: flex;
       justify-content: center;
@@ -236,11 +230,6 @@ export class WcEmailPreview extends LitElement {
         ? html`<ul class="emails" aria-labelledby="heading" aria-busy=${this.loading ? 'true' : 'false'}>
             ${this.emails.map((email) => this.renderEmail(email, count > 1))}
           </ul>`
-        : nothing}
-      ${this.placeholders.length > 0 && count > 0
-        ? html`<p class="note" data-placeholder-note>
-            <mark>Marked</mark> text is a link created when the email is sent.
-          </p>`
         : nothing}
     `;
   }

@@ -2044,8 +2044,7 @@ export class FakeApiClient implements ApiClient {
       to: `${recipient.name} <${recipient.email}>`,
       subject,
       body: [
-        `Hello ${recipient.name},`,
-        greeting,
+        greeting || `Hello ${recipient.name},`,
         role === "signer"
           ? `${company} has sent you \u201c${detail.title}\u201d to review and accept.`
           : `${company} has shared \u201c${detail.title}\u201d with you for review.`,

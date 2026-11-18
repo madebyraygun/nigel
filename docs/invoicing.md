@@ -756,7 +756,7 @@ carries no contact line unless a custom template asks for one with
 
 A greeting is your own opening paragraph for the email: plain text, at most
 2,000 characters, trimmed. It is the first paragraph of an invoice email, above
-the subject line, and the paragraph after `Hello {name},` in a document email.
+the subject line. In a document email it replaces the `Hello {name},` line.
 It goes in the email body only — never on the published page or in the PDF.
 
 Each kind has a default, empty until you set one: **Invoice email greeting** and
