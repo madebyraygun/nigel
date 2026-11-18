@@ -46,13 +46,14 @@ import {
   documentTableRows,
   latestSentVersion,
   previewRequestFrom,
+  previewRecipientNotes,
   recipientContacts,
   sendRequestFrom,
   timelineVersions,
 } from './documents-data.js';
 import { documentSendFailureMessage, documentsGuardrailMessage } from './documents-errors.js';
 import type { ScreenContext } from './context.js';
-import { EmailDraftController } from './email-draft.js';
+import { EmailDraftController, reasonOf } from './email-draft.js';
 
 type View = 'list' | 'detail';
 
@@ -594,7 +595,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       if (this.detail?.id === detail.id) this.previewHtml = page;
     } catch (error) {
       if (this.detail?.id === detail.id) {
-        this.previewError = error instanceof ApiError ? error.message : String(error);
+        this.previewError = reasonOf(error, 'Could not build the preview.');
       }
     } finally {
       this.previewLoading = false;
@@ -1527,9 +1528,11 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           ? html`<wc-email-preview
               slot="email-preview"
               .emails=${this.emailDraft.preview?.emails ?? []}
-              .placeholders=${this.emailDraft.preview?.placeholders ?? []}
+              .linkPlaceholders=${this.emailDraft.preview?.linkPlaceholders ?? []}
+              .notes=${previewRecipientNotes(this.recipients)}
               .loading=${this.emailDraft.previewLoading}
               .error=${this.emailDraft.previewError}
+              .errorBlocksSend=${this.emailDraft.previewBlocksSend}
             ></wc-email-preview>`
           : nothing}
       </wc-send-dialog>

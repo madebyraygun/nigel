@@ -176,7 +176,7 @@ const preview: Preview = {
           <wc-email-preview
             slot="email-preview"
             .emails=${[INVOICE_EMAIL]}
-            .placeholders=${[PAY]}
+            .linkPlaceholders=${[PAY]}
           ></wc-email-preview>
         </wc-send-dialog>
       `,
@@ -217,7 +217,7 @@ const preview: Preview = {
               docEmail('signer', 'Pat Example', 'pat@cedar.test'),
               docEmail('collaborator', 'Sam Example', 'sam@cedar.test'),
             ]}
-            .placeholders=${[LINK]}
+            .linkPlaceholders=${[LINK]}
           ></wc-email-preview>
         </wc-send-dialog>
       `,

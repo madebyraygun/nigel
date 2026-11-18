@@ -693,7 +693,7 @@ describe('FetchApiClient', () => {
             attachments: ['Invoice-1251.pdf'],
           },
         ],
-        placeholders: ['[pay link created when sent]'],
+        linkPlaceholders: ['[pay link created when sent]'],
       };
       const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse(preview));
       const client = clientFor(fetchImpl);
@@ -772,6 +772,22 @@ describe('FetchApiClient', () => {
       expect(error.details).toMatchObject({ step: 'publish', service: 'r2' });
     });
 
+    it('keeps greeting_invalid and its details on a refused greeting', async () => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        envelope('greeting_invalid', 'The greeting names ${nickname}, which is not a placeholder.', {
+          placeholder: 'nickname',
+        }),
+      );
+
+      const error = (await clientFor(fetchImpl)
+        .invoiceEmailPreview(1251, { greeting: 'Hi ${nickname}' })
+        .catch((thrown: unknown) => thrown)) as ApiError;
+
+      expect(error.code).toBe('greeting_invalid');
+      expect(error.status).toBe(400);
+      expect(error.details).toEqual({ placeholder: 'nickname' });
+    });
+
     it('falls back to upstream_failed for a 502 with no envelope', async () => {
       const fetchImpl = vi
         .fn()
@@ -839,7 +855,7 @@ describe('FetchApiClient', () => {
 
     it('asks for the document email preview with the recipients and the greeting', async () => {
       const fetchImpl = vi.fn().mockImplementation(async () =>
-        jsonResponse({ emails: [], placeholders: [] }),
+        jsonResponse({ emails: [], linkPlaceholders: [] }),
       );
       const client = clientFor(fetchImpl);
       const signer = { name: 'Pat Example', email: 'pat@cedar.test' };

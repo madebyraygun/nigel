@@ -740,7 +740,30 @@ describe('nigel-documents-screen', () => {
       expect(emails.map((email) => email.role)).toEqual(['signer']);
       expect(emails[0].body.startsWith(`${GREETING}\n\n`)).toBe(true);
       expect(emails[0].body).not.toContain("Hello Pat Example,");
-      expect(emailPreview(el)?.placeholders).toEqual(['[link created when sent]']);
+      expect(emailPreview(el)?.linkPlaceholders).toEqual(['[link created when sent]']);
+    });
+
+    it('says which recipients the preview leaves out', async () => {
+      const { el } = await opened();
+      await pause(el);
+      expect(emailPreview(el)?.notes).toEqual([]);
+
+      find<WcRecipientEditor>(el, 'wc-send-dialog > wc-recipient-editor').dispatchEvent(
+        new CustomEvent('nc-recipients-change', {
+          detail: {
+            value: {
+              signer: { name: 'Pat Example', email: 'pat@cedar' },
+              collaborators: [{ name: 'Sam Example', email: 'sam@' }],
+            },
+          },
+        }),
+      );
+      await pause(el);
+
+      expect(emailPreview(el)?.notes).toEqual([
+        'The signer row is incomplete, so the preview uses the default signer.',
+        'The preview leaves out 1 incomplete recipient.',
+      ]);
     });
 
     it('previews one email per recipient once the recipients settle', async () => {

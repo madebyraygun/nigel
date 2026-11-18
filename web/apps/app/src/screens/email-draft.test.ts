@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
-import { EmailDraftController, EMAIL_PREVIEW_DEBOUNCE_MS } from './email-draft.js';
+import { EmailDraftController, EMAIL_PREVIEW_DEBOUNCE_MS, reasonOf } from './email-draft.js';
+import { ApiError } from '../api/index.js';
 import type { EmailPreview } from '../api/types.js';
 
 function host(): ReactiveControllerHost & { updates: number } {
@@ -28,7 +29,7 @@ function previewOf(greeting: string | undefined): EmailPreview {
         attachments: [],
       },
     ],
-    placeholders: [],
+    linkPlaceholders: [],
   };
 }
 
@@ -123,6 +124,8 @@ describe('EmailDraftController', () => {
 
     expect(draft.greeting).toBeUndefined();
     expect(draft.messageCaution).toContain('Could not load the saved message');
+    expect(draft.messageCaution).toContain('offline');
+    expect(draft.messageCaution).not.toContain('Error:');
     expect(fetchPreview).toHaveBeenCalledWith(undefined);
 
     draft.edit('');
@@ -142,5 +145,61 @@ describe('EmailDraftController', () => {
     await opening;
 
     expect(draft.preview).toBeNull();
+  });
+
+  it('clears the last preview when a refresh fails', async () => {
+    const fetchPreview = vi
+      .fn<(greeting: string | undefined) => Promise<EmailPreview>>()
+      .mockImplementationOnce(async (greeting) => previewOf(greeting))
+      .mockRejectedValueOnce(
+        new ApiError({ code: 'internal', rawCode: 'internal', message: 'Template missing.', status: 500 }),
+      );
+    const draft = new EmailDraftController(host(), { loadDefault: async () => 'Hi', fetchPreview });
+    await draft.open();
+    expect(draft.preview).not.toBeNull();
+
+    draft.edit('Hi again');
+    await draft.refresh();
+
+    expect(draft.preview).toBeNull();
+    expect(draft.previewError).toBe('Template missing.');
+    expect(draft.previewBlocksSend).toBe(false);
+  });
+
+  it('marks an invalid greeting as one the send refuses too', async () => {
+    const draft = new EmailDraftController(host(), {
+      loadDefault: async () => 'Hi ${nickname}',
+      fetchPreview: async () => {
+        throw new ApiError({
+          code: 'greeting_invalid',
+          rawCode: 'greeting_invalid',
+          message: 'The greeting names ${nickname}, which is not a placeholder.',
+          status: 400,
+          details: { placeholder: 'nickname' },
+        });
+      },
+    });
+    await draft.open();
+
+    expect(draft.previewBlocksSend).toBe(true);
+    expect(draft.previewError).toContain('${nickname}');
+  });
+
+  it('shows a plain Error by its message, without the Error prefix', async () => {
+    const draft = new EmailDraftController(host(), {
+      loadDefault: async () => '',
+      fetchPreview: () => Promise.reject(new Error('No document is open.')),
+    });
+    await draft.open();
+
+    expect(draft.previewError).toBe('No document is open.');
+  });
+});
+
+describe('reasonOf', () => {
+  it('reads an Error by its message and anything else as the fallback', () => {
+    expect(reasonOf(new Error('offline'), 'x')).toBe('offline');
+    expect(reasonOf('busy', 'x')).toBe('busy');
+    expect(reasonOf({}, 'Something failed.')).toBe('Something failed.');
   });
 });

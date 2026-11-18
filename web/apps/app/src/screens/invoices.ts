@@ -67,7 +67,7 @@ import {
   completedSteps,
 } from './invoicing-errors.js';
 import { routeToHash } from './hash-route.js';
-import { EmailDraftController } from './email-draft.js';
+import { EmailDraftController, reasonOf } from './email-draft.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -698,7 +698,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     } catch (error) {
       // The server's own sentence — a broken custom template names its path,
       // and that is the thing this dialog exists to catch before a send.
-      this.previewError = error instanceof ApiError ? error.message : String(error);
+      this.previewError = reasonOf(error, 'Could not build the preview.');
     } finally {
       this.previewLoading = false;
     }
@@ -1109,9 +1109,10 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
           ? html`<wc-email-preview
               slot="email-preview"
               .emails=${this.emailDraft.preview?.emails ?? []}
-              .placeholders=${this.emailDraft.preview?.placeholders ?? []}
+              .linkPlaceholders=${this.emailDraft.preview?.linkPlaceholders ?? []}
               .loading=${this.emailDraft.previewLoading}
               .error=${this.emailDraft.previewError}
+              .errorBlocksSend=${this.emailDraft.previewBlocksSend}
             ></wc-email-preview>`
           : nothing}
       </wc-send-dialog>

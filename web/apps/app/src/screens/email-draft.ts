@@ -5,6 +5,13 @@ import type { EmailPreview } from '../api/types.js';
 /** How long the message box has to sit still before the preview is asked for again. */
 export const EMAIL_PREVIEW_DEBOUNCE_MS = 300;
 
+/** An error as a sentence a person can read: the message itself, never `Error: …`. */
+export function reasonOf(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim() !== '') return error.message;
+  if (typeof error === 'string' && error.trim() !== '') return error;
+  return fallback;
+}
+
 export interface EmailDraftOptions {
   /** The saved default greeting the message box starts from. */
   loadDefault: () => Promise<string>;
@@ -22,7 +29,9 @@ export interface EmailDraftOptions {
  * the box's exact contents, and an empty box is `""`: no greeting at all.
  *
  * A preview that comes back after a newer one was asked for is dropped, so a
- * slow response never overwrites what the operator just typed.
+ * slow response never overwrites what the operator just typed. A refresh that
+ * fails clears the preview, so an email the send would no longer deliver is
+ * never left on screen under the error.
  */
 export class EmailDraftController implements ReactiveController {
   message = '';
@@ -32,6 +41,8 @@ export class EmailDraftController implements ReactiveController {
   preview: EmailPreview | null = null;
   previewLoading = false;
   previewError = '';
+  /** The failure also refuses the send — the greeting itself is invalid. */
+  previewBlocksSend = false;
 
   private known = false;
   private session = 0;
@@ -63,6 +74,7 @@ export class EmailDraftController implements ReactiveController {
     this.messageCaution = '';
     this.preview = null;
     this.previewError = '';
+    this.previewBlocksSend = false;
     this.messageLoading = true;
     this.host.requestUpdate();
     try {
@@ -75,8 +87,8 @@ export class EmailDraftController implements ReactiveController {
       }
     } catch (error) {
       if (session !== this.session) return;
-      const reason = error instanceof ApiError ? ` ${error.message}` : '';
-      this.messageCaution = `Could not load the saved message. It still goes out unless you type your own.${reason}`;
+      const reason = reasonOf(error, '');
+      this.messageCaution = `Could not load the saved message. It still goes out unless you type your own.${reason ? ` ${reason}` : ''}`;
     } finally {
       if (session === this.session) {
         this.messageLoading = false;
@@ -110,6 +122,7 @@ export class EmailDraftController implements ReactiveController {
     const sequence = ++this.sequence;
     this.previewLoading = true;
     this.previewError = '';
+    this.previewBlocksSend = false;
     this.host.requestUpdate();
     try {
       const preview = await this.options.fetchPreview(this.greeting);
@@ -117,7 +130,9 @@ export class EmailDraftController implements ReactiveController {
       this.preview = preview;
     } catch (error) {
       if (sequence !== this.sequence) return;
-      this.previewError = error instanceof ApiError ? error.message : String(error);
+      this.preview = null;
+      this.previewError = reasonOf(error, 'The preview failed.');
+      this.previewBlocksSend = error instanceof ApiError && error.code === 'greeting_invalid';
     } finally {
       if (sequence === this.sequence) {
         this.previewLoading = false;

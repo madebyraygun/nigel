@@ -63,14 +63,14 @@ const preview: Preview = {
     {
       name: 'invoice',
       render: () =>
-        frame(html`<wc-email-preview .emails=${[INVOICE]} .placeholders=${[PAY]}></wc-email-preview>`),
+        frame(html`<wc-email-preview .emails=${[INVOICE]} .linkPlaceholders=${[PAY]}></wc-email-preview>`),
     },
     {
       name: 'no-greeting',
       render: () =>
         frame(html`<wc-email-preview
           .emails=${[NO_GREETING]}
-          .placeholders=${[PAY]}
+          .linkPlaceholders=${[PAY]}
         ></wc-email-preview>`),
     },
     {
@@ -81,7 +81,7 @@ const preview: Preview = {
           documentEmail('signer', 'Pat Example', 'pat@cedar.test'),
           documentEmail('collaborator', 'Sam Example', 'sam@cedar.test'),
         ]}
-        .placeholders=${[LINK]}
+        .linkPlaceholders=${[LINK]}
       ></wc-email-preview>`),
     },
     {
@@ -95,13 +95,36 @@ const preview: Preview = {
         frame(html`<wc-email-preview
           loading
           .emails=${[INVOICE]}
-          .placeholders=${[PAY]}
+          .linkPlaceholders=${[PAY]}
+        ></wc-email-preview>`),
+    },
+    {
+      name: 'incomplete-recipients',
+      render: () =>
+        frame(html`<wc-email-preview
+          .emails=${[documentEmail('signer', 'Globex Signer', 'sign@globex.test')]}
+          .linkPlaceholders=${[LINK]}
+          .notes=${[
+            'The signer row is incomplete, so the preview uses the default signer.',
+            'The preview leaves out 1 incomplete recipient.',
+          ]}
         ></wc-email-preview>`),
     },
     {
       name: 'error',
       render: () =>
-        frame(html`<wc-email-preview error="Juniper Labs has no email address."></wc-email-preview>`),
+        frame(html`<wc-email-preview
+          error="Juniper Labs has no email address."
+          .emails=${[INVOICE]}
+        ></wc-email-preview>`),
+    },
+    {
+      name: 'error-greeting-invalid',
+      render: () =>
+        frame(html`<wc-email-preview
+          error-blocks-send
+          error="The greeting names \${nickname}, which is not a placeholder."
+        ></wc-email-preview>`),
     },
   ],
 };

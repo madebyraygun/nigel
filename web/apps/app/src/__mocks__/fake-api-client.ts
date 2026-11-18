@@ -1813,7 +1813,7 @@ export class FakeApiClient implements ApiClient {
           attachments: ['invoice.pdf'],
         },
       ],
-      placeholders: [INVOICE_PAY_PLACEHOLDER],
+      linkPlaceholders: [INVOICE_PAY_PLACEHOLDER],
     };
   }
 
@@ -2081,7 +2081,7 @@ export class FakeApiClient implements ApiClient {
         email("signer", signer),
         ...(input.collaborators ?? []).map((c) => email("collaborator", c)),
       ],
-      placeholders: [DOCUMENT_LINK_PLACEHOLDER],
+      linkPlaceholders: [DOCUMENT_LINK_PLACEHOLDER],
     };
   }
 

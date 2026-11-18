@@ -35,7 +35,7 @@ describe('DesktopApiClient', () => {
 
   it('asks for both email previews over its own transport', async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({ emails: [], placeholders: [] }), {
+      new Response(JSON.stringify({ emails: [], linkPlaceholders: [] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       }),

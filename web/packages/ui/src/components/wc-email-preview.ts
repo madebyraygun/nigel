@@ -3,7 +3,6 @@ import { customElement, property } from 'lit/decorators.js';
 import './wc-notice-bar.js';
 import './wc-spinner.js';
 
-/** One email as the server renders it for a preview. */
 /** The placeholders an email greeting may name, written `${name}`, per kind. */
 export const GREETING_PLACEHOLDERS: Record<'invoice' | 'document', readonly string[]> = {
   invoice: ['firstName', 'fullName', 'clientName', 'companyName', 'invoiceNumber', 'amountDue', 'dueDate'],
@@ -15,9 +14,10 @@ export function greetingPlaceholderList(kind: 'invoice' | 'document'): string {
   return GREETING_PLACEHOLDERS[kind].map((name) => `\${${name}}`).join(', ');
 }
 
+/** One email as the server renders it for a preview. */
 export interface EmailPreviewView {
   role: string;
-  /** `Name <email>`. */
+  /** `Name <email>` or a bare address. */
   to: string;
   cc?: string[];
   subject: string;
@@ -58,7 +58,8 @@ export function splitPlaceholders(
  * marked, so nobody mistakes the stand-in for the real thing.
  *
  * While a refresh is in flight the last preview stays in place, dimmed, rather
- * than collapsing to a spinner on every keystroke.
+ * than collapsing to a spinner on every keystroke. An error replaces the
+ * emails: a preview that could not be rebuilt is no longer what goes out.
  */
 @customElement('wc-email-preview')
 export class WcEmailPreview extends LitElement {
@@ -162,6 +163,14 @@ export class WcEmailPreview extends LitElement {
       color: var(--wa-color-text);
     }
 
+    .notes {
+      margin: 0 0 var(--wa-space-xs);
+      padding: 0;
+      list-style: none;
+      color: var(--wa-color-muted);
+      font-size: var(--wa-font-size-s);
+    }
+
     .loading {
       display: flex;
       justify-content: center;
@@ -174,7 +183,11 @@ export class WcEmailPreview extends LitElement {
 
   /** The literal stand-ins the body carries for links made at send time. */
   @property({ attribute: false })
-  placeholders: string[] = [];
+  linkPlaceholders: string[] = [];
+
+  /** What the preview was built from that differs from what was entered. */
+  @property({ attribute: false })
+  notes: string[] = [];
 
   @property({ type: Boolean, reflect: true })
   loading = false;
@@ -183,8 +196,12 @@ export class WcEmailPreview extends LitElement {
   @property({ type: String })
   error = '';
 
+  /** The send would be refused for the same reason, so the error says to fix it. */
+  @property({ type: Boolean, attribute: 'error-blocks-send' })
+  errorBlocksSend = false;
+
   private renderBody(body: string) {
-    return splitPlaceholders(body, this.placeholders).map((part) =>
+    return splitPlaceholders(body, this.linkPlaceholders).map((part) =>
       part.placeholder
         ? html`<mark data-placeholder title="Created when the email is sent">${part.text}</mark>`
         : part.text,
@@ -217,7 +234,8 @@ export class WcEmailPreview extends LitElement {
   }
 
   render() {
-    const count = this.emails.length;
+    const count = this.error ? 0 : this.emails.length;
+    const advice = this.errorBlocksSend ? 'Fix the message to send.' : 'You can still send.';
     return html`
       <p class="heading" id="heading">
         ${count > 1 ? `Email preview — ${count} emails` : 'Email preview'}
@@ -229,8 +247,13 @@ export class WcEmailPreview extends LitElement {
         ? html`<wc-notice-bar
             variant="warning"
             data-error
-            message=${`Could not preview the email. ${this.error} You can still send.`}
+            message=${`Could not preview the email. ${this.error} ${advice}`}
           ></wc-notice-bar>`
+        : nothing}
+      ${count > 0 && this.notes.length > 0
+        ? html`<ul class="notes" data-notes>
+            ${this.notes.map((note) => html`<li>${note}</li>`)}
+          </ul>`
         : nothing}
       ${this.loading && count === 0
         ? html`<div class="loading" data-loading>

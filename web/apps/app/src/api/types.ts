@@ -827,6 +827,7 @@ export const API_ERROR_CODES = [
   'password_change_required',
   'too_many_attempts',
   'busy',
+  'greeting_invalid',
 ] as const;
 
 export type KnownApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -1198,7 +1199,10 @@ export interface InvoiceDetail {
   deleteBlocked: DeleteBlocked | null;
   /** The day `status` was derived on (`YYYY-MM-DD`): the request's `asOf`, or the server's today. */
   asOf: string;
-  /** The greeting the most recent send opened its email with; null when it had none or was never sent. */
+  /**
+   * The greeting the most recent send opened its email with, as written —
+   * placeholders unfilled; null when it had none or was never sent.
+   */
   emailGreeting: string | null;
 }
 
@@ -1363,9 +1367,8 @@ export interface PayInvoiceRequest {
  * screen sends it: without `confirm: true` the server answers 400
  * `confirmation_required` and nothing happens.
  */
-export interface SendInvoiceRequest {
+export interface SendInvoiceRequest extends EmailGreetingOption {
   confirm: true;
-  greeting?: string;
 }
 
 /**
@@ -1379,7 +1382,7 @@ export interface EmailGreetingOption {
 /** One email a send would deliver, as the email-preview routes render it. */
 export interface EmailPreviewMessage {
   role: 'client' | 'signer' | 'collaborator';
-  /** `Name <email>`. */
+  /** `Name <email>` or a bare address. */
   to: string;
   /** Copied contacts; empty for documents. */
   cc: string[];
@@ -1398,7 +1401,7 @@ export interface EmailPreview {
   /** One per recipient. */
   emails: EmailPreviewMessage[];
   /** Every stand-in for a link that only exists after the send. */
-  placeholders: string[];
+  linkPlaceholders: string[];
 }
 
 /** The document preview's request: the draft greeting and the recipients as they stand. */
@@ -1586,7 +1589,10 @@ export interface DocumentVersionDetail {
   changeRequests: DocumentChangeRequest[];
   /** The version's PDF is absent from the data directory. */
   fileMissing: boolean;
-  /** The greeting the version's emails opened with; null when there was none. */
+  /**
+   * The greeting the version's emails opened with, as written — placeholders
+   * unfilled; null when there was none.
+   */
   emailGreeting: string | null;
 }
 

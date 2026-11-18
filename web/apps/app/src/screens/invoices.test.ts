@@ -1105,7 +1105,7 @@ describe('nigel-invoices-screen', () => {
       expect(preview?.emails).toHaveLength(1);
       expect(preview?.emails[0].body.startsWith(GREETING)).toBe(true);
       expect(preview?.emails[0].attachments).toEqual(['invoice.pdf']);
-      expect(preview?.placeholders).toEqual(['[pay link created when sent]']);
+      expect(preview?.linkPlaceholders).toEqual(['[pay link created when sent]']);
     });
 
     it('asks for one preview once typing pauses, with the last thing typed', async () => {
@@ -1125,6 +1125,30 @@ describe('nigel-invoices-screen', () => {
         `invoiceEmailPreview:1250:${JSON.stringify({ greeting: 'Thanks, Acme.' })}`,
       ]);
       expect(emailPreview(el)?.emails[0].body.startsWith('Thanks, Acme.')).toBe(true);
+    });
+
+    it('drops the old email and says to fix the message when the greeting is refused', async () => {
+      const { el, fake } = await opened();
+      expect(emailPreview(el)?.emails).toHaveLength(1);
+
+      fake.emailPreviewError = new ApiError({
+        code: 'greeting_invalid',
+        rawCode: 'greeting_invalid',
+        message: 'The greeting names ${nickname}, which is not a placeholder.',
+        status: 400,
+        details: { placeholder: 'nickname' },
+      });
+      typeMessage(el, 'Hi ${nickname}');
+      await new Promise((resolve) => setTimeout(resolve, EMAIL_PREVIEW_DEBOUNCE_MS + 100));
+      await settle(el);
+
+      const preview = emailPreview(el)!;
+      await preview.updateComplete;
+      expect(preview.emails).toHaveLength(0);
+      expect(preview.shadowRoot!.querySelector('[data-email]')).toBeNull();
+      const message = preview.shadowRoot!.querySelector('[data-error]')?.getAttribute('message');
+      expect(message).toContain('Fix the message to send.');
+      expect(message).not.toContain('You can still send.');
     });
 
     it('sends what is in the box', async () => {

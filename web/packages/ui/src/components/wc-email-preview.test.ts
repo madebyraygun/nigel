@@ -49,7 +49,7 @@ describe('wc-email-preview', () => {
   });
 
   it('shows the To, subject, attachments and the body', async () => {
-    const el = await mount({ emails: [EMAIL], placeholders: [LINK] });
+    const el = await mount({ emails: [EMAIL], linkPlaceholders: [LINK] });
     const root = el.shadowRoot!;
     expect(root.querySelector('[data-to]')?.textContent).toContain('Pat Example <pat@cedar.test>');
     expect(root.querySelector('[data-subject]')?.textContent).toBe('Agreement from Initech');
@@ -60,7 +60,7 @@ describe('wc-email-preview', () => {
   });
 
   it('marks each placeholder in the body', async () => {
-    const el = await mount({ emails: [EMAIL], placeholders: [LINK] });
+    const el = await mount({ emails: [EMAIL], linkPlaceholders: [LINK] });
     const marks = el.shadowRoot!.querySelectorAll('[data-body] mark[data-placeholder]');
     expect([...marks].map((m) => m.textContent)).toEqual([LINK]);
   });
@@ -91,6 +91,26 @@ describe('wc-email-preview', () => {
     const el = await mount({ error: 'Cedar Systems has no email address.' });
     expect(el.shadowRoot!.querySelector('[data-error]')?.getAttribute('message')).toContain(
       'You can still send.',
+    );
+  });
+
+  it('hides the emails while an error stands', async () => {
+    const el = await mount({ emails: [EMAIL], error: 'Template missing.' });
+    expect(el.shadowRoot!.querySelector('[data-email]')).toBeNull();
+    expect(el.shadowRoot!.querySelector('[data-error]')).toBeTruthy();
+  });
+
+  it('says to fix the message when the send would be refused too', async () => {
+    const el = await mount({ error: 'The greeting is too long.', errorBlocksSend: true });
+    const message = el.shadowRoot!.querySelector('[data-error]')?.getAttribute('message') ?? '';
+    expect(message).toContain('Fix the message to send.');
+    expect(message).not.toContain('You can still send.');
+  });
+
+  it('lists what the preview was built from differently', async () => {
+    const el = await mount({ emails: [EMAIL], notes: ['The preview leaves out 1 incomplete recipient.'] });
+    expect(el.shadowRoot!.querySelector('[data-notes]')?.textContent).toContain(
+      'leaves out 1 incomplete recipient',
     );
   });
 });
