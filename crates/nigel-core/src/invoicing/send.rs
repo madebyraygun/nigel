@@ -4,7 +4,9 @@ use serde::{Serialize, Serializer};
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway, INVOICE_ATTACHMENT};
-use crate::invoicing::greeting::{EmailPreview, PreviewEmail, PREVIEW_LINK_PLACEHOLDER};
+use crate::invoicing::greeting::{
+    fill_placeholders, EmailPreview, GreetingValues, PreviewEmail, PREVIEW_LINK_PLACEHOLDER,
+};
 use crate::invoicing::invoices::{
     ensure_not_void, get_invoice, mark_published, set_email_greeting, set_payment_link,
 };
@@ -136,6 +138,8 @@ pub fn require_email(client: &Client) -> Result<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recipients {
     pub to: String,
+    /// The billing contact's name, when the contact has one.
+    pub to_name: Option<String>,
     pub cc: Vec<String>,
 }
 
@@ -149,17 +153,40 @@ pub fn require_recipients(conn: &Connection, client: &Client) -> Result<Recipien
     let contacts = crate::invoicing::clients::list_contacts(conn, client.id)?;
 
     let mut to = billing.clone();
+    let mut to_name = None;
     let mut cc = Vec::new();
     for contact in &contacts {
         let formatted =
             crate::invoicing::mailgun::format_address(contact.name.as_deref(), &contact.email);
         if contact.is_billing {
             to = formatted;
+            to_name = contact.name.clone();
         } else {
             cc.push(formatted);
         }
     }
-    Ok(Recipients { to, cc })
+    Ok(Recipients { to, to_name, cc })
+}
+
+/// The greeting with its placeholders filled for this invoice's email.
+fn fill_invoice_greeting(
+    greeting: Option<&str>,
+    invoice: &crate::models::Invoice,
+    client: &Client,
+    recipients: &Recipients,
+    company: &str,
+    balance: f64,
+) -> Option<String> {
+    let values = GreetingValues {
+        full_name: recipients.to_name.clone().unwrap_or_default(),
+        client_name: client.name.clone(),
+        company_name: company.trim().to_string(),
+        invoice_number: invoice.number.to_string(),
+        amount_due: crate::invoicing::document::money(balance, &invoice.currency),
+        due_date: invoice.due_date.clone().unwrap_or_default(),
+        ..GreetingValues::default()
+    };
+    greeting.map(|text| fill_placeholders(text, &values))
 }
 
 /// An invoice worth sending has something to charge for.
@@ -206,6 +233,14 @@ pub fn preview_invoice_email(
 
     let (items, money) = invoice_figures(conn, &invoice)?;
     let subject = invoice_email_subject(company, invoice.number);
+    let greeting = fill_invoice_greeting(
+        greeting,
+        &invoice,
+        &client,
+        &recipients,
+        company,
+        money.balance,
+    );
     let body = render_email_text(
         &invoice,
         &items,
@@ -213,7 +248,7 @@ pub fn preview_invoice_email(
         payment_instructions,
         &subject,
         PREVIEW_LINK_PLACEHOLDER,
-        greeting,
+        greeting.as_deref(),
     );
     Ok(EmailPreview {
         emails: vec![PreviewEmail {
@@ -387,6 +422,14 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // The message a client reads is plain text: the same figures the page and
     // the PDF draw, the link to the published page, the PDF attached. The page
     // HTML goes to the bucket and nowhere else.
+    let filled = fill_invoice_greeting(
+        greeting,
+        &invoice,
+        &client,
+        &recipients,
+        branding.company,
+        rendered.money.balance,
+    );
     let body = render_email_text(
         &invoice,
         &rendered.items,
@@ -394,7 +437,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         branding.payment_instructions,
         &subject,
         &public_url,
-        greeting,
+        filled.as_deref(),
     );
     mailer
         .send_invoice(&recipients.to, &recipients.cc, &subject, &body, &pdf)

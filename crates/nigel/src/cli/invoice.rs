@@ -8,7 +8,9 @@ use nigel_core::db::get_connection;
 use nigel_core::error::{NigelError, Result};
 use nigel_core::fmt::money;
 use nigel_core::invoicing::clients::get_client;
-use nigel_core::invoicing::greeting::{format_email_preview, invoice_default, resolve_greeting};
+use nigel_core::invoicing::greeting::{
+    format_email_preview, invoice_default, resolve_greeting, GreetingKind,
+};
 use nigel_core::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, duplicate_invoice, ensure_not_void,
@@ -634,7 +636,11 @@ pub fn send(number: i64, today: &str, yes: bool, message: Option<String>) -> Res
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "sent")?;
     let client = get_client(&conn, invoice.client_id)?;
-    let greeting = resolve_greeting(message.as_deref(), &invoice_default(&conn))?;
+    let greeting = resolve_greeting(
+        message.as_deref(),
+        &invoice_default(&conn),
+        GreetingKind::Invoice,
+    )?;
     // The template is loaded before anything is built or created, so a broken
     // one fails the send with no Stripe link made and nothing published.
     let template = load_template(&get_data_dir())?;

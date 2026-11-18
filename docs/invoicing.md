@@ -759,6 +759,24 @@ A greeting is your own opening paragraph for the email: plain text, at most
 the subject line. In a document email it replaces the `Hello {name},` line.
 It goes in the email body only — never on the published page or in the PDF.
 
+A greeting can name placeholders, written `${name}`, which each email fills in
+for its own recipient:
+
+| Placeholder | Invoice | Document | Filled with |
+|---|---|---|---|
+| `${firstName}` | yes | yes | the first word of the recipient's name; the client's name when the contact has none |
+| `${fullName}` | yes | yes | the recipient's name; the client's name when the contact has none |
+| `${clientName}` | yes | yes | the client's name |
+| `${companyName}` | yes | yes | your company name |
+| `${invoiceNumber}` | yes | | the invoice number |
+| `${amountDue}` | yes | | the balance still owed, with its currency |
+| `${dueDate}` | yes | | the due date, empty when there is none |
+| `${documentTitle}` | | yes | the document's title |
+
+A greeting that names any other placeholder is refused, both when it is saved as
+a default and when it is sent, so a typo never reaches a client as literal
+text. The recorded greeting keeps its placeholders as written.
+
 Each kind has a default, empty until you set one: **Invoice email greeting** and
 **Document email greeting** in the web UI's Settings, stored as the
 `invoice_email_greeting` and `document_email_greeting` metadata keys. Every send

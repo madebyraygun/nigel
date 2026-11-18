@@ -7,6 +7,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
+  greetingPlaceholderList,
   dispatchNcToast,
   type NcLogoFileDetail,
   type NcPasswordSubmitDetail,
@@ -772,6 +773,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           ></wa-textarea>
           <p class="note">
             Opens the email that carries each invoice. You can change it on any send.
+            Placeholders: ${greetingPlaceholderList('invoice')}
           </p>
         </div>
         <div>
@@ -785,6 +787,7 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           ></wa-textarea>
           <p class="note">
             Opens the email that carries each document. You can change it on any send.
+            Placeholders: ${greetingPlaceholderList('document')}
           </p>
         </div>
         <wc-logo-field

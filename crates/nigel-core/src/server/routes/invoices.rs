@@ -907,8 +907,12 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // traced precheck's, called once, and the precheck runs before any network
     // call, so a refusal still costs nothing.
     let invoice = find_invoice(conn, number).map_err(|e| e.at_step(SendStep::Load))?;
-    let greeting = greeting::resolve_greeting(greeting, &greeting::invoice_default(conn))
-        .map_err(|e| ApiError::from(e).at_step(SendStep::Precheck))?;
+    let greeting = greeting::resolve_greeting(
+        greeting,
+        &greeting::invoice_default(conn),
+        greeting::GreetingKind::Invoice,
+    )
+    .map_err(|e| ApiError::from(e).at_step(SendStep::Precheck))?;
     // Loaded before the Stripe link, so a broken override costs no link, no
     // upload and no email.
     let template = load_template(data_dir)?;
@@ -1004,7 +1008,11 @@ fn email_preview_for(
     greeting: Option<&str>,
 ) -> ApiResult<EmailPreview> {
     let invoice = find_invoice(conn, number)?;
-    let greeting = greeting::resolve_greeting(greeting, &greeting::invoice_default(conn))?;
+    let greeting = greeting::resolve_greeting(
+        greeting,
+        &greeting::invoice_default(conn),
+        greeting::GreetingKind::Invoice,
+    )?;
     let profile = crate::invoicing::wiring::company_profile(conn);
     preview_invoice_email(
         conn,
@@ -3652,6 +3660,60 @@ mod tests {
         assert_eq!(detail["stripePaymentLinkUrl"], serde_json::Value::Null);
         assert_eq!(detail["publishedAt"], serde_json::Value::Null);
         assert_eq!(detail["emailGreeting"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_fills_placeholders_and_refuses_unknown_ones() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let uri = "/api/invoices/1252/email-preview";
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "Hi ${firstName}, invoice ${invoiceNumber} for ${clientName} is ${amountDue}." }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = body["emails"][0]["body"].as_str().unwrap();
+        let opening = text.split("\n\n").next().unwrap();
+        assert!(
+            opening.starts_with("Hi Northwind Traders, invoice 1252 for Northwind Traders is "),
+            "the contact has no name, so firstName is the client's name: {text}"
+        );
+        assert!(!opening.contains("${"), "{text}");
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "Hi ${frstName}" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid", "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("${frstName}"),
+            "{body}"
+        );
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "About ${documentTitle}" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a document placeholder is not offered on an invoice: {body}"
+        );
     }
 
     #[tokio::test]

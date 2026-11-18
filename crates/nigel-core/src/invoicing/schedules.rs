@@ -834,6 +834,7 @@ pub fn run_due_schedules<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     let greeting = crate::invoicing::greeting::resolve_greeting(
         None,
         &crate::invoicing::greeting::invoice_default(conn),
+        crate::invoicing::greeting::GreetingKind::Invoice,
     );
     for generated in &mut report.generated {
         if !autosend_for(conn, generated.schedule_id)? {

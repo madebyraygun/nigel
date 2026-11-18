@@ -11,6 +11,7 @@ import './wc-notice-bar.js';
 import './wc-document-frame.js';
 import '../icons/icons.js';
 import type { ExportTarget } from './wc-export-links.js';
+import { greetingPlaceholderList } from './wc-email-preview.js';
 import { dispatchNcToast } from './wc-toast.js';
 
 /**
@@ -621,7 +622,9 @@ export class WcSendDialog extends LitElement {
           @input=${this.handleMessageInput}
         ></wa-textarea>
         <div class="message-row">
-          <p class="caveat">Optional.</p>
+          <p class="caveat" data-message-hint>
+            Optional. Placeholders: ${greetingPlaceholderList(this.mode)}
+          </p>
           <wa-button
             data-message-clear
             size="s"

@@ -199,7 +199,12 @@ async fn put_company(
     .into_iter()
     .filter_map(|(key, value)| value.map(|v| (key, v)))
     .map(|(key, value)| {
-        let cleaned = crate::invoicing::greeting::clean_greeting(&value)?;
+        let kind = if key == crate::invoicing::greeting::INVOICE_GREETING_KEY {
+            crate::invoicing::greeting::GreetingKind::Invoice
+        } else {
+            crate::invoicing::greeting::GreetingKind::Document
+        };
+        let cleaned = crate::invoicing::greeting::resolve_greeting(Some(&value), "", kind)?;
         Ok((key, cleaned.unwrap_or_default()))
     })
     .collect::<crate::error::Result<_>>()?;

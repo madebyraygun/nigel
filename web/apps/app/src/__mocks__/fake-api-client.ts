@@ -391,6 +391,11 @@ function resolveGreeting(greeting: string | undefined, saved: string): string {
   return (greeting ?? saved).trim();
 }
 
+/** The server's placeholder fill: each known `${name}` replaced, others left as typed. */
+function fillGreeting(greeting: string, values: Record<string, string>): string {
+  return greeting.replace(/\$\{\s*(\w+)\s*\}/g, (token, name: string) => values[name] ?? token);
+}
+
 /**
  * An ApiClient that never touches the network.
  *
@@ -1781,7 +1786,15 @@ export class FakeApiClient implements ApiClient {
       detail.dueDate ? `, due ${detail.dueDate}` : ""
     }.`;
     const body = [
-      greeting,
+      fillGreeting(greeting, {
+        firstName: detail.client.name.split(/\s+/)[0] ?? "",
+        fullName: detail.client.name,
+        clientName: detail.client.name,
+        companyName: company,
+        invoiceNumber: String(number),
+        amountDue: `${detail.currency} ${detail.total.toFixed(2)}`,
+        dueDate: detail.dueDate ?? "",
+      }),
       recap,
       `View and pay online: ${INVOICE_PAY_PLACEHOLDER}`,
       "The invoice PDF is attached.",
@@ -2044,7 +2057,13 @@ export class FakeApiClient implements ApiClient {
       to: `${recipient.name} <${recipient.email}>`,
       subject,
       body: [
-        greeting || `Hello ${recipient.name},`,
+        fillGreeting(greeting, {
+          firstName: recipient.name.split(/\s+/)[0] ?? "",
+          fullName: recipient.name,
+          clientName: detail.clientName,
+          companyName: company,
+          documentTitle: detail.title,
+        }) || `Hello ${recipient.name},`,
         role === "signer"
           ? `${company} has sent you \u201c${detail.title}\u201d to review and accept.`
           : `${company} has shared \u201c${detail.title}\u201d with you for review.`,

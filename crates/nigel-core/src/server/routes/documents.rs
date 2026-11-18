@@ -751,6 +751,7 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     let greeting = greeting::resolve_greeting(
         request.greeting.as_deref(),
         &greeting::document_default(conn),
+        greeting::GreetingKind::Document,
     )
     .map_err(|e| ApiError::from(e).at_document_step(DocumentSendStep::Load))?;
 
@@ -811,6 +812,7 @@ fn email_preview_for(
     let greeting = greeting::resolve_greeting(
         request.greeting.as_deref(),
         &greeting::document_default(conn),
+        greeting::GreetingKind::Document,
     )?;
     Ok(preview_document_email(
         conn,

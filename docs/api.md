@@ -302,7 +302,7 @@ structured context to give:
 | `internal` | 500 | Unexpected server-side failure |
 | `upstream_failed` | 502 | Stripe, R2, Mailgun or a SimpleFIN bridge refused or could not be reached; `details.service` names it |
 | `feature_disabled` | 501 | The build lacks the required cargo feature |
-| `greeting_invalid` | 422 | An email greeting is over the length limit; `details.maxChars` is the limit |
+| `greeting_invalid` | 422 | An email greeting is over the length limit or names an unknown placeholder; `details.maxChars` is the limit |
 
 ## Endpoints
 
@@ -1633,8 +1633,11 @@ the published page or in the PDF.
 | `""`, or only whitespace | no greeting |
 | any other string | exactly that text, trimmed |
 
-A greeting is plain text of at most 2,000 characters after trimming; a longer
-one is `422 greeting_invalid` with `details.maxChars`, before any network call.
+A greeting is plain text of at most 2,000 characters after trimming, and may
+name the placeholders listed in [docs/invoicing.md](invoicing.md#the-email-greeting)
+as `${name}`; each email fills them for its own recipient. A longer greeting, or
+one naming a placeholder its kind does not offer, is `422 greeting_invalid` with
+`details.maxChars`, before any network call.
 On a send that refusal carries `details.step` too — `precheck` for an invoice,
 `load` for a document. The greeting that went out is recorded as the invoice's
 `emailGreeting` and the version's `emailGreeting`.

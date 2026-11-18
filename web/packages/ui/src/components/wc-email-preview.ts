@@ -4,6 +4,17 @@ import './wc-notice-bar.js';
 import './wc-spinner.js';
 
 /** One email as the server renders it for a preview. */
+/** The placeholders an email greeting may name, written `${name}`, per kind. */
+export const GREETING_PLACEHOLDERS: Record<'invoice' | 'document', readonly string[]> = {
+  invoice: ['firstName', 'fullName', 'clientName', 'companyName', 'invoiceNumber', 'amountDue', 'dueDate'],
+  document: ['firstName', 'fullName', 'clientName', 'companyName', 'documentTitle'],
+};
+
+/** The placeholders of one kind as the text a person types. */
+export function greetingPlaceholderList(kind: 'invoice' | 'document'): string {
+  return GREETING_PLACEHOLDERS[kind].map((name) => `\${${name}}`).join(', ');
+}
+
 export interface EmailPreviewView {
   role: string;
   /** `Name <email>`. */

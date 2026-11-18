@@ -93,6 +93,21 @@ describe('wc-send-dialog', () => {
     expect(clear?.hasAttribute('disabled')).toBe(true);
   });
 
+  it('names the placeholders each kind of email offers under the message', async () => {
+    const invoice = await mount({ open: true, mode: 'invoice' });
+    const invoiceHint = invoice.shadowRoot?.querySelector('[data-message-hint]')?.textContent ?? '';
+    expect(invoiceHint).toMatch(/^\s*Optional\./);
+    expect(invoiceHint).toContain('${invoiceNumber}');
+    expect(invoiceHint).not.toContain('${documentTitle}');
+    invoice.remove();
+
+    const document = await mount({ open: true, mode: 'document' });
+    const documentHint = document.shadowRoot?.querySelector('[data-message-hint]')?.textContent ?? '';
+    expect(documentHint).toContain('${firstName}');
+    expect(documentHint).toContain('${documentTitle}');
+    expect(documentHint).not.toContain('${invoiceNumber}');
+  });
+
   it('holds the message box while the saved default loads', async () => {
     const el = await mount({ messageLoading: true });
     const box = el.shadowRoot?.querySelector('[data-message]');

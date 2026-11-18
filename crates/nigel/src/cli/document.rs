@@ -30,7 +30,9 @@ use nigel_core::documents::sync::{sync_documents, DocumentSyncReport};
 use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
-use nigel_core::invoicing::greeting::{document_default, format_email_preview, resolve_greeting};
+use nigel_core::invoicing::greeting::{
+    document_default, format_email_preview, resolve_greeting, GreetingKind,
+};
 use nigel_core::invoicing::wiring::{
     build_document_clients, company_name, complete_execution_configured,
     optional_document_publisher, optional_response_source, regenerate_signing_record_configured,
@@ -280,7 +282,11 @@ pub fn send(
     let version = latest_version(&conn, id)?;
     let client = get_client(&conn, document.client_id)?;
     let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
-    let greeting = resolve_greeting(message.as_deref(), &document_default(&conn))?;
+    let greeting = resolve_greeting(
+        message.as_deref(),
+        &document_default(&conn),
+        GreetingKind::Document,
+    )?;
 
     let config = documents_config();
     let status = documents_status(&config);
