@@ -946,6 +946,7 @@ needs, and with `includeInactive=true` also lists the deactivated kinds, which
 | `GET /api/documents/{id}/preview` | `text/html; charset=utf-8` |
 | `GET /api/documents/{id}/preview.pdf` | `application/pdf` |
 | `GET /api/documents/{id}/signing-record.pdf` | `application/pdf` |
+| `GET /api/documents/{id}/executed.pdf` | `application/pdf` |
 | `GET /api/document-kinds` | `DocumentKind[]`, active kinds only; every kind with `includeInactive=true` (`true` or `false`, anything else is `400`) |
 
 `GET /api/documents` takes `clientId`, `status` and `kind`, all optional and
@@ -973,6 +974,7 @@ client's name, every version, and what may be done to it next:
   "versions": [
     { "id": 5, "documentId": 3, "number": 2, "checksum": "sha256:9c1f…",
       "sentAt": "2026-10-02", "createdAt": "2026-10-02",
+      "executedChecksum": null, "executedPublicChecksum": null,
       "recipients": [
         { "id": 8, "versionId": 5, "role": "signer", "name": "Pat Example",
           "email": "pat@acme.test", "position": 0,
@@ -989,11 +991,19 @@ client's name, every version, and what may be done to it next:
 ```
 
 A signature carries `role` (`client` or `countersign`), `method` (`online` or
-`manual`), `name`, `signedAt`, the `checksum` it was given on and, for an online
-one, `typedName`, `email`, `ip` and `userAgent`. A change request carries
+`manual`), `name`, `title` (the role they signed in, or `null`), `signedAt`, the
+`checksum` it was given on and, for an online one, `typedName`, `email`, `ip`
+and `userAgent`. A change request carries
 `name`, `note`, `requestedAt`, `method`, `checksum` and the same online
 metadata. `checksum` always carries the `sha256:` prefix.
 
+- **`executedChecksum`** and **`executedPublicChecksum`** are the checksums of
+  an executed version's two executed copies — the signed PDF with the full or
+  the redacted signing record appended. `executedChecksum` is set when the full
+  copy is written to the data directory and `executedPublicChecksum` once the
+  redacted copy is published; both are `null` otherwise, and both are cleared
+  when no executed copy could be made. They are not the version's `checksum`,
+  which stays the signed PDF's.
 - **`fileMissing`** is `true` on a version whose PDF is absent from the data
   directory, as after a restore from a backup that lacked the documents folder.
   Fetching such a version's PDF or sending it answers `409` `file_missing`.
@@ -1046,6 +1056,13 @@ the data directory, `inline`, named
 kept first. A document that is not executed is `409` `document_not_executed`,
 and a build without the `pdf` feature is `501 feature_disabled`. It makes no
 network call.
+
+`executed.pdf` is the executed copy: the signed PDF with that full record
+appended, named `<Title>-v<n>-executed.pdf` and served `inline` from the copy
+kept in the data directory. When no copy is kept but a signing record is, it is
+built in memory from the kept record and nothing is written. An encrypted or
+unreadable signed PDF is `409` `executed_copy_unavailable`; see
+[Documents](invoicing.md#the-executed-copy).
 
 ### Not-found reasons
 
@@ -1107,10 +1124,10 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/documents/:id` | `PATCH` | `title?`, `kind?` | `DocumentDetail` |
 | `/api/documents/:id/revise` | `POST` | multipart: `file` | `DocumentActionResult` |
 | `/api/documents/:id/send` | `POST` | `confirm` (must be `true`), `signer?`, `collaborators?` | `DocumentSendResult` |
-| `/api/documents/:id/accept` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/accept` | `POST` | `name`, `title?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/request-changes` | `POST` | `name`, `note`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/decline` | `POST` | `note?`, `date?` | `DocumentActionResult` |
-| `/api/documents/:id/countersign` | `POST` | `name`, `date?` | `DocumentActionResult` |
+| `/api/documents/:id/countersign` | `POST` | `name`, `title?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/withdraw` | `POST` | `{}` | `DocumentActionResult` |
 | `/api/documents/:id/signing-record` | `POST` | `{}` | `DocumentActionResult` with `published` |
 | `/api/document-kinds/:id/reactivate` | `POST` | — | `DocumentKind`; `409 already_active` for an active kind, `404 kind_not_found` for none |
@@ -1841,19 +1858,23 @@ commit fails, the `200` carries only `warnings`, one of which says to refresh. T
 and hold the database while they do, each bounded by the 30s call timeout.
 
 `countersign` does more after the commit, in order: it generates the signing
-record and publishes it beside the version's PDF, republishes the pages with a
-link to it, then emails every recipient of the executed version the signed PDF
-and the record — see [Documents](invoicing.md#documents). A record that could
+record and the executed copy and publishes them beside the version's PDF,
+republishes the pages with links to them, then emails every recipient of the
+executed version the executed copy, or the signed PDF and the record as two
+files when no executed copy could be made — see
+[Documents](invoicing.md#documents). A record that could
 not be published, R2 or Mailgun unset, partly set or refused, a message Mailgun
 refused or one over its 25 MB limit is a sentence in `warnings`, one per
 situation, ending with what to do; the document stays `executed`.
 
 `POST /api/documents/{id}/signing-record` takes `{}` and regenerates an
-executed document's signing record: it writes the full local copy, publishes
-the redacted copy, and republishes the pages linking it. It emails nobody. It answers the document,
-`warnings` and `published`, which is `true` only when the record reached the
-public bucket; an R2 that is unset or a failed upload is a `200` with
-`published: false` and the reason in `warnings`. A document that is not
+executed document's signing record and executed copy: it rewrites the full
+record and the full executed copy in the data directory, publishes the redacted
+ones, and republishes the pages linking them. It emails nobody. It answers the
+document, `warnings` and `published`, which is `true` only when the record and,
+when one was made, the executed copy reached the public bucket; an R2 that is
+unset or a failed upload of either is a `200` with `published: false` and the
+reason in `warnings`. A document that is not
 executed is `409` `document_not_executed`, a missing one `404`, and a build
 without the `pdf` feature `501 feature_disabled`. It may make network calls, as
 the routes above do.

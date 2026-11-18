@@ -631,9 +631,58 @@ const MIGRATIONS: &[Migration] = &[
             Ok(())
         },
     },
+    Migration {
+        version: 21,
+        description: "documents: an optional title beside a signature's name",
+        up: |conn| add_column_if_missing(conn, "document_signatures", "title", "TEXT"),
+    },
+    Migration {
+        version: 22,
+        description: "documents: the client name a version was sent on behalf of",
+        up: |conn| {
+            add_column_if_missing(conn, "document_versions", "client_name", "TEXT")?;
+            // A sent version without a name takes its client's current one;
+            // a named one is left alone, so a replay changes nothing.
+            conn.execute_batch(
+                "UPDATE document_versions
+                    SET client_name = (SELECT c.name FROM documents d
+                                         JOIN clients c ON c.id = d.client_id
+                                        WHERE d.id = document_versions.document_id)
+                  WHERE sent_at IS NOT NULL AND client_name IS NULL;",
+            )?;
+            Ok(())
+        },
+    },
+    Migration {
+        version: 23,
+        description: "documents: the checksums of an executed version's executed copies",
+        up: |conn| {
+            add_column_if_missing(conn, "document_versions", "executed_checksum", "TEXT")?;
+            add_column_if_missing(
+                conn,
+                "document_versions",
+                "executed_public_checksum",
+                "TEXT",
+            )
+        },
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
+
+/// `ALTER TABLE … ADD COLUMN` once: SQLite has no `ADD COLUMN IF NOT EXISTS`,
+/// so the probe is what makes a replayed migration a no-op.
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let present: bool = conn.query_row(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?;
+    if !present {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
+    Ok(())
+}
 
 /// A version holding more than one signer keeps the first in the frozen order
 /// and records the rest as collaborators, so v16's index can be built. The
@@ -2007,6 +2056,96 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM simplefin_accounts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(feeds, 2);
+    }
+
+    #[test]
+    fn v21_gives_signatures_a_title_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "20").unwrap();
+        run_migrations(&conn).unwrap();
+        set_metadata(&conn, "schema_version", "20").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        let has_title: bool = conn
+            .query_row(
+                "SELECT COUNT(*) = 1 FROM pragma_table_info('document_signatures') WHERE name = 'title'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has_title);
+    }
+
+    #[test]
+    fn v22_gives_versions_a_client_name_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) = 1 FROM pragma_table_info('document_versions') WHERE name = 'client_name'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(has);
+    }
+
+    #[test]
+    fn v22_names_each_sent_version_after_its_client_and_leaves_drafts_unnamed() {
+        let (_dir, conn) = test_db();
+        let kind: i64 = conn
+            .query_row("SELECT id FROM document_kinds LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO clients (id, name) VALUES (1, 'Cedar Systems');
+             INSERT INTO documents (id, client_id, kind_id, title, token, created_at, updated_at)
+                  VALUES (1, 1, {kind}, 'SOW', 'tok', '2026-10-01', '2026-10-01');
+             INSERT INTO document_versions (document_id, number, file_path, checksum, sent_at, created_at, client_name)
+                  VALUES (1, 1, 'v1.pdf', 'sha256:a', '2026-10-02', '2026-10-01', NULL),
+                         (1, 2, 'v2.pdf', 'sha256:b', '2026-10-03', '2026-10-03', 'Cedar Holdings'),
+                         (1, 3, 'v3.pdf', 'sha256:c', NULL, '2026-10-04', NULL);"
+        ))
+        .unwrap();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        conn.execute("UPDATE clients SET name = 'Renamed' WHERE id = 1", [])
+            .unwrap();
+        set_metadata(&conn, "schema_version", "21").unwrap();
+        run_migrations(&conn).unwrap();
+        let names: Vec<Option<String>> = conn
+            .prepare("SELECT client_name FROM document_versions ORDER BY number")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            names,
+            [
+                Some("Cedar Systems".into()),
+                Some("Cedar Holdings".into()),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn v23_gives_versions_executed_copy_checksums_and_is_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "22").unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('document_versions')
+                  WHERE name IN ('executed_checksum', 'executed_public_checksum')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 2);
     }
 
     #[test]

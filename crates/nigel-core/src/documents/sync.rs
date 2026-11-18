@@ -8,9 +8,11 @@ use serde::Serialize;
 use crate::documents::lifecycle::republish_after_change;
 use crate::documents::model::{
     validate_moment, validate_note, DocumentListRow, DocumentStatus, DocumentVersion, Recipient,
-    ResponseKind,
+    ResponseKind, SIGNER_TEXT_MAX_CHARS,
 };
-use crate::documents::record::{record_online_response, OnlineResponse, RecordOutcome};
+use crate::documents::record::{
+    clean_title, record_online_response, OnlineResponse, RecordOutcome,
+};
 use crate::documents::status::document_status;
 use crate::documents::store::{
     change_requests, get_document, latest_sent_version, list_documents, recipients, signatures,
@@ -195,6 +197,7 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
         let kind = match r.action {
             ResponseAction::Accept => ResponseKind::Accept {
                 typed_name: r.typed_name.as_deref().unwrap_or_default().trim(),
+                title: checked.title.as_deref(),
             },
             ResponseAction::RequestChanges => ResponseKind::RequestChanges {
                 note: r.note.as_deref().unwrap_or_default(),
@@ -234,18 +237,19 @@ fn sync_document<R: ResponseSource, P: DocumentPublisher>(
     Ok(line)
 }
 
-const TYPED_NAME_MAX_CHARS: usize = 200;
+const TYPED_NAME_MAX_CHARS: usize = SIGNER_TEXT_MAX_CHARS;
 const USER_AGENT_MAX_CHARS: usize = 512;
 
 /// What survives of a response's metadata once it is fit to store.
 struct Checked {
     received_at: String,
+    title: Option<String>,
     ip: Option<String>,
     user_agent: Option<String>,
 }
 
 /// Refuses a response that does not answer exactly this version for exactly
-/// this recipient, or that carries a name or note unfit to record, no consent
+/// this recipient, or that carries a name, title or note unfit to record, no consent
 /// or an unreadable `receivedAt`. An address
 /// that is not an IP, or an over-long or control-laden user agent, is dropped
 /// rather than refused. Nothing the response carries is echoed beyond what
@@ -269,6 +273,7 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
     if r.recipient_token != f.recipient.token {
         return refuse("it names a different recipient.".into());
     }
+    let mut title = None;
     match r.action {
         ResponseAction::Accept => {
             if r.consent != Some(true) {
@@ -285,6 +290,10 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
             }
             if typed.chars().any(char::is_control) {
                 return refuse("the typed name carries control characters.".into());
+            }
+            match clean_title(r.title.as_deref()) {
+                Ok(t) => title = t,
+                Err(e) => return refuse(e.to_string()),
             }
         }
         ResponseAction::RequestChanges => {
@@ -312,6 +321,7 @@ fn check(f: &Fetched, version: &DocumentVersion) -> std::result::Result<Checked,
         .map(str::to_string);
     Ok(Checked {
         received_at,
+        title,
         ip,
         user_agent,
     })
@@ -358,6 +368,7 @@ mod tests {
             checksum: s.version.checksum.clone(),
             recipient_token: s.signer.token.clone(),
             typed_name: Some("Pat Example".into()),
+            title: None,
             consent: Some(true),
             note: None,
             received_at: at.into(),
@@ -651,6 +662,45 @@ mod tests {
             change_requests(&conn, s.version.id).unwrap()[0].note,
             "Fix the dates.\nAnd the totals."
         );
+    }
+
+    #[test]
+    fn an_online_acceptance_records_the_title_it_carries() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            DocumentResponse {
+                title: Some(" Director of Operations ".into()),
+                ..accept_from(&s, "2026-10-05T17:04:11Z")
+            },
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert_eq!(report.recorded, 1);
+        let sig = &signatures(&conn, s.version.id).unwrap()[0];
+        assert_eq!(sig.title.as_deref(), Some("Director of Operations"));
+    }
+
+    #[test]
+    fn a_title_with_control_characters_is_refused() {
+        let (dir, conn) = test_conn();
+        let (id, p, src) = sent_document_with_fakes(&conn, dir.path());
+        let s = sent_state(&conn, id);
+        src.put_response(
+            &s.token,
+            1,
+            &s.signer.token,
+            DocumentResponse {
+                title: Some("Director\u{1b}[2J".into()),
+                ..accept_from(&s, "2026-10-05T17:04:11Z")
+            },
+        );
+        let report = sync_documents(&conn, "Initech", &src, Some(&p), None).unwrap();
+        assert_eq!((report.recorded, report.lines[0].refused.len()), (0, 1));
+        assert!(signatures(&conn, s.version.id).unwrap().is_empty());
     }
 
     #[test]

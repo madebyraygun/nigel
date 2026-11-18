@@ -109,6 +109,7 @@ export async function handle(request: Request, env: Env, now: () => Date = () =>
     checksum: parsed.checksum,
     recipientToken: parsed.recipientToken,
     ...(parsed.action === 'accept' ? { typedName: parsed.typedName, consent: true } : {}),
+    ...(parsed.action === 'accept' && parsed.title?.trim() ? { title: parsed.title.trim() } : {}),
     note: parsed.action === 'request_changes' ? parsed.note : null,
     receivedAt: now().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     ip: request.headers.get('CF-Connecting-IP'),

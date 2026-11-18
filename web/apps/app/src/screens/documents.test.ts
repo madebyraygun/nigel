@@ -180,6 +180,8 @@ function documentDetail(overrides: Partial<DocumentDetail> = {}): DocumentDetail
         signatures: [],
         changeRequests: [],
         fileMissing: false,
+        executedChecksum: null,
+        executedPublicChecksum: null,
       },
     ],
     ...documentFlags('draft'),
@@ -590,6 +592,8 @@ describe('nigel-documents-screen', () => {
   it('offers the signing record beside the PDF only once the document is executed', async () => {
     const sent = await mount('id=12', withDetail(documentDetail()));
     expect(sent.el.shadowRoot?.querySelector('[data-signing-record-link]')).toBeNull();
+    const executedBefore = sent.el.shadowRoot?.querySelector('[data-executed-copy-link]');
+    expect(executedBefore).toBeNull();
 
     document.body.innerHTML = '';
     resetAppStore();
@@ -602,6 +606,29 @@ describe('nigel-documents-screen', () => {
     expect(link.getAttribute('href')).toBe('/document-signing-record/12.pdf');
     expect(link.textContent?.trim()).toBe('Download signing record');
     expect(find(el, '[data-pdf-link]').nextElementSibling).toBe(link);
+    const copy = find(el, '[data-executed-copy-link]');
+    expect(copy.hasAttribute('href')).toBe(false);
+    expect(copy.textContent?.trim()).toBe('Download executed copy');
+    expect(copy.nextElementSibling).toBe(find(el, '[data-pdf-link]'));
+  });
+
+  it('downloads the executed copy and shows why the server refused one', async () => {
+    const fake = withDetail(documentDetail({ status: 'executed', ...documentFlags('executed') }));
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-executed-copy-link]').click();
+    await settle(el);
+    expect(fake.calls).toContain('downloadExecutedCopy:12');
+    expect(el.shadowRoot?.querySelector('[data-action-error]')).toBeNull();
+
+    fake.executedCopyError = conflictError('executed_copy_unavailable', {
+      message: 'The signed PDF is encrypted, so no executed copy can be made.',
+    });
+    find(el, '[data-executed-copy-link]').click();
+    await settle(el);
+    expect(find(el, '[data-action-error]').getAttribute('message')).toBe(
+      'Couldn’t save the executed copy. The signed PDF is encrypted, so no executed copy can be made.',
+    );
   });
 
   it('send posts the recipient editor’s value', async () => {
@@ -812,6 +839,30 @@ describe('nigel-documents-screen', () => {
     expect(el.shadowRoot?.querySelector('wc-manager-dialog')).toBeNull();
   });
 
+  it('countersign sends the title when one is given', async () => {
+    const fake = withDetail(documentDetail({ status: 'accepted', ...documentFlags('accepted') }));
+    const { el } = await mount('id=12', fake);
+
+    find(el, '[data-action="countersign"]').click();
+    await settle(el);
+    const dialog = find(el, 'wc-manager-dialog');
+    const name = find(el, '[data-field-name]') as HTMLElement & { value: string };
+    name.value = 'Sam Example';
+    name.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    const title = find(el, '[data-field-signer-title]') as HTMLElement & { value: string };
+    title.value = '  Managing Partner ';
+    title.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    await settle(el);
+
+    await answerConfirm(true);
+    dialog.dispatchEvent(new CustomEvent('nc-manager-save'));
+    await settle(el);
+
+    expect(fake.calls).toContain(
+      `countersignDocument:12:${JSON.stringify({ name: 'Sam Example', title: 'Managing Partner' })}`,
+    );
+  });
+
   it('notes in the timeline render as text', async () => {
     const note = '<b>Bold</b> & <img src=x onerror=alert(1)> scope';
     const fake = withDetail(
@@ -822,6 +873,8 @@ describe('nigel-documents-screen', () => {
           {
             id: 40,
             fileMissing: false,
+            executedChecksum: null,
+            executedPublicChecksum: null,
             documentId: 12,
             number: 1,
             checksum: `sha256:${'a'.repeat(64)}`,

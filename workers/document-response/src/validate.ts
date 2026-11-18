@@ -15,6 +15,7 @@ export interface ResponseRequest {
   checksum: string;
   action: Action;
   typedName?: string;
+  title?: string;
   consent?: boolean;
   note?: string;
 }
@@ -27,6 +28,7 @@ export interface Refusal {
 
 export const NOTE_MAX = 4000;
 export const TYPED_NAME_MAX = 200;
+export const TITLE_MAX = 200;
 
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const ANY_CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -47,7 +49,7 @@ export function parseRequest(body: unknown): ResponseRequest | Refusal {
   }
   if (typeof b.version !== 'number' || !Number.isInteger(b.version)) return bad('Missing or invalid version.');
   if (b.action !== 'accept' && b.action !== 'request_changes') return bad('Unknown action.');
-  for (const [field, type] of [['typedName', 'string'], ['consent', 'boolean'], ['note', 'string']] as const) {
+  for (const [field, type] of [['typedName', 'string'], ['title', 'string'], ['consent', 'boolean'], ['note', 'string']] as const) {
     if (b[field] !== undefined && typeof b[field] !== type) return bad(`Invalid ${field}.`);
   }
   return {
@@ -57,6 +59,7 @@ export function parseRequest(body: unknown): ResponseRequest | Refusal {
     checksum: b.checksum,
     action: b.action,
     typedName: b.typedName as string | undefined,
+    title: b.title as string | undefined,
     consent: b.consent as boolean | undefined,
     note: b.note as string | undefined,
   };
@@ -78,6 +81,10 @@ export function checkRequest(request: ResponseRequest, manifest: Manifest | null
     const typed = (request.typedName ?? '').trim();
     if (typed === '' || [...typed].length > TYPED_NAME_MAX || ANY_CONTROL.test(typed) || LONE_SURROGATE.test(typed)) {
       return refuse(422, 'name_invalid', `Type your full name, at most ${TYPED_NAME_MAX} characters of plain text.`);
+    }
+    const title = (request.title ?? '').trim();
+    if ([...title].length > TITLE_MAX || ANY_CONTROL.test(title) || LONE_SURROGATE.test(title)) {
+      return refuse(422, 'title_invalid', `Your title can be at most ${TITLE_MAX} characters of plain text.`);
     }
     return null;
   }

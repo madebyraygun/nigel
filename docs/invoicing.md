@@ -1670,7 +1670,13 @@ An acceptance is a **simple electronic signature with an audit trail**: the
 signer's typed name, their consent to sign electronically, the time, their IP
 address and browser, bound to the SHA-256 checksum of the exact PDF they were
 shown. The signer's page tells them their typed name is their signature on the
-document. Nigel does not verify who typed the name — anyone holding the link
+document. The form also asks for an optional **title**, the role the signer signs
+in ("Director of Operations"); it is recorded beside the name and shown wherever
+the signature is. Under the fields the form says **Signing on behalf of** the
+client, and the stamped page, the signing record and the confirmation email name
+the signer as acting on the client's behalf. The client's name is the one it
+had when the version was sent, so renaming the client later changes no published
+page or record. Nigel does not verify who typed the name — anyone holding the link
 can — and it is not a qualified (eIDAS) signature, so a contract that needs
 identity verification or a qualified signature belongs in a service that
 provides it.
@@ -1735,6 +1741,7 @@ pair is the capability in a recipient's link.
 |---|---|---|
 | `d/{token}/v{n}/document.pdf` | public | Nigel, once per version, never changed |
 | `d/{token}/v{n}/signing-record.pdf` | public | Nigel, when that version is countersigned, and again by `document signing-record`; the redacted record, without IP address or browser |
+| `d/{token}/v{n}/executed.pdf` | public | Nigel, beside the record: the signed PDF with the redacted record appended |
 | `d/{token}/{recipient-token}/index.html` | public | Nigel, on send and again whenever the document changes state |
 | `d/{token}/manifest.json` | private | Nigel |
 | `d/{token}/v{n}/{recipient-token}.json` | private | the Worker, once per recipient per version |
@@ -1748,7 +1755,8 @@ read and written only with the R2 keys and by the Worker's binding.
 Every version of every filed PDF also stays in the data directory under
 `documents/<id>/v<n>.pdf`, and its checksum is verified on each read. An
 executed version's full signing record is kept beside it as
-`documents/<id>/v<n>-signing-record.pdf`.
+`documents/<id>/v<n>-signing-record.pdf`, and its full executed copy as
+`documents/<id>/v<n>-executed.pdf`.
 
 The **manifest** tells the Worker whether a recipient may still respond:
 
@@ -1777,6 +1785,7 @@ A **response** is what the Worker writes when a recipient answers:
   "checksum": "sha256:9c1f…",
   "recipientToken": "…",
   "typedName": "Pat Example",
+  "title": "Director of Operations",
   "consent": true,
   "note": null,
   "receivedAt": "2026-10-05T17:04:11Z",
@@ -1786,13 +1795,16 @@ A **response** is what the Worker writes when a recipient answers:
 ```
 
 `action` is `accept` or `request_changes`; a change request has a `note` of 1 to
-4000 characters of plain text and no `typedName` or `consent`. The Worker
+4000 characters of plain text and no `typedName` or `consent`. `title` is
+optional: the page posts it only when the signer typed one, and the Worker
+records it as at most 200 characters of plain text, trimmed, which Nigel checks
+again on sync. The Worker
 refuses a request when the document is unknown (404), the manifest is `closed`
 or the recipient already answered that version (409), the version was already
 accepted (409 `accepted`) or someone requested changes on it (409
 `changes_requested`), the link is not a recipient's or a collaborator tries to
 accept (403), the version or checksum is stale (409), the typed name is blank or
-not plain text, consent is missing or the note is unusable (422), or the
+not plain text, the title is over 200 characters or not plain text, consent is missing or the note is unusable (422), or the
 recipient is over 10 requests a minute (429). The typed name is recorded as
 typed; it does not have to match the signer's name on file.
 
@@ -1846,10 +1858,10 @@ links no longer take responses — tell those people to disregard the email.
 
 ```bash
 nigel document revise 3 --file ~/proposal-v2.pdf
-nigel document accept 3 --name "Pat Example"
+nigel document accept 3 --name "Pat Example" --title "Director of Operations"
 nigel document request-changes 3 --name "Pat Example" --note "Move the start date"
 nigel document decline 3 --note "Going another way"
-nigel document countersign 3 --name "Sam Example"
+nigel document countersign 3 --name "Sam Example" --title "Managing Partner"
 nigel document withdraw 3
 ```
 
@@ -1870,23 +1882,26 @@ versions as superseded again, which repairs it. It works from `sent` and
 the response page. Each takes `--date` (default: today; `YYYY-MM-DD` or an RFC 3339
 timestamp), is recorded with the method `manual`, closes the manifest and
 rewrites the recipients' pages to show the outcome. `accept` records the named
-signer's assent against the version's checksum. `decline` is terminal.
+signer's assent against the version's checksum, with `--title` for the role they
+signed in; `countersign` takes `--title` too. `decline` is terminal.
 
 `countersign` records your own signature on an `accepted` document and makes it
 `executed`. Then, in order:
 
 1. **The signing record** is generated in its two variants (below): the full
    one is kept in the data directory and the redacted one is published beside
-   the version's PDF.
+   the version's PDF. So is the **executed copy** of each, the signed PDF with
+   that record appended (below).
 2. **The pages** are republished showing both signatures, with a **Download the
-   signing record** button beside **Download the PDF** once the record is
-   published.
+   PDF** button and, once each file is published, **Download the executed
+   copy** and **Download the signing record** buttons.
 3. **A confirmation email** goes to every recipient of the executed version, one
    message each, with the subject `Signed: <title> for <company>` (just
    `Signed: <title>` when no business name is set), a short plain-text body
-   with their page link, and two attachments: the signed PDF and the signing
-   record — the full record for the signer, the redacted one for each
-   collaborator. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
+   naming who signed, with their page link, and the executed copy attached —
+   the one with the full record for the signer, the redacted one for each
+   collaborator. When no executed copy could be made, the signed PDF and the
+   signing record are attached as two files instead. It needs `mailgun_api_key`, `mailgun_domain` and `from_email`, and
    nothing from R2 except for the page link, which is left out when R2 is not
    configured.
 
@@ -1915,7 +1930,8 @@ signed PDF itself never changes: every signature is bound to its SHA-256
 checksum, and the record names that checksum so anyone can verify the copy they
 hold. It shows the document's title, kind, client, version and checksum, then
 the client's acceptance and your countersignature, each with the name, the
-typed name, the method (`online` or `manual`), the time, and for an online
+title when one was given (and for the acceptance, the client it was given on
+behalf of), the typed name, the method (`online` or `manual`), the time, and for an online
 acceptance the IP address and browser. Text a recipient supplied — the typed
 name, the browser string — is printed as plain text with control characters
 removed. It is downloaded as `<Title>-v<n>-signing-record.pdf`, e.g.
@@ -1927,14 +1943,44 @@ anyone holding a page link:
 
 | Variant | Contents | Who gets it |
 |---|---|---|
-| Full | Everything above, including the IP address and browser of an online acceptance | You: the copy in the data directory, **Download signing record** in the web UI and `GET /api/documents/{id}/signing-record.pdf`. The signer: attached to their confirmation email |
-| Redacted | The same, without IP address and browser, and a line saying the sender keeps them in the full record | Each collaborator's confirmation email, and the published `d/{token}/v{n}/signing-record.pdf` that every recipient page links |
+| Full | Everything above, including the IP address and browser of an online acceptance | You: the copy in the data directory, **Download signing record** in the web UI and `GET /api/documents/{id}/signing-record.pdf`. The signer: inside the executed copy attached to their confirmation email, or as its own attachment when no executed copy could be made |
+| Redacted | The same, without IP address and browser, and a line saying the sender keeps them in the full record | The published `d/{token}/v{n}/signing-record.pdf` that every recipient page links. Each collaborator: inside the executed copy attached to their confirmation email, or as its own attachment when no executed copy could be made |
 
 Both name the same checksum and the same signatures, so either verifies the
 signed file.
 
-The record needs the `pdf` feature, which the release builds have. A build
-without it skips the record with a warning and emails the signed PDF alone.
+#### The executed copy
+
+The **executed copy** is the signed PDF with the signing record appended as its
+last pages, in one file, as e-signature services hand back an executed document.
+It is downloaded as `<Title>-v<n>-executed.pdf`.
+
+The signed PDF stays exactly as it was sent. Appending pages changes a file's
+bytes, so the executed copy is a **new file with its own checksum**, never a
+replacement: the signatures stay bound to the signed PDF's checksum, which the
+appended record names, and a reader verifies the original pages against that.
+There are two, matching the record's variants: the full one is kept in the data
+directory beside the record as `documents/<id>/v<n>-executed.pdf` (**Download
+executed copy** in the web UI and `GET /api/documents/{id}/executed.pdf`) and
+emailed to the signer; the redacted one is published as
+`d/{token}/v{n}/executed.pdf` and emailed to collaborators.
+
+A file cannot name its own checksum, so Nigel stores the executed copies' on the
+version: `executedChecksum` for the full copy, set when it is written to the data
+directory, and `executedPublicChecksum` for the redacted copy, set once it is
+published. `nigel document show` prints them beside the version, and the API
+carries them under those names.
+
+When no executed copy can be made — the signed PDF is encrypted, unreadable or
+cannot be merged, or the copy cannot be written — the countersignature stands,
+the warning says why, any earlier executed copy and both checksums are cleared,
+and the signed PDF and the record go out as two files. **Download executed copy**
+and `GET /api/documents/{id}/executed.pdf` still build a copy from the kept
+record when one can be made, without writing it.
+
+The record and the executed copy need the `pdf` feature, which the release
+builds have. A build without it skips both with a warning and emails the signed
+PDF alone.
 
 If the record could not be generated or published, regenerate it and publish it
 again, from the terminal or with **Republish signing record** on the document in
@@ -1944,11 +1990,12 @@ the web UI:
 nigel document signing-record 3
 ```
 
-It writes the full local copy and, when R2 is configured, uploads the redacted
-copy and republishes the pages linking it. It emails nobody. It says `Published it as …` only when
-the upload succeeded, says the record was written locally when R2 is not
+It rewrites the full signing record and the full executed copy in the data
+directory and, when R2 is configured, uploads the redacted ones and republishes
+the pages linking them. It emails nobody. It says `Published it as …` only when
+every upload succeeded, says the record was written locally when R2 is not
 configured, and exits non-zero when R2 is configured, even partly, and the
-record was not published.
+record or the executed copy was not published.
 
 `withdraw` is terminal and works from `draft`, `sent` and `changes_requested`.
 It replaces every published page with a withdrawn notice and closes the
@@ -2009,8 +2056,9 @@ page links, and every response; **Send…**, **Revise…**, **Record acceptance�
 **Record change request…**, **Record decline…**, **Countersign…**, **Withdraw…**
 and **Sync** are enabled by the server's guards, and Send and Sync stay disabled
 until their keys are configured. A preview shows the page the signer will
-receive before anything is sent. An executed document offers **Download signing
-record** beside **Download PDF**.
+receive before anything is sent. An executed document offers **Download executed
+copy**, **Download PDF** and **Download signing record**; a refusal to build the
+executed copy shows as a notice on the document.
 
 ### Deploying the response Worker
 
@@ -2043,6 +2091,9 @@ PDF. Deploy it once:
 5. **Then set `document_response_url`** to `https://<your documents
    hostname>/d/respond`. Documents sent before it was set keep pages without a
    form; revise and send them again to give them one.
+
+Redeploy it (step 3) whenever you update Nigel, so the Worker records every
+field the pages post, including a title typed online.
 
 The hostname is the one that serves the public bucket, so the route sits beside
 the bucket's own objects under `/d/`. Nothing about the Worker holds a secret:

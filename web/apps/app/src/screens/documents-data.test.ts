@@ -32,6 +32,8 @@ function version(overrides: Partial<DocumentVersionDetail>): DocumentVersionDeta
     signatures: [],
     changeRequests: [],
     fileMissing: false,
+    executedChecksum: null,
+    executedPublicChecksum: null,
     ...overrides,
   };
 }
@@ -159,6 +161,7 @@ describe('timelineVersions', () => {
           method: 'manual',
           signedAt: '2026-10-06T09:00:00Z',
           typedName: 'Sam Example',
+          title: null,
           ip: null,
           userAgent: null,
           checksum: 'sha256:x',
@@ -173,6 +176,7 @@ describe('timelineVersions', () => {
           method: 'online',
           signedAt: '2026-10-05T09:00:00Z',
           typedName: 'Pat Example',
+          title: null,
           ip: '203.0.113.9',
           userAgent: 'TestAgent',
           checksum: 'sha256:x',

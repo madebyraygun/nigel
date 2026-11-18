@@ -149,6 +149,21 @@ describe('hostile and malformed input', () => {
     expect((await res.json()).code).toBe('name_invalid');
     expect(responses()).toHaveLength(0);
   });
+  it('records an optional title trimmed, and writes none when it is blank', async () => {
+    expect((await post({ ...ACCEPT, title: '  Director of Operations ' })).status).toBe(200);
+    expect(JSON.parse(bucket.objects.get(responseKey(DOC, 2, SIGNER))!).title).toBe('Director of Operations');
+    bucket.objects.clear();
+    bucket.objects.set(manifestKey(DOC), JSON.stringify(MANIFEST));
+    expect((await post({ ...ACCEPT, title: '   ' })).status).toBe(200);
+    expect(JSON.parse(bucket.objects.get(responseKey(DOC, 2, SIGNER))!)).not.toHaveProperty('title');
+  });
+  it('refuses a title that is too long or carries control characters, and writes nothing', async () => {
+    for (const title of ['D'.repeat(201), 'Director\nof Operations', 7]) {
+      const res = await post({ ...ACCEPT, title });
+      expect(res.status, JSON.stringify(title)).toBe(typeof title === 'number' ? 400 : 422);
+    }
+    expect(responses()).toHaveLength(0);
+  });
   it('refuses a typed name with a tab or newline that Nigel would refuse, and writes nothing', async () => {
     for (const typedName of ['pat\texample', 'pat\nexample']) {
       const res = await post({ ...ACCEPT, typedName });

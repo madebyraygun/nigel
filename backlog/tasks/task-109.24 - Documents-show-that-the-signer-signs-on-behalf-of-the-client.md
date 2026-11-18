@@ -1,9 +1,11 @@
 ---
 id: TASK-109.24
 title: 'Documents: show that the signer signs on behalf of the client'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-11-17 21:22'
+updated_date: '2026-11-17 22:08'
 labels:
   - documents
   - signing
@@ -22,8 +24,8 @@ The client name is the one on the document at send time, frozen into the version
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The signer's accept form shows 'Signing on behalf of <client>' below the signature fields
-- [ ] #2 The stamped page and both signing record variants show the client under the signer's name
-- [ ] #3 The client name is taken from the sent version, not read live, and a later client rename does not change a published page or record
-- [ ] #4 Tests cover the form, the stamped page and the record; docs/invoicing.md describes it
+- [x] #1 The signer's accept form shows 'Signing on behalf of <client>' below the signature fields
+- [x] #2 The stamped page and both signing record variants show the client under the signer's name
+- [x] #3 The client name is taken from the sent version, not read live, and a later client rename does not change a published page or record
+- [x] #4 Tests cover the form, the stamped page and the record; docs/invoicing.md describes it
 <!-- AC:END -->

@@ -740,8 +740,8 @@ mod tests {
         let run = |cfg: DocumentsConfig| {
             let (dir, conn) = test_conn();
             let (id, _, _) = sent_document_with_fakes(&conn, dir.path());
-            record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
-            record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+            record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+            record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
             complete_execution_configured(&conn, dir.path(), id, "Initech", &cfg)
         };
         let mail = |warnings: &[String]| -> Vec<String> {

@@ -27,6 +27,7 @@ const ACCEPT: TimelineEvent = {
   method: "manual",
   at: "2026-10-06",
   typedName: null,
+  title: null,
   ip: null,
   userAgent: null,
   note: null,
@@ -39,6 +40,7 @@ const CHANGE: TimelineEvent = {
   method: "online",
   at: "2026-10-05T17:04:11Z",
   typedName: null,
+  title: null,
   ip: "203.0.113.7",
   userAgent: "UA",
   note: "Fix the dates",
@@ -80,6 +82,7 @@ describe("wc-document-timeline", () => {
             ...ACCEPT,
             method: "online",
             typedName: "Pat Example",
+            title: null,
             ip: "203.0.113.7",
             userAgent: "UA",
           },
@@ -97,6 +100,16 @@ describe("wc-document-timeline", () => {
       "203.0.113.7",
     );
     expect(events[1].querySelector("[data-evidence]")).toBeNull();
+  });
+
+  it("names the title a signer gave beside their name", async () => {
+    const el = await mount([
+      { ...V1, events: [{ ...ACCEPT, title: "Director of Operations" }] },
+    ]);
+    const text = el.shadowRoot!.textContent!.replace(/\s+/g, " ");
+    expect(text).toContain(
+      "Accepted by Pat Example, Director of Operations — manual, 2026-10-06",
+    );
   });
 
   it("marks an unsent version as a draft", async () => {

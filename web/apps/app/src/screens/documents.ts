@@ -60,6 +60,7 @@ const RECORDED_ASSENT =
   'A simple electronic signature with an audit trail: Nigel records the name, the date and the checksum of the version it binds to. It does not verify the signer’s identity and is not a qualified (eIDAS) signature.';
 
 const NOTE_LIMIT = 4000;
+const SIGNER_TITLE_LIMIT = 200;
 
 const BLANK_RECIPIENTS: RecipientEditorValue = {
   signer: { name: '', email: '' },
@@ -266,6 +267,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   @state() private dialog: ActionDialog | null = null;
   @state() private dialogError: string | null = null;
   @state() private fieldName = '';
+  @state() private fieldSignerTitle = '';
   @state() private fieldNote = '';
   @state() private fieldDate = '';
   @state() private fieldTitle = '';
@@ -586,6 +588,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   private handlePdf = (event: Event): Promise<void> =>
     this.saveTarget(event, (id) => this.client.documentPreviewTarget(id), 'the PDF');
 
+  private handleExecutedCopy = (event: Event): Promise<void> =>
+    this.saveTarget(
+      event,
+      (id) => this.client.documentExecutedCopyTarget(id),
+      'the executed copy',
+    );
+
   private handleSigningRecord = (event: Event): Promise<void> =>
     this.saveTarget(
       event,
@@ -624,6 +633,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     this.fieldName =
       dialog === 'accept' || dialog === 'requestChanges' ? this.signerName(detail) : '';
     this.fieldNote = '';
+    this.fieldSignerTitle = '';
     this.fieldDate = '';
     this.fieldTitle = detail.title;
     this.fieldKind = detail.kind;
@@ -649,6 +659,10 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
   private handleFieldName = (event: Event): void => {
     this.fieldName = (event.target as HTMLInputElement).value;
+  };
+
+  private handleFieldSignerTitle = (event: Event): void => {
+    this.fieldSignerTitle = (event.target as HTMLInputElement).value;
   };
 
   private handleFieldNote = (event: Event): void => {
@@ -757,18 +771,20 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     const name = this.fieldName.trim();
     const note = this.fieldNote.trim();
     const date = this.fieldDate ? { date: this.fieldDate } : {};
+    const signerTitle = this.fieldSignerTitle.trim();
+    const title = signerTitle ? { title: signerTitle } : {};
     const revision = this.revision;
     switch (dialog) {
       case 'revise':
         return (id) => this.client.reviseDocument(id, revision as File);
       case 'accept':
-        return (id) => this.client.acceptDocument(id, { name, ...date });
+        return (id) => this.client.acceptDocument(id, { name, ...title, ...date });
       case 'requestChanges':
         return (id) => this.client.requestDocumentChanges(id, { name, note, ...date });
       case 'decline':
         return (id) => this.client.declineDocument(id, { ...(note ? { note } : {}), ...date });
       case 'countersign':
-        return (id) => this.client.countersignDocument(id, { name, ...date });
+        return (id) => this.client.countersignDocument(id, { name, ...title, ...date });
     }
   }
 
@@ -1130,7 +1146,8 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           >
             ${this.previewOpen ? 'Hide preview' : 'Show preview'}
           </wa-button>
-          ${this.renderPdfLink(detail)} ${this.renderSigningRecordLink(detail)}
+          ${this.renderExecutedCopyLink(detail)} ${this.renderPdfLink(detail)}
+          ${this.renderSigningRecordLink(detail)}
         </div>
         ${this.previewOpen ? this.renderPreview(detail) : nothing}
       </wc-panel>
@@ -1272,6 +1289,21 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     </wa-button>`;
   }
 
+  /** An executed document's executed copy: the signed PDF with the signing record at the end. */
+  private renderExecutedCopyLink(detail: DocumentDetail) {
+    if (detail.status !== 'executed') return nothing;
+    const target = this.client.documentExecutedCopyTarget(detail.id);
+    return html`<wa-button
+      data-executed-copy-link
+      variant="brand"
+      href=${target.kind === 'href' ? target.href : nothing}
+      download=${target.kind === 'href' ? '' : nothing}
+      @click=${this.handleExecutedCopy}
+    >
+      Download executed copy
+    </wa-button>`;
+  }
+
   /** An executed document's signing record, beside its PDF. */
   private renderSigningRecordLink(detail: DocumentDetail) {
     if (detail.status !== 'executed') return nothing;
@@ -1330,6 +1362,16 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
       ?disabled=${this.busy}
       @input=${this.handleFieldNote}
     ></wa-textarea>`;
+    const signerTitle = html`<wa-input
+      data-field-signer-title
+      label="Title (optional)"
+      hint="The role they sign in, such as Director of Operations."
+      maxlength=${SIGNER_TITLE_LIMIT}
+      autocomplete="off"
+      .value=${this.fieldSignerTitle}
+      ?disabled=${this.busy}
+      @input=${this.handleFieldSignerTitle}
+    ></wa-input>`;
     const assent = html`<p class="meta" data-assent>${RECORDED_ASSENT}</p>`;
 
     switch (dialog) {
@@ -1368,13 +1410,13 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           @nc-file-clear=${this.handleRevisionClear}
         ></wc-dropzone>`;
       case 'accept':
-        return html`${assent} ${name('Signer name')} ${date}`;
+        return html`${assent} ${name('Signer name')} ${signerTitle} ${date}`;
       case 'requestChanges':
         return html`${name('Requested by')} ${note('Changes requested')} ${date}`;
       case 'decline':
         return html`${note('Note (optional)')} ${date}`;
       case 'countersign':
-        return html`${assent} ${name('Countersigned by')} ${date}`;
+        return html`${assent} ${name('Countersigned by')} ${signerTitle} ${date}`;
     }
   }
 

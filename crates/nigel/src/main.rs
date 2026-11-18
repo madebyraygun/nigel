@@ -336,9 +336,17 @@ fn dispatch(command: Commands) -> error::Result<()> {
             DocumentCommands::Withdraw { id, yes } => {
                 cli::document::withdraw(id, yes, &cli::today())
             }
-            DocumentCommands::Accept { id, name, date } => {
-                cli::document::accept(id, &name, &date.unwrap_or_else(cli::today))
-            }
+            DocumentCommands::Accept {
+                id,
+                name,
+                title,
+                date,
+            } => cli::document::accept(
+                id,
+                &name,
+                title.as_deref(),
+                &date.unwrap_or_else(cli::today),
+            ),
             DocumentCommands::RequestChanges {
                 id,
                 name,
@@ -348,9 +356,17 @@ fn dispatch(command: Commands) -> error::Result<()> {
             DocumentCommands::Decline { id, note, date } => {
                 cli::document::decline(id, note.as_deref(), &date.unwrap_or_else(cli::today))
             }
-            DocumentCommands::Countersign { id, name, date } => {
-                cli::document::countersign(id, &name, &date.unwrap_or_else(cli::today))
-            }
+            DocumentCommands::Countersign {
+                id,
+                name,
+                title,
+                date,
+            } => cli::document::countersign(
+                id,
+                &name,
+                title.as_deref(),
+                &date.unwrap_or_else(cli::today),
+            ),
             DocumentCommands::SigningRecord { id } => cli::document::signing_record(id),
         },
         Commands::Invoice { command } => match command {

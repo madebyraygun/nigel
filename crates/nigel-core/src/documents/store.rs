@@ -200,10 +200,25 @@ fn version_from_row(r: &Row<'_>) -> rusqlite::Result<DocumentVersion> {
         checksum: r.get(4)?,
         sent_at: r.get(5)?,
         created_at: r.get(6)?,
+        client_name: r.get(7)?,
+        executed_checksum: r.get(8)?,
+        executed_public_checksum: r.get(9)?,
     })
 }
 
-const VERSION_COLUMNS: &str = "id, document_id, number, file_path, checksum, sent_at, created_at";
+const VERSION_COLUMNS: &str = "id, document_id, number, file_path, checksum, sent_at, created_at, \
+     client_name, executed_checksum, executed_public_checksum";
+
+/// The client name frozen on a sent version, which its pages and signing
+/// record name the signer as acting on behalf of.
+pub fn version_client_name(document: &Document, version: &DocumentVersion) -> Result<String> {
+    version.client_name.clone().ok_or_else(|| {
+        NigelError::Other(format!(
+            "Version {} of document #{} has no client name; it has not been sent.",
+            version.number, document.id
+        ))
+    })
+}
 
 pub fn versions(conn: &Connection, document_id: i64) -> Result<Vec<DocumentVersion>> {
     let mut stmt = conn.prepare(&format!(
@@ -275,7 +290,7 @@ pub fn recipients(conn: &Connection, version_id: i64) -> Result<Vec<Recipient>> 
 pub fn signatures(conn: &Connection, version_id: i64) -> Result<Vec<Signature>> {
     let mut stmt = conn.prepare(
         "SELECT id, version_id, recipient_id, role, name, email, method, signed_at,
-                typed_name, ip, user_agent, checksum
+                typed_name, ip, user_agent, checksum, title
            FROM document_signatures WHERE version_id = ?1 ORDER BY id",
     )?;
     let rows = stmt
@@ -296,6 +311,7 @@ pub fn signatures(conn: &Connection, version_id: i64) -> Result<Vec<Signature>> 
                 ip: r.get(9)?,
                 user_agent: r.get(10)?,
                 checksum: r.get(11)?,
+                title: r.get(12)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -604,7 +620,7 @@ mod tests {
             )],
         )
         .unwrap();
-        mark_sent(&conn, v.id, "2026-10-05").unwrap();
+        mark_sent(&conn, v.id, "Cedar Systems", "2026-10-05").unwrap();
         record_decline(&conn, declined, None, "2026-10-06").unwrap();
         let live = file("Website rebuild, once more").expect("refiled after a decline");
 

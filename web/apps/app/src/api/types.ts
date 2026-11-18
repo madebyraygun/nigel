@@ -1503,6 +1503,7 @@ export interface DocumentSignature {
   method: 'online' | 'manual';
   signedAt: string;
   typedName: string | null;
+  title: string | null;
   ip: string | null;
   userAgent: string | null;
   checksum: string;
@@ -1529,6 +1530,10 @@ export interface DocumentVersionDetail {
   checksum: string;
   sentAt: string | null;
   createdAt: string;
+  /** The executed copy kept locally: the signed PDF with the full signing record appended. */
+  executedChecksum: string | null;
+  /** The executed copy published beside the version, with the redacted record appended. */
+  executedPublicChecksum: string | null;
   recipients: DocumentRecipient[];
   signatures: DocumentSignature[];
   changeRequests: DocumentChangeRequest[];
@@ -1648,6 +1653,8 @@ export interface DocumentSendErrorDetails {
 /** A response given outside the published page. `date` defaults to today. */
 export interface ManualAcceptRequest {
   name: string;
+  /** The role they sign in, e.g. "Director of Operations". */
+  title?: string;
   date?: string;
 }
 
@@ -1664,6 +1671,7 @@ export interface DeclineRequest {
 
 export interface CountersignRequest {
   name: string;
+  title?: string;
   date?: string;
 }
 
@@ -1680,6 +1688,7 @@ export type DocumentActionResult = Partial<DocumentDetail> & {
 /** `POST /api/documents/{id}/signing-record`: the action's result, and whether the record reached the public bucket. */
 export type SigningRecordResult = DocumentActionResult & {
   published: boolean;
+  executedCopyPublished: boolean;
 };
 
 export interface DocumentSyncLine {

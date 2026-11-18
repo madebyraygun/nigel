@@ -579,9 +579,9 @@ pub fn sync() -> Result<()> {
     Ok(())
 }
 
-pub fn accept(id: i64, name: &str, date: &str) -> Result<()> {
+pub fn accept(id: i64, name: &str, title: Option<&str>, date: &str) -> Result<()> {
     record_then_republish(id, date, |conn, at| {
-        record_manual_accept(conn, id, name, at)
+        record_manual_accept(conn, id, name, title, at)
     })
 }
 
@@ -598,11 +598,11 @@ pub fn decline(id: i64, note: Option<&str>, date: &str) -> Result<()> {
 /// Countersign, then publish the signing record, republish the pages and
 /// email the signed copy. Everything after the countersignature is a warning
 /// when it fails, never an error.
-pub fn countersign(id: i64, name: &str, date: &str) -> Result<()> {
+pub fn countersign(id: i64, name: &str, title: Option<&str>, date: &str) -> Result<()> {
     let date = validate_moment(date, "date")?;
     let data_dir = get_data_dir();
     let conn = get_connection(&data_dir.join("nigel.db"))?;
-    record_countersign(&conn, id, name, &date)?;
+    record_countersign(&conn, id, name, title, &date)?;
     println!("Recorded: document #{id} is executed.");
     let warnings = complete_execution_configured(
         &conn,
@@ -644,6 +644,12 @@ pub fn report_regenerated(id: i64, regenerated: &RegeneratedRecord) -> (Vec<Stri
         "Wrote the signing record for document #{id}: {}",
         regenerated.path.display()
     )];
+    if let Some(path) = &regenerated.executed_path {
+        lines.push(format!(
+            "Wrote the executed copy, the signed PDF with the record appended: {}",
+            path.display()
+        ));
+    }
     if regenerated.published {
         lines.push(format!("Published it as {}.", regenerated.filename));
     } else if regenerated
@@ -653,9 +659,17 @@ pub fn report_regenerated(id: i64, regenerated: &RegeneratedRecord) -> (Vec<Stri
     {
         lines.push("Wrote it locally; R2 is not configured, so it was not published.".into());
     }
+    if regenerated.executed_published {
+        lines.push("Published the executed copy beside it.".into());
+    }
     let outcome = if regenerated.failed() {
+        let what = if regenerated.published {
+            "executed copy"
+        } else {
+            "signing record"
+        };
         Err(NigelError::Other(format!(
-            "The signing record for document #{id} was not published."
+            "The {what} for document #{id} was not published."
         )))
     } else {
         Ok(())
@@ -751,6 +765,11 @@ pub fn format_document_show(
             "Version {}  {}  {state}\n",
             version.number, version.checksum
         ));
+        if let Some(executed) = &version.executed_checksum {
+            out.push_str(&format!(
+                "  executed copy  {executed}  (the signed PDF with its signing record appended)\n"
+            ));
+        }
         if file_missing(version) {
             out.push_str(&format!(
                 "  PDF MISSING: {} is not on disk; restore it from a backup that includes the documents folder\n",
@@ -770,8 +789,13 @@ pub fn format_document_show(
                 SignatureRole::Client => "accepted",
                 SignatureRole::Countersign => "countersigned",
             };
+            let title = signature
+                .title
+                .as_deref()
+                .map(|t| format!(", {}", printable(t)))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "  {verb} by {} ({}) at {}",
+                "  {verb} by {}{title} ({}) at {}",
                 printable(&signature.name),
                 signature.method.as_str(),
                 signature.signed_at
@@ -928,6 +952,7 @@ mod tests {
                 checksum: v.checksum.clone(),
                 recipient_token: signer.token.clone(),
                 typed_name: Some("Pat Example".into()),
+                title: None,
                 consent: Some(true),
                 note: None,
                 received_at: "2026-10-05T17:04:11Z".into(),
@@ -1142,6 +1167,9 @@ mod tests {
                 checksum: checksum.into(),
                 sent_at: sent_at.map(Into::into),
                 created_at: "2026-10-05T09:00:00Z".into(),
+                client_name: None,
+                executed_checksum: None,
+                executed_public_checksum: None,
             };
         let recipient = |id: i64, role: RecipientRole, name: &str, email: &str| Recipient {
             id,
@@ -1216,10 +1244,21 @@ mod tests {
             method,
             signed_at: "2026-10-06T10:00:00Z".into(),
             typed_name: (method == Method::Online).then(|| "Pat E.".into()),
+            title: None,
             ip: (method == Method::Online).then(|| "203.0.113.9".into()),
             user_agent: None,
             checksum: "sha256:dd".into(),
         }
+    }
+
+    #[test]
+    fn show_prints_an_executed_copy_checksum_beside_its_version() {
+        let mut record = fixture_record();
+        record.versions[0].version.executed_checksum = Some("sha256:ee".into());
+        let out = format_document_show(&record, |_| false);
+        assert!(out.contains(
+            "  executed copy  sha256:ee  (the signed PDF with its signing record appended)\n"
+        ));
     }
 
     #[test]
@@ -1335,8 +1374,10 @@ mod tests {
         use nigel_core::invoicing::gateway::{Unavailable, UnavailableState};
         let record = |published: bool, state: Option<UnavailableState>| RegeneratedRecord {
             path: std::path::PathBuf::from("/data/documents/3/v1-signing-record.pdf"),
+            executed_path: None,
             filename: "Website-rebuild-v1-signing-record.pdf".into(),
             published,
+            executed_published: false,
             unavailable: state.map(|state| Unavailable {
                 service: "R2",
                 keys: &["r2_bucket"],
@@ -1370,5 +1411,28 @@ mod tests {
         );
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(outcome.is_err(), "a partly configured R2 is an error");
+
+        let copy = |executed_published: bool| RegeneratedRecord {
+            executed_path: Some("/data/documents/3/v1-executed.pdf".into()),
+            executed_published,
+            ..record(true, None)
+        };
+        let (lines, outcome) = report_regenerated(3, &copy(false));
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("Published the executed copy")),
+            "{lines:?}"
+        );
+        assert_eq!(
+            outcome.unwrap_err().to_string(),
+            "The executed copy for document #3 was not published."
+        );
+        let (lines, outcome) = report_regenerated(3, &copy(true));
+        assert_eq!(
+            lines.last().unwrap(),
+            "Published the executed copy beside it."
+        );
+        assert!(outcome.is_ok());
     }
 }

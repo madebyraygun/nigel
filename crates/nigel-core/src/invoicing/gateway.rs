@@ -1,3 +1,4 @@
+use crate::documents::signing_record::Redacted;
 use crate::error::Result;
 use crate::models::{Client, Invoice};
 
@@ -39,14 +40,24 @@ pub trait DocumentPublisher {
     fn publish_pdf(&self, token: &str, version: i64, pdf: &[u8]) -> Result<String>;
     /// Write one recipient's page and answer its address.
     fn publish_page(&self, token: &str, recipient_token: &str, html: &[u8]) -> Result<String>;
-    /// Write an executed version's signing record beside its PDF, saved as
-    /// `filename` when downloaded, and answer its address.
+    /// Write an executed version's redacted signing record beside its PDF,
+    /// saved as `filename` when downloaded, and answer its address.
     fn publish_signing_record(
         &self,
         token: &str,
         version: i64,
         filename: &str,
-        pdf: &[u8],
+        pdf: &Redacted,
+    ) -> Result<String>;
+    /// Write an executed version's signed PDF with its redacted signing record
+    /// appended, beside its PDF, saved as `filename` when downloaded, and
+    /// answer its address.
+    fn publish_executed_copy(
+        &self,
+        token: &str,
+        version: i64,
+        filename: &str,
+        pdf: &Redacted,
     ) -> Result<String>;
     /// The address every published document object is served under.
     fn public_base(&self) -> &str;

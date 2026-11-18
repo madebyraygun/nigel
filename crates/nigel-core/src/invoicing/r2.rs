@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
+use crate::documents::signing_record::Redacted;
 use crate::documents::wire::{manifest_key, response_key, Manifest};
 use crate::error::{NigelError, Result};
 use crate::invoicing::gateway::{AssetPublisher, DocumentPublisher, ResponseSource};
@@ -63,6 +64,25 @@ pub fn document_signing_record_key(token: &str, version: i64) -> String {
         KeyPrefix::Documents,
         token,
         &format!("v{version}/{SIGNING_RECORD_OBJECT}"),
+    )
+}
+
+pub const EXECUTED_COPY_OBJECT: &str = "executed.pdf";
+
+/// An executed version's signed PDF with the redacted signing record appended,
+/// beside that version's PDF.
+pub fn document_executed_copy_key(token: &str, version: i64) -> String {
+    object_key(
+        KeyPrefix::Documents,
+        token,
+        &format!("v{version}/{EXECUTED_COPY_OBJECT}"),
+    )
+}
+
+pub fn document_executed_copy_url(base: &str, token: &str, version: i64) -> String {
+    format!(
+        "{}/{token}/v{version}/{EXECUTED_COPY_OBJECT}",
+        base.trim_end_matches('/')
     )
 }
 
@@ -533,7 +553,7 @@ impl DocumentPublisher for R2Publisher {
         token: &str,
         version: i64,
         filename: &str,
-        pdf: &[u8],
+        pdf: &Redacted,
     ) -> Result<String> {
         put_object(
             &self.account_id,
@@ -541,11 +561,35 @@ impl DocumentPublisher for R2Publisher {
             &self.secret_key,
             &self.bucket,
             &document_signing_record_key(token, version),
-            pdf,
+            pdf.as_bytes(),
             "application/pdf",
             Some(&inline_disposition(filename)),
         )?;
         Ok(document_signing_record_url(
+            &self.public_base_url,
+            token,
+            version,
+        ))
+    }
+
+    fn publish_executed_copy(
+        &self,
+        token: &str,
+        version: i64,
+        filename: &str,
+        pdf: &Redacted,
+    ) -> Result<String> {
+        put_object(
+            &self.account_id,
+            &self.access_key,
+            &self.secret_key,
+            &self.bucket,
+            &document_executed_copy_key(token, version),
+            pdf.as_bytes(),
+            "application/pdf",
+            Some(&inline_disposition(filename)),
+        )?;
+        Ok(document_executed_copy_url(
             &self.public_base_url,
             token,
             version,

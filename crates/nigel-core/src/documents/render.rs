@@ -2,7 +2,7 @@
 //! here, so what an operator previews is what a client receives. Every value
 //! interpolated into HTML is escaped with the invoicing `esc`; the inline script is
 //! fixed text that reads its values from `data-*` attributes.
-use super::model::RecipientRole;
+use super::model::{RecipientRole, SignatureRole};
 use crate::invoicing::render_html::esc;
 
 pub struct PageContext<'a> {
@@ -36,6 +36,52 @@ pub struct RequestedChange {
     pub at: String,
 }
 
+/// One signature as a page states it: who, the role they signed in when they
+/// gave one, and the date.
+#[derive(Debug, Clone, Copy)]
+pub struct Stamp<'a> {
+    pub name: &'a str,
+    pub title: Option<&'a str>,
+    pub date: &'a str,
+}
+
+impl Stamp<'_> {
+    /// [`signed_by`], escaped.
+    fn by(&self, on_behalf_of: Option<&str>) -> String {
+        esc(&signed_by(self.name, self.title, on_behalf_of, self.date))
+    }
+}
+
+/// Who signed and when, as plain text: `Pat Example on 2026-10-06`, or with a
+/// title or the organization they signed for, each set off by commas:
+/// `Pat Example, Director of Operations, on behalf of Cedar Systems, on
+/// 2026-10-06`.
+fn signed_by(name: &str, title: Option<&str>, on_behalf_of: Option<&str>, date: &str) -> String {
+    let title = title.filter(|t| !t.is_empty());
+    let on_behalf_of = on_behalf_of.filter(|c| !c.is_empty());
+    let mut who = name.to_string();
+    if let Some(title) = title {
+        who.push_str(&format!(", {title}"));
+    }
+    if let Some(client) = on_behalf_of {
+        who.push_str(&format!(", on behalf of {client}"));
+    }
+    if title.is_some() || on_behalf_of.is_some() {
+        format!("{who}, on {date}")
+    } else {
+        format!("{who} on {date}")
+    }
+}
+
+/// What an executed page links beside the PDF, each relative to the page and
+/// set only once that object is published.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExecutedLinks<'a> {
+    /// The signed PDF with the redacted signing record appended.
+    pub executed_copy: Option<&'a str>,
+    pub signing_record: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PageState<'a> {
     Open {
@@ -50,16 +96,11 @@ pub enum PageState<'a> {
     ChangesRequested {
         requests: &'a [RequestedChange],
     },
-    Accepted {
-        name: &'a str,
-        date: &'a str,
-    },
-    /// `signing_record_href` is the record's address relative to the page,
-    /// set only once the record is published beside the PDF.
+    Accepted(Stamp<'a>),
     Executed {
-        client: (&'a str, &'a str),
-        countersign: (&'a str, &'a str),
-        signing_record_href: Option<&'a str>,
+        client: Stamp<'a>,
+        countersign: Stamp<'a>,
+        links: ExecutedLinks<'a>,
     },
     Declined,
 }
@@ -73,7 +114,8 @@ const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach
     var d = form.dataset, f = new FormData(form), status = form.querySelector('[data-status]');
     var body = { token: d.token, recipientToken: d.recipient, version: Number(d.version),
                  checksum: d.checksum, action: d.action };
-    if (d.action === 'accept') { body.typedName = f.get('typedName'); body.consent = f.get('consent') === 'on'; }
+    if (d.action === 'accept') { body.typedName = f.get('typedName'); body.consent = f.get('consent') === 'on';
+                                 var title = String(f.get('title') || '').trim(); if (title) { body.title = title; } }
     else { body.note = f.get('note'); }
     form.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
     fetch(d.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -114,6 +156,8 @@ label{display:block;margin:0 0 .9rem;font-size:.9rem;color:#333}\
 input[type=text],textarea{display:block;width:100%;margin-top:.35rem;padding:.55rem .7rem;font:inherit;color:#111;border:1px solid #909090;border-radius:.4rem;background:#fff}\
 input[type=text]:focus,textarea:focus{outline:2px solid #111;outline-offset:1px}\
 textarea{resize:vertical;min-height:7rem}\
+.optional{color:#666}\
+.behalf{margin:-.25rem 0 .9rem;font-size:.9rem;color:#333}\
 .check{display:flex;gap:.5rem;align-items:flex-start}.check input{margin-top:.25rem}\
 .button,button{display:inline-block;padding:.6rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:1px solid #111;cursor:pointer;text-decoration:none}\
 .primary{background:#111;color:#fff}.secondary{background:#fff;color:#111}\
@@ -131,6 +175,10 @@ pub fn relative_pdf_href(version: i64) -> String {
 
 pub fn relative_signing_record_href(version: i64) -> String {
     format!("../v{version}/signing-record.pdf")
+}
+
+pub fn relative_executed_copy_href(version: i64) -> String {
+    format!("../v{version}/executed.pdf")
 }
 
 fn page_shell(title: &str, body: &str) -> String {
@@ -171,15 +219,29 @@ fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
     }
 }
 
+/// The line under the signature fields saying whom the signer signs for.
+fn on_behalf_line(client: &str) -> String {
+    if client.is_empty() {
+        return String::new();
+    }
+    format!(
+        "<p class=\"behalf\">Signing on behalf of <strong>{}</strong></p>",
+        esc(client)
+    )
+}
+
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
     let mut out = String::from("<div class=\"forms\">\n");
     if recipient.role == RecipientRole::Signer {
         out.push_str(&format!(
             "<form method=\"post\" hidden {} class=\"card\"><h2>Accept</h2>\
 <label>Your full name <input type=\"text\" name=\"typedName\" required maxlength=\"200\" autocomplete=\"name\"></label>\
+<label>Your title <span class=\"optional\">(optional)</span> <input type=\"text\" name=\"title\" maxlength=\"200\" autocomplete=\"organization-title\"></label>\
+{behalf}\
 <label class=\"check\"><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
 <button type=\"submit\" class=\"primary\">Accept</button><p data-status role=\"status\" class=\"status\"></p></form>\n",
-            data_attrs(ctx, recipient, endpoint, "accept")
+            data_attrs(ctx, recipient, endpoint, "accept"),
+            behalf = on_behalf_line(ctx.client_name),
         ));
     }
     out.push_str(&format!(
@@ -287,19 +349,18 @@ fn state_section(
             "<p class=\"notice\">This version has been superseded by version {latest} and no longer takes responses.</p>\n"
         ),
         PageState::ChangesRequested { requests } => changes_requested(requests),
-        PageState::Accepted { name, date } => {
-            format!("<p class=\"notice success\">Accepted by {} on {}.</p>\n", esc(name), esc(date))
-        }
+        PageState::Accepted(client) => format!(
+            "<p class=\"notice success\">Accepted by {}.</p>\n",
+            client.by(Some(ctx.client_name))
+        ),
         PageState::Executed {
             client,
             countersign,
             ..
         } => format!(
-            "<p class=\"notice success\">Accepted by {} on {}.<br>Countersigned by {} on {}.</p>\n",
-            esc(client.0),
-            esc(client.1),
-            esc(countersign.0),
-            esc(countersign.1)
+            "<p class=\"notice success\">Accepted by {}.<br>Countersigned by {}.</p>\n",
+            client.by(Some(ctx.client_name)),
+            countersign.by(None)
         ),
         PageState::Declined => "<p class=\"notice\">This document was declined.</p>\n".into(),
     }
@@ -317,7 +378,7 @@ pub fn render_recipient_page(
 <tr><th>Client</th><td>{client}</td></tr>\
 <tr><th>Checksum</th><td class=\"mono\">{checksum}</td></tr></table>\n\
 <div class=\"doc\"><object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object></div>\n\
-<p class=\"download\"><a class=\"button secondary\" href=\"{href}\">Download the PDF</a>{record}</p>\n\
+<p class=\"download\">{executed}<a class=\"button secondary\" href=\"{href}\">Download the PDF</a>{record}</p>\n\
 <section class=\"respond\">\n{signing}{section}</section>",
         company = esc(ctx.company),
         title = esc(ctx.title),
@@ -331,9 +392,27 @@ pub fn render_recipient_page(
             .unwrap_or_default(),
         name = esc(recipient.name),
         href = esc(ctx.pdf_href),
+        executed = match state {
+            PageState::Executed {
+                links:
+                    ExecutedLinks {
+                        executed_copy: Some(copy),
+                        ..
+                    },
+                ..
+            } => format!(
+                "<a class=\"button primary\" href=\"{}\">Download the executed copy</a>",
+                esc(copy)
+            ),
+            _ => String::new(),
+        },
         record = match state {
             PageState::Executed {
-                signing_record_href: Some(record),
+                links:
+                    ExecutedLinks {
+                        signing_record: Some(record),
+                        ..
+                    },
                 ..
             } => format!(
                 "<a class=\"button secondary\" href=\"{}\">Download the signing record</a>",
@@ -407,23 +486,57 @@ pub fn signed_subject(company: &str, title: &str) -> String {
     }
 }
 
+/// What a confirmation carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attached {
+    /// One file: the signed PDF with the signing record appended.
+    ExecutedCopy,
+    /// The signed PDF and the signing record as two files.
+    SignedAndRecord,
+    /// The signed PDF alone, when no record could be made.
+    SignedOnly,
+}
+
+/// One signature as the confirmation lists it: `Accepted by Pat Example,
+/// Director of Operations, on behalf of Cedar Systems, on 2026-10-06.`
+pub fn signed_by_line(
+    role: SignatureRole,
+    name: &str,
+    title: Option<&str>,
+    on_behalf_of: Option<&str>,
+    date: &str,
+) -> String {
+    let verb = match role {
+        SignatureRole::Client => "Accepted",
+        SignatureRole::Countersign => "Countersigned",
+    };
+    format!("{verb} by {}.", signed_by(name, title, on_behalf_of, date))
+}
+
 /// The confirmation's plain-text body: a greeting, one sentence that the
-/// document is fully signed and what is attached, the title and version, and
-/// the recipient's page when it is published.
+/// document is fully signed and what is attached, the title and version, who
+/// signed, and the recipient's page when it is published.
 pub fn render_signed_email_text(
     name: &str,
     title: &str,
     version: i64,
+    signed_by: &[String],
     url: Option<&str>,
-    with_record: bool,
+    attached: Attached,
 ) -> String {
-    let attached = if with_record {
-        "the signed copy and its signing record are attached"
-    } else {
-        "the signed copy is attached"
+    let attached = match attached {
+        Attached::ExecutedCopy => {
+            "the executed copy, the signed document with its signing record at the end, is attached"
+        }
+        Attached::SignedAndRecord => "the signed copy and its signing record are attached",
+        Attached::SignedOnly => "the signed copy is attached",
     };
     let link = url.map(|u| format!("{u}\n")).unwrap_or_default();
-    format!("Hello {name},\n\nThis document is now fully signed; {attached}.\n\n{title} (version {version})\n{link}")
+    let signed = signed_by
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+    format!("Hello {name},\n\nThis document is now fully signed; {attached}.\n\n{title} (version {version})\n{signed}{link}")
 }
 
 pub fn attachment_name(title: &str, version: i64) -> String {
@@ -566,10 +679,42 @@ mod tests {
         }
         assert!(signer.contains("I agree to sign electronically"));
         assert!(signer.contains(
+            "<label>Your title <span class=\"optional\">(optional)</span> <input type=\"text\" name=\"title\" maxlength=\"200\""
+        ));
+        assert!(!signer.contains("name=\"title\" required"));
+        assert!(signer.contains(
+            "<p class=\"behalf\">Signing on behalf of <strong>Cedar Systems</strong></p>"
+        ));
+        assert!(!collab.contains("on behalf of"));
+        assert!(signer.contains(
             "against this exact file (checksum sha256:ab). Your typed name is your electronic signature on this document."
         ));
         assert!(!collab.contains("electronic signature"));
         assert_eq!(signer.matches("<form").count(), 2);
+    }
+
+    #[test]
+    fn a_stamped_page_names_each_signer_with_their_title() {
+        let page = render_recipient_page(
+            &ctx(),
+            &COLLAB,
+            &PageState::Executed {
+                client: Stamp {
+                    name: "Pat Example",
+                    title: Some("Director <of> Operations"),
+                    date: "2026-10-06",
+                },
+                countersign: Stamp {
+                    name: "Sam Example",
+                    title: None,
+                    date: "2026-10-07",
+                },
+                links: ExecutedLinks::default(),
+            },
+        );
+        assert!(page.contains(
+            "Accepted by Pat Example, Director &lt;of&gt; Operations, on behalf of Cedar Systems, on 2026-10-06.<br>Countersigned by Sam Example on 2026-10-07."
+        ));
     }
 
     #[test]
@@ -586,14 +731,23 @@ mod tests {
             PageState::Superseded { latest: 3 },
             PageState::ChangesRequested { requests: &[] },
             PageState::Declined,
-            PageState::Accepted {
+            PageState::Accepted(Stamp {
                 name: "Pat Example",
+                title: None,
                 date: "2026-10-06",
-            },
+            }),
             PageState::Executed {
-                client: ("Pat Example", "2026-10-06"),
-                countersign: ("Sam Example", "2026-10-07"),
-                signing_record_href: None,
+                client: Stamp {
+                    name: "Pat Example",
+                    title: None,
+                    date: "2026-10-06",
+                },
+                countersign: Stamp {
+                    name: "Sam Example",
+                    title: None,
+                    date: "2026-10-07",
+                },
+                links: ExecutedLinks::default(),
             },
         ] {
             assert!(
@@ -604,12 +758,15 @@ mod tests {
         let accepted = render_recipient_page(
             &ctx(),
             &SIGNER,
-            &PageState::Accepted {
+            &PageState::Accepted(Stamp {
                 name: "Pat Example",
+                title: None,
                 date: "2026-10-06",
-            },
+            }),
         );
-        assert!(accepted.contains("Accepted by Pat Example on 2026-10-06"));
+        assert!(
+            accepted.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
+        );
     }
 
     #[test]
@@ -624,10 +781,11 @@ mod tests {
                 ..ctx()
             },
             &evil,
-            &PageState::Accepted {
+            &PageState::Accepted(Stamp {
                 name: "<b>Pat</b>",
+                title: None,
                 date: "2026-10-06",
-            },
+            }),
         );
         assert!(
             !page.contains("<img src=x") && !page.contains("<script>x") && !page.contains("<b>Pat")
@@ -737,12 +895,20 @@ mod tests {
         assert!(changes.contains("time[data-local]") && !changes.contains("<form"));
         assert!(notice(PageState::Declined).contains("This document was declined."));
         let executed = notice(PageState::Executed {
-            client: ("Pat Example", "2026-10-06"),
-            countersign: ("Sam Example", "2026-10-07"),
-            signing_record_href: None,
+            client: Stamp {
+                name: "Pat Example",
+                title: None,
+                date: "2026-10-06",
+            },
+            countersign: Stamp {
+                name: "Sam Example",
+                title: None,
+                date: "2026-10-07",
+            },
+            links: ExecutedLinks::default(),
         });
         assert!(
-            executed.contains("Accepted by Pat Example on 2026-10-06")
+            executed.contains("Accepted by Pat Example, on behalf of Cedar Systems, on 2026-10-06")
                 && executed.contains("Countersigned by Sam Example on 2026-10-07")
         );
         assert!(!executed.contains("signing record"));
@@ -758,9 +924,20 @@ mod tests {
             &ctx(),
             &COLLAB,
             &PageState::Executed {
-                client: ("Pat Example", "2026-10-06"),
-                countersign: ("Sam Example", "2026-10-07"),
-                signing_record_href: Some(&href),
+                client: Stamp {
+                    name: "Pat Example",
+                    title: None,
+                    date: "2026-10-06",
+                },
+                countersign: Stamp {
+                    name: "Sam Example",
+                    title: None,
+                    date: "2026-10-07",
+                },
+                links: ExecutedLinks {
+                    executed_copy: None,
+                    signing_record: Some(&href),
+                },
             },
         );
         assert!(page.contains(
@@ -769,13 +946,46 @@ mod tests {
         ));
         for state in [
             PageState::Open { response_url: URL },
-            PageState::Accepted {
+            PageState::Accepted(Stamp {
                 name: "Pat Example",
+                title: None,
                 date: "2026-10-06",
-            },
+            }),
         ] {
             assert!(!render_recipient_page(&ctx(), &SIGNER, &state).contains("signing record"));
         }
+    }
+
+    #[test]
+    fn a_comma_in_the_signer_name_does_not_move_the_date_comma() {
+        assert_eq!(
+            signed_by_line(
+                SignatureRole::Countersign,
+                "Example, Pat",
+                None,
+                None,
+                "2026-10-07"
+            ),
+            "Countersigned by Example, Pat on 2026-10-07."
+        );
+        assert_eq!(
+            Stamp {
+                name: "Example, Pat",
+                title: None,
+                date: "2026-10-07",
+            }
+            .by(None),
+            "Example, Pat on 2026-10-07"
+        );
+        assert_eq!(
+            Stamp {
+                name: "Example, Pat",
+                title: Some("R&D"),
+                date: "2026-10-07",
+            }
+            .by(None),
+            "Example, Pat, R&amp;D, on 2026-10-07"
+        );
     }
 
     #[test]
@@ -793,13 +1003,36 @@ mod tests {
                 "Pat Example",
                 "Website rebuild",
                 2,
+                &[
+                    signed_by_line(
+                        SignatureRole::Client,
+                        "Pat Example",
+                        Some("Director of Operations"),
+                        Some("Cedar Systems"),
+                        "2026-10-06"
+                    ),
+                    signed_by_line(
+                        SignatureRole::Countersign,
+                        "Sam Example",
+                        None,
+                        None,
+                        "2026-10-07"
+                    ),
+                ],
                 Some("https://docs.example.test/d/doc/rs/index.html"),
-                true
+                Attached::SignedAndRecord
             ),
-            "Hello Pat Example,\n\nThis document is now fully signed; the signed copy and its signing record are attached.\n\nWebsite rebuild (version 2)\nhttps://docs.example.test/d/doc/rs/index.html\n"
+            "Hello Pat Example,\n\nThis document is now fully signed; the signed copy and its signing record are attached.\n\nWebsite rebuild (version 2)\nAccepted by Pat Example, Director of Operations, on behalf of Cedar Systems, on 2026-10-06.\nCountersigned by Sam Example on 2026-10-07.\nhttps://docs.example.test/d/doc/rs/index.html\n"
         );
         assert_eq!(
-            render_signed_email_text("Pat Example", "Website rebuild", 2, None, false),
+            render_signed_email_text(
+                "Pat Example",
+                "Website rebuild",
+                2,
+                &[],
+                None,
+                Attached::SignedOnly
+            ),
             "Hello Pat Example,\n\nThis document is now fully signed; the signed copy is attached.\n\nWebsite rebuild (version 2)\n"
         );
     }

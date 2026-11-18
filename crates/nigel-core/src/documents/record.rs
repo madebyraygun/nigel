@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use crate::documents::guards::{self, ensure_allowed, Action};
 use crate::documents::model::{
     checksum_of, validate_moment, validate_note, validate_recipient, DocumentStatus, NewRecipient,
-    Recipient, RecipientRole, ResponseKind,
+    Recipient, RecipientRole, ResponseKind, SIGNER_TEXT_MAX_CHARS,
 };
 use crate::documents::status::document_status;
 use crate::documents::store::{
@@ -174,13 +174,15 @@ pub fn unfreeze(conn: &Connection, version_id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn mark_sent(conn: &Connection, version_id: i64, today: &str) -> Result<()> {
+/// Record the version as sent, freezing `client_name` as the name its pages
+/// were rendered with.
+pub fn mark_sent(conn: &Connection, version_id: i64, client_name: &str, today: &str) -> Result<()> {
     let document_id = ensure_latest_unsent(conn, version_id)?;
     let today = validate_date(today, "send date")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE document_versions SET sent_at = ?2 WHERE id = ?1",
-        params![version_id, today],
+        "UPDATE document_versions SET sent_at = ?2, client_name = ?3 WHERE id = ?1",
+        params![version_id, today, client_name],
     )?;
     touch(&tx, document_id, &today)?;
     tx.commit()?;
@@ -194,6 +196,25 @@ fn clean_name(name: &str) -> Result<String> {
     }
     validate_header_value(name, "name")?;
     Ok(name.to_string())
+}
+
+/// An optional signer title: trimmed, blank as none, and refused when it is
+/// too long or carries control characters.
+pub fn clean_title(title: Option<&str>) -> Result<Option<String>> {
+    let Some(title) = title.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if title.chars().count() > SIGNER_TEXT_MAX_CHARS {
+        return Err(NigelError::Invalid(format!(
+            "A title can be at most {SIGNER_TEXT_MAX_CHARS} characters."
+        )));
+    }
+    if title.chars().any(char::is_control) {
+        return Err(NigelError::Invalid(
+            "A title must be plain text, with no control characters.".into(),
+        ));
+    }
+    Ok(Some(title.to_string()))
 }
 
 struct Bound {
@@ -218,30 +239,52 @@ fn record_manual_signature(
     conn: &Connection,
     id: i64,
     name: &str,
+    title: Option<&str>,
     date: &str,
     action: Action,
     role: &str,
 ) -> Result<()> {
     let name = clean_name(name)?;
+    let title = clean_title(title)?;
     let at = validate_moment(date, "response date")?;
     let bound = bind_manual(conn, id, action)?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO document_signatures (version_id, recipient_id, role, name, method, signed_at, checksum)
-         VALUES (?1, NULL, ?2, ?3, 'manual', ?4, ?5)",
-        params![bound.version_id, role, name, at, bound.checksum],
+        "INSERT INTO document_signatures (version_id, recipient_id, role, name, title, method, signed_at, checksum)
+         VALUES (?1, NULL, ?2, ?3, ?4, 'manual', ?5, ?6)",
+        params![bound.version_id, role, name, title, at, bound.checksum],
     )?;
     touch(&tx, id, &at)?;
     tx.commit()?;
     Ok(())
 }
 
-pub fn record_manual_accept(conn: &Connection, id: i64, name: &str, date: &str) -> Result<()> {
-    record_manual_signature(conn, id, name, date, Action::Accept, "client")
+pub fn record_manual_accept(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    title: Option<&str>,
+    date: &str,
+) -> Result<()> {
+    record_manual_signature(conn, id, name, title, date, Action::Accept, "client")
 }
 
-pub fn record_countersign(conn: &Connection, id: i64, name: &str, date: &str) -> Result<()> {
-    record_manual_signature(conn, id, name, date, Action::Countersign, "countersign")
+pub fn record_countersign(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+    title: Option<&str>,
+    date: &str,
+) -> Result<()> {
+    record_manual_signature(
+        conn,
+        id,
+        name,
+        title,
+        date,
+        Action::Countersign,
+        "countersign",
+    )
 }
 
 pub fn record_manual_change_request(
@@ -390,7 +433,7 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
     let status = document_status(&tx, document_id)?;
     let at = validate_moment(r.received_at, "response")?;
     match r.kind {
-        ResponseKind::Accept { typed_name } => {
+        ResponseKind::Accept { typed_name, title } => {
             if role != RecipientRole::Signer.as_str() {
                 return Err(NigelError::Conflict {
                     code: "role_not_allowed",
@@ -401,9 +444,9 @@ pub fn record_online_response(conn: &Connection, r: &OnlineResponse<'_>) -> Resu
             }
             ensure_open_online(document_id, status, Action::Accept)?;
             let inserted = tx.execute(
-                "INSERT INTO document_signatures (version_id, recipient_id, role, name, email, method, signed_at, typed_name, ip, user_agent, checksum)
-                 VALUES (?1, ?2, 'client', ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9)",
-                params![r.version_id, r.recipient_id, name, email, at, typed_name, r.ip, r.user_agent, r.checksum],
+                "INSERT INTO document_signatures (version_id, recipient_id, role, name, email, method, signed_at, typed_name, title, ip, user_agent, checksum)
+                 VALUES (?1, ?2, 'client', ?3, ?4, 'online', ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![r.version_id, r.recipient_id, name, email, at, typed_name, title, r.ip, r.user_agent, r.checksum],
             );
             if inserted.as_ref().is_err_and(is_unique_violation) {
                 return Ok(RecordOutcome::AlreadyRecorded);
@@ -463,7 +506,7 @@ mod tests {
             ],
         )
         .unwrap();
-        mark_sent(conn, v.id, "2026-10-02").unwrap();
+        mark_sent(conn, v.id, "Cedar Systems", "2026-10-02").unwrap();
         (id, v.id, recipients[0].id, recipients[1].id)
     }
 
@@ -717,6 +760,7 @@ mod tests {
         let accept = OnlineResponse {
             kind: ResponseKind::Accept {
                 typed_name: "Pat Example",
+                title: None,
             },
             ..first
         };
@@ -750,6 +794,7 @@ mod tests {
             recipient_id: signer,
             kind: ResponseKind::Accept {
                 typed_name: "Pat Example",
+                title: None,
             },
             received_at: "2026-10-05T17:04:11Z",
             ip: None,
@@ -771,6 +816,7 @@ mod tests {
             recipient_id: signer,
             kind: ResponseKind::Accept {
                 typed_name: "Pat Example",
+                title: None,
             },
             received_at: "2026-10-05T17:04:11Z",
             ip: None,
@@ -796,6 +842,7 @@ mod tests {
             recipient_id: collab,
             kind: ResponseKind::Accept {
                 typed_name: "Sam Example",
+                title: None,
             },
             received_at: "2026-10-05T17:04:11Z",
             ip: None,
@@ -821,6 +868,7 @@ mod tests {
             recipient_id: signer,
             kind: ResponseKind::Accept {
                 typed_name: "P. Example",
+                title: None,
             },
             received_at: "2026-10-05T17:04:11+00:00",
             ip: Some("203.0.113.7"),
@@ -865,12 +913,13 @@ mod tests {
             )],
         )
         .unwrap();
-        mark_sent(&conn, v2.id, "2026-10-08").unwrap();
+        mark_sent(&conn, v2.id, "Cedar Systems", "2026-10-08").unwrap();
         let r = OnlineResponse {
             version_id: v,
             recipient_id: signer,
             kind: ResponseKind::Accept {
                 typed_name: "Pat Example",
+                title: None,
             },
             received_at: "2026-10-09T10:00:00Z",
             ip: None,
@@ -890,7 +939,7 @@ mod tests {
     fn manual_responses_bind_to_the_latest_sent_version_and_carry_no_evidence() {
         let (dir, conn) = test_conn();
         let (id, v, _, _) = sent_document(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         let sig = &signatures(&conn, v).unwrap()[0];
         assert_eq!(
             (sig.method, sig.recipient_id, sig.ip.as_deref()),
@@ -901,7 +950,7 @@ mod tests {
             get_document(&conn, id).unwrap().status,
             DocumentStatus::Accepted
         );
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         assert_eq!(
             get_document(&conn, id).unwrap().status,
             DocumentStatus::Executed
@@ -919,7 +968,7 @@ mod tests {
     fn an_accepted_document_with_an_unsent_next_version_reads_as_draft() {
         let (dir, conn) = test_conn();
         let (id, _, _, _) = sent_document(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
         assert_eq!(
             document_status(&conn, id).unwrap(),
             DocumentStatus::Accepted
@@ -937,8 +986,8 @@ mod tests {
     fn countersigning_an_accepted_document_derives_executed_from_the_rows() {
         let (dir, conn) = test_conn();
         let (id, v, _, _) = sent_document(&conn, dir.path());
-        record_manual_accept(&conn, id, "Pat Example", "2026-10-06").unwrap();
-        record_countersign(&conn, id, "Sam Example", "2026-10-07").unwrap();
+        record_manual_accept(&conn, id, "Pat Example", None, "2026-10-06").unwrap();
+        record_countersign(&conn, id, "Sam Example", None, "2026-10-07").unwrap();
         let roles: Vec<_> = signatures(&conn, v)
             .unwrap()
             .iter()
@@ -955,11 +1004,57 @@ mod tests {
     }
 
     #[test]
+    fn a_signer_title_is_recorded_trimmed_and_a_blank_one_as_none() {
+        let (dir, conn) = test_conn();
+        let (id, v, _, _) = sent_document(&conn, dir.path());
+        record_manual_accept(
+            &conn,
+            id,
+            "Pat Example",
+            Some("  Director of Operations "),
+            "2026-10-06",
+        )
+        .unwrap();
+        record_countersign(&conn, id, "Sam Example", Some("   "), "2026-10-07").unwrap();
+        let titles: Vec<_> = signatures(&conn, v)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.title)
+            .collect();
+        assert_eq!(titles, [Some("Director of Operations".into()), None]);
+    }
+
+    #[test]
+    fn a_title_is_measured_in_characters_up_to_the_limit() {
+        let at_limit = "D".repeat(SIGNER_TEXT_MAX_CHARS);
+        let multibyte = "é".repeat(SIGNER_TEXT_MAX_CHARS);
+        assert_eq!(clean_title(Some(&at_limit)).unwrap(), Some(at_limit));
+        assert_eq!(clean_title(Some(&multibyte)).unwrap(), Some(multibyte));
+        assert!(matches!(
+            clean_title(Some(&"é".repeat(SIGNER_TEXT_MAX_CHARS + 1))),
+            Err(NigelError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_title_that_is_too_long_or_carries_control_characters_is_refused() {
+        let (dir, conn) = test_conn();
+        let (id, v, _, _) = sent_document(&conn, dir.path());
+        for title in ["D".repeat(201), "Director\u{7}".to_string()] {
+            assert!(matches!(
+                record_manual_accept(&conn, id, "Pat Example", Some(&title), "2026-10-06"),
+                Err(NigelError::Invalid(_))
+            ));
+        }
+        assert!(signatures(&conn, v).unwrap().is_empty());
+    }
+
+    #[test]
     fn countersigning_before_acceptance_is_refused() {
         let (dir, conn) = test_conn();
         let (id, _, _, _) = sent_document(&conn, dir.path());
         assert!(matches!(
-            record_countersign(&conn, id, "Sam Example", "2026-10-07"),
+            record_countersign(&conn, id, "Sam Example", None, "2026-10-07"),
             Err(NigelError::Conflict {
                 code: "document_wrong_state",
                 ..
@@ -972,7 +1067,7 @@ mod tests {
         let (dir, conn) = test_conn();
         let (id, _, _, _) = sent_document(&conn, dir.path());
         assert!(matches!(
-            record_manual_accept(&conn, id, "  ", "2026-10-06"),
+            record_manual_accept(&conn, id, "  ", None, "2026-10-06"),
             Err(NigelError::Invalid(_))
         ));
     }

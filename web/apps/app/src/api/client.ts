@@ -245,6 +245,12 @@ export type ExportTarget =
   | { kind: 'href'; href: string }
   | { kind: 'action'; run: () => Promise<void> };
 
+/** The name the server chose for a download, or the caller's fallback. */
+export function filenameFrom(disposition: string | null, fallback: string): string {
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition ?? '');
+  return match ? decodeURIComponent(match[1]) : fallback;
+}
+
 /**
  * Tauri's window-level drag-and-drop, reduced to the three moments a screen
  * has a use for. `enter` and `over` both mean "a file is over the window",
@@ -610,6 +616,8 @@ export interface ApiClient {
   documentPreviewTarget(id: number): ExportTarget;
   /** An executed document's signing record PDF, in the form the running client can use. */
   documentSigningRecordTarget(id: number): ExportTarget;
+  /** An executed document's executed copy, the signed PDF with its signing record appended. */
+  documentExecutedCopyTarget(id: number): ExportTarget;
   /** The signer's page as HTML: an iframe cannot report a failed load, bytes can. */
   documentPreviewHtml(id: number): Promise<string>;
 }
@@ -1143,12 +1151,46 @@ export class FetchApiClient implements ApiClient {
     return { kind: 'href', href: this.documentSigningRecordUrl(id) };
   }
 
+  protected documentExecutedCopyUrl(id: number): string {
+    return `${this.baseUrl}/documents/${id}/executed.pdf`;
+  }
+
+  /**
+   * The server can refuse an executed copy it cannot build, and a plain link
+   * would save that refusal as the PDF, so the browser fetches the bytes first
+   * and raises the server's envelope when it fails.
+   */
+  documentExecutedCopyTarget(id: number): ExportTarget {
+    const url = this.documentExecutedCopyUrl(id);
+    return { kind: 'action', run: () => this.download(url, `document-${id}-executed.pdf`) };
+  }
+
   documentPreviewHtml(id: number): Promise<string> {
     return this.fetchText(this.documentPreviewUrl(id, 'html'));
   }
 
   /** A rendered page as text, raising the server's envelope when it fails. */
   private async fetchText(url: string): Promise<string> {
+    return (await this.fetchOk(url)).text();
+  }
+
+  /** Saves a file through a blob link once the server has answered with it. */
+  private async download(url: string, fallbackName: string): Promise<void> {
+    const response = await this.fetchOk(url);
+    const name = filenameFrom(response.headers.get('content-disposition'), fallbackName);
+    const href = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = name;
+    anchor.hidden = true;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 0);
+  }
+
+  /** A GET that raises the server's envelope when it fails. */
+  private async fetchOk(url: string): Promise<Response> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, { credentials: 'same-origin' });
@@ -1162,7 +1204,7 @@ export class FetchApiClient implements ApiClient {
     }
     if (!response.ok) throw this.toApiError(await this.errorFrom(response));
     appUnauthorized.set(false);
-    return response.text();
+    return response;
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

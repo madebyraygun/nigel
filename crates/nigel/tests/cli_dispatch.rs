@@ -4885,7 +4885,7 @@ fn document_revise_files_version_two() {
     filed_document(&env);
     env.db()
         .execute(
-            "UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1",
+            "UPDATE document_versions SET sent_at = '2026-10-05', client_name = 'Globex' WHERE document_id = 1",
             [],
         )
         .unwrap();
@@ -4903,7 +4903,7 @@ fn manual_accept_and_countersign_carry_a_document_to_executed() {
     let env = TestEnv::new();
     filed_document(&env);
     env.db()
-        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05', client_name = 'Globex' WHERE document_id = 1")
         .unwrap();
     env.cmd()
         .args(["document", "accept", "1", "--name", "Pat Example"])
@@ -4941,7 +4941,7 @@ fn request_changes_needs_a_note() {
     let env = TestEnv::new();
     filed_document(&env);
     env.db()
-        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05', client_name = 'Globex' WHERE document_id = 1")
         .unwrap();
     env.cmd()
         .args([
@@ -4963,7 +4963,7 @@ fn a_bad_date_is_refused_before_anything_is_recorded() {
     let env = TestEnv::new();
     filed_document(&env);
     env.db()
-        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05' WHERE document_id = 1")
+        .execute_batch("UPDATE document_versions SET sent_at = '2026-10-05', client_name = 'Globex' WHERE document_id = 1")
         .unwrap();
     env.cmd()
         .args([

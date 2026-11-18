@@ -15,6 +15,8 @@ export interface TimelineEvent {
   method: "online" | "manual";
   at: string;
   typedName: string | null;
+  /** The role the signer signed in, when they gave one. */
+  title: string | null;
   ip: string | null;
   userAgent: string | null;
   note: string | null;
@@ -116,7 +118,8 @@ export class WcDocumentTimeline extends LitElement {
     return html`
       <li class="event" data-event>
         <div>
-          ${eventVerb(event)} by ${event.name} — ${event.method}, ${event.at}
+          ${eventVerb(event)} by ${event.name}${event.title ? `, ${event.title}` : ""}
+          — ${event.method}, ${event.at}
         </div>
         ${
           evidence.length > 0

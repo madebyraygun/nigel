@@ -7,8 +7,33 @@ pub fn test_conn() -> (tempfile::TempDir, rusqlite::Connection) {
     (dir, conn)
 }
 
+/// A minimal one-page PDF that parses, with `seed` in a comment so each fixture
+/// has its own checksum.
 pub fn fixture_pdf(seed: &str) -> Vec<u8> {
-    format!("%PDF-1.4\n% fixture {seed}\n%%EOF\n").into_bytes()
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>",
+        "<< /Type /Page /Parent 2 0 R >>",
+    ];
+    let mut out = format!("%PDF-1.4\n% fixture {seed}\n");
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.push_str(&format!("{} 0 obj\n{body}\nendobj\n", i + 1));
+    }
+    let xref = out.len();
+    out.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
+    for offset in offsets {
+        out.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    out.push_str(&format!(
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    ));
+    out.into_bytes()
 }
 
 pub fn seed_client(conn: &rusqlite::Connection, name: &str) -> i64 {
@@ -121,13 +146,31 @@ impl crate::invoicing::gateway::DocumentPublisher for FakeDocumentPublisher {
         token: &str,
         version: i64,
         _filename: &str,
-        pdf: &[u8],
+        pdf: &crate::documents::signing_record::Redacted,
     ) -> crate::error::Result<String> {
         self.write(
             crate::invoicing::r2::document_signing_record_key(token, version),
-            pdf,
+            pdf.as_bytes(),
         )?;
         Ok(crate::invoicing::r2::document_signing_record_url(
+            Self::BASE,
+            token,
+            version,
+        ))
+    }
+
+    fn publish_executed_copy(
+        &self,
+        token: &str,
+        version: i64,
+        _filename: &str,
+        pdf: &crate::documents::signing_record::Redacted,
+    ) -> crate::error::Result<String> {
+        self.write(
+            crate::invoicing::r2::document_executed_copy_key(token, version),
+            pdf.as_bytes(),
+        )?;
+        Ok(crate::invoicing::r2::document_executed_copy_url(
             Self::BASE,
             token,
             version,
@@ -339,7 +382,10 @@ pub fn accept_online(conn: &rusqlite::Connection, id: i64, typed_name: &str, use
         &crate::documents::record::OnlineResponse {
             version_id: version.id,
             recipient_id: signer.id,
-            kind: crate::documents::model::ResponseKind::Accept { typed_name },
+            kind: crate::documents::model::ResponseKind::Accept {
+                typed_name,
+                title: None,
+            },
             received_at: "2026-10-06T17:04:11Z",
             ip: Some("203.0.113.7"),
             user_agent: Some(user_agent),
