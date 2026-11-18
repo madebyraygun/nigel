@@ -1,11 +1,11 @@
 ---
 id: TASK-109.25
 title: 'Documents: an executed copy with the signing record appended'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-17 21:22'
-updated_date: '2026-11-17 22:08'
+updated_date: '2026-11-18 00:17'
 labels:
   - documents
   - signing
@@ -33,3 +33,9 @@ The executed copy becomes the default download and the confirmation email's atta
 - [x] #5 document signing-record regenerates and republishes the executed copy too; documents executed before this change get one the next time it runs
 - [x] #6 Tests cover the merge (page count, the original pages unchanged, the checksum named) and the publish; docs/invoicing.md and docs/api.md describe it
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #89.
+<!-- SECTION:FINAL_SUMMARY:END -->

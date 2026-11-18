@@ -1,11 +1,11 @@
 ---
 id: TASK-109.24
 title: 'Documents: show that the signer signs on behalf of the client'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-17 21:22'
-updated_date: '2026-11-17 22:08'
+updated_date: '2026-11-18 00:17'
 labels:
   - documents
   - signing
@@ -29,3 +29,9 @@ The client name is the one on the document at send time, frozen into the version
 - [x] #3 The client name is taken from the sent version, not read live, and a later client rename does not change a published page or record
 - [x] #4 Tests cover the form, the stamped page and the record; docs/invoicing.md describes it
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #89.
+<!-- SECTION:FINAL_SUMMARY:END -->

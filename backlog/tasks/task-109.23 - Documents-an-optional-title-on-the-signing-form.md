@@ -1,11 +1,11 @@
 ---
 id: TASK-109.23
 title: 'Documents: an optional title on the signing form'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-17 21:22'
-updated_date: '2026-11-17 22:08'
+updated_date: '2026-11-18 00:17'
 labels:
   - documents
   - signing
@@ -38,3 +38,9 @@ The Worker in workers/document-response refuses unknown fields today, so this ne
 <!-- SECTION:NOTES:BEGIN -->
 The description's premise was wrong: the Worker ignores fields it does not know rather than refusing them, so the new page works against the deployed Worker. Titles typed online are recorded only after the Worker is redeployed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Shipped in PR #89.
+<!-- SECTION:FINAL_SUMMARY:END -->
