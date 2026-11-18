@@ -8,6 +8,7 @@ import {
   documentTableRows,
   latestSentVersion,
   recipientContacts,
+  previewRequestFrom,
   sendRequestFrom,
   timelineVersions,
 } from './documents-data.js';
@@ -34,6 +35,7 @@ function version(overrides: Partial<DocumentVersionDetail>): DocumentVersionDeta
     fileMissing: false,
     executedChecksum: null,
     executedPublicChecksum: null,
+    emailGreeting: null,
     ...overrides,
   };
 }
@@ -282,5 +284,41 @@ describe('latestSentVersion', () => {
 
   it('is null when nothing was sent', () => {
     expect(latestSentVersion(detail([version({})]))).toBeNull();
+  });
+});
+
+describe('previewRequestFrom', () => {
+  it('sends the recipients that are ready and the greeting', () => {
+    expect(
+      previewRequestFrom(
+        {
+          signer: { name: ' Pat Example ', email: 'pat@cedar.test' },
+          collaborators: [
+            { name: 'Sam Example', email: 'sam@cedar.test' },
+            { name: 'Half typed', email: 'half@' },
+          ],
+        },
+        '',
+      ),
+    ).toEqual({
+      signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+      collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+      greeting: '',
+    });
+  });
+
+  it('leaves out a signer still being typed, and a greeting nobody has set', () => {
+    expect(
+      previewRequestFrom({ signer: { name: '', email: 'pat@cedar.test' }, collaborators: [] }, undefined),
+    ).toEqual({ collaborators: [] });
+  });
+});
+
+describe('timelineVersions message', () => {
+  it('carries the greeting each version was sent with', () => {
+    const detail = {
+      versions: [version({ number: 1, emailGreeting: 'Here it is.' }), version({ number: 2 })],
+    } as DocumentDetail;
+    expect(timelineVersions(detail).map((v) => v.message)).toEqual([null, 'Here it is.']);
   });
 });

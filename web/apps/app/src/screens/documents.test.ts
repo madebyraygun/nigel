@@ -8,7 +8,9 @@ import type {
   WcDropzone,
   WcRecipientEditor,
   WcSendDialog,
+  WcEmailPreview,
 } from '@nigel/ui';
+import { EMAIL_PREVIEW_DEBOUNCE_MS } from './email-draft.js';
 
 import { ApiError } from '../api/index.js';
 import {
@@ -182,6 +184,7 @@ function documentDetail(overrides: Partial<DocumentDetail> = {}): DocumentDetail
         fileMissing: false,
         executedChecksum: null,
         executedPublicChecksum: null,
+        emailGreeting: null,
       },
     ],
     ...documentFlags('draft'),
@@ -680,6 +683,7 @@ describe('nigel-documents-screen', () => {
       `sendDocument:12:${JSON.stringify({
         signer: { name: 'Pat Example', email: 'pat@cedar.test' },
         collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+        greeting: '',
       })}`,
     );
     const sent = sendDialog(el);
@@ -690,6 +694,123 @@ describe('nigel-documents-screen', () => {
       'https://docs.example.test/d/doc12/r1/index.html',
     ]);
     expect(sent?.pageLinks[0].label).toContain('Pat Example');
+  });
+
+  describe('the message and the email preview', () => {
+    const GREETING = 'Here is the agreement we talked through.';
+
+    function emailPreview(el: NigelDocumentsScreen): WcEmailPreview | null {
+      return sendDialog(el)?.querySelector<WcEmailPreview>('wc-email-preview') ?? null;
+    }
+
+    function previewCalls(fake: FakeApiClient): string[] {
+      return fake.calls.filter((call) => call.startsWith('documentEmailPreview'));
+    }
+
+    async function pause(el: NigelDocumentsScreen): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, EMAIL_PREVIEW_DEBOUNCE_MS + 100));
+      await settle(el);
+    }
+
+    async function opened(): Promise<Mounted> {
+      const fake = withDetail(documentDetail());
+      fake.clientContacts[1] = CEDAR_CONTACTS;
+      fake.company = { ...fake.company, documentEmailGreeting: GREETING };
+      const mounted = await mount('id=12', fake);
+      find(mounted.el, '[data-action="send"]').click();
+      await settle(mounted.el);
+      await settle(mounted.el);
+      return mounted;
+    }
+
+    it('fills the box with the saved document greeting and previews it for the signer', async () => {
+      const { el, fake } = await opened();
+      expect(sendDialog(el)?.message).toBe(GREETING);
+
+      await pause(el);
+      const last = previewCalls(fake).at(-1);
+      expect(last).toBe(
+        `documentEmailPreview:12:${JSON.stringify({
+          signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+          collaborators: [],
+          greeting: GREETING,
+        })}`,
+      );
+      const emails = emailPreview(el)?.emails ?? [];
+      expect(emails.map((email) => email.role)).toEqual(['signer']);
+      expect(emails[0].body).toContain(`Hello Pat Example,\n\n${GREETING}`);
+      expect(emailPreview(el)?.placeholders).toEqual(['[link created when sent]']);
+    });
+
+    it('previews one email per recipient once the recipients settle', async () => {
+      const { el, fake } = await opened();
+      await pause(el);
+      const before = previewCalls(fake).length;
+
+      find<WcRecipientEditor>(el, 'wc-send-dialog > wc-recipient-editor').dispatchEvent(
+        new CustomEvent('nc-recipients-change', {
+          detail: {
+            value: {
+              signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+              collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+            },
+          },
+        }),
+      );
+      await settle(el);
+      expect(previewCalls(fake)).toHaveLength(before);
+
+      await pause(el);
+      expect(previewCalls(fake)).toHaveLength(before + 1);
+      expect(emailPreview(el)?.emails.map((email) => email.to)).toEqual([
+        'Pat Example <pat@cedar.test>',
+        'Sam Example <sam@cedar.test>',
+      ]);
+    });
+
+    it('debounces typing into one preview with the last value', async () => {
+      const { el, fake } = await opened();
+      await pause(el);
+      const before = previewCalls(fake).length;
+
+      for (const value of ['H', 'Hi', 'Hi Pat.']) {
+        sendDialog(el)?.dispatchEvent(
+          new CustomEvent('nc-send-message', { detail: { value }, bubbles: true, composed: true }),
+        );
+      }
+      await settle(el);
+      expect(previewCalls(fake)).toHaveLength(before);
+
+      await pause(el);
+      expect(previewCalls(fake).slice(before)).toHaveLength(1);
+      expect(previewCalls(fake).at(-1)).toContain('"greeting":"Hi Pat."');
+    });
+
+    it('sends the edited message, and records it on the version', async () => {
+      const { el, fake } = await opened();
+      sendDialog(el)?.dispatchEvent(
+        new CustomEvent('nc-send-message', {
+          detail: { value: 'Hi Pat.' },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+      await settle(el);
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+
+      expect(fake.calls).toContain(
+        `sendDocument:12:${JSON.stringify({
+          signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+          collaborators: [],
+          greeting: 'Hi Pat.',
+        })}`,
+      );
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-close'));
+      await settle(el);
+      const timeline = find<WcDocumentTimeline>(el, 'wc-document-timeline');
+      expect(timeline.versions[0].message).toBe('Hi Pat.');
+    });
   });
 
   it('a send whose reload failed still shows its links and the warning, never a failure', async () => {
@@ -875,6 +996,7 @@ describe('nigel-documents-screen', () => {
             fileMissing: false,
             executedChecksum: null,
             executedPublicChecksum: null,
+            emailGreeting: null,
             documentId: 12,
             number: 1,
             checksum: `sha256:${'a'.repeat(64)}`,

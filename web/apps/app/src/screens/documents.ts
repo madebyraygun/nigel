@@ -22,6 +22,7 @@ import {
   type RecipientErrors,
   type SendFailureView,
   type SendStepView,
+  type NcSendMessageDetail,
 } from '@nigel/ui';
 import { controlsCss } from '@nigel/theme';
 
@@ -44,12 +45,14 @@ import {
   documentSendStepViews,
   documentTableRows,
   latestSentVersion,
+  previewRequestFrom,
   recipientContacts,
   sendRequestFrom,
   timelineVersions,
 } from './documents-data.js';
 import { documentSendFailureMessage, documentsGuardrailMessage } from './documents-errors.js';
 import type { ScreenContext } from './context.js';
+import { EmailDraftController } from './email-draft.js';
 
 type View = 'list' | 'detail';
 
@@ -275,6 +278,19 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
   @state() private revision: File | null = null;
   @state() private revisionError = '';
 
+  /** The send dialog's message box and the emails it previews. */
+  private readonly emailDraft = new EmailDraftController(this, {
+    loadDefault: async () => (await this.client.getCompany()).documentEmailGreeting,
+    fetchPreview: (greeting) => {
+      const detail = this.detail;
+      if (!detail) return Promise.reject(new Error('No document is open.'));
+      return this.client.documentEmailPreview(
+        detail.id,
+        previewRequestFrom(this.recipients, greeting),
+      );
+    },
+  });
+
   @state() private sendOpen = false;
   @state() private sendPhase: 'confirm' | 'sending' | 'sent' | 'failed' = 'confirm';
   @state() private sendSteps: SendStepView[] = [];
@@ -340,6 +356,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     this.previewOpen = false;
     this.previewHtml = '';
     this.previewError = '';
+    this.emailDraft.close();
   }
 
   private async load(key: string, keepActionError = false): Promise<void> {
@@ -882,12 +899,16 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     this.contacts = [];
     this.recipients = BLANK_RECIPIENTS;
     void this.loadPreview();
+    void this.emailDraft.open();
 
     try {
       const client = await this.client.getClient(detail.clientId);
       if (!this.sendOpen || this.detail?.id !== detail.id) return;
       this.contacts = recipientContacts(client);
-      if (this.recipients === BLANK_RECIPIENTS) this.recipients = defaultRecipients(this.contacts);
+      if (this.recipients === BLANK_RECIPIENTS) {
+        this.recipients = defaultRecipients(this.contacts);
+        this.emailDraft.schedule();
+      }
     } catch (error) {
       const reason = error instanceof ApiError ? ` ${error.message}` : '';
       this.sendCautions = [
@@ -898,6 +919,11 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
   private handleRecipients = (event: Event): void => {
     this.recipients = (event as CustomEvent<NcRecipientsChangeDetail>).detail.value;
+    this.emailDraft.schedule();
+  };
+
+  private handleMessage = (event: Event): void => {
+    this.emailDraft.edit((event as CustomEvent<NcSendMessageDetail>).detail.value);
   };
 
   private handleSend = async (): Promise<void> => {
@@ -910,9 +936,14 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
     this.sendFailure = null;
     this.sendLinks = [];
     this.sendSteps = documentSendStepViews({ running: true });
+    const greeting = this.emailDraft.greeting;
+    this.emailDraft.close();
 
     try {
-      const result = await this.client.sendDocument(detail.id, sendRequestFrom(this.recipients));
+      const result = await this.client.sendDocument(detail.id, {
+        ...sendRequestFrom(this.recipients),
+        ...(greeting === undefined ? {} : { greeting }),
+      });
       this.sendSteps = documentSendStepViews({ running: false, result });
       this.sendWarnings = [...result.configWarnings, ...result.warnings];
       this.sendLinks = result.links;
@@ -927,6 +958,7 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
 
   private closeSend = (): void => {
     this.sendOpen = false;
+    this.emailDraft.close();
     void this.refresh();
   };
 
@@ -1465,7 +1497,9 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
         .previewError=${this.previewError}
         .previewLoading=${this.previewLoading}
         .pdfTarget=${this.client.documentPreviewTarget(detail.id)}
-        .configCautions=${this.sendCautions}
+        .configCautions=${this.emailDraft.messageCaution
+          ? [...this.sendCautions, this.emailDraft.messageCaution]
+          : this.sendCautions}
         phase=${this.sendPhase}
         .steps=${this.sendSteps}
         .failure=${this.sendFailure}
@@ -1475,6 +1509,9 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           href: link.url,
         }))}
         .blocked=${blocked}
+        .message=${this.emailDraft.message}
+        .messageLoading=${this.emailDraft.messageLoading}
+        @nc-send-message=${this.handleMessage}
         @nc-send-confirm=${this.handleSend}
         @nc-send-close=${this.closeSend}
       >
@@ -1486,6 +1523,15 @@ export class NigelDocumentsScreen extends SignalWatcher(LitElement) {
           ?disabled=${this.sendPhase !== 'confirm'}
           @nc-recipients-change=${this.handleRecipients}
         ></wc-recipient-editor>
+        ${this.sendPhase === 'confirm'
+          ? html`<wc-email-preview
+              slot="email-preview"
+              .emails=${this.emailDraft.preview?.emails ?? []}
+              .placeholders=${this.emailDraft.preview?.placeholders ?? []}
+              .loading=${this.emailDraft.previewLoading}
+              .error=${this.emailDraft.previewError}
+            ></wc-email-preview>`
+          : nothing}
       </wc-send-dialog>
     `;
   }

@@ -11,6 +11,7 @@ import type {
 import type {
   ClientDetail,
   DocumentDetail,
+  DocumentEmailPreviewRequest,
   DocumentListParams,
   DocumentListRow,
   DocumentSendRequest,
@@ -117,6 +118,7 @@ export function timelineVersions(detail: DocumentDetail): TimelineVersion[] {
         email: r.email,
       })),
       events: eventsOf(version),
+      message: version.emailGreeting,
     }));
 }
 
@@ -136,6 +138,26 @@ export function sendRequestFrom(value: RecipientEditorValue): DocumentSendReques
   return {
     signer: trimmed(value.signer),
     collaborators: value.collaborators.map(trimmed),
+  };
+}
+
+/**
+ * The recipients a preview can be built for, as they stand in the editor. A
+ * row still being typed is left out rather than sent, so the preview does not
+ * flash a validation error on every keystroke; an unusable signer falls back
+ * to the server's default one.
+ */
+export function previewRequestFrom(
+  value: RecipientEditorValue,
+  greeting: string | undefined,
+): DocumentEmailPreviewRequest {
+  const usable = (r: { name: string; email: string }) =>
+    r.name.trim() !== '' && /^[^@\s]+@[^@\s]+$/.test(r.email.trim());
+  const { signer, collaborators } = sendRequestFrom(value);
+  return {
+    ...(usable(signer) ? { signer } : {}),
+    collaborators: collaborators.filter(usable),
+    ...(greeting === undefined ? {} : { greeting }),
   };
 }
 

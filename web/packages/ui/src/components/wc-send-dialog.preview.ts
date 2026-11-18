@@ -1,6 +1,8 @@
 import { html } from 'lit';
 import './wc-send-dialog.js';
 import './wc-recipient-editor.js';
+import './wc-email-preview.js';
+import type { EmailPreviewView } from './wc-email-preview.js';
 import type { SendStepView } from './wc-send-dialog.js';
 import type { Preview } from '../../preview/types.js';
 
@@ -81,6 +83,41 @@ const base = html`
 const PREVIEW_PAGE =
   '<h1>Invoice #1251</h1><p>Billed to: Acme Co</p><p><strong>Total: USD 1850.00</strong></p>';
 
+const GREETING =
+  'Thanks again for a great quarter. This covers the March retainer and the extra workshop day.';
+const PAY = '[pay link created when sent]';
+const LINK = '[link created when sent]';
+
+const INVOICE_EMAIL: EmailPreviewView = {
+  role: 'client',
+  to: 'Acme Accounts <ap@acme.test>',
+  subject: 'Invoice #1251 from Initech',
+  body: [
+    GREETING,
+    'Invoice #1251 from Initech for USD 1850.00, due 2026-04-14.',
+    `View and pay online: ${PAY}`,
+    'The invoice PDF is attached.',
+    'Thank you,\nInitech',
+  ].join('\n\n'),
+  attachments: ['Invoice-1251.pdf'],
+};
+
+function docEmail(role: 'signer' | 'collaborator', name: string, email: string): EmailPreviewView {
+  return {
+    role,
+    to: `${name} <${email}>`,
+    subject: 'Agreement: Cedar Systems services agreement from Initech',
+    body: [
+      `Hello ${name},`,
+      'Here is the agreement we talked through on Tuesday.',
+      'Initech has sent you \u201cCedar Systems services agreement\u201d to review.',
+      `Your personal link: ${LINK}`,
+      'The PDF is attached.',
+    ].join('\n\n'),
+    attachments: ['Cedar-Systems-services-agreement-v1.pdf'],
+  };
+}
+
 const preview: Preview = {
   id: 'wc-send-dialog',
   title: 'Send dialog',
@@ -121,6 +158,67 @@ const preview: Preview = {
             slot="recipients"
             .value=${{ ...DOC_RECIPIENTS, collaborators: [] }}
           ></wc-recipient-editor>
+        </wc-send-dialog>
+      `,
+    },
+    {
+      name: 'message-and-email-preview',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .publishHost=${'billing.example.com'}
+          .message=${GREETING}
+        >
+          <wc-email-preview
+            slot="email-preview"
+            .emails=${[INVOICE_EMAIL]}
+            .placeholders=${[PAY]}
+          ></wc-email-preview>
+        </wc-send-dialog>
+      `,
+    },
+    {
+      name: 'message-loading',
+      render: () => html`
+        <wc-send-dialog
+          open
+          number="1251"
+          .total=${1850}
+          .client=${'Acme Co'}
+          .recipient=${'ap@acme.test'}
+          .messageLoading=${true}
+        >
+          <wc-email-preview slot="email-preview" loading></wc-email-preview>
+        </wc-send-dialog>
+      `,
+    },
+    {
+      name: 'document-message-and-email-preview',
+      render: () => html`
+        <wc-send-dialog
+          open
+          mode="document"
+          .documentTitle=${'Cedar Systems services agreement'}
+          .recipientCount=${2}
+          .publishHost=${'docs.example.com'}
+          .message=${'Here is the agreement we talked through on Tuesday.'}
+        >
+          <wc-recipient-editor
+            slot="recipients"
+            .value=${DOC_RECIPIENTS}
+          ></wc-recipient-editor>
+          <wc-email-preview
+            slot="email-preview"
+            .emails=${[
+              docEmail('signer', 'Pat Example', 'pat@cedar.test'),
+              docEmail('collaborator', 'Sam Example', 'sam@cedar.test'),
+            ]}
+            .placeholders=${[LINK]}
+          ></wc-email-preview>
         </wc-send-dialog>
       `,
     },

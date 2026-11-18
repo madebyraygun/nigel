@@ -73,6 +73,17 @@ describe("wc-document-timeline", () => {
     expect(note.textContent).toContain("<img src=x");
   });
 
+  it("shows the message a version was sent with, and nothing when there was none", async () => {
+    const el = await mount([
+      { ...V1, number: 2, message: "Here is the revised agreement." },
+      { ...V1, message: null },
+    ]);
+    const messages = el.shadowRoot!.querySelectorAll("[data-message]");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].textContent).toContain("Message sent");
+    expect(messages[0].textContent).toContain("Here is the revised agreement.");
+  });
+
   it("shows the evidence of an online acceptance and none for a manual one", async () => {
     const el = await mount([
       {

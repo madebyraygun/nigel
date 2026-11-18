@@ -63,6 +63,51 @@ describe('wc-send-dialog', () => {
     expect(confirms).toBe(1);
   });
 
+  it('shows the message it is given and reports every edit', async () => {
+    const el = await mount({ message: 'Thanks for the quarter.' });
+    const box = el.shadowRoot?.querySelector('[data-message]') as HTMLTextAreaElement;
+    expect(box.value).toBe('Thanks for the quarter.');
+
+    const seen: string[] = [];
+    el.addEventListener('nc-send-message', (event) =>
+      seen.push((event as CustomEvent<{ value: string }>).detail.value),
+    );
+    box.value = 'Thanks for the year.';
+    box.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    expect(seen).toEqual(['Thanks for the year.']);
+  });
+
+  it('clears the message with one button, and offers it only when there is one', async () => {
+    const el = await mount({ message: 'Thanks for the quarter.' });
+    const seen: string[] = [];
+    el.addEventListener('nc-send-message', (event) =>
+      seen.push((event as CustomEvent<{ value: string }>).detail.value),
+    );
+    const clear = el.shadowRoot?.querySelector<HTMLElement>('[data-message-clear]');
+    expect(clear?.hasAttribute('disabled')).toBe(false);
+    clear?.click();
+    expect(seen).toEqual(['']);
+
+    el.message = '';
+    await el.updateComplete;
+    expect(clear?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('holds the message box while the saved default loads', async () => {
+    const el = await mount({ messageLoading: true });
+    const box = el.shadowRoot?.querySelector('[data-message]');
+    expect(box?.hasAttribute('disabled')).toBe(true);
+    expect(box?.getAttribute('placeholder')).toContain('Loading');
+  });
+
+  it('places a slotted email preview in both modes', async () => {
+    for (const mode of ['invoice', 'document'] as const) {
+      const el = await mount({ mode });
+      expect(el.shadowRoot?.querySelector('slot[name="email-preview"]')).toBeTruthy();
+      el.remove();
+    }
+  });
+
   it('refuses to confirm at all when the invoice cannot be sent', async () => {
     const el = await mount({ blocked: 'Globex has no email address.' });
     let confirms = 0;

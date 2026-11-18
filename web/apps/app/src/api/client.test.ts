@@ -668,6 +668,46 @@ describe('FetchApiClient', () => {
       expect(JSON.parse(init.body)).toEqual({ confirm: true });
     });
 
+    it('carries the greeting on a send only when one is given, an empty one included', async () => {
+      const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse({}));
+      const client = clientFor(fetchImpl);
+      await client.sendInvoice(1251, { greeting: 'Thanks, Acme.' });
+      await client.sendInvoice(1251, { greeting: '' });
+      await client.sendInvoice(1251, {});
+
+      expect(fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body))).toEqual([
+        { confirm: true, greeting: 'Thanks, Acme.' },
+        { confirm: true, greeting: '' },
+        { confirm: true },
+      ]);
+    });
+
+    it('asks for the invoice email preview with the draft greeting', async () => {
+      const preview = {
+        emails: [
+          {
+            role: 'client',
+            to: 'Acme <ap@acme.test>',
+            subject: 'Invoice #1251',
+            body: 'Thanks.',
+            attachments: ['Invoice-1251.pdf'],
+          },
+        ],
+        placeholders: ['[pay link created when sent]'],
+      };
+      const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse(preview));
+      const client = clientFor(fetchImpl);
+
+      expect(await client.invoiceEmailPreview(1251, { greeting: '' })).toEqual(preview);
+      await client.invoiceEmailPreview(1251);
+
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/invoices/1251/email-preview');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({ greeting: '' });
+      expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({});
+    });
+
     it('builds both preview addresses without fetching them', () => {
       const client = clientFor(vi.fn());
       expect(client.invoicePreviewUrl(1248, 'html')).toBe('/api/invoices/1248/preview');
@@ -782,6 +822,43 @@ describe('FetchApiClient', () => {
       expect((form.get('file') as File).name).toBe('proposal-v2.pdf');
       expect([...form.keys()]).toEqual(['file']);
       expect(init.headers).toBeUndefined();
+    });
+
+    it('sendDocument carries the greeting beside the recipients when one is given', async () => {
+      const fetchImpl = vi.fn().mockImplementation(async () => jsonResponse({}));
+      const signer = { name: 'Pat Example', email: 'pat@cedar.test' };
+      await clientFor(fetchImpl).sendDocument(7, { signer, collaborators: [], greeting: '' });
+
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+        confirm: true,
+        signer,
+        collaborators: [],
+        greeting: '',
+      });
+    });
+
+    it('asks for the document email preview with the recipients and the greeting', async () => {
+      const fetchImpl = vi.fn().mockImplementation(async () =>
+        jsonResponse({ emails: [], placeholders: [] }),
+      );
+      const client = clientFor(fetchImpl);
+      const signer = { name: 'Pat Example', email: 'pat@cedar.test' };
+      await client.documentEmailPreview(7, {
+        signer,
+        collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+        greeting: 'Here it is.',
+      });
+      await client.documentEmailPreview(7, { collaborators: [] });
+
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/documents/7/email-preview');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({
+        signer,
+        collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+        greeting: 'Here it is.',
+      });
+      expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ collaborators: [] });
     });
 
     it('sendDocument always carries confirm true', async () => {

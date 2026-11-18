@@ -83,6 +83,19 @@ const preview: Preview = {
         ></wc-document-timeline>`,
     },
     {
+      name: "sent-with-message",
+      render: () =>
+        html`<wc-document-timeline
+          .versions=${[
+            {
+              ...SENT,
+              message:
+                "Here is the agreement we talked through on Tuesday.\nShout if anything looks off.",
+            },
+          ]}
+        ></wc-document-timeline>`,
+    },
+    {
       name: "sent-with-change-request",
       render: () =>
         html`<wc-document-timeline
