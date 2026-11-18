@@ -107,8 +107,20 @@ pub enum PageState<'a> {
 
 const REPLY_BY_EMAIL: &str = "To respond, reply to the email this link came in.";
 
-const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach(function (form) {
-  form.hidden = false;
+const SCRIPT: &str = r#"document.querySelectorAll('[data-actions]').forEach(function (bar) { bar.hidden = false; });
+document.querySelectorAll('button[aria-controls]').forEach(function (toggle, _, toggles) {
+  toggle.addEventListener('click', function () {
+    var open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggles.forEach(function (t) {
+      var show = open && t === toggle;
+      t.setAttribute('aria-expanded', String(show));
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !show;
+    });
+    if (open) { var field = document.getElementById(toggle.getAttribute('aria-controls')).querySelector('input, textarea');
+                if (field) { field.focus(); } }
+  });
+});
+document.querySelectorAll('form[data-endpoint]').forEach(function (form) {
   form.addEventListener('submit', function (event) {
     event.preventDefault();
     var d = form.dataset, f = new FormData(form), status = form.querySelector('[data-status]');
@@ -121,10 +133,11 @@ const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach
     fetch(d.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
-        if (res.ok) { document.querySelectorAll('form[data-endpoint]').forEach(function (x) { x.hidden = true; });
+        if (res.ok) { document.querySelectorAll('form[data-endpoint], [data-actions]').forEach(function (x) { x.hidden = true; });
                       var received = document.getElementById('received');
                       received.textContent = received.dataset[d.action === 'accept' ? 'accept' : 'requestChanges'] || received.textContent;
-                      received.hidden = false; }
+                      received.hidden = false;
+                      if (received.focus) { received.focus(); } }
         else { status.textContent = (res.j && res.j.message) || 'This response could not be recorded.';
                form.querySelectorAll('button').forEach(function (b) { b.disabled = false; }); }
       })
@@ -134,40 +147,45 @@ const SCRIPT: &str = r#"document.querySelectorAll('form[data-endpoint]').forEach
 });"#;
 
 const STYLE: &str = "*,*::before,*::after{box-sizing:border-box}[hidden]{display:none!important}\
-body{font-family:system-ui,sans-serif;max-width:52rem;margin:2.5rem auto;padding:0 1.25rem;color:#111;line-height:1.5;background:#fff}\
-.letterhead{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-bottom:1.25rem;border-bottom:1px solid #909090;margin-bottom:2rem}\
+body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:52rem;margin:2.5rem auto 4rem;padding:0 1.25rem;color:#111;line-height:1.5;background:#fff}\
+:focus-visible{outline:2px solid #111;outline-offset:2px}\
+.letterhead{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-bottom:1.25rem;border-bottom:1px solid #d4d4d4;margin-bottom:2.25rem}\
 .logo{max-width:8.8rem;max-height:2.5rem}\
-.company,.eyebrow{margin:0;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#666}\
-.eyebrow{margin-bottom:.25rem}\
-h1{margin:0 0 1.25rem;font-size:1.75rem;line-height:1.2}\
-table.meta{border-collapse:collapse;margin-bottom:1.75rem}\
-table.meta th,table.meta td{padding:.2rem 1.5rem .2rem 0;text-align:left;vertical-align:top;font-weight:400}\
-table.meta th{color:#666;white-space:nowrap}\
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;word-break:break-all;color:#444}\
-.doc{margin:0 0 .75rem;border:1px solid #909090;border-radius:.4rem;overflow:hidden;background:#f4f4f4}\
+.company,.eyebrow{margin:0;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#5f5f5f}\
+.eyebrow{margin-bottom:.35rem}\
+h1{margin:0 0 1.25rem;font-size:1.75rem;line-height:1.2;letter-spacing:-.01em}\
+table.meta{border-collapse:collapse;margin-bottom:2rem;font-size:.9375rem}\
+table.meta th,table.meta td{padding:.2rem 1.5rem .2rem 0;text-align:left;vertical-align:baseline;font-weight:400}\
+table.meta th{color:#5f5f5f;white-space:nowrap}\
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.75rem;word-break:break-all;color:#5f5f5f}\
+.doc{margin:0 0 1rem;border:1px solid #d4d4d4;border-radius:.5rem;overflow:hidden;background:#f4f4f4}\
 .doc object{display:block;width:100%;height:75vh}\
 .doc object p{padding:2rem;text-align:center}\
-.download{display:flex;flex-wrap:wrap;gap:.6rem;margin:0 0 2.5rem}\
-.note{font-size:.875rem;color:#444;overflow-wrap:anywhere;border-left:3px solid #909090;padding:.25rem 0 .25rem .9rem;margin:0 0 1.5rem}\
-.forms{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:1.25rem;align-items:start}\
-.card{border:1px solid #d0d0d0;border-radius:.5rem;padding:1.25rem 1.25rem 1rem}\
-.card h2{margin:0 0 .75rem;font-size:1.05rem}\
-label{display:block;margin:0 0 .9rem;font-size:.9rem;color:#333}\
-input[type=text],textarea{display:block;width:100%;margin-top:.35rem;padding:.55rem .7rem;font:inherit;color:#111;border:1px solid #909090;border-radius:.4rem;background:#fff}\
+.download{display:flex;flex-wrap:wrap;gap:.5rem;margin:0 0 2.25rem}\
+.download .button{min-height:2.25rem;padding:.4rem .9rem;font-size:.875rem}\
+.respond{border-top:1px solid #d4d4d4;padding-top:2rem}\
+.actions{display:flex;flex-wrap:wrap;gap:.75rem}\
+.toggle{white-space:nowrap}.toggle::after{content:'';flex:none;width:.45em;height:.45em;margin-left:.65em;border:solid currentColor;border-width:0 2px 2px 0;transform:translateY(-.15em) rotate(45deg)}\
+.toggle[aria-expanded=true]::after{transform:translateY(.15em) rotate(-135deg)}\
+.card{max-width:34rem;margin-top:1.25rem;border:1px solid #d4d4d4;border-radius:.5rem;padding:1.5rem;background:#fafafa}\
+label{display:block;margin:0 0 1rem;font-size:.9rem;color:#333}\
+input[type=text],textarea{display:block;width:100%;margin-top:.35rem;padding:.6rem .75rem;font:inherit;color:#111;border:1px solid #8a8a8a;border-radius:.4rem;background:#fff}\
 input[type=text]:focus,textarea:focus{outline:2px solid #111;outline-offset:1px}\
 textarea{resize:vertical;min-height:7rem}\
-.optional{color:#666}\
-.behalf{margin:-.25rem 0 .9rem;font-size:.9rem;color:#333}\
-.check{display:flex;gap:.5rem;align-items:flex-start}.check input{margin-top:.25rem}\
-.button,button{display:inline-block;padding:.6rem 1.1rem;font:inherit;font-weight:600;border-radius:.4rem;border:1px solid #111;cursor:pointer;text-decoration:none}\
+.optional{color:#5f5f5f}\
+.behalf{margin:-.25rem 0 1rem;font-size:.9rem;color:#333}\
+.note{font-size:.8125rem;color:#444;overflow-wrap:anywhere;margin:0 0 1rem;padding-top:1rem;border-top:1px solid #e2e2e2}\
+.check{display:flex;gap:.6rem;align-items:flex-start;margin-bottom:1.25rem}.check input{margin:.25rem 0 0;width:1rem;height:1rem;flex:none;accent-color:#111}\
+.button,button{display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:.6rem 1.25rem;font:inherit;font-weight:600;line-height:1.2;border-radius:.4rem;border:1px solid #111;cursor:pointer;text-decoration:none}\
 .primary{background:#111;color:#fff}.secondary{background:#fff;color:#111}\
+.primary:hover{background:#333}.secondary:hover{background:#f0f0f0}\
 button:disabled{opacity:.5;cursor:default}\
 .status{margin:.75rem 0 0;font-size:.875rem;color:#a40000}.status:empty{display:none}\
-.notice{padding:.9rem 1.1rem;border-radius:.5rem;background:#f4f4f4;border:1px solid #d0d0d0}\
+.notice{margin:0;padding:.9rem 1.1rem;border-radius:.5rem;background:#f4f4f4;border:1px solid #d4d4d4}\
 .notice p{margin:0}.notice p+p{margin-top:.6rem}.request{white-space:pre-wrap;overflow-wrap:anywhere}\
 .success{background:#eef7ee;border-color:#9cc79c}\
-@media (max-width:36rem){body{margin-top:1.5rem}h1{font-size:1.4rem}.doc object{height:60vh}}\
-@media print{.respond,.download{display:none}}";
+@media (max-width:36rem){body{margin-top:1.5rem}h1{font-size:1.4rem}table.meta th{padding-right:1rem}.doc object{height:60vh}.actions button{flex:1 1 auto}.card{padding:1.1rem}}\
+@media print{.download,.doc,.actions,.forms,#received{display:none}.respond{border:0;padding:0}}";
 
 pub fn relative_pdf_href(version: i64) -> String {
     format!("../v{version}/document.pdf")
@@ -210,13 +228,10 @@ fn data_attrs(
 
 const SIGNATURE_INTENT: &str = "Your typed name is your electronic signature on this document.";
 
-fn signing_paragraph(role: RecipientRole, checksum: &str) -> String {
-    match role {
-        RecipientRole::Signer => format!(
-            "<p class=\"note\">Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). {SIGNATURE_INTENT}</p>\n"
-        ),
-        RecipientRole::Collaborator => String::new(),
-    }
+fn signing_paragraph(checksum: &str) -> String {
+    format!(
+        "<p class=\"note\">Accepting records your typed name, the time, your IP address and browser against this exact file (checksum {checksum}). {SIGNATURE_INTENT}</p>"
+    )
 }
 
 /// The line under the signature fields saying whom the signer signs for.
@@ -231,24 +246,35 @@ fn on_behalf_line(client: &str) -> String {
 }
 
 fn forms(ctx: &PageContext<'_>, recipient: &PageRecipient<'_>, endpoint: &str) -> String {
-    let mut out = String::from("<div class=\"forms\">\n");
-    if recipient.role == RecipientRole::Signer {
+    let signer = recipient.role == RecipientRole::Signer;
+    let mut out = String::from("<div class=\"actions\" data-actions hidden>");
+    if signer {
+        out.push_str(
+            "<button type=\"button\" class=\"primary toggle\" aria-expanded=\"false\" aria-controls=\"respond-accept\">Accept</button>",
+        );
+    }
+    out.push_str(
+        "<button type=\"button\" class=\"secondary toggle\" aria-expanded=\"false\" aria-controls=\"respond-changes\">Request changes</button></div>\n\
+<div class=\"forms\">\n",
+    );
+    if signer {
         out.push_str(&format!(
-            "<form method=\"post\" hidden {} class=\"card\"><h2>Accept</h2>\
+            "<form method=\"post\" hidden {} id=\"respond-accept\" aria-label=\"Accept\" class=\"card\">\
 <label>Your full name <input type=\"text\" name=\"typedName\" required maxlength=\"200\" autocomplete=\"name\"></label>\
 <label>Your title <span class=\"optional\">(optional)</span> <input type=\"text\" name=\"title\" maxlength=\"200\" autocomplete=\"organization-title\"></label>\
-{behalf}\
+{behalf}{signing}\
 <label class=\"check\"><input type=\"checkbox\" name=\"consent\" required> I agree to sign electronically</label>\
 <button type=\"submit\" class=\"primary\">Accept</button><p data-status role=\"status\" class=\"status\"></p></form>\n",
             data_attrs(ctx, recipient, endpoint, "accept"),
             behalf = on_behalf_line(ctx.client_name),
+            signing = signing_paragraph(&esc(ctx.checksum)),
         ));
     }
     out.push_str(&format!(
-        "<form method=\"post\" hidden {} class=\"card\"><h2>Request changes</h2>\
+        "<form method=\"post\" hidden {} id=\"respond-changes\" aria-label=\"Request changes\" class=\"card\">\
 <label>What should change? <textarea name=\"note\" rows=\"5\" maxlength=\"4000\" required></textarea></label>\
 <button type=\"submit\" class=\"secondary\">Request changes</button><p data-status role=\"status\" class=\"status\"></p></form>\n</div>\n\
-<p id=\"received\" class=\"notice success\" hidden data-accept=\"Thank you, your acceptance has been received.\" data-request-changes=\"Thank you, your request has been received.\">Thank you, your response has been received.</p>\n<script>{SCRIPT}</script>\n\
+<p id=\"received\" class=\"notice success\" hidden tabindex=\"-1\" data-accept=\"Thank you, your acceptance has been received.\" data-request-changes=\"Thank you, your request has been received.\">Thank you, your response has been received.</p>\n<script>{SCRIPT}</script>\n\
 <noscript><p>{REPLY_BY_EMAIL}</p></noscript>\n",
         data_attrs(ctx, recipient, endpoint, "request_changes")
     ));
@@ -379,13 +405,12 @@ pub fn render_recipient_page(
 <tr><th>Checksum</th><td class=\"mono\">{checksum}</td></tr></table>\n\
 <div class=\"doc\"><object data=\"{href}\" type=\"application/pdf\"><p><a href=\"{href}\">Download the PDF</a></p></object></div>\n\
 <p class=\"download\">{executed}<a class=\"button secondary\" href=\"{href}\">Download the PDF</a>{record}</p>\n\
-<section class=\"respond\">\n{signing}{section}</section>",
+<section class=\"respond\">\n{section}</section>",
         company = esc(ctx.company),
         title = esc(ctx.title),
         kind = esc(ctx.kind),
         client = esc(ctx.client_name),
         version = ctx.version,
-        signing = signing_paragraph(recipient.role, &esc(ctx.checksum)),
         logo = ctx
             .logo_src
             .map(|src| format!("<img class=\"logo\" src=\"{}\" alt=\"\">", esc(src)))
@@ -691,6 +716,31 @@ mod tests {
         ));
         assert!(!collab.contains("electronic signature"));
         assert_eq!(signer.matches("<form").count(), 2);
+
+        let accept_form = signer
+            .split("data-action=\"accept\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</form>").next())
+            .expect("the accept form");
+        assert!(accept_form.contains("Your typed name is your electronic signature"));
+        assert!(signer.contains(
+            "<div class=\"actions\" data-actions hidden>\
+<button type=\"button\" class=\"primary toggle\" aria-expanded=\"false\" aria-controls=\"respond-accept\">Accept</button>\
+<button type=\"button\" class=\"secondary toggle\" aria-expanded=\"false\" aria-controls=\"respond-changes\">Request changes</button></div>"
+        ));
+        assert!(collab.contains(
+            "<div class=\"actions\" data-actions hidden>\
+<button type=\"button\" class=\"secondary toggle\" aria-expanded=\"false\" aria-controls=\"respond-changes\">Request changes</button></div>"
+        ));
+        assert!(!collab.contains("respond-accept"));
+        for (page, ids) in [
+            (&signer, &["respond-accept", "respond-changes"][..]),
+            (&collab, &["respond-changes"][..]),
+        ] {
+            for id in ids {
+                assert_eq!(page.matches(&format!("id=\"{id}\"")).count(), 1, "{id}");
+            }
+        }
     }
 
     #[test]
@@ -750,10 +800,10 @@ mod tests {
                 links: ExecutedLinks::default(),
             },
         ] {
-            assert!(
-                !render_recipient_page(&ctx(), &SIGNER, &state).contains("<form"),
-                "{state:?}"
-            );
+            let page = render_recipient_page(&ctx(), &SIGNER, &state);
+            assert!(!page.contains("<form"), "{state:?}");
+            assert!(!page.contains("data-actions"), "{state:?}");
+            assert!(!page.contains("electronic signature"), "{state:?}");
         }
         let accepted = render_recipient_page(
             &ctx(),
