@@ -1276,15 +1276,23 @@ impl InvoiceManager {
         let Some(detail) = &self.detail else {
             return;
         };
-        let outcome = send_invoice(
-            conn,
-            detail.invoice.id,
-            today,
-            branding,
-            gateway,
-            publisher,
-            mailer,
+        // The TUI has no greeting field, so its sends carry the saved default.
+        let greeting = nigel_core::invoicing::greeting::resolve_greeting(
+            None,
+            &nigel_core::invoicing::greeting::invoice_default(conn),
         );
+        let outcome = greeting.and_then(|greeting| {
+            send_invoice(
+                conn,
+                detail.invoice.id,
+                today,
+                branding,
+                greeting.as_deref(),
+                gateway,
+                publisher,
+                mailer,
+            )
+        });
         self.finish_send(conn, outcome);
     }
 

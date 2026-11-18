@@ -96,8 +96,7 @@ pub fn render_with_logo(
     // the same order — and, for the same reason, the money block is built here
     // rather than by whoever is rendering: every caller above the seam shows
     // the same figures without asking for them.
-    let items = line_items(conn, invoice.id)?;
-    let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
+    let (items, money) = invoice_figures(conn, invoice)?;
 
     // The verdict is applied **above both renderers**: a value that fails
     // `usable_logo` is erased from the branding the page is rendered from, so
@@ -133,6 +132,17 @@ pub fn render_with_logo(
         items,
         money,
     })
+}
+
+/// The line items and money block every rendering of an invoice draws, and
+/// the email preview too, read the one way.
+pub fn invoice_figures(
+    conn: &Connection,
+    invoice: &Invoice,
+) -> Result<(Vec<InvoiceLineItem>, MoneySummary)> {
+    let items = line_items(conn, invoice.id)?;
+    let money = MoneySummary::of(invoice, paid_amount(conn, invoice.id)?);
+    Ok((items, money))
 }
 
 #[cfg(feature = "pdf")]

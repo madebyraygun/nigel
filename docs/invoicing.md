@@ -668,18 +668,33 @@ with no way to tell which was meant.
 
 ```bash
 nigel invoice send 1248
+nigel invoice send 1248 --message "Thanks for a great month."   # this send's greeting
+nigel invoice send 1248 --no-message                            # no greeting
 nigel invoice send 1248 --yes        # skip the confirmation (and the files)
 ```
 
 **It asks first.** Before anything is created, uploaded or emailed, Nigel
 renders the invoice through the same seam `send` publishes through, writes the
-same two files `nigel invoice preview` writes, states who it is going to and
-for how much, and waits:
+same two files `nigel invoice preview` writes, prints the email that will go
+out, states who it is going to and for how much, and waits:
 
 ```
 Invoice #1248 — Acme Co, $1,850.00 USD, issued 2026-08-04. To ap@acme.test.
 Wrote /home/you/Documents/nigel/previews/invoice-1248.html
 Wrote /home/you/Documents/nigel/previews/invoice-1248.pdf
+------------------------------------------------------------
+To: ap@acme.test
+Subject: Invoice #1248 from Acme LLC
+Attachments: invoice.pdf
+
+Thanks for a great month.
+
+Invoice #1248 from Acme LLC
+…
+Pay now: [link created when sent]
+…
+------------------------------------------------------------
+[link created when sent] stands in for a link the send creates.
 Sending creates a Stripe payment link, publishes the page and PDF to
 billing.example.com, and emails ap@acme.test. This cannot be undone.
 Send it? [y/N]
@@ -688,8 +703,9 @@ Send it? [y/N]
 Anything but `y` prints `Aborted.` and exits 0 — `void`'s behaviour, and
 `--yes` skips the prompt exactly as it does there. `--yes` also writes no
 files: a scripted send has nobody to look at them, and leaving artifacts behind
-on every run is litter. The **render still happens** either way, so a broken
-custom template is caught before any gateway is called.
+on every run is litter. It still prints the email preview. The **render still
+happens** either way, so a broken custom template is caught before any gateway
+is called.
 
 A non-TTY without `--yes` is refused — `Refusing to send invoice #1248 without
 confirmation. Pass --yes.` — before the summary is printed and before anything
@@ -712,7 +728,8 @@ One command does the whole publish:
    "Hosting" below.
 4. Emails the client through Mailgun — a **plain-text body**, PDF attached,
    subject `Invoice #1248 from Acme LLC`, or plain `Invoice #1248` when no
-   business name is set. The body opens with that same line, then carries the
+   business name is set. The body opens with the [greeting](#the-email-greeting)
+   when the send has one, then that same subject line, then carries the
    metadata rows, the line items and the money lines the page and the PDF draw
    — built from the same figures, so the three cannot disagree — a
    `Pay now:` line with the published page's URL, the notes, terms and payment
@@ -722,7 +739,8 @@ One command does the whole publish:
    dashboard's settings screen edits. The From carries a display name and, when
    one is configured, a Reply-To — see "Who the email is from" below.
 5. Marks the invoice published, which moves it from `draft` to `sent` (or straight
-   to `overdue` if its due date has already passed).
+   to `overdue` if its due date has already passed), and records the greeting
+   the email carried.
 
 If any step fails the invoice stays a draft and no email goes out, so a failed
 send is safe to retry. The command prints the public URL on success:
@@ -733,6 +751,41 @@ the line items, the money block, a Pay button linking to Stripe, and — under t
 foot rule — the notes, the terms and whatever `payment_instructions` says. It
 carries no contact line unless a custom template asks for one with
 `{{CONTACT}}`.
+
+### The email greeting
+
+A greeting is your own opening paragraph for the email: plain text, at most
+2,000 characters, trimmed. It is the first paragraph of an invoice email, above
+the subject line, and the paragraph after `Hello {name},` in a document email.
+It goes in the email body only — never on the published page or in the PDF.
+
+Each kind has a default, empty until you set one: **Invoice email greeting** and
+**Document email greeting** in the web UI's Settings, stored as the
+`invoice_email_greeting` and `document_email_greeting` metadata keys. Every send
+starts from the default and can change it:
+
+| How the send is asked | What the email carries |
+|---|---|
+| no greeting given | the saved default, or none when it is empty |
+| `--message "…"` (or the dialog's text) | exactly that text, trimmed |
+| `--no-message` (or an emptied dialog box) | no greeting |
+
+`--message` and `--no-message` cannot be combined. A greeting over the limit is
+refused before anything is created, uploaded or emailed. A scheduled run's
+autosends and a send from the dashboard always carry the saved invoice default.
+
+The greeting that was sent is recorded — on the invoice for its most recent
+send, and on the document version — and `nigel invoice show` and
+`nigel document show` print it.
+
+**The preview.** Both sends print the email they will deliver before the
+confirmation prompt: the recipients, the subject, the attachments and the whole
+plain-text body, built by the same functions the send uses. A link that only
+exists once the send has run — the invoice's published page, each document
+recipient's personal page — is printed as `[link created when sent]`. The web
+UI's send dialogs show the same preview from `POST
+/api/invoices/{number}/email-preview` and `POST /api/documents/{id}/email-preview`,
+which publish, charge and email nothing.
 
 ### Who the email is from
 
@@ -1322,6 +1375,7 @@ nigel invoice schedule edit 1 --autosend      # or --no-autosend
 
 Unattended sending means a wrong figure can reach a client with nobody
 watching, so it is a decision made once per schedule rather than a default.
+An autosent invoice opens with the saved [invoice greeting](#the-email-greeting).
 
 An autosend schedule sends through the same path `nigel invoice send` uses, and
 only when all nine invoicing keys are configured. When it cannot send — the
@@ -1815,6 +1869,8 @@ nigel document kinds                       # Proposal, Estimate, Agreement, …
 nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf
 nigel document preview 3                   # Writes the pages and PDF locally; no network, no configuration
 nigel document send 3                      # Confirm, then publish and email
+nigel document send 3 --message "Here is the SOW we discussed."
+nigel document send 3 --no-message         # No greeting
 ```
 
 `add` files the PDF as a draft and prints its checksum. A new database starts
@@ -1833,9 +1889,13 @@ receive, rendered by the code `send` publishes with.
 
 `send` defaults the signer to the client's billing contact; `--signer
 "Name <email>"` names someone else, and `--collaborator "Name <email>"` (repeat
-it) adds collaborators. It checks the configuration first, so a missing key is
-named before anything is asked, then prints who gets what and asks; `--yes` skips the
-question and is required when stdin is not a terminal. A document can be sent
+it) adds collaborators. Each email opens with the saved document greeting;
+`--message` replaces it for this send and `--no-message` leaves it out (see
+[The email greeting](#the-email-greeting)). It checks the configuration first,
+so a missing key is named before anything is asked, then prints each recipient's
+email as it will go out — with `[link created when sent]` for the personal link
+— and who gets what, and asks; `--yes` skips the question, still prints the
+emails, and is required when stdin is not a terminal. A document can be sent
 once, from `draft`, and not for an archived client.
 
 A send runs these steps in order and reports the one that failed:
@@ -1846,7 +1906,7 @@ A send runs these steps in order and reports the one that failed:
 4. **publish** the PDF and each page to the public bucket;
 5. **manifest** — write the `open` manifest to the private bucket;
 6. **email** each recipient their own link with the PDF attached;
-7. **record** the version as sent.
+7. **record** the version as sent, with the greeting its emails carried.
 
 A failure anywhere before the last step **rolls back**: the recipients it froze
 are removed, the manifest is written back as `closed`, and the version stays an

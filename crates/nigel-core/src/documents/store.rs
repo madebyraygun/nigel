@@ -203,11 +203,12 @@ fn version_from_row(r: &Row<'_>) -> rusqlite::Result<DocumentVersion> {
         client_name: r.get(7)?,
         executed_checksum: r.get(8)?,
         executed_public_checksum: r.get(9)?,
+        email_greeting: r.get(10)?,
     })
 }
 
 const VERSION_COLUMNS: &str = "id, document_id, number, file_path, checksum, sent_at, created_at, \
-     client_name, executed_checksum, executed_public_checksum";
+     client_name, executed_checksum, executed_public_checksum, email_greeting";
 
 /// The client name frozen on a sent version, which its pages and signing
 /// record name the signer as acting on behalf of.
@@ -620,7 +621,7 @@ mod tests {
             )],
         )
         .unwrap();
-        mark_sent(&conn, v.id, "Cedar Systems", "2026-10-05").unwrap();
+        mark_sent(&conn, v.id, "Cedar Systems", "2026-10-05", None).unwrap();
         record_decline(&conn, declined, None, "2026-10-06").unwrap();
         let live = file("Website rebuild, once more").expect("refiled after a decline");
 

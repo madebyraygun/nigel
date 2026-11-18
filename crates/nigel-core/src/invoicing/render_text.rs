@@ -11,9 +11,11 @@ use crate::models::{Invoice, InvoiceLineItem};
 
 /// Render the email body for one invoice.
 ///
-/// `subject` is the message's own subject line, repeated as the opening line so
-/// a client whose reader hides headers still sees who is billing them.
-/// `page_url` is the published page — the one artifact that can take a payment.
+/// `greeting`, when there is one, is the operator's own opening paragraph and
+/// comes first. `subject` is the message's own subject line, repeated as the
+/// next line so a client whose reader hides headers still sees who is billing
+/// them. `page_url` is the published page — the one artifact that can take a
+/// payment.
 pub fn render_email_text(
     invoice: &Invoice,
     items: &[InvoiceLineItem],
@@ -21,8 +23,10 @@ pub fn render_email_text(
     payment_instructions: &str,
     subject: &str,
     page_url: &str,
+    greeting: Option<&str>,
 ) -> String {
-    let mut blocks: Vec<String> = vec![subject.to_string()];
+    let mut blocks: Vec<String> = greeting.map(str::to_string).into_iter().collect();
+    blocks.push(subject.to_string());
 
     blocks.push(
         meta_rows(invoice)
@@ -141,7 +145,37 @@ mod tests {
             "",
             "Invoice #1248 from Bluepeak LLC",
             "https://billing.example.test/i/tok/index.html",
+            None,
         )
+    }
+
+    fn body_with(greeting: Option<&str>) -> String {
+        render_email_text(
+            &invoice(),
+            &[item("Consulting", 1.0, 100.0)],
+            &summary(100.0, 0.0),
+            "",
+            "Invoice #1248 from Initech",
+            "https://billing.example.test/i/tok/index.html",
+            greeting,
+        )
+    }
+
+    #[test]
+    fn a_greeting_is_the_opening_paragraph_above_the_subject_line() {
+        let text = body_with(Some("Hi Acme team,\nThanks for a great month."));
+        assert!(
+            text.starts_with(
+                "Hi Acme team,\nThanks for a great month.\n\nInvoice #1248 from Initech\n\n"
+            ),
+            "got: {text}"
+        );
+        // Nothing else moves: the rest is the body without a greeting.
+        assert_eq!(
+            text.split_once("\n\n").unwrap().1,
+            body_with(None),
+            "only the opening paragraph differs"
+        );
     }
 
     #[test]
@@ -185,6 +219,7 @@ mod tests {
             "",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         assert!(text.contains("Total: $100.00"), "got: {text}");
         assert!(text.contains("Paid: $40.00"), "got: {text}");
@@ -220,6 +255,7 @@ mod tests {
             "Wells Fargo\nRouting 121000248",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         assert!(
             text.contains("Notes:\nThanks for your business"),
@@ -242,6 +278,7 @@ mod tests {
             "",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         assert!(text.contains("Due Date: 2026-09-03\n"), "got: {text}");
         assert!(
@@ -265,6 +302,7 @@ mod tests {
             "",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         assert!(text.contains("Consulting"), "not vacuous: {text}");
         for absence in ["Due Date", "Notes", "Terms", "Payment:", "Paid"] {
@@ -283,6 +321,7 @@ mod tests {
             "",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         assert!(
             text.contains("Consulting  1 x EUR 100.00  EUR 100.00"),
@@ -301,6 +340,7 @@ mod tests {
             "",
             "Invoice #1248",
             "https://x.test/i/t/index.html",
+            None,
         );
         // No escaping and no tags of our own: the text goes into a text/plain
         // part, where `&amp;` would read literally.

@@ -78,6 +78,31 @@ pub(crate) fn confirm_or_refuse(
 
 pub(crate) use nigel_core::reports::parse_month_opt;
 
+/// The greeting a sent email opened with, as `show` prints it, or nothing when
+/// there was none.
+pub(crate) fn format_sent_greeting(greeting: Option<&str>) -> String {
+    match greeting {
+        Some(text) => {
+            let mut out = String::from("Email greeting:\n");
+            for line in text.lines() {
+                out.push_str(&format!("  {line}\n"));
+            }
+            out
+        }
+        None => String::new(),
+    }
+}
+
+/// The greeting a send was asked for: `--no-message` is none, `--message` is
+/// that text, and neither is `None`, which the send resolves to the saved
+/// default.
+pub fn greeting_arg(message: Option<&str>, no_message: bool) -> Option<String> {
+    if no_message {
+        return Some(String::new());
+    }
+    message.map(str::to_string)
+}
+
 #[derive(Parser)]
 #[command(
     name = "nigel",
@@ -621,6 +646,12 @@ pub enum InvoiceCommands {
         /// Send without confirmation (required when stdin is not a TTY)
         #[arg(long)]
         yes: bool,
+        /// Open the email with this greeting instead of the saved default
+        #[arg(long, value_name = "TEXT")]
+        message: Option<String>,
+        /// Send the email with no greeting
+        #[arg(long = "no-message", conflicts_with = "message")]
+        no_message: bool,
     },
     /// Poll Stripe and record any new payments.
     Sync,
@@ -727,6 +758,12 @@ pub enum DocumentCommands {
         /// Send without confirmation (required when stdin is not a TTY)
         #[arg(long)]
         yes: bool,
+        /// Open each email with this greeting instead of the saved default
+        #[arg(long, value_name = "TEXT")]
+        message: Option<String>,
+        /// Send the emails with no greeting
+        #[arg(long = "no-message", conflicts_with = "message")]
+        no_message: bool,
     },
     /// Add a new version of the PDF as a draft: live pages show "being revised" until it is sent, then "superseded".
     Revise {
@@ -1220,6 +1257,70 @@ pub fn launch_sync_allowed(command: &Commands) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_flags_resolve_to_a_greeting_request() {
+        assert_eq!(greeting_arg(None, false), None, "the saved default");
+        assert_eq!(greeting_arg(None, true), Some(String::new()), "none");
+        assert_eq!(
+            greeting_arg(Some("Thanks, Acme."), false),
+            Some("Thanks, Acme.".into())
+        );
+    }
+
+    #[test]
+    fn message_and_no_message_parse_and_conflict_on_both_sends() {
+        for kind in ["invoice", "document"] {
+            let parsed =
+                Cli::try_parse_from(["nigel", kind, "send", "1", "--message", "Hi Globex"]);
+            assert!(parsed.is_ok(), "{kind}");
+            assert!(Cli::try_parse_from(["nigel", kind, "send", "1", "--no-message"]).is_ok());
+            assert!(
+                Cli::try_parse_from([
+                    "nigel",
+                    kind,
+                    "send",
+                    "1",
+                    "--message",
+                    "Hi",
+                    "--no-message"
+                ])
+                .is_err(),
+                "{kind}: the two conflict"
+            );
+        }
+        let Some(Commands::Invoice {
+            command:
+                InvoiceCommands::Send {
+                    message,
+                    no_message,
+                    ..
+                },
+        }) = Cli::try_parse_from([
+            "nigel",
+            "invoice",
+            "send",
+            "1248",
+            "--message",
+            "Hi Initech",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("an invoice send");
+        };
+        assert_eq!(message.as_deref(), Some("Hi Initech"));
+        assert!(!no_message);
+    }
+
+    #[test]
+    fn a_sent_greeting_prints_indented_under_its_label() {
+        assert_eq!(
+            format_sent_greeting(Some("Thanks, Acme.\nInvoice below.")),
+            "Email greeting:\n  Thanks, Acme.\n  Invoice below.\n"
+        );
+        assert_eq!(format_sent_greeting(None), "");
+    }
 
     #[test]
     fn launch_sync_skips_document_sync_and_both_previews() {

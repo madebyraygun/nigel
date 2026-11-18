@@ -302,6 +302,7 @@ structured context to give:
 | `internal` | 500 | Unexpected server-side failure |
 | `upstream_failed` | 502 | Stripe, R2, Mailgun or a SimpleFIN bridge refused or could not be reached; `details.service` names it |
 | `feature_disabled` | 501 | The build lacks the required cargo feature |
+| `greeting_invalid` | 422 | An email greeting is over the length limit; `details.maxChars` is the limit |
 
 ## Endpoints
 
@@ -822,9 +823,13 @@ The invoice's own fields flattened, plus everything a detail screen prints:
     "reason": "not_deletable",
     "message": "Cannot delete: invoice has been sent, paid or voided — only an unsent draft with no payments can be deleted"
   },
-  "asOf": "2026-03-15"
+  "asOf": "2026-03-15",
+  "emailGreeting": null
 }
 ```
+
+`emailGreeting` is the greeting the invoice's most recent send opened its email
+with, and `null` when that send carried none or the invoice was never sent.
 
 The invoice's `token` is **never** on the wire: it is the only access control on
 a published invoice, and a response carrying one would put it into devtools
@@ -975,6 +980,7 @@ client's name, every version, and what may be done to it next:
     { "id": 5, "documentId": 3, "number": 2, "checksum": "sha256:9c1f…",
       "sentAt": "2026-10-02", "createdAt": "2026-10-02",
       "executedChecksum": null, "executedPublicChecksum": null,
+      "emailGreeting": "Thanks for the call. The SOW is attached.",
       "recipients": [
         { "id": 8, "versionId": 5, "role": "signer", "name": "Pat Example",
           "email": "pat@acme.test", "position": 0,
@@ -1004,6 +1010,8 @@ metadata. `checksum` always carries the `sha256:` prefix.
   redacted copy is published; both are `null` otherwise, and both are cleared
   when no executed copy could be made. They are not the version's `checksum`,
   which stays the signed PDF's.
+- **`emailGreeting`** is the greeting the version's emails opened with, and
+  `null` when they carried none or the version is unsent.
 - **`fileMissing`** is `true` on a version whose PDF is absent from the data
   directory, as after a restore from a backup that lacked the documents folder.
   Fetching such a version's PDF or sending it answers `409` `file_missing`.
@@ -1118,12 +1126,14 @@ refused with `423 locked` until an encrypted database is unlocked. Three are
 | `/api/invoices/:number/duplicate` | `POST` | — | `InvoiceDetail` (`201`) |
 | `/api/invoices/:number/void` | `POST` | — | `VoidResult` |
 | `/api/invoices/:number/pay` | `POST` | `date`, `amount?`, `method?` | `PayResult` |
-| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`) | `SendResult` (with `configWarnings` and `warnings`) |
+| `/api/invoices/:number/send` | `POST` | `confirm` (must be `true`), `greeting?` | `SendResult` (with `configWarnings` and `warnings`) |
+| `/api/invoices/:number/email-preview` | `POST` | `greeting?` | `EmailPreview` |
 | `/api/invoices/sync` | `POST` | — | `SyncResult` |
 | `/api/documents` | `POST` | multipart: `clientId`, `kind`, `title`, `file` | `DocumentDetail` (`201`) |
 | `/api/documents/:id` | `PATCH` | `title?`, `kind?` | `DocumentDetail` |
 | `/api/documents/:id/revise` | `POST` | multipart: `file` | `DocumentActionResult` |
-| `/api/documents/:id/send` | `POST` | `confirm` (must be `true`), `signer?`, `collaborators?` | `DocumentSendResult` |
+| `/api/documents/:id/send` | `POST` | `confirm` (must be `true`), `signer?`, `collaborators?`, `greeting?` | `DocumentSendResult` |
+| `/api/documents/:id/email-preview` | `POST` | `signer?`, `collaborators?`, `greeting?` | `EmailPreview` |
 | `/api/documents/:id/accept` | `POST` | `name`, `title?`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/request-changes` | `POST` | `name`, `note`, `date?` | `DocumentActionResult` |
 | `/api/documents/:id/decline` | `POST` | `note?`, `date?` | `DocumentActionResult` |
@@ -1609,6 +1619,70 @@ it as text and frames it as `srcdoc`, rather than pointing an iframe at it,
 because an iframe cannot report a failure — a broken custom template has to
 arrive as the server's sentence rather than as this envelope rendered in a box.
 That is why the route's error body has to stay legible.
+
+#### The email greeting
+
+Both send routes take an optional `greeting`, the opening paragraph of the
+email — the first paragraph of an invoice email, and the paragraph after
+`Hello {name},` in each document email. It goes in the email body only, never on
+the published page or in the PDF.
+
+| `greeting` in the body | What the email carries |
+|---|---|
+| absent (or `null`) | the saved default — `invoiceEmailGreeting` or `documentEmailGreeting` in [the letterhead](#the-letterhead) |
+| `""`, or only whitespace | no greeting |
+| any other string | exactly that text, trimmed |
+
+A greeting is plain text of at most 2,000 characters after trimming; a longer
+one is `422 greeting_invalid` with `details.maxChars`, before any network call.
+On a send that refusal carries `details.step` too — `precheck` for an invoice,
+`load` for a document. The greeting that went out is recorded as the invoice's
+`emailGreeting` and the version's `emailGreeting`.
+
+#### Email preview
+
+`POST /api/invoices/:number/email-preview` and `POST
+/api/documents/{id}/email-preview` answer the emails the matching send would
+deliver, built by the subject and body functions the send itself uses, so a
+preview cannot drift from what is sent. **They publish, charge and email
+nothing**: no Stripe link is created, nothing is uploaded or frozen, no mail is
+sent, and no invoicing or documents configuration is required.
+
+The invoice body is `{ "greeting"?: string }`. The document body is
+`{ "greeting"?: string, "signer"?: { "name", "email" }, "collaborators"?: [{ "name", "email" }] }`
+— the send's recipient shape, with the client's billing contact as the signer
+when none is named; unknown fields are `400`. `greeting` follows the send's rule
+above.
+
+```json
+{
+  "emails": [
+    { "role": "client",
+      "to": "Acme Co <ap@acme.test>",
+      "cc": ["ops@acme.test"],
+      "subject": "Invoice #1252 from Initech",
+      "body": "Thanks for a great month.\n\nInvoice #1252 from Initech\n\n…\n\nPay now: [link created when sent]\n\n…",
+      "attachments": ["invoice.pdf"] }
+  ],
+  "placeholders": ["[link created when sent]"]
+}
+```
+
+An invoice preview has one email, role `client`, copied (`cc`) to the client's
+other contacts. A document preview has one email per recipient, the signer first
+and then each collaborator, with roles `signer` and `collaborator` and an empty
+`cc`; its attachment is the version's PDF name. A link that only exists once the
+send has run — the invoice's published page, each recipient's personal page —
+is the literal text `[link created when sent]` in the body. `placeholders` lists
+every such string the bodies use, so a screen can mark them.
+
+A preview of something the send would refuse is refused with the send's error,
+without `details.step`: a void invoice is `409 void`, an invoice whose client
+has no address `409 client_missing_email` with `clientId` and `clientName`, an
+invoice with nothing to charge `409 invoice_not_payable`; a document that is not
+a draft, belongs to an archived client or has a missing PDF gets its send's
+`409`, and an unusable recipient set its send's `409` or `400`. An unknown
+invoice or document is `404`.
 
 #### Recording a payment
 
@@ -2200,7 +2274,7 @@ database — see below.
 | `/api/settings/app` | `GET` | — | `AppSettings` |
 | `/api/settings/app` | `PUT` | `updateCheck` | `AppSettings` |
 | `/api/settings/company` | `GET` | — | `Company` |
-| `/api/settings/company` | `PUT` | `name`, `address`, `phone`, `logo`, `paymentInstructions` | `Company` |
+| `/api/settings/company` | `PUT` | `name`, `address`, `phone`, `logo`, `paymentInstructions`, `invoiceEmailGreeting?`, `documentEmailGreeting?` | `Company` |
 | `/api/settings/data-dir` | `POST` | `path` | `StatusResponse` |
 | `/api/settings/password/set` | `POST` | `newPassword` | `{ encrypted, locked }` |
 | `/api/settings/password/change` | `POST` | `currentPassword`, `newPassword` | `{ encrypted, locked }` |
@@ -2224,7 +2298,8 @@ itself.
 ### The letterhead
 
 `GET`/`PUT /api/settings/company` read and write the five `metadata` keys both
-client-facing documents draw their sender block from:
+client-facing documents draw their sender block from, and the two default email
+greetings:
 
 ```json
 {
@@ -2232,9 +2307,18 @@ client-facing documents draw their sender block from:
   "address": "P.O. Box 1234\nSpringfield, CA 90001",
   "phone": "619.555.0123",
   "logo": "data:image/png;base64,…",
-  "paymentInstructions": "Bank transfer to Example Bank\nAccount 000123456"
+  "paymentInstructions": "Bank transfer to Example Bank\nAccount 000123456",
+  "invoiceEmailGreeting": "",
+  "documentEmailGreeting": ""
 }
 ```
+
+`invoiceEmailGreeting` and `documentEmailGreeting` are the greetings a send uses
+when its request names none (see [the email greeting](#the-email-greeting)),
+stored under the `invoice_email_greeting` and `document_email_greeting` keys and
+empty by default. A `PUT` may omit either, which leaves it as stored; one that is
+sent is trimmed, `""` clears it, and one over 2,000 characters is
+`422 greeting_invalid` with nothing written.
 
 One route rather than five: the fields are only ever correct together, and two
 writers for one letterhead is how a name and an address end up disagreeing about

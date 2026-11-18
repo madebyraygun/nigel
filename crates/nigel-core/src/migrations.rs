@@ -666,6 +666,16 @@ const MIGRATIONS: &[Migration] = &[
             )
         },
     },
+    Migration {
+        version: 24,
+        description: "invoices: the email greeting sent with the most recent send",
+        up: |conn| add_column_if_missing(conn, "invoices", "email_greeting", "TEXT"),
+    },
+    Migration {
+        version: 25,
+        description: "documents: the email greeting a version was sent with",
+        up: |conn| add_column_if_missing(conn, "document_versions", "email_greeting", "TEXT"),
+    },
 ];
 
 pub const LATEST_VERSION: u32 = MIGRATIONS[MIGRATIONS.len() - 1].version;
@@ -2146,6 +2156,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(columns, 2);
+    }
+
+    #[test]
+    fn v24_and_v25_add_the_email_greeting_columns_and_are_replayable() {
+        let (_dir, conn) = test_db();
+        set_metadata(&conn, "schema_version", "23").unwrap();
+        run_migrations(&conn).unwrap();
+        set_metadata(&conn, "schema_version", "23").unwrap();
+        run_migrations(&conn).unwrap();
+        assert_eq!(get_schema_version(&conn).unwrap(), LATEST_VERSION);
+        for table in ["invoices", "document_versions"] {
+            let present: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) = 1 FROM pragma_table_info(?1) WHERE name = 'email_greeting'",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(present, "{table}.email_greeting");
+        }
     }
 
     #[test]

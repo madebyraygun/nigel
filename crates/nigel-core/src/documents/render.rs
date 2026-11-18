@@ -460,17 +460,21 @@ pub fn email_subject(company: &str, title: &str, role: RecipientRole) -> String 
     }
 }
 
+/// The plain-text body of one recipient's email. `greeting`, when there is
+/// one, is the operator's own paragraph between the salutation and the ask.
 pub fn render_document_email_text(
     ctx: &PageContext<'_>,
     recipient: &PageRecipient<'_>,
     url: &str,
+    greeting: Option<&str>,
 ) -> String {
     let ask = match recipient.role {
         RecipientRole::Signer => "Please review the attached document and respond using the link below.",
         RecipientRole::Collaborator => "The attached document is shared for your review. You can request changes using the link below.",
     };
+    let greeting = greeting.map(|g| format!("{g}\n\n")).unwrap_or_default();
     format!(
-        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n",
+        "Hello {name},\n\n{greeting}{ask}\n\n{title} (version {version})\n{url}\n",
         name = recipient.name,
         title = ctx.title,
         version = ctx.version,
@@ -839,6 +843,7 @@ mod tests {
             &ctx(),
             &SIGNER,
             "https://docs.example.test/d/doc/rs/index.html",
+            None,
         );
         assert!(text.contains("https://docs.example.test/d/doc/rs/index.html"));
         assert!(!text.contains('<'));
@@ -852,8 +857,43 @@ mod tests {
             &ctx(),
             &COLLAB,
             "https://docs.example.test/d/doc/rc/index.html",
+            None,
         );
         assert!(text.ends_with("/d/doc/rc/index.html\n"));
+    }
+
+    #[test]
+    fn a_greeting_sits_between_the_salutation_and_the_ask() {
+        let url = "https://docs.example.test/d/doc/rs/index.html";
+        let with = render_document_email_text(
+            &ctx(),
+            &SIGNER,
+            url,
+            Some("Thanks for the call, Cedar Systems.\nHere is the SOW."),
+        );
+        let without = render_document_email_text(&ctx(), &SIGNER, url, None);
+        assert!(
+            with.starts_with(&format!(
+                "Hello {},\n\nThanks for the call, Cedar Systems.\nHere is the SOW.\n\nPlease review the attached document",
+                SIGNER.name
+            )),
+            "got: {with}"
+        );
+        assert!(
+            without.starts_with(&format!(
+                "Hello {},\n\nPlease review the attached document",
+                SIGNER.name
+            )),
+            "got: {without}"
+        );
+        assert_eq!(
+            with.replace(
+                "Thanks for the call, Cedar Systems.\nHere is the SOW.\n\n",
+                ""
+            ),
+            without,
+            "nothing else in the body changes"
+        );
     }
 
     #[test]

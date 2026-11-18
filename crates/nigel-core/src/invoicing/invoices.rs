@@ -925,6 +925,29 @@ pub fn mark_published(conn: &Connection, id: i64, published_at: &str) -> Result<
     Ok(())
 }
 
+/// Record the greeting the most recent send carried, `None` for a send with
+/// none.
+pub fn set_email_greeting(conn: &Connection, id: i64, greeting: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE invoices SET email_greeting = ?1 WHERE id = ?2",
+        rusqlite::params![greeting, id],
+    )?;
+    Ok(())
+}
+
+/// The greeting the most recent send carried, or `None` when it carried none
+/// or the invoice was never sent.
+pub fn email_greeting(conn: &Connection, id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT email_greeting FROM invoices WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten())
+}
+
 pub fn line_items(conn: &Connection, invoice_id: i64) -> Result<Vec<InvoiceLineItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, invoice_id, description, quantity, unit_amount, line_total, position

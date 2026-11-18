@@ -8,6 +8,7 @@ use nigel_core::db::get_connection;
 use nigel_core::error::{NigelError, Result};
 use nigel_core::fmt::money;
 use nigel_core::invoicing::clients::get_client;
+use nigel_core::invoicing::greeting::{format_email_preview, invoice_default, resolve_greeting};
 use nigel_core::invoicing::import_invoiceshelf::import as import_invoiceshelf;
 use nigel_core::invoicing::invoices::{
     create_invoice, delete_blocker, delete_invoice, duplicate_invoice, ensure_not_void,
@@ -17,7 +18,7 @@ use nigel_core::invoicing::invoices::{
 };
 use nigel_core::invoicing::render::{render_invoice, RenderedInvoice};
 use nigel_core::invoicing::render_html::{load_template, template_path, DEFAULT_TEMPLATE};
-use nigel_core::invoicing::send::send_invoice;
+use nigel_core::invoicing::send::{preview_invoice_email, send_invoice};
 use nigel_core::invoicing::sync::sync_all_report;
 use nigel_core::invoicing::void::void_invoice_with_teardown;
 use nigel_core::models::{Client, Invoice, InvoiceLineItem};
@@ -369,9 +370,11 @@ pub fn show(number: i64, today: &str) -> Result<()> {
     let client = get_client(&conn, invoice.client_id)?;
     let items = line_items(&conn, invoice.id)?;
     let paid = paid_amount(&conn, invoice.id)?;
+    let greeting = nigel_core::invoicing::invoices::email_greeting(&conn, invoice.id)?;
     let invoice = with_effective_status(invoice, paid, today);
 
     print!("{}", format_invoice_show(&invoice, &client, &items, paid));
+    print!("{}", crate::cli::format_sent_greeting(greeting.as_deref()));
     Ok(())
 }
 
@@ -624,11 +627,14 @@ pub(crate) fn publish_host(base: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_string())
 }
 
-pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
+/// `message` is the greeting asked for on the command line: `None` sends the
+/// saved default, an empty string sends none.
+pub fn send(number: i64, today: &str, yes: bool, message: Option<String>) -> Result<()> {
     let conn = get_connection(&get_data_dir().join("nigel.db"))?;
     let invoice = find_invoice(&conn, number)?;
     ensure_not_void(&invoice, "sent")?;
     let client = get_client(&conn, invoice.client_id)?;
+    let greeting = resolve_greeting(message.as_deref(), &invoice_default(&conn))?;
     // The template is loaded before anything is built or created, so a broken
     // one fails the send with no Stripe link made and nothing published.
     let template = load_template(&get_data_dir())?;
@@ -653,13 +659,23 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         pay_button_for(&invoice),
         &branding,
     )?;
+    let email = preview_invoice_email(
+        &conn,
+        invoice.id,
+        profile.name(),
+        profile.payment_instructions(),
+        greeting.as_deref(),
+    )?;
 
-    if !yes {
+    if yes {
+        print!("{}", format_email_preview(&email));
+    } else {
         refuse_unconfirmed_send(&invoice)?;
         println!("{}", send_summary(&invoice, &client));
         // The same bytes the send will publish, at the paths `invoice preview`
         // writes. A terminal cannot show a document; it can hand over a path.
         write_preview(&rendered, number, None)?;
+        print!("{}", format_email_preview(&email));
         let host = cfg.public_base_url.as_deref().and_then(publish_host);
         println!("{}", send_consequences(&invoice, &client, host.as_deref()));
         if !confirm_send(&invoice, yes)? {
@@ -677,6 +693,7 @@ pub fn send(number: i64, today: &str, yes: bool) -> Result<()> {
         invoice.id,
         today,
         &branding,
+        greeting.as_deref(),
         clients.stripe(),
         clients.r2(),
         clients.mail(),

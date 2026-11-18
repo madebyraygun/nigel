@@ -354,6 +354,7 @@ pub fn sent_document_with_fakes(
         company: "Initech",
         response_url: Some("https://docs.example.test/d/respond"),
         today: "2026-10-05",
+        greeting: None,
     };
     crate::documents::send::send_document(
         conn,

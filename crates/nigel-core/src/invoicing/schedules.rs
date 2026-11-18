@@ -830,10 +830,22 @@ pub fn run_due_schedules<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         }
     }
 
+    // Every autosend carries the saved invoice greeting, read once for the run.
+    let greeting = crate::invoicing::greeting::resolve_greeting(
+        None,
+        &crate::invoicing::greeting::invoice_default(conn),
+    );
     for generated in &mut report.generated {
         if !autosend_for(conn, generated.schedule_id)? {
             continue;
         }
+        let greeting = match &greeting {
+            Ok(greeting) => greeting.as_deref(),
+            Err(e) => {
+                generated.not_sent = Some(e.to_string());
+                continue;
+            }
+        };
         match senders {
             None => generated.not_sent = Some(NOT_CONFIGURED.to_string()),
             Some(senders) => match crate::invoicing::send::send_invoice(
@@ -841,6 +853,7 @@ pub fn run_due_schedules<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
                 generated.invoice_id,
                 &today,
                 senders.branding,
+                greeting,
                 senders.gateway,
                 senders.publisher,
                 senders.mailer,
@@ -2110,12 +2123,106 @@ mod autosend_tests {
     #[derive(Default)]
     struct Post {
         to: RefCell<Vec<String>>,
+        bodies: RefCell<Vec<String>>,
     }
     impl Mailer for Post {
         fn send(&self, mail: &OutgoingMail<'_>) -> Result<()> {
             self.to.borrow_mut().push(mail.to.to_string());
+            self.bodies.borrow_mut().push(mail.text.to_string());
             Ok(())
         }
+    }
+
+    fn autosend_schedule(conn: &rusqlite::Connection) -> i64 {
+        let client = crate::invoicing::clients::add_client(
+            conn,
+            "Globex",
+            Some("ap@globex.test"),
+            None,
+            None,
+        )
+        .unwrap();
+        add_schedule(
+            conn,
+            &NewSchedule {
+                client_id: client,
+                cadence: Cadence::Monthly,
+                anchor_day: 1,
+                start_period: "2026-01-01".into(),
+                net_days: None,
+                currency: "USD".into(),
+                notes: None,
+                terms: None,
+                autosend: true,
+                items: sample_items(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_scheduled_send_opens_with_the_saved_invoice_greeting_and_records_it() {
+        let (_d, conn) = test_conn();
+        autosend_schedule(&conn);
+        crate::db::set_metadata(
+            &conn,
+            crate::invoicing::greeting::INVOICE_GREETING_KEY,
+            "  Thanks for another month, Globex.  ",
+        )
+        .unwrap();
+        let branding = crate::invoicing::render_html::Branding {
+            company: "Initech",
+            ..crate::invoicing::render_html::Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let post = Post::default();
+        let senders = Senders {
+            branding: &branding,
+            gateway: &Gateway,
+            publisher: &Publisher,
+            mailer: &post,
+        };
+
+        let report = run_due_schedules(&conn, "2026-01-15", Some(&senders)).unwrap();
+        let sent = report.generated.iter().find(|g| g.sent).expect("one sent");
+        let bodies = post.bodies.borrow();
+        assert!(
+            bodies[0].starts_with("Thanks for another month, Globex.\n\nInvoice #"),
+            "got: {}",
+            bodies[0]
+        );
+        assert_eq!(
+            crate::invoicing::invoices::email_greeting(&conn, sent.invoice_id).unwrap(),
+            Some("Thanks for another month, Globex.".into())
+        );
+    }
+
+    #[test]
+    fn a_scheduled_send_with_no_saved_greeting_opens_with_the_subject() {
+        let (_d, conn) = test_conn();
+        autosend_schedule(&conn);
+        let branding = crate::invoicing::render_html::Branding {
+            company: "Initech",
+            ..crate::invoicing::render_html::Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let post = Post::default();
+        let senders = Senders {
+            branding: &branding,
+            gateway: &Gateway,
+            publisher: &Publisher,
+            mailer: &post,
+        };
+
+        let report = run_due_schedules(&conn, "2026-01-15", Some(&senders)).unwrap();
+        let sent = report.generated.iter().find(|g| g.sent).expect("one sent");
+        assert!(
+            post.bodies.borrow()[0].starts_with("Invoice #"),
+            "got: {}",
+            post.bodies.borrow()[0]
+        );
+        assert_eq!(
+            crate::invoicing::invoices::email_greeting(&conn, sent.invoice_id).unwrap(),
+            None
+        );
     }
 
     #[test]

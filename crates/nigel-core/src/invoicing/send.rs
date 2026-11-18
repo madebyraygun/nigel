@@ -3,10 +3,15 @@ use serde::{Serialize, Serializer};
 
 use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
-use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
-use crate::invoicing::invoices::{ensure_not_void, get_invoice, mark_published, set_payment_link};
+use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway, INVOICE_ATTACHMENT};
+use crate::invoicing::greeting::{EmailPreview, PreviewEmail, PREVIEW_LINK_PLACEHOLDER};
+use crate::invoicing::invoices::{
+    ensure_not_void, get_invoice, mark_published, set_email_greeting, set_payment_link,
+};
 use crate::invoicing::logo;
-use crate::invoicing::render::{pay_button_for, render_with_logo, usable_logo, RenderedInvoice};
+use crate::invoicing::render::{
+    invoice_figures, pay_button_for, render_with_logo, usable_logo, RenderedInvoice,
+};
 use crate::invoicing::render_html::Branding;
 use crate::invoicing::render_text::render_email_text;
 use crate::models::Client;
@@ -171,6 +176,58 @@ pub fn ensure_payable(invoice: &crate::models::Invoice) -> Result<()> {
     })
 }
 
+/// The subject line of an invoice email, naming the company when there is one.
+pub fn invoice_email_subject(company: &str, number: i64) -> String {
+    match company.trim() {
+        "" => format!("Invoice #{number}"),
+        company => format!("Invoice #{number} from {company}"),
+    }
+}
+
+/// The email a send of this invoice would deliver, built by the subject and
+/// body functions the send uses, with the published page's address as
+/// [`PREVIEW_LINK_PLACEHOLDER`]. Reads the database and nothing else: no
+/// payment link, no upload, no mail.
+///
+/// An invoice the send would refuse at its precheck — void, a client with no
+/// address, nothing to charge — is refused here with the same error.
+pub fn preview_invoice_email(
+    conn: &Connection,
+    invoice_id: i64,
+    company: &str,
+    payment_instructions: &str,
+    greeting: Option<&str>,
+) -> Result<EmailPreview> {
+    let invoice = get_invoice(conn, invoice_id)?;
+    let client = get_client(conn, invoice.client_id)?;
+    ensure_not_void(&invoice, "sent")?;
+    let recipients = require_recipients(conn, &client)?;
+    ensure_payable(&invoice)?;
+
+    let (items, money) = invoice_figures(conn, &invoice)?;
+    let subject = invoice_email_subject(company, invoice.number);
+    let body = render_email_text(
+        &invoice,
+        &items,
+        &money,
+        payment_instructions,
+        &subject,
+        PREVIEW_LINK_PLACEHOLDER,
+        greeting,
+    );
+    Ok(EmailPreview {
+        emails: vec![PreviewEmail {
+            role: "client".into(),
+            to: recipients.to,
+            cc: recipients.cc,
+            subject,
+            body,
+            attachments: vec![INVOICE_ATTACHMENT.into()],
+        }],
+        placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
+    })
+}
+
 #[derive(Default)]
 struct Trace {
     steps: Vec<(SendStep, StepOutcome)>,
@@ -206,18 +263,23 @@ impl Trace {
 /// The orchestration itself: Stripe link, render, publish, email, mark
 /// published. Any failure leaves the invoice a draft, and names the step it
 /// stopped at.
+///
+/// `greeting` is the opening paragraph of the email, already resolved and
+/// trimmed; it is recorded on the invoice as the one its latest send carried.
+#[allow(clippy::too_many_arguments)]
 pub fn send_invoice_traced<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     conn: &Connection,
     invoice_id: i64,
     today: &str,
     branding: &Branding<'_>,
+    greeting: Option<&str>,
     gateway: &G,
     publisher: &P,
     mailer: &M,
 ) -> std::result::Result<SendOutcome, SendFailure> {
     let mut trace = Trace::default();
     match run(
-        conn, invoice_id, today, branding, gateway, publisher, mailer, &mut trace,
+        conn, invoice_id, today, branding, greeting, gateway, publisher, mailer, &mut trace,
     ) {
         Ok(outcome) => Ok(outcome),
         Err((step, source)) => Err(trace.into_failure(conn, invoice_id, step, source)),
@@ -233,6 +295,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     invoice_id: i64,
     today: &str,
     branding: &Branding<'_>,
+    greeting: Option<&str>,
     gateway: &G,
     publisher: &P,
     mailer: &M,
@@ -320,10 +383,7 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         .map_err(|e| (Publish, e))?;
     trace.done(Publish, StepOutcome::Ok);
 
-    let subject = match branding.company.trim() {
-        "" => format!("Invoice #{}", invoice.number),
-        company => format!("Invoice #{} from {company}", invoice.number),
-    };
+    let subject = invoice_email_subject(branding.company, invoice.number);
     // The message a client reads is plain text: the same figures the page and
     // the PDF draw, the link to the published page, the PDF attached. The page
     // HTML goes to the bucket and nowhere else.
@@ -334,12 +394,14 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
         branding.payment_instructions,
         &subject,
         &public_url,
+        greeting,
     );
     mailer
         .send_invoice(&recipients.to, &recipients.cc, &subject, &body, &pdf)
         .map_err(|e| (Email, e))?;
     trace.done(Email, StepOutcome::Ok);
 
+    set_email_greeting(conn, invoice_id, greeting).map_err(|e| (Record, e))?;
     mark_published(conn, invoice_id, today).map_err(|e| (Record, e))?;
     let status = get_invoice(conn, invoice_id)
         .map_err(|e| (Record, e))?
@@ -358,17 +420,19 @@ fn run<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
 /// The send without its step trace, for the callers whose wording predates one
 /// — the CLI and the TUI, which want the address and the sentences and nothing
 /// about which of eight steps reused a payment link.
+#[allow(clippy::too_many_arguments)]
 pub fn send_invoice<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     conn: &Connection,
     invoice_id: i64,
     today: &str,
     branding: &Branding<'_>,
+    greeting: Option<&str>,
     gateway: &G,
     publisher: &P,
     mailer: &M,
 ) -> Result<SendOutcome> {
     send_invoice_traced(
-        conn, invoice_id, today, branding, gateway, publisher, mailer,
+        conn, invoice_id, today, branding, greeting, gateway, publisher, mailer,
     )
     .map_err(|failure| failure.source)
 }
@@ -517,6 +581,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -545,6 +610,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -559,6 +625,77 @@ mod tests {
         assert!(body.contains("W  1 x $100.00  $100.00"), "got: {body}");
         assert!(body.contains("Total: $100.00"), "got: {body}");
         assert!(!body.contains('<'), "markup reached the email: {body}");
+    }
+
+    /// The preview is the email the send delivers, with the page link as the
+    /// placeholder, and the greeting the send carried is recorded.
+    #[test]
+    fn the_preview_matches_what_the_send_delivers() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let greeting = Some("Thanks for a great month, Acme.");
+        let branding = Branding {
+            company: "Initech",
+            payment_instructions: "Pay by bank transfer.",
+            ..brand("billing@example.test")
+        };
+        let preview = preview_invoice_email(
+            &conn,
+            id,
+            branding.company,
+            branding.payment_instructions,
+            greeting,
+        )
+        .unwrap();
+        let gw = FakeGw {
+            create_calls: RefCell::new(0),
+        };
+        let mail = FakeMail::default();
+        let outcome = send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &branding,
+            greeting,
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
+
+        let [email] = preview.emails.as_slice() else {
+            panic!("one email: {preview:?}");
+        };
+        assert_eq!(email.subject, *mail.subject.borrow());
+        assert_eq!(email.to, *mail.to.borrow());
+        assert_eq!(email.cc, *mail.cc.borrow());
+        assert_eq!(email.attachments, ["invoice.pdf"]);
+        assert_eq!(
+            email
+                .body
+                .replace(PREVIEW_LINK_PLACEHOLDER, &outcome.public_url),
+            *mail.body.borrow()
+        );
+        assert!(mail
+            .body
+            .borrow()
+            .starts_with("Thanks for a great month, Acme.\n\n"));
+        assert_eq!(
+            crate::invoicing::invoices::email_greeting(&conn, id).unwrap(),
+            Some("Thanks for a great month, Acme.".into())
+        );
+    }
+
+    #[test]
+    fn the_preview_refuses_a_void_invoice_and_reaches_no_service() {
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        crate::invoicing::invoices::void_invoice(&conn, id, "2026-08-04").unwrap();
+        let err = preview_invoice_email(&conn, id, "Initech", "", None).unwrap_err();
+        assert!(
+            matches!(err, NigelError::Conflict { code: "void", .. }),
+            "{err:?}"
+        );
     }
 
     /// AC #3: every contact is reached, the billing one as the `To`.
@@ -601,6 +738,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -631,6 +769,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -670,6 +809,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -700,6 +840,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -736,6 +877,7 @@ mod tests {
             id,
             "2026-08-07",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -764,6 +906,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FailPub,
             &mail,
@@ -788,7 +931,17 @@ mod tests {
             payment_instructions: "Wells Fargo, routing 121000248",
             ..Branding::with_template(DEFAULT_TEMPLATE)
         };
-        send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &branding,
+            None,
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .unwrap();
         let html = publisher.html.borrow();
         assert!(html.contains("Bluepeak LLC"), "got: {html}");
         assert!(html.contains("ph. 619.555.0123"), "got: {html}");
@@ -844,6 +997,7 @@ mod tests {
             id,
             "2026-08-04",
             &letterhead(&uri),
+            None,
             &gw,
             &publisher,
             &mail,
@@ -886,6 +1040,7 @@ mod tests {
                 id,
                 "2026-08-04",
                 &letterhead(&uri),
+                None,
                 &gw,
                 &publisher,
                 &mail,
@@ -920,6 +1075,7 @@ mod tests {
             id,
             "2026-08-04",
             &letterhead(&uri),
+            None,
             &gw,
             &publisher,
             &mail,
@@ -957,6 +1113,7 @@ mod tests {
             id,
             "2026-08-04",
             &letterhead(""),
+            None,
             &gw,
             &publisher,
             &mail,
@@ -984,6 +1141,7 @@ mod tests {
             id,
             "2026-08-04",
             &letterhead("data:image/png;base64,bm90IGEgcG5n"),
+            None,
             &gw,
             &publisher,
             &mail,
@@ -1031,7 +1189,17 @@ mod tests {
             contact_email: "billing@example.test",
             ..Branding::with_template("<p>CUSTOM {{NUMBER}} {{CLIENT}} {{ROWS}} {{TOTAL}}</p>")
         };
-        send_invoice(&conn, id, "2026-08-04", &branding, &gw, &publisher, &mail).unwrap();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &branding,
+            None,
+            &gw,
+            &publisher,
+            &mail,
+        )
+        .unwrap();
 
         let html = publisher.html.borrow();
         assert!(html.contains("CUSTOM"), "got: {html}");
@@ -1051,7 +1219,17 @@ mod tests {
             contact_email: "billing@example.test",
             ..Branding::with_template(DEFAULT_TEMPLATE)
         };
-        send_invoice(&conn, id, "2026-08-04", &branding, &gw, &FakePub, &mail).unwrap();
+        send_invoice(
+            &conn,
+            id,
+            "2026-08-04",
+            &branding,
+            None,
+            &gw,
+            &FakePub,
+            &mail,
+        )
+        .unwrap();
         assert_eq!(*mail.subject.borrow(), "Invoice #1248 from Acme LLC");
     }
 
@@ -1068,6 +1246,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1128,6 +1307,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1157,6 +1337,7 @@ mod tests {
             id,
             "2026-08-05",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1184,6 +1365,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &ForbiddenPub,
             &mail,
@@ -1225,6 +1407,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &FailMail,
@@ -1258,6 +1441,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1295,6 +1479,7 @@ mod tests {
             id,
             "2026-08-07",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &FakeMail::default(),
@@ -1325,6 +1510,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1339,6 +1525,7 @@ mod tests {
             second,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &ForbiddenPub,
             &mail,
@@ -1363,6 +1550,7 @@ mod tests {
             id,
             "2026-08-04",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
@@ -1373,6 +1561,7 @@ mod tests {
             id,
             "2026-08-05",
             &brand("billing@example.test"),
+            None,
             &gw,
             &FakePub,
             &mail,
