@@ -1796,7 +1796,8 @@ export class FakeApiClient implements ApiClient {
           to: `${detail.client.name} <${detail.client.email ?? ""}>`,
           subject,
           body,
-          attachments: [`Invoice-${number}.pdf`],
+          cc: [],
+          attachments: ['invoice.pdf'],
         },
       ],
       placeholders: [INVOICE_PAY_PLACEHOLDER],
@@ -2054,6 +2055,7 @@ export class FakeApiClient implements ApiClient {
       ]
         .filter((block) => block !== "")
         .join("\n\n"),
+      cc: [],
       attachments: [attachment],
     });
     return {

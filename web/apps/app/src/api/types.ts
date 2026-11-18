@@ -1381,6 +1381,8 @@ export interface EmailPreviewMessage {
   role: 'client' | 'signer' | 'collaborator';
   /** `Name <email>`. */
   to: string;
+  /** Copied contacts; empty for documents. */
+  cc: string[];
   subject: string;
   /** The plain-text body, placeholders included literally. */
   body: string;

@@ -8,6 +8,7 @@ export interface EmailPreviewView {
   role: string;
   /** `Name <email>`. */
   to: string;
+  cc?: string[];
   subject: string;
   body: string;
   attachments: string[];
@@ -194,6 +195,10 @@ export class WcEmailPreview extends LitElement {
           <dd data-to>
             ${email.to}${multiple ? html` <span class="role">· ${role}</span>` : nothing}
           </dd>
+          ${email.cc && email.cc.length > 0
+            ? html`<dt>Cc</dt>
+                <dd data-cc>${email.cc.join(', ')}</dd>`
+            : nothing}
           <dt>Subject</dt>
           <dd data-subject>${email.subject}</dd>
           ${email.attachments.length > 0

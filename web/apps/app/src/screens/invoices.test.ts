@@ -1104,7 +1104,7 @@ describe('nigel-invoices-screen', () => {
       expect(preview?.getAttribute('slot')).toBe('email-preview');
       expect(preview?.emails).toHaveLength(1);
       expect(preview?.emails[0].body.startsWith(GREETING)).toBe(true);
-      expect(preview?.emails[0].attachments).toEqual(['Invoice-1250.pdf']);
+      expect(preview?.emails[0].attachments).toEqual(['invoice.pdf']);
       expect(preview?.placeholders).toEqual(['[pay link created when sent]']);
     });
 

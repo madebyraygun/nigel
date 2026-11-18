@@ -22,6 +22,7 @@ function previewOf(greeting: string | undefined): EmailPreview {
       {
         role: 'client',
         to: 'Acme <ap@acme.test>',
+        cc: [],
         subject: 'Invoice #1251',
         body: `${greeting ?? '(saved)'}\n\nInvoice #1251.`,
         attachments: [],

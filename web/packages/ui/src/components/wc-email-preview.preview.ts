@@ -17,7 +17,8 @@ const INVOICE: EmailPreviewView = {
     'The invoice PDF is attached.',
     'Thank you,\nInitech',
   ].join('\n\n'),
-  attachments: ['Invoice-1251.pdf'],
+  cc: ['Juniper Labs AP <ap@juniper.example>'],
+  attachments: ['invoice.pdf'],
 };
 
 function documentEmail(
