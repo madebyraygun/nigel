@@ -302,7 +302,7 @@ structured context to give:
 | `internal` | 500 | Unexpected server-side failure |
 | `upstream_failed` | 502 | Stripe, R2, Mailgun or a SimpleFIN bridge refused or could not be reached; `details.service` names it |
 | `feature_disabled` | 501 | The build lacks the required cargo feature |
-| `greeting_invalid` | 422 | An email greeting is over the length limit or names an unknown placeholder; `details.maxChars` is the limit |
+| `greeting_invalid` | 422 | An email greeting is over the length limit (`details.maxChars` is the limit) or names a placeholder its kind does not offer (`details.placeholder` is the first such name); a settings write adds `details.field` |
 
 ## Endpoints
 
@@ -829,7 +829,9 @@ The invoice's own fields flattened, plus everything a detail screen prints:
 ```
 
 `emailGreeting` is the greeting the invoice's most recent send opened its email
-with, and `null` when that send carried none or the invoice was never sent.
+with, stored as the template with its placeholders as written rather than the
+filled text the client read, and `null` when that send carried none or the
+invoice was never sent.
 
 The invoice's `token` is **never** on the wire: it is the only access control on
 a published invoice, and a response carrying one would put it into devtools
@@ -1010,8 +1012,10 @@ metadata. `checksum` always carries the `sha256:` prefix.
   redacted copy is published; both are `null` otherwise, and both are cleared
   when no executed copy could be made. They are not the version's `checksum`,
   which stays the signed PDF's.
-- **`emailGreeting`** is the greeting the version's emails opened with, and
-  `null` when they carried none or the version is unsent.
+- **`emailGreeting`** is the greeting the version's emails opened with, stored
+  as the template with its placeholders as written rather than any one
+  recipient's filled text, and `null` when they carried none or the version is
+  unsent.
 - **`fileMissing`** is `true` on a version whose PDF is absent from the data
   directory, as after a restore from a backup that lacked the documents folder.
   Fetching such a version's PDF or sending it answers `409` `file_missing`.
@@ -1635,17 +1639,19 @@ the published page or in the PDF.
 
 A greeting is plain text of at most 2,000 characters after trimming, and may
 name the placeholders listed in [docs/invoicing.md](invoicing.md#the-email-greeting)
-as `${name}`; each email fills them for its own recipient. A longer greeting, or
-one naming a placeholder its kind does not offer, is `422 greeting_invalid` with
-`details.maxChars`, before any network call.
+as `${name}`; each email fills them for its own recipient. A longer greeting is
+`422 greeting_invalid` with `details.maxChars`, and one naming a placeholder its
+kind does not offer is the same code with `details.placeholder` naming it, both
+before any network call.
 On a send that refusal carries `details.step` too — `precheck` for an invoice,
-`load` for a document. The greeting that went out is recorded as the invoice's
-`emailGreeting` and the version's `emailGreeting`.
+`load` for a document. The greeting that went out is recorded, as the template
+with its placeholders as written, as the invoice's `emailGreeting` and the
+version's `emailGreeting`.
 
 #### Email preview
 
 `POST /api/invoices/:number/email-preview` and `POST
-/api/documents/{id}/email-preview` answer the emails the matching send would
+/api/documents/:id/email-preview` answer the emails the matching send would
 deliver, built by the subject and body functions the send itself uses, so a
 preview cannot drift from what is sent. **They publish, charge and email
 nothing**: no Stripe link is created, nothing is uploaded or frozen, no mail is
@@ -1654,8 +1660,9 @@ sent, and no invoicing or documents configuration is required.
 The invoice body is `{ "greeting"?: string }`. The document body is
 `{ "greeting"?: string, "signer"?: { "name", "email" }, "collaborators"?: [{ "name", "email" }] }`
 — the send's recipient shape, with the client's billing contact as the signer
-when none is named; unknown fields are `400`. `greeting` follows the send's rule
-above.
+when none is named. On both, an unknown field is `400`, and so it is on both
+send routes: `POST /api/invoices/:number/send` takes `confirm` and `greeting`
+and nothing else. `greeting` follows the send's rule above.
 
 ```json
 {
@@ -1667,7 +1674,7 @@ above.
       "body": "Thanks for a great month.\n\nInvoice #1252 from Initech\n\n…\n\nPay now: [link created when sent]\n\n…",
       "attachments": ["invoice.pdf"] }
   ],
-  "placeholders": ["[link created when sent]"]
+  "linkPlaceholders": ["[link created when sent]"]
 }
 ```
 
@@ -1676,8 +1683,10 @@ other contacts. A document preview has one email per recipient, the signer first
 and then each collaborator, with roles `signer` and `collaborator` and an empty
 `cc`; its attachment is the version's PDF name. A link that only exists once the
 send has run — the invoice's published page, each recipient's personal page —
-is the literal text `[link created when sent]` in the body. `placeholders` lists
-every such string the bodies use, so a screen can mark them.
+is the literal text `[link created when sent]` in the body. `linkPlaceholders`
+lists every such string the bodies use, so a screen can mark them. The bodies
+carry the greeting with its `${name}` placeholders already filled, exactly as
+the send would.
 
 A preview of something the send would refuse is refused with the send's error,
 without `details.step`: a void invoice is `409 void`, an invoice whose client
@@ -2320,8 +2329,13 @@ greetings:
 when its request names none (see [the email greeting](#the-email-greeting)),
 stored under the `invoice_email_greeting` and `document_email_greeting` keys and
 empty by default. A `PUT` may omit either, which leaves it as stored; one that is
-sent is trimmed, `""` clears it, and one over 2,000 characters is
-`422 greeting_invalid` with nothing written.
+sent is trimmed, `""` clears it, and one over 2,000 characters or naming a
+placeholder its kind does not offer — `${invoiceNumber}` in the document
+greeting, say — is `422 greeting_invalid` with nothing written. The refusal's
+`details.field` is `invoiceEmailGreeting` or `documentEmailGreeting`, and its
+message names which greeting it was (`The document email greeting: Unknown
+placeholder …`). A `GET` whose read of any key fails answers that error rather
+than blank fields.
 
 One route rather than five: the fields are only ever correct together, and two
 writers for one letterhead is how a name and an address end up disagreeing about

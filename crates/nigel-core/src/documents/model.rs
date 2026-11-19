@@ -172,8 +172,9 @@ pub struct DocumentVersion {
     /// the redacted record appended. Set only once that copy is published,
     /// so it is present only when `executed_checksum` is.
     pub executed_public_checksum: Option<String>,
-    /// The greeting this version's emails opened with. `None` when they
-    /// carried none or the version is unsent.
+    /// The greeting this version's emails opened with, as the template with
+    /// its placeholders as written. `None` when they carried none or the
+    /// version is unsent.
     pub email_greeting: Option<String>,
 }
 

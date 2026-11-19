@@ -37,7 +37,8 @@ pub enum ApiErrorCode {
     TooManyAttempts,
     /// No password verification slot came free in time; retry shortly.
     Busy,
-    /// An email greeting over the length limit.
+    /// An email greeting over the length limit or naming an unknown
+    /// placeholder.
     GreetingInvalid,
 }
 
@@ -390,10 +391,20 @@ impl From<NigelError> for ApiError {
             NigelError::Conflict { code, .. } => {
                 Self::conflict(err.to_string(), serde_json::json!({ "reason": code }))
             }
-            NigelError::GreetingInvalid(message) => {
-                Self::new(ApiErrorCode::GreetingInvalid, message).with_details(serde_json::json!({
-                    "maxChars": crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS,
-                }))
+            NigelError::GreetingInvalid(refusal) => {
+                use crate::invoicing::greeting::GreetingProblem;
+                let mut details = match &refusal.problem {
+                    GreetingProblem::TooLong => serde_json::json!({
+                        "maxChars": crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS,
+                    }),
+                    GreetingProblem::UnknownPlaceholder(name) => {
+                        serde_json::json!({ "placeholder": name })
+                    }
+                };
+                if let Some(field) = refusal.field {
+                    details["field"] = field.into();
+                }
+                Self::new(ApiErrorCode::GreetingInvalid, refusal.message).with_details(details)
             }
             NigelError::Db(_) => Self::internal(redact_key_pragma(err.to_string())),
             NigelError::SettingsUnreadable { .. } => Self::internal(err)

@@ -271,7 +271,7 @@ pub enum NigelError {
 
     /// An email greeting the send or the settings cannot take.
     #[error("{0}")]
-    GreetingInvalid(String),
+    GreetingInvalid(Box<crate::invoicing::greeting::GreetingRefusal>),
 
     #[cfg(feature = "pdf")]
     #[error("PDF error: {0}")]

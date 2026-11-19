@@ -284,7 +284,7 @@ pub fn send(
     let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
     let greeting = resolve_greeting(
         message.as_deref(),
-        &document_default(&conn),
+        &document_default(&conn)?,
         GreetingKind::Document,
     )?;
 
@@ -474,30 +474,7 @@ fn record_then_republish(
     Ok(())
 }
 
-/// Replaces every control character but newline — a carriage return
-/// included — and every bidirectional formatting character with a space, so
-/// text a recipient typed cannot move the cursor, overwrite a line, rewrite
-/// the terminal or reorder what is printed around it.
-pub fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| {
-            if (c != '\n' && c.is_control()) || is_bidi_control(c) {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect()
-}
-
-/// The Unicode bidirectional formatting characters: the marks, the embeddings
-/// and overrides, and the isolates.
-fn is_bidi_control(c: char) -> bool {
-    matches!(
-        c,
-        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-    )
-}
+pub use nigel_core::fmt::printable;
 
 pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
     report

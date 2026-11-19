@@ -21,7 +21,9 @@ use crate::invoicing::clients::{get_client, list_contacts};
 use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource,
 };
-use crate::invoicing::greeting::{EmailPreview, PreviewEmail, PREVIEW_LINK_PLACEHOLDER};
+use crate::invoicing::greeting::{
+    EmailPreview, PreviewEmail, PreviewRole, PREVIEW_LINK_PLACEHOLDER,
+};
 use crate::invoicing::logo::{fingerprint, COMPANY_LOGO_KEY, PUBLISHED_LOGO_KEY};
 use crate::invoicing::mailgun::{ensure_message_fits, format_address};
 use crate::invoicing::render::usable_logo;
@@ -282,7 +284,10 @@ pub fn preview_document_email(
                 name: &r.name,
             };
             PreviewEmail {
-                role: r.role.as_str().to_string(),
+                role: match r.role {
+                    RecipientRole::Signer => PreviewRole::Signer,
+                    RecipientRole::Collaborator => PreviewRole::Collaborator,
+                },
                 to: format_address(Some(&r.name), &r.email),
                 cc: Vec::new(),
                 subject: email_subject(company, &document.title, r.role),
@@ -298,7 +303,7 @@ pub fn preview_document_email(
         .collect();
     Ok(EmailPreview {
         emails,
-        placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
+        link_placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
     })
 }
 
@@ -608,7 +613,8 @@ mod tests {
             seed_client(&conn, "Harbor & Vale"),
             "Website rebuild",
         );
-        let greeting = Some("Thanks for the call.\nThe SOW is attached.");
+        let template = "Hi ${firstName}, ${companyName} sent ${documentTitle} for ${clientName}";
+        let greeting = Some(template);
         let preview =
             preview_document_email(&conn, dir.path(), id, &[sam(), pat()], "Initech", greeting)
                 .unwrap();
@@ -650,6 +656,7 @@ mod tests {
                 email.body.replace(PREVIEW_LINK_PLACEHOLDER, &link.url),
                 mail.text
             );
+            assert!(!mail.text.contains("${"), "unfilled: {}", mail.text);
             assert_eq!(
                 email.attachments,
                 mail.attachments
@@ -658,9 +665,23 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+        assert!(
+            sent[0]
+                .text
+                .starts_with("Hi Pat, Initech sent Website rebuild for Harbor & Vale"),
+            "{}",
+            sent[0].text
+        );
+        assert!(
+            sent[1]
+                .text
+                .starts_with("Hi Sam, Initech sent Website rebuild for Harbor & Vale"),
+            "{}",
+            sent[1].text
+        );
         assert_eq!(
             latest_version(&conn, id).unwrap().email_greeting.as_deref(),
-            Some("Thanks for the call.\nThe SOW is attached.")
+            Some(template)
         );
     }
 

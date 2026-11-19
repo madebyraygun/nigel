@@ -1277,11 +1277,13 @@ impl InvoiceManager {
             return;
         };
         // The TUI has no greeting field, so its sends carry the saved default.
-        let greeting = nigel_core::invoicing::greeting::resolve_greeting(
-            None,
-            &nigel_core::invoicing::greeting::invoice_default(conn),
-            nigel_core::invoicing::greeting::GreetingKind::Invoice,
-        );
+        let greeting = nigel_core::invoicing::greeting::invoice_default(conn).and_then(|default| {
+            nigel_core::invoicing::greeting::resolve_greeting(
+                None,
+                &default,
+                nigel_core::invoicing::greeting::GreetingKind::Invoice,
+            )
+        });
         let outcome = greeting.and_then(|greeting| {
             send_invoice(
                 conn,

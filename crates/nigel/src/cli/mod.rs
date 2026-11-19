@@ -85,7 +85,7 @@ pub(crate) fn format_sent_greeting(greeting: Option<&str>) -> String {
         Some(text) => {
             let mut out = String::from("Email greeting:\n");
             for line in text.lines() {
-                out.push_str(&format!("  {line}\n"));
+                out.push_str(&format!("  {}\n", nigel_core::fmt::printable(line)));
             }
             out
         }
@@ -1320,6 +1320,10 @@ mod tests {
             "Email greeting:\n  Thanks, Acme.\n  Invoice below.\n"
         );
         assert_eq!(format_sent_greeting(None), "");
+        assert_eq!(
+            format_sent_greeting(Some("Hi\x1b[2J Acme\u{202E}")),
+            "Email greeting:\n  Hi [2J Acme \n"
+        );
     }
 
     #[test]

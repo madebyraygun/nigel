@@ -5,7 +5,8 @@ use crate::error::{NigelError, Result};
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway, INVOICE_ATTACHMENT};
 use crate::invoicing::greeting::{
-    fill_placeholders, EmailPreview, GreetingValues, PreviewEmail, PREVIEW_LINK_PLACEHOLDER,
+    fill_placeholders, EmailPreview, GreetingValues, PreviewEmail, PreviewRole,
+    PREVIEW_LINK_PLACEHOLDER,
 };
 use crate::invoicing::invoices::{
     ensure_not_void, get_invoice, mark_published, set_email_greeting, set_payment_link,
@@ -252,14 +253,14 @@ pub fn preview_invoice_email(
     );
     Ok(EmailPreview {
         emails: vec![PreviewEmail {
-            role: "client".into(),
+            role: PreviewRole::Client,
             to: recipients.to,
             cc: recipients.cc,
             subject,
             body,
             attachments: vec![INVOICE_ATTACHMENT.into()],
         }],
-        placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
+        link_placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
     })
 }
 
@@ -671,12 +672,30 @@ mod tests {
     }
 
     /// The preview is the email the send delivers, with the page link as the
-    /// placeholder, and the greeting the send carried is recorded.
+    /// placeholder and the greeting's placeholders filled the same way, and the
+    /// greeting the send carried is recorded as the template, unfilled.
     #[test]
     fn the_preview_matches_what_the_send_delivers() {
         let (_d, conn) = test_conn();
-        let id = seed(&conn);
-        let greeting = Some("Thanks for a great month, Acme.");
+        let cid = add_client(&conn, "Acme", Some("a@b.test"), None, None).unwrap();
+        let items = vec![NewLineItem {
+            description: "W".into(),
+            quantity: 1.0,
+            unit_amount: 100.0,
+        }];
+        let id = create_invoice(
+            &conn,
+            cid,
+            "2026-08-04",
+            Some("2026-09-03"),
+            "USD",
+            &items,
+            None,
+            None,
+        )
+        .unwrap();
+        let template = "Hi ${firstName}, ${invoiceNumber} for ${amountDue} due ${dueDate}";
+        let greeting = Some(template);
         let branding = Branding {
             company: "Initech",
             payment_instructions: "Pay by bank transfer.",
@@ -709,6 +728,8 @@ mod tests {
         let [email] = preview.emails.as_slice() else {
             panic!("one email: {preview:?}");
         };
+        let number = get_invoice(&conn, id).unwrap().number;
+        let delivered = mail.body.borrow();
         assert_eq!(email.subject, *mail.subject.borrow());
         assert_eq!(email.to, *mail.to.borrow());
         assert_eq!(email.cc, *mail.cc.borrow());
@@ -717,16 +738,63 @@ mod tests {
             email
                 .body
                 .replace(PREVIEW_LINK_PLACEHOLDER, &outcome.public_url),
-            *mail.body.borrow()
+            *delivered
         );
-        assert!(mail
-            .body
-            .borrow()
-            .starts_with("Thanks for a great month, Acme.\n\n"));
+        assert!(!delivered.contains("${"), "unfilled: {delivered}");
+        assert!(
+            delivered.starts_with(&format!("Hi Acme, {number} for $100.00 due 2026-09-03\n\n")),
+            "{delivered}"
+        );
         assert_eq!(
             crate::invoicing::invoices::email_greeting(&conn, id).unwrap(),
-            Some("Thanks for a great month, Acme.".into())
+            Some(template.into())
         );
+    }
+
+    /// A named billing contact fills the name placeholders, and the copied
+    /// contact changes nothing about them.
+    #[test]
+    fn a_named_billing_contact_fills_first_and_full_name() {
+        use crate::invoicing::clients::{set_contacts, NewContact};
+
+        let (_d, conn) = test_conn();
+        let id = seed(&conn);
+        let client_id = get_invoice(&conn, id).unwrap().client_id;
+        set_contacts(
+            &conn,
+            client_id,
+            &[
+                NewContact {
+                    email: "pat@acme.test".into(),
+                    name: Some("Pat Example".into()),
+                    is_billing: true,
+                    ..Default::default()
+                },
+                NewContact {
+                    email: "ops@acme.test".into(),
+                    name: Some("Sam Example".into()),
+                    ..Default::default()
+                },
+            ],
+        )
+        .unwrap();
+        let preview = preview_invoice_email(
+            &conn,
+            id,
+            "Initech",
+            "",
+            Some("Hi ${firstName} (${fullName})"),
+        )
+        .unwrap();
+        let [email] = preview.emails.as_slice() else {
+            panic!("one email: {preview:?}");
+        };
+        assert!(
+            email.body.starts_with("Hi Pat (Pat Example)\n\n"),
+            "{}",
+            email.body
+        );
+        assert_eq!(email.cc, ["Sam Example <ops@acme.test>"]);
     }
 
     #[test]

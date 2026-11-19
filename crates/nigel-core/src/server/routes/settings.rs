@@ -25,6 +25,7 @@ use tokio::sync::OwnedRwLockWriteGuard;
 use zeroize::Zeroizing;
 
 use crate::db;
+use crate::invoicing::greeting::{refusal_in_context, resolve_greeting, GreetingKind};
 use crate::password;
 use crate::settings::{self, Settings};
 
@@ -115,7 +116,6 @@ pub struct Company {
     logo: String,
     payment_instructions: String,
     /// The opening paragraph of an invoice email, when a send names none.
-    /// Absent from a `PUT`, the stored value is left alone.
     #[serde(default, skip_deserializing)]
     invoice_email_greeting: String,
     /// The same for a document email.
@@ -130,13 +130,18 @@ pub struct Company {
 pub struct CompanyUpdate {
     #[serde(flatten)]
     company: Company,
+    /// Absent from a `PUT`, the stored value is left alone.
     invoice_email_greeting: Option<String>,
+    /// Absent from a `PUT`, the stored value is left alone.
     document_email_greeting: Option<String>,
 }
 
 /// The `metadata` key a letterhead field lives under, and how to reach that
 /// field, so reading and writing cannot drift.
-type CompanyKey = (&'static str, fn(&mut Company) -> &mut String);
+type CompanyKey = (&'static str, CompanyField);
+
+/// How to reach one letterhead field.
+type CompanyField = fn(&mut Company) -> &mut String;
 
 const COMPANY_KEYS: &[CompanyKey] = &[
     ("company_name", |c| &mut c.name),
@@ -146,25 +151,26 @@ const COMPANY_KEYS: &[CompanyKey] = &[
     ("payment_instructions", |c| &mut c.payment_instructions),
 ];
 
-const GREETING_KEYS: &[CompanyKey] = &[
-    (crate::invoicing::greeting::INVOICE_GREETING_KEY, |c| {
-        &mut c.invoice_email_greeting
-    }),
-    (crate::invoicing::greeting::DOCUMENT_GREETING_KEY, |c| {
-        &mut c.document_email_greeting
-    }),
+/// Each greeting's kind beside the field it is read into; the kind owns the
+/// key, the settings field name and the noun a refusal uses.
+const GREETINGS: &[(GreetingKind, CompanyField)] = &[
+    (GreetingKind::Invoice, |c| &mut c.invoice_email_greeting),
+    (GreetingKind::Document, |c| &mut c.document_email_greeting),
 ];
 
-fn read_company(conn: &rusqlite::Connection) -> Company {
+fn read_company(conn: &rusqlite::Connection) -> crate::error::Result<Company> {
     let mut company = Company::default();
-    for (key, field) in COMPANY_KEYS.iter().chain(GREETING_KEYS) {
-        *field(&mut company) = db::get_metadata(conn, key).unwrap_or_default();
+    for (key, field) in COMPANY_KEYS {
+        *field(&mut company) = db::read_metadata(conn, key)?.unwrap_or_default();
     }
-    company
+    for (kind, field) in GREETINGS {
+        *field(&mut company) = kind.saved_default(conn)?;
+    }
+    Ok(company)
 }
 
 async fn get_company(State(state): State<AppState>) -> ApiResult<Json<Company>> {
-    let company = with_conn(&state, |conn| Ok(read_company(conn))).await?;
+    let company = with_conn(&state, read_company).await?;
     Ok(Json(company))
 }
 
@@ -172,8 +178,9 @@ async fn get_company(State(state): State<AppState>) -> ApiResult<Json<Company>> 
 /// what the TUI's settings screen does with an empty field, and refusing it
 /// here would make the web UI the only place you cannot undo a typo.
 ///
-/// A greeting is trimmed too, and one over the length limit is a `422` that
-/// writes nothing.
+/// A greeting is trimmed too, and one over the length limit or naming a
+/// placeholder its kind does not offer is a `422` that writes nothing, its
+/// `details.field` naming which greeting it was.
 async fn put_company(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<CompanyUpdate>,
@@ -186,28 +193,24 @@ async fn put_company(
     // Checked before any write, so a bad logo leaves the other four alone. The
     // refusal is `parse_logo`'s own sentence, which is what the TUI shows too.
     crate::invoicing::document::parse_logo(&company.logo)?;
-    let greetings: Vec<(&'static str, String)> = [
-        (
-            crate::invoicing::greeting::INVOICE_GREETING_KEY,
-            request.invoice_email_greeting,
-        ),
-        (
-            crate::invoicing::greeting::DOCUMENT_GREETING_KEY,
-            request.document_email_greeting,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(key, value)| value.map(|v| (key, v)))
-    .map(|(key, value)| {
-        let kind = if key == crate::invoicing::greeting::INVOICE_GREETING_KEY {
-            crate::invoicing::greeting::GreetingKind::Invoice
-        } else {
-            crate::invoicing::greeting::GreetingKind::Document
-        };
-        let cleaned = crate::invoicing::greeting::resolve_greeting(Some(&value), "", kind)?;
-        Ok((key, cleaned.unwrap_or_default()))
-    })
-    .collect::<crate::error::Result<_>>()?;
+    let requested = [
+        (GreetingKind::Invoice, request.invoice_email_greeting),
+        (GreetingKind::Document, request.document_email_greeting),
+    ];
+    let greetings: Vec<(&'static str, String)> = requested
+        .into_iter()
+        .filter_map(|(kind, value)| value.map(|v| (kind, v)))
+        .map(|(kind, value)| {
+            let cleaned = resolve_greeting(Some(&value), "", kind).map_err(|e| {
+                refusal_in_context(
+                    e,
+                    &format!("The {} email greeting: ", kind.noun()),
+                    Some(kind.settings_field()),
+                )
+            })?;
+            Ok((kind.key(), cleaned.unwrap_or_default()))
+        })
+        .collect::<crate::error::Result<_>>()?;
 
     let stored = with_conn(&state, move |conn| {
         // One transaction: a rejected value must not leave a half-written
@@ -227,7 +230,7 @@ async fn put_company(
             db::set_metadata(&tx, key, value)?;
         }
         tx.commit()?;
-        Ok(read_company(conn))
+        read_company(conn)
     })
     .await?;
     Ok(Json(stored))
@@ -765,9 +768,93 @@ mod tests {
             crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS
         );
 
+        assert_eq!(body["error"]["details"]["field"], "documentEmailGreeting");
+        assert!(
+            body["error"]["details"].get("placeholder").is_none(),
+            "{body}"
+        );
+
         let after = ok_json(&app, "/api/settings/company", &token).await;
         assert_eq!(after["name"], "", "nothing was written: {after}");
         assert_eq!(after["invoiceEmailGreeting"], "");
+    }
+
+    fn letterhead_with(greetings: serde_json::Value) -> serde_json::Value {
+        let mut body = json!({
+            "name": "Initech",
+            "address": "",
+            "phone": "",
+            "logo": "",
+            "paymentInstructions": "",
+        });
+        for (key, value) in greetings.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        body
+    }
+
+    #[tokio::test]
+    async fn a_placeholder_the_kind_does_not_offer_is_a_422_naming_the_field_and_writes_nothing() {
+        let (_config, _dir, db_path) = fixture();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &letterhead_with(json!({
+                "invoiceEmailGreeting": "Thanks, Acme.",
+                "documentEmailGreeting": "${invoiceNumber}",
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid");
+        let details = &body["error"]["details"];
+        assert_eq!(details["field"], "documentEmailGreeting", "{body}");
+        assert_eq!(details["placeholder"], "invoiceNumber", "{body}");
+        assert!(details.get("maxChars").is_none(), "{body}");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.starts_with("The document email greeting: "),
+            "{message}"
+        );
+        let after = ok_json(&app, "/api/settings/company", &token).await;
+        assert_eq!(after["name"], "", "nothing was written: {after}");
+        assert_eq!(after["invoiceEmailGreeting"], "", "{after}");
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &letterhead_with(json!({ "invoiceEmailGreeting": "${documentTitle}" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["details"]["field"], "invoiceEmailGreeting");
+        assert_eq!(body["error"]["details"]["placeholder"], "documentTitle");
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("The invoice email greeting: "));
+
+        let (status, body) = put_json(
+            &app,
+            "/api/settings/company",
+            &token,
+            &letterhead_with(json!({ "invoiceEmailGreeting": "${invoiceNumber}" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["invoiceEmailGreeting"], "${invoiceNumber}");
+    }
+
+    #[test]
+    fn a_failed_read_is_an_error_rather_than_a_blank_letterhead() {
+        let (_config, _dir, db_path) = fixture();
+        let conn = crate::db::get_connection(&db_path).unwrap();
+        conn.execute_batch("DROP TABLE metadata").unwrap();
+        assert!(super::read_company(&conn).is_err());
     }
 
     #[tokio::test]

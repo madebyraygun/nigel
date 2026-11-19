@@ -1178,6 +1178,17 @@ pub fn get_metadata(conn: &Connection, key: &str) -> Option<String> {
     .ok()
 }
 
+/// The value stored under `key`, `None` when the key is absent, and an error
+/// when the read itself fails.
+pub fn read_metadata(conn: &Connection, key: &str) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
 pub fn set_metadata(conn: &Connection, key: &str, value: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO metadata (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",

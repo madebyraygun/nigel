@@ -684,12 +684,12 @@ Wrote /home/you/Documents/nigel/previews/invoice-1248.html
 Wrote /home/you/Documents/nigel/previews/invoice-1248.pdf
 ------------------------------------------------------------
 To: ap@acme.test
-Subject: Invoice #1248 from Acme LLC
+Subject: Invoice #1248 from Initech
 Attachments: invoice.pdf
 
 Thanks for a great month.
 
-Invoice #1248 from Acme LLC
+Invoice #1248 from Initech
 …
 Pay now: [link created when sent]
 …
@@ -773,9 +773,11 @@ for its own recipient:
 | `${dueDate}` | yes | | the due date, empty when there is none |
 | `${documentTitle}` | | yes | the document's title |
 
-A greeting that names any other placeholder is refused, both when it is saved as
-a default and when it is sent, so a typo never reaches a client as literal
-text. The recorded greeting keeps its placeholders as written.
+A placeholder from the table with nothing to fill it — `${dueDate}` on an
+invoice with no due date — becomes empty text. A greeting that names any other
+placeholder is refused, both when it is saved as a default and when it is sent,
+so a typo never reaches a client as literal text. The recorded greeting keeps
+its placeholders as written.
 
 Each kind has a default, empty until you set one: **Invoice email greeting** and
 **Document email greeting** in the web UI's Settings, stored as the
@@ -791,6 +793,9 @@ starts from the default and can change it:
 `--message` and `--no-message` cannot be combined. A greeting over the limit is
 refused before anything is created, uploaded or emailed. A scheduled run's
 autosends and a send from the dashboard always carry the saved invoice default.
+When that saved default is invalid, a scheduled run still drafts each invoice
+it is due to generate but sends none of them, and its report names the greeting
+in Settings as what to fix.
 
 The greeting that was sent is recorded — on the invoice for its most recent
 send, and on the document version — and `nigel invoice show` and

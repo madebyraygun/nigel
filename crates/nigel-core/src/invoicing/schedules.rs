@@ -831,11 +831,20 @@ pub fn run_due_schedules<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     }
 
     // Every autosend carries the saved invoice greeting, read once for the run.
+    // A failed read fails the run; a saved greeting the send cannot take
+    // leaves each autosend a draft, with a sentence that says where to fix it.
     let greeting = crate::invoicing::greeting::resolve_greeting(
         None,
-        &crate::invoicing::greeting::invoice_default(conn),
+        &crate::invoicing::greeting::invoice_default(conn)?,
         crate::invoicing::greeting::GreetingKind::Invoice,
-    );
+    )
+    .map_err(|e| {
+        crate::invoicing::greeting::refusal_in_context(
+            e,
+            "The saved invoice email greeting (Settings) is invalid: ",
+            None,
+        )
+    });
     for generated in &mut report.generated {
         if !autosend_for(conn, generated.schedule_id)? {
             continue;
@@ -2194,6 +2203,48 @@ mod autosend_tests {
         assert_eq!(
             crate::invoicing::invoices::email_greeting(&conn, sent.invoice_id).unwrap(),
             Some("Thanks for another month, Globex.".into())
+        );
+    }
+
+    #[test]
+    fn an_invalid_saved_greeting_drafts_the_invoice_and_names_where_to_fix_it() {
+        let (_d, conn) = test_conn();
+        autosend_schedule(&conn);
+        crate::db::set_metadata(
+            &conn,
+            crate::invoicing::greeting::INVOICE_GREETING_KEY,
+            "Hi ${frstName}",
+        )
+        .unwrap();
+        let branding = crate::invoicing::render_html::Branding {
+            company: "Initech",
+            ..crate::invoicing::render_html::Branding::with_template(DEFAULT_TEMPLATE)
+        };
+        let post = Post::default();
+        let senders = Senders {
+            branding: &branding,
+            gateway: &Gateway,
+            publisher: &Publisher,
+            mailer: &post,
+        };
+
+        let report = run_due_schedules(&conn, "2026-01-15", Some(&senders)).unwrap();
+        let [generated] = report.generated.as_slice() else {
+            panic!("one invoice generated: {report:?}");
+        };
+        assert!(!generated.sent);
+        let why = generated.not_sent.as_deref().unwrap_or_default();
+        assert!(
+            why.starts_with("The saved invoice email greeting (Settings) is invalid: "),
+            "{why}"
+        );
+        assert!(why.contains("${frstName}"), "{why}");
+        assert!(post.bodies.borrow().is_empty(), "nothing was mailed");
+        assert_eq!(
+            crate::invoicing::invoices::get_invoice(&conn, generated.invoice_id)
+                .unwrap()
+                .status,
+            "draft"
         );
     }
 

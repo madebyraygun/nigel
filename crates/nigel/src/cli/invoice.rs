@@ -638,7 +638,7 @@ pub fn send(number: i64, today: &str, yes: bool, message: Option<String>) -> Res
     let client = get_client(&conn, invoice.client_id)?;
     let greeting = resolve_greeting(
         message.as_deref(),
-        &invoice_default(&conn),
+        &invoice_default(&conn)?,
         GreetingKind::Invoice,
     )?;
     // The template is loaded before anything is built or created, so a broken

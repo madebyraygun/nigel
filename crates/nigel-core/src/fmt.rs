@@ -73,6 +73,31 @@ pub fn slugify(value: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+/// Replaces every control character but newline — a carriage return
+/// included — and every bidirectional formatting character with a space, so
+/// text a recipient typed cannot move the cursor, overwrite a line, rewrite
+/// the terminal or reorder what is printed around it.
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if (c != '\n' && c.is_control()) || is_bidi_control(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// The Unicode bidirectional formatting characters: the marks, the embeddings
+/// and overrides, and the isolates.
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

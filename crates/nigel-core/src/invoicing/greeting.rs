@@ -9,6 +9,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::error::{NigelError, Result};
+use crate::fmt::printable;
 
 /// The longest greeting accepted, counted in characters after trimming.
 pub const EMAIL_GREETING_MAX_CHARS: usize = 2000;
@@ -23,6 +24,58 @@ pub const DOCUMENT_GREETING_KEY: &str = "document_email_greeting";
 /// would go: the invoice's published page, or a recipient's personal page.
 pub const PREVIEW_LINK_PLACEHOLDER: &str = "[link created when sent]";
 
+/// Why a greeting was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GreetingProblem {
+    /// Longer than [`EMAIL_GREETING_MAX_CHARS`] after trimming.
+    TooLong,
+    /// Names a placeholder its kind does not offer; this is the first such
+    /// name, as written between `${` and `}`.
+    UnknownPlaceholder(String),
+}
+
+/// A refused greeting: the sentence to show, what was wrong, and the settings
+/// field it came from when the refusal is a settings write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GreetingRefusal {
+    pub message: String,
+    pub problem: GreetingProblem,
+    pub field: Option<&'static str>,
+}
+
+impl std::fmt::Display for GreetingRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+fn refused(message: String, problem: GreetingProblem) -> NigelError {
+    NigelError::GreetingInvalid(Box::new(GreetingRefusal {
+        message,
+        problem,
+        field: None,
+    }))
+}
+
+/// `err` with `prefix` in front of its sentence and, for a greeting refusal,
+/// `field` recorded on it. Any other error passes through unchanged.
+pub fn refusal_in_context(
+    err: NigelError,
+    prefix: &str,
+    field: Option<&'static str>,
+) -> NigelError {
+    match err {
+        NigelError::GreetingInvalid(refusal) => {
+            NigelError::GreetingInvalid(Box::new(GreetingRefusal {
+                message: format!("{prefix}{}", refusal.message),
+                field: field.or(refusal.field),
+                ..*refusal
+            }))
+        }
+        other => other,
+    }
+}
+
 /// A greeting trimmed, with an empty one as none, or the refusal for one over
 /// [`EMAIL_GREETING_MAX_CHARS`].
 pub fn clean_greeting(text: &str) -> Result<Option<String>> {
@@ -32,9 +85,12 @@ pub fn clean_greeting(text: &str) -> Result<Option<String>> {
     }
     let chars = trimmed.chars().count();
     if chars > EMAIL_GREETING_MAX_CHARS {
-        return Err(NigelError::GreetingInvalid(format!(
-            "The email greeting can be at most {EMAIL_GREETING_MAX_CHARS} characters; this one is {chars}."
-        )));
+        return Err(refused(
+            format!(
+                "The email greeting can be at most {EMAIL_GREETING_MAX_CHARS} characters; this one is {chars}."
+            ),
+            GreetingProblem::TooLong,
+        ));
     }
     Ok(Some(trimmed.to_string()))
 }
@@ -56,6 +112,36 @@ const INVOICE_PLACEHOLDERS: &[&str] = &["invoiceNumber", "amountDue", "dueDate"]
 const DOCUMENT_PLACEHOLDERS: &[&str] = &["documentTitle"];
 
 impl GreetingKind {
+    /// The `metadata` key holding this kind's saved default.
+    pub fn key(self) -> &'static str {
+        match self {
+            GreetingKind::Invoice => INVOICE_GREETING_KEY,
+            GreetingKind::Document => DOCUMENT_GREETING_KEY,
+        }
+    }
+
+    /// The settings field this kind's saved default is written through.
+    pub fn settings_field(self) -> &'static str {
+        match self {
+            GreetingKind::Invoice => "invoiceEmailGreeting",
+            GreetingKind::Document => "documentEmailGreeting",
+        }
+    }
+
+    /// How a sentence names this kind's greeting: `invoice` or `document`.
+    pub fn noun(self) -> &'static str {
+        match self {
+            GreetingKind::Invoice => "invoice",
+            GreetingKind::Document => "document",
+        }
+    }
+
+    /// The saved default, empty when none is set. A failed read is an error,
+    /// never an empty greeting.
+    pub fn saved_default(self, conn: &Connection) -> Result<String> {
+        Ok(crate::db::read_metadata(conn, self.key())?.unwrap_or_default())
+    }
+
     /// Every placeholder a greeting of this kind may name, written `${name}`.
     pub fn placeholders(self) -> Vec<&'static str> {
         let own = match self {
@@ -102,11 +188,14 @@ pub fn check_placeholders(text: &str, kind: GreetingKind) -> Result<()> {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    Err(NigelError::GreetingInvalid(format!(
-        "Unknown placeholder {}. Available: {}.",
-        listed(&unknown),
-        listed(&known)
-    )))
+    Err(refused(
+        format!(
+            "Unknown placeholder {}. Available: {}.",
+            listed(&unknown),
+            listed(&known)
+        ),
+        GreetingProblem::UnknownPlaceholder(unknown[0].trim().to_string()),
+    ))
 }
 
 /// The values one email fills its greeting's placeholders with.
@@ -148,8 +237,10 @@ impl GreetingValues {
     }
 }
 
-/// `greeting` with each placeholder replaced by its value. A name with no
-/// value stays as written; [`check_placeholders`] has refused those already.
+/// `greeting` with each placeholder replaced by its value. A known name with
+/// no value — `${dueDate}` on an invoice with no due date — becomes empty; only
+/// a name this module does not recognise stays as written, and
+/// [`check_placeholders`] has refused those already.
 pub fn fill_placeholders(greeting: &str, values: &GreetingValues) -> String {
     let mut out = String::with_capacity(greeting.len());
     let mut last = 0;
@@ -182,13 +273,13 @@ pub fn resolve_greeting(
 }
 
 /// The saved default greeting for invoice emails, empty when none is set.
-pub fn invoice_default(conn: &Connection) -> String {
-    crate::db::get_metadata(conn, INVOICE_GREETING_KEY).unwrap_or_default()
+pub fn invoice_default(conn: &Connection) -> Result<String> {
+    GreetingKind::Invoice.saved_default(conn)
 }
 
 /// The saved default greeting for document emails, empty when none is set.
-pub fn document_default(conn: &Connection) -> String {
-    crate::db::get_metadata(conn, DOCUMENT_GREETING_KEY).unwrap_or_default()
+pub fn document_default(conn: &Connection) -> Result<String> {
+    GreetingKind::Document.saved_default(conn)
 }
 
 /// Every email one send would deliver, built by the functions the send itself
@@ -197,16 +288,37 @@ pub fn document_default(conn: &Connection) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct EmailPreview {
     pub emails: Vec<PreviewEmail>,
-    /// Every placeholder string the bodies carry, so a screen can mark them.
-    pub placeholders: Vec<String>,
+    /// Every link placeholder the bodies carry, so a screen can mark them.
+    pub link_placeholders: Vec<String>,
+}
+
+/// Who one previewed message goes to.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PreviewRole {
+    /// The client an invoice is billed to.
+    Client,
+    /// A document's signer.
+    Signer,
+    /// A document's collaborator.
+    Collaborator,
+}
+
+impl PreviewRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PreviewRole::Client => "client",
+            PreviewRole::Signer => "signer",
+            PreviewRole::Collaborator => "collaborator",
+        }
+    }
 }
 
 /// One message as it would go out.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewEmail {
-    /// `client` for an invoice; `signer` or `collaborator` for a document.
-    pub role: String,
+    pub role: PreviewRole,
     /// The `To` header, as `Name <email>` or a bare address.
     pub to: String,
     /// Everyone copied. An invoice copies the client's other contacts; a
@@ -220,28 +332,33 @@ pub struct PreviewEmail {
 }
 
 /// The preview printed for a terminal: each message's headers, attachments and
-/// body, with a note naming the placeholder when one appears.
+/// body, with a note naming the placeholder when one appears. Every value goes
+/// through [`printable`], since a contact's name or a greeting may carry
+/// control characters the terminal would act on.
 pub fn format_email_preview(preview: &EmailPreview) -> String {
     let rule = "-".repeat(60);
     let mut out = String::new();
     for email in &preview.emails {
         out.push_str(&rule);
         out.push('\n');
-        out.push_str(&format!("To: {}\n", email.to));
+        out.push_str(&format!("To: {}\n", printable(&email.to)));
         if !email.cc.is_empty() {
-            out.push_str(&format!("Cc: {}\n", email.cc.join(", ")));
+            out.push_str(&format!("Cc: {}\n", printable(&email.cc.join(", "))));
         }
-        out.push_str(&format!("Subject: {}\n", email.subject));
+        out.push_str(&format!("Subject: {}\n", printable(&email.subject)));
         if !email.attachments.is_empty() {
-            out.push_str(&format!("Attachments: {}\n", email.attachments.join(", ")));
+            out.push_str(&format!(
+                "Attachments: {}\n",
+                printable(&email.attachments.join(", "))
+            ));
         }
         out.push('\n');
-        out.push_str(email.body.trim_end());
+        out.push_str(&printable(email.body.trim_end()));
         out.push('\n');
     }
     out.push_str(&rule);
     out.push('\n');
-    for placeholder in &preview.placeholders {
+    for placeholder in &preview.link_placeholders {
         out.push_str(&format!(
             "{placeholder} stands in for a link the send creates.\n"
         ));
@@ -294,6 +411,14 @@ mod tests {
             check_placeholders("Hi ${firstName}, ${documentTitle}", GreetingKind::Document).is_ok()
         );
         let err = check_placeholders("${invoiceNumber}", GreetingKind::Document).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                NigelError::GreetingInvalid(refusal)
+                    if refusal.problem == GreetingProblem::UnknownPlaceholder("invoiceNumber".into())
+            ),
+            "{err:?}"
+        );
         assert!(err.to_string().contains("${invoiceNumber}"), "{err}");
         assert!(err.to_string().contains("${documentTitle}"), "{err}");
         assert!(resolve_greeting(Some("Hi ${frstName}"), "", GreetingKind::Invoice).is_err());
@@ -333,6 +458,42 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_default_is_empty_when_unset_and_an_error_when_unreadable() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(
+            invoice_default(&conn).is_err(),
+            "a failed read is not an empty greeting"
+        );
+        conn.execute_batch("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+            .unwrap();
+        assert_eq!(invoice_default(&conn).unwrap(), "");
+        crate::db::set_metadata(&conn, DOCUMENT_GREETING_KEY, "Hi ${firstName}").unwrap();
+        assert_eq!(document_default(&conn).unwrap(), "Hi ${firstName}");
+    }
+
+    #[test]
+    fn the_terminal_preview_neutralises_control_characters() {
+        let preview = EmailPreview {
+            emails: vec![PreviewEmail {
+                role: PreviewRole::Client,
+                to: "Acme\x1b[2J <ap@acme.example>".into(),
+                cc: vec!["Ops\u{202E} <ops@acme.example>".into()],
+                subject: "Invoice\r #1001".into(),
+                body: "Hi\x07 Acme\nLine two\n".into(),
+                attachments: vec!["invoice\x1b.pdf".into()],
+            }],
+            link_placeholders: Vec::new(),
+        };
+        let text = format_email_preview(&preview);
+        assert!(
+            !text.chars().any(|c| c != '\n' && c.is_control()),
+            "{text:?}"
+        );
+        assert!(!text.contains('\u{202E}'), "{text:?}");
+        assert!(text.contains("Hi  Acme\nLine two"), "{text:?}");
+    }
+
+    #[test]
     fn the_limit_counts_characters_after_trimming() {
         let at_limit = "é".repeat(EMAIL_GREETING_MAX_CHARS);
         assert!(clean_greeting(&format!("  {at_limit}  "))
@@ -340,7 +501,13 @@ mod tests {
             .is_some());
         let over = "a".repeat(EMAIL_GREETING_MAX_CHARS + 1);
         let err = clean_greeting(&over).unwrap_err();
-        assert!(matches!(err, NigelError::GreetingInvalid(_)), "{err:?}");
+        assert!(
+            matches!(
+                &err,
+                NigelError::GreetingInvalid(refusal) if refusal.problem == GreetingProblem::TooLong
+            ),
+            "{err:?}"
+        );
         assert!(
             resolve_greeting(None, &over, GreetingKind::Invoice).is_err(),
             "a default is checked too"
@@ -351,14 +518,14 @@ mod tests {
     fn the_terminal_preview_prints_headers_attachments_body_and_the_placeholder_note() {
         let preview = EmailPreview {
             emails: vec![PreviewEmail {
-                role: "client".into(),
+                role: PreviewRole::Client,
                 to: "Juniper Labs <ap@juniper.example>".into(),
                 cc: vec!["ops@juniper.example".into()],
                 subject: "Invoice #1001 from Initech".into(),
                 body: format!("Thanks!\n\nPay now: {PREVIEW_LINK_PLACEHOLDER}\n"),
                 attachments: vec!["invoice.pdf".into()],
             }],
-            placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
+            link_placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
         };
         let text = format_email_preview(&preview);
         for line in [

@@ -106,8 +106,9 @@ struct InvoiceDetail {
     /// today. A screen that counts days to the due date counts from this, so
     /// "3 days overdue" and the `overdue` beside it agree.
     as_of: String,
-    /// The greeting the most recent send opened its email with, or `null`
-    /// when it had none or the invoice was never sent.
+    /// The greeting the most recent send opened its email with — the template
+    /// with its placeholders as written, not the text a recipient read — or
+    /// `null` when it had none or the invoice was never sent.
     email_greeting: Option<String>,
 }
 
@@ -706,9 +707,9 @@ fn pay_with<P: AssetPublisher>(
 // Send and sync
 // ---------------------------------------------------------------------------
 
-/// The whole body of a send request.
+/// The whole body of a send request. Any other field is a `400`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SendRequest {
     /// Absent or `false` refuses the request and sends nothing.
     #[serde(default)]
@@ -718,9 +719,9 @@ struct SendRequest {
     greeting: Option<String>,
 }
 
-/// The body of an email preview request.
+/// The body of an email preview request. Any other field is a `400`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EmailPreviewRequest {
     /// The same rule as [`SendRequest::greeting`].
     greeting: Option<String>,
@@ -907,12 +908,11 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // traced precheck's, called once, and the precheck runs before any network
     // call, so a refusal still costs nothing.
     let invoice = find_invoice(conn, number).map_err(|e| e.at_step(SendStep::Load))?;
-    let greeting = greeting::resolve_greeting(
-        greeting,
-        &greeting::invoice_default(conn),
-        greeting::GreetingKind::Invoice,
-    )
-    .map_err(|e| ApiError::from(e).at_step(SendStep::Precheck))?;
+    let greeting = greeting::invoice_default(conn)
+        .and_then(|default| {
+            greeting::resolve_greeting(greeting, &default, greeting::GreetingKind::Invoice)
+        })
+        .map_err(|e| ApiError::from(e).at_step(SendStep::Precheck))?;
     // Loaded before the Stripe link, so a broken override costs no link, no
     // upload and no email.
     let template = load_template(data_dir)?;
@@ -1010,7 +1010,7 @@ fn email_preview_for(
     let invoice = find_invoice(conn, number)?;
     let greeting = greeting::resolve_greeting(
         greeting,
-        &greeting::invoice_default(conn),
+        &greeting::invoice_default(conn)?,
         greeting::GreetingKind::Invoice,
     )?;
     let profile = crate::invoicing::wiring::company_profile(conn);
@@ -3626,7 +3626,7 @@ mod tests {
         );
         assert!(text.contains("Pay now: [link created when sent]"), "{text}");
         assert_eq!(
-            body["placeholders"],
+            body["linkPlaceholders"],
             serde_json::json!(["[link created when sent]"])
         );
 
@@ -3796,6 +3796,62 @@ mod tests {
         assert_eq!(*gateway.create_calls.borrow(), 0);
         assert!(publisher.pairs.borrow().is_empty());
         assert_eq!(*mailer.sent.borrow(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_placeholder_refuses_the_send_before_any_network_call() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+        let mailer = FakeMail::default();
+
+        let err = send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1252,
+            AS_OF,
+            "billing@example.test",
+            Some("Hi ${frstName}"),
+            &gateway,
+            &publisher,
+            &mailer,
+        )
+        .expect_err("unknown placeholder");
+
+        let (status, json) = error_json(err).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{json}");
+        assert_eq!(json["error"]["code"], "greeting_invalid");
+        let details = &json["error"]["details"];
+        assert_eq!(details["placeholder"], "frstName", "{json}");
+        assert_eq!(details["step"], "precheck", "{json}");
+        assert!(details.get("maxChars").is_none(), "{json}");
+        assert!(details.get("field").is_none(), "{json}");
+        assert_eq!(*gateway.create_calls.borrow(), 0);
+        assert!(publisher.pairs.borrow().is_empty());
+        assert_eq!(*mailer.sent.borrow(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_send_or_preview_body_with_an_unknown_field_is_a_400() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for (uri, body) in [
+            (
+                "/api/invoices/1252/send",
+                serde_json::json!({ "confirm": true, "greting": "Hi" }),
+            ),
+            (
+                "/api/invoices/1252/email-preview",
+                serde_json::json!({ "greting": "Hi" }),
+            ),
+        ] {
+            let (status, json) = post_json(&app, uri, &token, &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {json}");
+        }
     }
 
     #[cfg(feature = "pdf")]

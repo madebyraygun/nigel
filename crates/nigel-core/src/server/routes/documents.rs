@@ -748,12 +748,15 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         request.collaborators,
     )
     .map_err(at_load)?;
-    let greeting = greeting::resolve_greeting(
-        request.greeting.as_deref(),
-        &greeting::document_default(conn),
-        greeting::GreetingKind::Document,
-    )
-    .map_err(|e| ApiError::from(e).at_document_step(DocumentSendStep::Load))?;
+    let greeting = greeting::document_default(conn)
+        .and_then(|default| {
+            greeting::resolve_greeting(
+                request.greeting.as_deref(),
+                &default,
+                greeting::GreetingKind::Document,
+            )
+        })
+        .map_err(|e| ApiError::from(e).at_document_step(DocumentSendStep::Load))?;
 
     let ctx = SendContext {
         data_dir,
@@ -811,7 +814,7 @@ fn email_preview_for(
     )?;
     let greeting = greeting::resolve_greeting(
         request.greeting.as_deref(),
-        &greeting::document_default(conn),
+        &greeting::document_default(conn)?,
         greeting::GreetingKind::Document,
     )?;
     Ok(preview_document_email(
@@ -2815,7 +2818,7 @@ mod tests {
             .unwrap()
             .starts_with("Thanks for the call, Cedar Systems.\n\nPlease review"));
         assert_eq!(
-            body["placeholders"],
+            body["linkPlaceholders"],
             serde_json::json!(["[link created when sent]"])
         );
 
@@ -2998,5 +3001,60 @@ mod tests {
         );
         assert!(publisher.objects.borrow().is_empty());
         assert!(mailer.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unknown_placeholder_refuses_the_send_before_anything_is_published() {
+        use axum::response::IntoResponse;
+
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let publisher = FakeDocumentPublisher::default();
+        let mailer = FakeMailer::default();
+        let mut request = send_request(&[]);
+        request.greeting = Some("Re ${invoiceNumber}".into());
+
+        let err = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            request,
+            "Initech",
+            None,
+            "2026-10-05",
+            &publisher,
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .expect_err("unknown placeholder");
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = json_body(response).await;
+        assert_eq!(json["error"]["code"], "greeting_invalid", "{json}");
+        assert_eq!(json["error"]["details"]["placeholder"], "invoiceNumber");
+        assert_eq!(json["error"]["details"]["step"], "load", "{json}");
+        assert!(json["error"]["details"].get("maxChars").is_none(), "{json}");
+        assert!(publisher.objects.borrow().is_empty());
+        assert!(mailer.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_refuses_an_invoice_placeholder() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_json(
+            &app,
+            "/api/documents/1/email-preview",
+            &token,
+            &preview_body(Some("Re ${invoiceNumber}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid");
+        assert_eq!(body["error"]["details"]["placeholder"], "invoiceNumber");
+        assert!(body["error"]["details"].get("maxChars").is_none(), "{body}");
     }
 }
