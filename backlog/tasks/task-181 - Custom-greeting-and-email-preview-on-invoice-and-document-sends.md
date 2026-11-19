@@ -1,11 +1,11 @@
 ---
 id: TASK-181
 title: Custom greeting and email preview on invoice and document sends
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-18 21:36'
-updated_date: '2026-11-18 21:41'
+updated_date: '2026-11-19 00:36'
 labels: []
 dependencies: []
 ---
