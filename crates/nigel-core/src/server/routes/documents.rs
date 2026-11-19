@@ -46,8 +46,8 @@ use crate::documents::render::{
     attachment_name, render_recipient_page, PageContext, PageRecipient, PageState,
 };
 use crate::documents::send::{
-    default_signer, preview_recipients, send_document_traced, DocumentSendStep, RecipientLink,
-    SendContext,
+    default_signer, preview_document_email, preview_recipients, send_document_traced,
+    DocumentSendStep, RecipientLink, SendContext,
 };
 use crate::documents::signing_record::{
     generate_signing_record, merge_kept_record, read_executed_copy, read_signing_record,
@@ -61,6 +61,7 @@ use crate::documents::sync::{sync_documents, DocumentSyncReport};
 use crate::error::NigelError;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
+use crate::invoicing::greeting::{self, EmailPreview};
 use crate::invoicing::send::StepOutcome;
 use crate::invoicing::wiring::{
     build_document_clients, company_name, complete_execution_configured,
@@ -86,6 +87,7 @@ pub fn routes() -> Router<AppState> {
         .route("/documents/{id}", get(detail).patch(edit))
         .route("/documents/sync", post(sync))
         .route("/documents/{id}/send", post(send))
+        .route("/documents/{id}/email-preview", post(email_preview))
         .route("/documents/{id}/accept", post(accept))
         .route("/documents/{id}/request-changes", post(request_changes))
         .route("/documents/{id}/decline", post(decline))
@@ -591,6 +593,41 @@ struct SendRequest {
     signer: Option<SendRecipient>,
     #[serde(default)]
     collaborators: Vec<SendRecipient>,
+    /// The emails' opening paragraph: absent is the saved default, `""` is
+    /// none, anything else is that text, trimmed.
+    greeting: Option<String>,
+}
+
+/// The body of an email preview request: the send's recipients and greeting,
+/// with no `confirm`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EmailPreviewRequest {
+    signer: Option<SendRecipient>,
+    #[serde(default)]
+    collaborators: Vec<SendRecipient>,
+    greeting: Option<String>,
+}
+
+/// The recipients a send names, with the client's billing contact as the
+/// signer when none is named.
+fn send_recipients(
+    conn: &Connection,
+    client_id: i64,
+    signer: Option<SendRecipient>,
+    collaborators: Vec<SendRecipient>,
+) -> crate::error::Result<Vec<NewRecipient>> {
+    let signer = match signer {
+        Some(signer) => signer.into_recipient(RecipientRole::Signer),
+        None => default_signer(conn, client_id)?,
+    };
+    Ok(std::iter::once(signer)
+        .chain(
+            collaborators
+                .into_iter()
+                .map(|c| c.into_recipient(RecipientRole::Collaborator)),
+        )
+        .collect())
 }
 
 #[derive(Debug, Serialize)]
@@ -704,24 +741,29 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     let at_load =
         |e| not_found_because(e, "document_not_found").at_document_step(DocumentSendStep::Load);
     let document = get_document(conn, id).map_err(at_load)?;
-    let signer = match request.signer {
-        Some(signer) => signer.into_recipient(RecipientRole::Signer),
-        None => default_signer(conn, document.client_id).map_err(at_load)?,
-    };
-    let recipients: Vec<NewRecipient> = std::iter::once(signer)
-        .chain(
-            request
-                .collaborators
-                .into_iter()
-                .map(|c| c.into_recipient(RecipientRole::Collaborator)),
-        )
-        .collect();
+    let recipients = send_recipients(
+        conn,
+        document.client_id,
+        request.signer,
+        request.collaborators,
+    )
+    .map_err(at_load)?;
+    let greeting = greeting::document_default(conn)
+        .and_then(|default| {
+            greeting::resolve_greeting(
+                request.greeting.as_deref(),
+                &default,
+                greeting::GreetingKind::Document,
+            )
+        })
+        .map_err(|e| ApiError::from(e).at_document_step(DocumentSendStep::Load))?;
 
     let ctx = SendContext {
         data_dir,
         company: ctx_company,
         response_url,
         today,
+        greeting: greeting.as_deref(),
     };
     let mut outcome = send_document_traced(conn, id, &recipients, &ctx, publisher, mailer, source)?;
 
@@ -736,6 +778,53 @@ fn send_with<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         config_warnings: Vec::new(),
         warnings: outcome.warnings,
     })
+}
+
+/// `POST /api/documents/{id}/email-preview` — the emails a send to these
+/// recipients would deliver, one per recipient, from the subject and body
+/// functions the send uses. It needs no documents configuration and makes no
+/// network call: nothing is published, frozen or emailed. A document or a
+/// recipient set the send would refuse is refused here with the send's error.
+async fn email_preview(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(request): ApiJson<EmailPreviewRequest>,
+) -> ApiResult<Json<EmailPreview>> {
+    let preview = with_conn_api(&state, {
+        let state = state.clone();
+        move |conn| email_preview_for(conn, &state.data_dir(), id, request)
+    })
+    .await?;
+    Ok(Json(preview))
+}
+
+fn email_preview_for(
+    conn: &Connection,
+    data_dir: &Path,
+    id: i64,
+    request: EmailPreviewRequest,
+) -> ApiResult<EmailPreview> {
+    let document =
+        get_document(conn, id).map_err(|e| not_found_because(e, "document_not_found"))?;
+    let recipients = send_recipients(
+        conn,
+        document.client_id,
+        request.signer,
+        request.collaborators,
+    )?;
+    let greeting = greeting::resolve_greeting(
+        request.greeting.as_deref(),
+        &greeting::document_default(conn)?,
+        greeting::GreetingKind::Document,
+    )?;
+    Ok(preview_document_email(
+        conn,
+        data_dir,
+        id,
+        &recipients,
+        &company_name(conn),
+        greeting.as_deref(),
+    )?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1809,6 +1898,7 @@ mod tests {
                     email: (*email).into(),
                 })
                 .collect(),
+            greeting: None,
         }
     }
 
@@ -2665,5 +2755,306 @@ mod tests {
             "{body}"
         );
         assert_eq!(std::fs::read(&record_path).unwrap(), kept_record);
+    }
+
+    // -----------------------------------------------------------------------
+    // Email greeting and preview
+    // -----------------------------------------------------------------------
+
+    fn set_document_greeting(db_path: &std::path::Path, text: &str) {
+        crate::db::set_metadata(
+            &crate::db::open_connection(db_path, None).unwrap(),
+            crate::invoicing::greeting::DOCUMENT_GREETING_KEY,
+            text,
+        )
+        .unwrap();
+    }
+
+    fn preview_body(greeting: Option<&str>) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "signer": { "name": "Pat Example", "email": "pat@cedar.test" },
+            "collaborators": [{ "name": "Sam Example", "email": "sam@cedar.test" }],
+        });
+        if let Some(greeting) = greeting {
+            body["greeting"] = serde_json::json!(greeting);
+        }
+        body
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_has_one_email_per_recipient_with_the_greeting() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        set_document_greeting(&db_path, "Thanks for the call, Cedar Systems.");
+        let (app, token) = app_for(&db_path);
+        let uri = "/api/documents/1/email-preview";
+
+        let (status, body) = post_json(&app, uri, &token, &preview_body(None)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let emails = body["emails"].as_array().expect("emails");
+        assert_eq!(emails.len(), 2, "{body}");
+        assert_eq!(emails[0]["role"], "signer");
+        assert_eq!(emails[0]["to"], "Pat Example <pat@cedar.test>");
+        assert_eq!(emails[1]["role"], "collaborator");
+        assert_eq!(emails[1]["to"], "Sam Example <sam@cedar.test>");
+        assert!(emails[0]["subject"]
+            .as_str()
+            .unwrap()
+            .starts_with("Please review and sign: Website rebuild"));
+        assert_eq!(
+            emails[0]["attachments"],
+            serde_json::json!(["Website-rebuild-v1.pdf"])
+        );
+        for email in emails {
+            let text = email["body"].as_str().unwrap();
+            assert!(
+                text.starts_with("Thanks for the call, Cedar Systems.\n\n"),
+                "{text}"
+            );
+            assert!(text.contains("[link created when sent]"), "{text}");
+        }
+        assert!(emails[0]["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Thanks for the call, Cedar Systems.\n\nPlease review"));
+        assert_eq!(
+            body["linkPlaceholders"],
+            serde_json::json!(["[link created when sent]"])
+        );
+
+        let (_, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &preview_body(Some("  Over to you, Juniper Labs.  ")),
+        )
+        .await;
+        assert!(
+            body["emails"][0]["body"]
+                .as_str()
+                .unwrap()
+                .starts_with("Over to you, Juniper Labs.\n\nPlease review"),
+            "{body}"
+        );
+
+        let (_, body) = post_json(&app, uri, &token, &preview_body(Some(""))).await;
+        assert!(
+            body["emails"][0]["body"]
+                .as_str()
+                .unwrap()
+                .starts_with("Hello Pat Example,\n\nPlease review"),
+            "{body}"
+        );
+
+        // Nothing was frozen, published or recorded.
+        let detail = ok_json(&app, "/api/documents/1", &token).await;
+        assert_eq!(detail["status"], "draft", "{detail}");
+        assert_eq!(detail["versions"][0]["recipients"], serde_json::json!([]));
+        assert_eq!(detail["versions"][0]["sentAt"], serde_json::Value::Null);
+        assert_eq!(
+            detail["versions"][0]["emailGreeting"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_refuses_what_the_send_would_refuse() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let uri = "/api/documents/1/email-preview";
+
+        // The billing contact has no name, so the default signer is refused.
+        let (status, body) = post_json(&app, uri, &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "signer_name_required");
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({
+                "signer": { "name": "Pat Example", "email": "pat@cedar.test" },
+                "collaborators": [{ "name": "Pat Again", "email": "PAT@cedar.test" }],
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        let (status, body) =
+            post_json(&app, uri, &token, &serde_json::json!({ "confirm": true })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "unknown field: {body}");
+
+        let long = "a".repeat(crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS + 1);
+        let (status, body) = post_json(&app, uri, &token, &preview_body(Some(&long))).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid");
+
+        let (status, body) = post_json(
+            &app,
+            "/api/documents/999/email-preview",
+            &token,
+            &preview_body(None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "document_not_found");
+
+        let id = sent_document(&db_path);
+        let (status, body) = post_json(
+            &app,
+            &format!("/api/documents/{id}/email-preview"),
+            &token,
+            &preview_body(None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "a sent document: {body}");
+    }
+
+    #[test]
+    fn a_send_carries_the_default_an_override_or_no_greeting_and_records_it() {
+        let _config = TempConfig::new();
+        let cases: [(Option<&str>, Option<&str>); 3] = [
+            (None, Some("Thanks for the call, Cedar Systems.")),
+            (
+                Some("  Over to you, Juniper Labs.  "),
+                Some("Over to you, Juniper Labs."),
+            ),
+            (Some(""), None),
+        ];
+        for (requested, expected) in cases {
+            let (_dir, db_path) = seeded_db();
+            set_document_greeting(&db_path, "Thanks for the call, Cedar Systems.");
+            let conn = crate::db::open_connection(&db_path, None).unwrap();
+            let mailer = FakeMailer::default();
+            let mut request = send_request(&[("Sam Example", "sam@acme.test")]);
+            request.greeting = requested.map(str::to_string);
+
+            let result = super::send_with(
+                &conn,
+                db_path.parent().unwrap(),
+                1,
+                request,
+                "Initech",
+                None,
+                "2026-10-05",
+                &FakeDocumentPublisher::default(),
+                &mailer,
+                &FakeResponseSource::default(),
+            )
+            .expect("sends");
+
+            let json = serde_json::to_value(&result).expect("serializes");
+            let version = &json["document"]["versions"][0];
+            assert_eq!(
+                version["emailGreeting"],
+                serde_json::json!(expected),
+                "{requested:?}: {json}"
+            );
+            for mail in mailer.sent.borrow().iter() {
+                let ask = match expected {
+                    Some(text) => mail.text.strip_prefix(&format!("{text}\n\n")),
+                    None => mail
+                        .text
+                        .strip_prefix("Hello ")
+                        .and_then(|rest| rest.split_once(",\n\n"))
+                        .map(|(_, ask)| ask),
+                }
+                .unwrap_or_else(|| panic!("{requested:?}: {}", mail.text));
+                assert!(
+                    ask.starts_with("Please review") || ask.starts_with("The attached"),
+                    "{requested:?}: {}",
+                    mail.text
+                );
+            }
+            assert_eq!(mailer.sent.borrow().len(), 2);
+        }
+    }
+
+    #[test]
+    fn a_greeting_over_the_limit_refuses_the_send_before_anything_is_published() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let publisher = FakeDocumentPublisher::default();
+        let mailer = FakeMailer::default();
+        let mut request = send_request(&[]);
+        request.greeting =
+            Some("a".repeat(crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS + 1));
+
+        let err = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            request,
+            "Initech",
+            None,
+            "2026-10-05",
+            &publisher,
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .expect_err("too long");
+        assert_eq!(
+            err.code(),
+            crate::server::error::ApiErrorCode::GreetingInvalid
+        );
+        assert!(publisher.objects.borrow().is_empty());
+        assert!(mailer.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unknown_placeholder_refuses_the_send_before_anything_is_published() {
+        use axum::response::IntoResponse;
+
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = crate::db::open_connection(&db_path, None).unwrap();
+        let publisher = FakeDocumentPublisher::default();
+        let mailer = FakeMailer::default();
+        let mut request = send_request(&[]);
+        request.greeting = Some("Re ${invoiceNumber}".into());
+
+        let err = super::send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1,
+            request,
+            "Initech",
+            None,
+            "2026-10-05",
+            &publisher,
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .expect_err("unknown placeholder");
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = json_body(response).await;
+        assert_eq!(json["error"]["code"], "greeting_invalid", "{json}");
+        assert_eq!(json["error"]["details"]["placeholder"], "invoiceNumber");
+        assert_eq!(json["error"]["details"]["step"], "load", "{json}");
+        assert!(json["error"]["details"].get("maxChars").is_none(), "{json}");
+        assert!(publisher.objects.borrow().is_empty());
+        assert!(mailer.sent.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_refuses_an_invoice_placeholder() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_json(
+            &app,
+            "/api/documents/1/email-preview",
+            &token,
+            &preview_body(Some("Re ${invoiceNumber}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid");
+        assert_eq!(body["error"]["details"]["placeholder"], "invoiceNumber");
+        assert!(body["error"]["details"].get("maxChars").is_none(), "{body}");
     }
 }

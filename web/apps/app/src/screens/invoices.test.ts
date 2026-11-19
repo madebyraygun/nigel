@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import './invoices.js';
 import type { NigelInvoicesScreen } from './invoices.js';
-import type { WcInvoiceTable, WcSendDialog } from '@nigel/ui';
+import type { WcEmailPreview, WcInvoiceTable, WcSendDialog } from '@nigel/ui';
+import { EMAIL_PREVIEW_DEBOUNCE_MS } from './email-draft.js';
 
 import { ApiError } from '../api/index.js';
 import {
@@ -112,6 +113,7 @@ const NOT_DELETABLE = {
 function detail(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
   return {
     deleteBlocked: overrides.canDelete ? null : NOT_DELETABLE,
+    emailGreeting: null,
     id: 3,
     number: 1250,
     clientId: 1,
@@ -1060,8 +1062,183 @@ describe('nigel-invoices-screen', () => {
     dialog?.dispatchEvent(new CustomEvent('nc-send-confirm'));
     await settle(el);
 
-    expect(fake.calls).toContain('sendInvoice:1250');
+    expect(fake.calls).toContain('sendInvoice:1250:{"greeting":""}');
     expect(sendDialog(el)?.phase).toBe('sent');
+  });
+
+  describe('the message and the email preview', () => {
+    const GREETING = 'Thanks for the work this month.';
+
+    function emailPreview(el: NigelInvoicesScreen): WcEmailPreview | null {
+      return sendDialog(el)?.querySelector<WcEmailPreview>('wc-email-preview') ?? null;
+    }
+
+    function typeMessage(el: NigelInvoicesScreen, value: string): void {
+      sendDialog(el)?.dispatchEvent(
+        new CustomEvent('nc-send-message', { detail: { value }, bubbles: true, composed: true }),
+      );
+    }
+
+    function previewCalls(fake: FakeApiClient): string[] {
+      return fake.calls.filter((call) => call.startsWith('invoiceEmailPreview'));
+    }
+
+    async function opened(fake: FakeApiClient = client()): Promise<Mounted> {
+      fake.company = { ...fake.company, invoiceEmailGreeting: GREETING };
+      const mounted = await mount('number=1250', fake);
+      button(mounted.el, '[data-send]').click();
+      await settle(mounted.el);
+      await settle(mounted.el);
+      return mounted;
+    }
+
+    it('fills the box with the saved invoice greeting and previews it', async () => {
+      const { el, fake } = await opened();
+
+      expect(sendDialog(el)?.message).toBe(GREETING);
+      expect(sendDialog(el)?.messageLoading).toBe(false);
+      expect(previewCalls(fake)).toEqual([
+        `invoiceEmailPreview:1250:${JSON.stringify({ greeting: GREETING })}`,
+      ]);
+      const preview = emailPreview(el);
+      expect(preview?.getAttribute('slot')).toBe('email-preview');
+      expect(preview?.emails).toHaveLength(1);
+      expect(preview?.emails[0].body.startsWith(GREETING)).toBe(true);
+      expect(preview?.emails[0].attachments).toEqual(['invoice.pdf']);
+      expect(preview?.linkPlaceholders).toEqual(['[pay link created when sent]']);
+    });
+
+    it('asks for one preview once typing pauses, with the last thing typed', async () => {
+      const { el, fake } = await opened();
+      const before = previewCalls(fake).length;
+
+      typeMessage(el, 'T');
+      typeMessage(el, 'Th');
+      typeMessage(el, 'Thanks, Acme.');
+      await settle(el);
+      expect(sendDialog(el)?.message).toBe('Thanks, Acme.');
+      expect(previewCalls(fake)).toHaveLength(before);
+
+      await new Promise((resolve) => setTimeout(resolve, EMAIL_PREVIEW_DEBOUNCE_MS + 100));
+      await settle(el);
+      expect(previewCalls(fake).slice(before)).toEqual([
+        `invoiceEmailPreview:1250:${JSON.stringify({ greeting: 'Thanks, Acme.' })}`,
+      ]);
+      expect(emailPreview(el)?.emails[0].body.startsWith('Thanks, Acme.')).toBe(true);
+    });
+
+    it('drops the old email and says to fix the message when the greeting is refused', async () => {
+      const { el, fake } = await opened();
+      expect(emailPreview(el)?.emails).toHaveLength(1);
+
+      fake.emailPreviewError = new ApiError({
+        code: 'greeting_invalid',
+        rawCode: 'greeting_invalid',
+        message: 'The greeting names ${nickname}, which is not a placeholder.',
+        status: 400,
+        details: { placeholder: 'nickname' },
+      });
+      typeMessage(el, 'Hi ${nickname}');
+      await new Promise((resolve) => setTimeout(resolve, EMAIL_PREVIEW_DEBOUNCE_MS + 100));
+      await settle(el);
+
+      const preview = emailPreview(el)!;
+      await preview.updateComplete;
+      expect(preview.emails).toHaveLength(0);
+      expect(preview.shadowRoot!.querySelector('[data-email]')).toBeNull();
+      const message = preview.shadowRoot!.querySelector('[data-error]')?.getAttribute('message');
+      expect(message).toContain('Fix the message to send.');
+      expect(message).not.toContain('You can still send.');
+    });
+
+    it('sends what is in the box', async () => {
+      const { el, fake } = await opened();
+      typeMessage(el, 'Thanks, Acme.');
+      await settle(el);
+
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+
+      expect(fake.calls).toContain(`sendInvoice:1250:${JSON.stringify({ greeting: 'Thanks, Acme.' })}`);
+    });
+
+    it('sends an empty greeting when the box is cleared', async () => {
+      const { el, fake } = await opened();
+      typeMessage(el, '');
+      await settle(el);
+
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+
+      expect(fake.calls).toContain('sendInvoice:1250:{"greeting":""}');
+      expect(fake.invoiceDetails[1250].emailGreeting).toBeNull();
+    });
+
+    it('leaves the greeting to the server when the saved one could not be read', async () => {
+      const fake = client();
+      fake.companyLoadError = new ApiError({
+        code: 'internal',
+        rawCode: 'internal',
+        message: 'database is locked',
+        status: 500,
+      });
+      const { el } = await opened(fake);
+
+      expect(sendDialog(el)?.message).toBe('');
+      expect(sendDialog(el)?.configCautions.join(' ')).toContain('Could not load the saved message');
+      expect(previewCalls(fake)).toEqual(['invoiceEmailPreview:1250:{}']);
+
+      sendDialog(el)?.dispatchEvent(new CustomEvent('nc-send-confirm'));
+      await settle(el);
+      expect(fake.calls).toContain('sendInvoice:1250');
+    });
+
+    it('shows a preview failure without blocking the send', async () => {
+      const fake = client();
+      fake.emailPreviewError = new ApiError({
+        code: 'conflict',
+        rawCode: 'conflict',
+        message: 'Acme has no email address.',
+        status: 409,
+      });
+      const { el } = await opened(fake);
+
+      expect(emailPreview(el)?.error).toBe('Acme has no email address.');
+      expect(emailPreview(el)?.loading).toBe(false);
+      expect(sendDialog(el)?.blocked).toBe('');
+    });
+
+    it('shows the loading state while the preview is on its way', async () => {
+      const fake = client();
+      let release: () => void = () => {};
+      fake.emailPreviewGate = new Promise((resolve) => (release = resolve));
+      const { el } = await opened(fake);
+
+      expect(emailPreview(el)?.loading).toBe(true);
+      release();
+      await settle(el);
+      expect(emailPreview(el)?.loading).toBe(false);
+      expect(emailPreview(el)?.emails).toHaveLength(1);
+    });
+
+    it('shows the message an invoice was sent with', async () => {
+      const fake = client();
+      fake.invoiceDetails[1250] = detail({
+        publicUrl: 'https://billing.example.test/i/t/index.html',
+        emailGreeting: GREETING,
+      });
+      const { el } = await mount('number=1250', fake);
+      expect(el.shadowRoot?.querySelector('[data-email-greeting]')?.textContent).toBe(GREETING);
+    });
+
+    it('shows no message row when the send had none', async () => {
+      const fake = client();
+      fake.invoiceDetails[1250] = detail({
+        publicUrl: 'https://billing.example.test/i/t/index.html',
+      });
+      const { el } = await mount('number=1250', fake);
+      expect(el.shadowRoot?.querySelector('[data-email-greeting]')).toBeNull();
+    });
   });
 
   it('renders the failed step in the dialog and leaves it open', async () => {

@@ -41,6 +41,7 @@ const CLIENT: Client = {
 };
 
 const DETAIL: InvoiceDetail = {
+  emailGreeting: null,
   id: 3,
   number: 1250,
   clientId: 1,

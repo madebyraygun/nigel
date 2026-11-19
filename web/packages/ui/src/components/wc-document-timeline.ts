@@ -29,6 +29,8 @@ export interface TimelineVersion {
   createdAt: string;
   recipients: TimelineRecipient[];
   events: TimelineEvent[];
+  /** The greeting the version's emails opened with, when they had one. */
+  message?: string | null;
 }
 
 function eventVerb(event: TimelineEvent): string {
@@ -93,6 +95,20 @@ export class WcDocumentTimeline extends LitElement {
       text-transform: capitalize;
     }
 
+    .message {
+      margin: var(--wa-space-xs) 0;
+      font-size: var(--wa-font-size-s);
+    }
+
+    .message .label {
+      color: var(--wa-color-muted);
+    }
+
+    .message .note {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
     .note {
       margin: var(--wa-space-2xs) 0 0;
       padding-left: var(--wa-space-s);
@@ -152,6 +168,14 @@ export class WcDocumentTimeline extends LitElement {
                     </li>`,
                 )}
               </ul>`
+            : nothing
+        }
+        ${
+          version.message
+            ? html`<div class="message" data-message>
+                <span class="label">Message sent</span>
+                <p class="note">${version.message}</p>
+              </div>`
             : nothing
         }
         ${

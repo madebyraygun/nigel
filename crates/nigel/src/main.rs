@@ -328,7 +328,16 @@ fn dispatch(command: Commands) -> error::Result<()> {
                 signer,
                 collaborators,
                 yes,
-            } => cli::document::send(id, signer.as_deref(), &collaborators, yes, &cli::today()),
+                message,
+                no_message,
+            } => cli::document::send(
+                id,
+                signer.as_deref(),
+                &collaborators,
+                yes,
+                cli::greeting_arg(message.as_deref(), no_message),
+                &cli::today(),
+            ),
             DocumentCommands::Sync => cli::document::sync(),
             DocumentCommands::Revise { id, file } => {
                 cli::document::revise(id, &file, &cli::today())
@@ -419,7 +428,17 @@ fn dispatch(command: Commands) -> error::Result<()> {
             InvoiceCommands::Preview { number, output_dir } => {
                 cli::invoice::preview(number, output_dir)
             }
-            InvoiceCommands::Send { number, yes } => cli::invoice::send(number, &cli::today(), yes),
+            InvoiceCommands::Send {
+                number,
+                yes,
+                message,
+                no_message,
+            } => cli::invoice::send(
+                number,
+                &cli::today(),
+                yes,
+                cli::greeting_arg(message.as_deref(), no_message),
+            ),
             InvoiceCommands::Sync => cli::invoice::sync(&cli::today()),
             InvoiceCommands::Pay {
                 number,

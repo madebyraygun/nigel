@@ -30,12 +30,15 @@ use serde::{Deserialize, Serialize};
 use crate::error::NigelError;
 use crate::invoicing::clients::get_client;
 use crate::invoicing::gateway::{AssetPublisher, Mailer, PaymentGateway};
+use crate::invoicing::greeting::{self, EmailPreview};
 use crate::invoicing::invoices::{
     self as inv, AgingReport, InvoiceListRow, InvoiceUpdate, NewLineItem,
 };
 use crate::invoicing::render::{render_invoice, RenderedInvoice};
 use crate::invoicing::render_html::load_template;
-use crate::invoicing::send::{send_invoice_traced, SendFailure, SendStep, StepOutcome};
+use crate::invoicing::send::{
+    preview_invoice_email, send_invoice_traced, SendFailure, SendStep, StepOutcome,
+};
 use crate::invoicing::sync::{sync_all_report_within, SyncReport};
 use crate::invoicing::void::void_invoice_with_teardown;
 use crate::models::{Client, Invoice, InvoiceLineItem, InvoicePayment};
@@ -60,6 +63,7 @@ pub fn routes() -> Router<AppState> {
             get(detail).patch(update).delete(destroy),
         )
         .route("/invoices/{number}/send", post(send))
+        .route("/invoices/{number}/email-preview", post(email_preview))
         .route("/invoices/{number}/duplicate", post(duplicate))
         .route("/invoices/{number}/void", post(void))
         .route("/invoices/{number}/pay", post(pay))
@@ -102,6 +106,10 @@ struct InvoiceDetail {
     /// today. A screen that counts days to the due date counts from this, so
     /// "3 days overdue" and the `overdue` beside it agree.
     as_of: String,
+    /// The greeting the most recent send opened its email with — the template
+    /// with its placeholders as written, not the text a recipient read — or
+    /// `null` when it had none or the invoice was never sent.
+    email_greeting: Option<String>,
 }
 
 /// A delete the detail already knows would be refused.
@@ -151,6 +159,7 @@ fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<Inv
         message: block.to_string(),
     });
     let can_delete = delete_blocked.is_none();
+    let email_greeting = inv::email_greeting(conn, invoice.id)?;
 
     let invoice = inv::with_effective_status(invoice, paid, today);
 
@@ -169,6 +178,7 @@ fn detail_for(conn: &Connection, invoice: Invoice, today: &str) -> ApiResult<Inv
         can_delete,
         delete_blocked,
         as_of: today.to_string(),
+        email_greeting,
     })
 }
 
@@ -697,13 +707,24 @@ fn pay_with<P: AssetPublisher>(
 // Send and sync
 // ---------------------------------------------------------------------------
 
-/// The whole body of a send request.
+/// The whole body of a send request. Any other field is a `400`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SendRequest {
     /// Absent or `false` refuses the request and sends nothing.
     #[serde(default)]
     confirm: bool,
+    /// The email's opening paragraph: absent is the saved default, `""` is
+    /// none, anything else is that text, trimmed.
+    greeting: Option<String>,
+}
+
+/// The body of an email preview request. Any other field is a `400`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EmailPreviewRequest {
+    /// The same rule as [`SendRequest::greeting`].
+    greeting: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -854,6 +875,7 @@ async fn send(
                 number,
                 &today,
                 &contact_email,
+                request.greeting.as_deref(),
                 clients.stripe(),
                 clients.r2(),
                 clients.mail(),
@@ -875,6 +897,7 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     number: i64,
     today: &str,
     contact_email: &str,
+    greeting: Option<&str>,
     gateway: &G,
     publisher: &P,
     mailer: &M,
@@ -885,6 +908,11 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     // traced precheck's, called once, and the precheck runs before any network
     // call, so a refusal still costs nothing.
     let invoice = find_invoice(conn, number).map_err(|e| e.at_step(SendStep::Load))?;
+    let greeting = greeting::invoice_default(conn)
+        .and_then(|default| {
+            greeting::resolve_greeting(greeting, &default, greeting::GreetingKind::Invoice)
+        })
+        .map_err(|e| ApiError::from(e).at_step(SendStep::Precheck))?;
     // Loaded before the Stripe link, so a broken override costs no link, no
     // upload and no email.
     let template = load_template(data_dir)?;
@@ -892,7 +920,14 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
     let branding = profile.branding(&template, contact_email);
 
     let outcome = send_invoice_traced(
-        conn, invoice.id, today, &branding, gateway, publisher, mailer,
+        conn,
+        invoice.id,
+        today,
+        &branding,
+        greeting.as_deref(),
+        gateway,
+        publisher,
+        mailer,
     )
     .map_err(|failure| send_error(conn, &invoice, failure))?;
 
@@ -915,26 +950,78 @@ fn send_with<G: PaymentGateway, P: AssetPublisher, M: Mailer>(
 /// of context only the route holds — which client needs an email address —
 /// because that refusal is a link to a form, not a sentence to read.
 fn send_error(conn: &Connection, invoice: &Invoice, failure: SendFailure) -> ApiError {
-    if matches!(
-        failure.source,
+    match missing_email_error(conn, invoice, &failure.source, Some(failure.step)) {
+        Some(error) => error,
+        None => ApiError::from(failure),
+    }
+}
+
+/// A client with no address, answered with the client to link to, or `None`
+/// for any other error.
+fn missing_email_error(
+    conn: &Connection,
+    invoice: &Invoice,
+    source: &NigelError,
+    step: Option<SendStep>,
+) -> Option<ApiError> {
+    if !matches!(
+        source,
         NigelError::Conflict {
             code: "client_missing_email",
             ..
         }
     ) {
-        if let Ok(client) = get_client(conn, invoice.client_id) {
-            return ApiError::conflict(
-                failure.source.to_string(),
-                serde_json::json!({
-                    "reason": "client_missing_email",
-                    "step": failure.step.as_str(),
-                    "clientId": client.id,
-                    "clientName": client.name,
-                }),
-            );
-        }
+        return None;
     }
-    ApiError::from(failure)
+    let client = get_client(conn, invoice.client_id).ok()?;
+    let mut details = serde_json::json!({
+        "reason": "client_missing_email",
+        "clientId": client.id,
+        "clientName": client.name,
+    });
+    if let Some(step) = step {
+        details["step"] = serde_json::json!(step.as_str());
+    }
+    Some(ApiError::conflict(source.to_string(), details))
+}
+
+/// `POST /api/invoices/{number}/email-preview` — the email a send would
+/// deliver, from the subject and body functions the send uses. It needs no
+/// invoicing configuration and makes no network call: nothing is published,
+/// charged or emailed. An invoice the send would refuse is refused here with
+/// the send's error.
+async fn email_preview(
+    State(state): State<AppState>,
+    ApiPath(number): ApiPath<i64>,
+    ApiJson(request): ApiJson<EmailPreviewRequest>,
+) -> ApiResult<Json<EmailPreview>> {
+    let preview = with_conn_api(&state, move |conn| {
+        email_preview_for(conn, number, request.greeting.as_deref())
+    })
+    .await?;
+    Ok(Json(preview))
+}
+
+fn email_preview_for(
+    conn: &Connection,
+    number: i64,
+    greeting: Option<&str>,
+) -> ApiResult<EmailPreview> {
+    let invoice = find_invoice(conn, number)?;
+    let greeting = greeting::resolve_greeting(
+        greeting,
+        &greeting::invoice_default(conn)?,
+        greeting::GreetingKind::Invoice,
+    )?;
+    let profile = crate::invoicing::wiring::company_profile(conn);
+    preview_invoice_email(
+        conn,
+        invoice.id,
+        profile.name(),
+        profile.payment_instructions(),
+        greeting.as_deref(),
+    )
+    .map_err(|e| missing_email_error(conn, &invoice, &e, None).unwrap_or_else(|| e.into()))
 }
 
 /// `POST /api/invoices/sync` — pull Stripe payments and record them.
@@ -2795,10 +2882,12 @@ mod tests {
     #[derive(Default)]
     struct FakeMail {
         sent: RefCell<u32>,
+        bodies: RefCell<Vec<String>>,
     }
     impl Mailer for FakeMail {
-        fn send(&self, _mail: &OutgoingMail<'_>) -> NigelResult<()> {
+        fn send(&self, mail: &OutgoingMail<'_>) -> NigelResult<()> {
             *self.sent.borrow_mut() += 1;
+            self.bodies.borrow_mut().push(mail.text.to_string());
             Ok(())
         }
     }
@@ -3137,6 +3226,7 @@ mod tests {
             1247,
             AS_OF,
             "billing@example.test",
+            None,
             &gateway,
             &FakePub::default(),
             &mailer,
@@ -3168,6 +3258,7 @@ mod tests {
             1249,
             AS_OF,
             "billing@example.test",
+            None,
             &gateway,
             &FakePub::default(),
             &mailer,
@@ -3195,6 +3286,7 @@ mod tests {
             9999,
             AS_OF,
             "billing@example.test",
+            None,
             &FakeGw::default(),
             &FakePub::default(),
             &FakeMail::default(),
@@ -3221,6 +3313,7 @@ mod tests {
             1252,
             AS_OF,
             "billing@example.test",
+            None,
             &FakeGw::default(),
             &ForbiddenPub,
             &mailer,
@@ -3271,6 +3364,7 @@ mod tests {
             1252,
             AS_OF,
             "billing@example.test",
+            None,
             &FakeGw::default(),
             &FakePub::default(),
             &FakeMail::default(),
@@ -3299,6 +3393,7 @@ mod tests {
             1252,
             AS_OF,
             "billing@example.test",
+            None,
             &gateway,
             &FakePub::default(),
             &mailer,
@@ -3341,6 +3436,7 @@ mod tests {
             1252,
             AS_OF,
             "billing@example.test",
+            None,
             &gateway,
             &FakePub::default(),
             &mailer,
@@ -3492,5 +3588,316 @@ mod tests {
             body["error"]["details"]["reason"], "invoice_not_found",
             "{body}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Email greeting and preview
+    // -----------------------------------------------------------------------
+
+    fn set_invoice_greeting(db_path: &std::path::Path, text: &str) {
+        crate::db::set_metadata(
+            &open_db(db_path),
+            crate::invoicing::greeting::INVOICE_GREETING_KEY,
+            text,
+        )
+        .expect("greeting");
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_uses_the_default_an_override_or_none() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        set_invoice_greeting(&db_path, "Thanks for working with Initech.");
+        let (app, token) = app_for(&db_path);
+        let uri = "/api/invoices/1252/email-preview";
+
+        let (status, body) = post_json(&app, uri, &token, &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let email = &body["emails"][0];
+        assert_eq!(email["role"], "client");
+        assert_eq!(email["to"], "billing@nw.test");
+        assert_eq!(email["cc"], serde_json::json!([]));
+        assert_eq!(email["subject"], "Invoice #1252");
+        assert_eq!(email["attachments"], serde_json::json!(["invoice.pdf"]));
+        let text = email["body"].as_str().unwrap();
+        assert!(
+            text.starts_with("Thanks for working with Initech.\n\nInvoice #1252\n\n"),
+            "{text}"
+        );
+        assert!(text.contains("Pay now: [link created when sent]"), "{text}");
+        assert_eq!(
+            body["linkPlaceholders"],
+            serde_json::json!(["[link created when sent]"])
+        );
+
+        let (_, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "  Hi Juniper Labs,\nSee attached.  " }),
+        )
+        .await;
+        assert!(
+            body["emails"][0]["body"]
+                .as_str()
+                .unwrap()
+                .starts_with("Hi Juniper Labs,\nSee attached.\n\nInvoice #1252\n\n"),
+            "{body}"
+        );
+
+        let (_, body) = post_json(&app, uri, &token, &serde_json::json!({ "greeting": "" })).await;
+        assert!(
+            body["emails"][0]["body"]
+                .as_str()
+                .unwrap()
+                .starts_with("Invoice #1252\n\n"),
+            "{body}"
+        );
+
+        // Nothing was published, linked or recorded.
+        let detail = ok_json(&app, "/api/invoices/1252", &token).await;
+        assert_eq!(detail["status"], "draft", "{detail}");
+        assert_eq!(detail["stripePaymentLinkUrl"], serde_json::Value::Null);
+        assert_eq!(detail["publishedAt"], serde_json::Value::Null);
+        assert_eq!(detail["emailGreeting"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_fills_placeholders_and_refuses_unknown_ones() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+        let uri = "/api/invoices/1252/email-preview";
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "Hi ${firstName}, invoice ${invoiceNumber} for ${clientName} is ${amountDue}." }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = body["emails"][0]["body"].as_str().unwrap();
+        let opening = text.split("\n\n").next().unwrap();
+        assert!(
+            opening.starts_with("Hi Northwind Traders, invoice 1252 for Northwind Traders is "),
+            "the contact has no name, so firstName is the client's name: {text}"
+        );
+        assert!(!opening.contains("${"), "{text}");
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "Hi ${frstName}" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid", "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("${frstName}"),
+            "{body}"
+        );
+
+        let (status, body) = post_json(
+            &app,
+            uri,
+            &token,
+            &serde_json::json!({ "greeting": "About ${documentTitle}" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a document placeholder is not offered on an invoice: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_email_preview_refuses_what_the_send_would_refuse() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        let (status, body) = post_json(
+            &app,
+            "/api/invoices/1247/email-preview",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "void");
+
+        // 1249 belongs to Globex, which has no email address.
+        let (status, body) = post_json(
+            &app,
+            "/api/invoices/1249/email-preview",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "client_missing_email");
+        assert_eq!(body["error"]["details"]["clientName"], "Globex");
+
+        let (status, body) = post_json(
+            &app,
+            "/api/invoices/9999/email-preview",
+            &token,
+            &serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["details"]["reason"], "invoice_not_found");
+
+        let long = "a".repeat(crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS + 1);
+        let (status, body) = post_json(
+            &app,
+            "/api/invoices/1252/email-preview",
+            &token,
+            &serde_json::json!({ "greeting": long }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "greeting_invalid");
+    }
+
+    #[tokio::test]
+    async fn a_greeting_over_the_limit_refuses_the_send_before_any_network_call() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+        let mailer = FakeMail::default();
+        let long = "a".repeat(crate::invoicing::greeting::EMAIL_GREETING_MAX_CHARS + 1);
+
+        let err = send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1252,
+            AS_OF,
+            "billing@example.test",
+            Some(&long),
+            &gateway,
+            &publisher,
+            &mailer,
+        )
+        .expect_err("too long");
+
+        let (status, json) = error_json(err).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{json}");
+        assert_eq!(json["error"]["code"], "greeting_invalid");
+        assert_eq!(json["error"]["details"]["step"], "precheck");
+        assert_eq!(*gateway.create_calls.borrow(), 0);
+        assert!(publisher.pairs.borrow().is_empty());
+        assert_eq!(*mailer.sent.borrow(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_placeholder_refuses_the_send_before_any_network_call() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let publisher = FakePub::default();
+        let mailer = FakeMail::default();
+
+        let err = send_with(
+            &conn,
+            db_path.parent().unwrap(),
+            1252,
+            AS_OF,
+            "billing@example.test",
+            Some("Hi ${frstName}"),
+            &gateway,
+            &publisher,
+            &mailer,
+        )
+        .expect_err("unknown placeholder");
+
+        let (status, json) = error_json(err).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{json}");
+        assert_eq!(json["error"]["code"], "greeting_invalid");
+        let details = &json["error"]["details"];
+        assert_eq!(details["placeholder"], "frstName", "{json}");
+        assert_eq!(details["step"], "precheck", "{json}");
+        assert!(details.get("maxChars").is_none(), "{json}");
+        assert!(details.get("field").is_none(), "{json}");
+        assert_eq!(*gateway.create_calls.borrow(), 0);
+        assert!(publisher.pairs.borrow().is_empty());
+        assert_eq!(*mailer.sent.borrow(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_send_or_preview_body_with_an_unknown_field_is_a_400() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        let (app, token) = app_for(&db_path);
+
+        for (uri, body) in [
+            (
+                "/api/invoices/1252/send",
+                serde_json::json!({ "confirm": true, "greting": "Hi" }),
+            ),
+            (
+                "/api/invoices/1252/email-preview",
+                serde_json::json!({ "greting": "Hi" }),
+            ),
+        ] {
+            let (status, json) = post_json(&app, uri, &token, &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {json}");
+        }
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn a_send_carries_the_default_an_override_or_no_greeting_and_records_it() {
+        let _config = TempConfig::new();
+        let (_dir, db_path) = seeded_db();
+        set_invoice_greeting(&db_path, "  Thanks for working with Initech.  ");
+        let conn = open_db(&db_path);
+        let gateway = FakeGw::default();
+        let mailer = FakeMail::default();
+        let send = |greeting: Option<&str>| {
+            let result = send_with(
+                &conn,
+                db_path.parent().unwrap(),
+                1252,
+                AS_OF,
+                "billing@example.test",
+                greeting,
+                &gateway,
+                &FakePub::default(),
+                &mailer,
+            )
+            .expect("sends");
+            let json = serde_json::to_value(&result).expect("serializes");
+            let body = mailer.bodies.borrow().last().cloned().expect("a body");
+            (json["invoice"]["emailGreeting"].clone(), body)
+        };
+
+        let (stored, body) = send(None);
+        assert_eq!(stored, "Thanks for working with Initech.");
+        assert!(
+            body.starts_with("Thanks for working with Initech.\n\nInvoice #1252\n\n"),
+            "{body}"
+        );
+
+        let (stored, body) = send(Some("  Hello again, Acme.  "));
+        assert_eq!(stored, "Hello again, Acme.");
+        assert!(
+            body.starts_with("Hello again, Acme.\n\nInvoice #1252\n\n"),
+            "{body}"
+        );
+
+        let (stored, body) = send(Some(""));
+        assert_eq!(stored, serde_json::Value::Null);
+        assert!(body.starts_with("Invoice #1252\n\n"), "{body}");
+        assert_eq!(*mailer.sent.borrow(), 3);
     }
 }

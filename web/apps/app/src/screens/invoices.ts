@@ -28,6 +28,7 @@ import {
   type PaymentFormValue,
   type SendFailureView,
   type SendStepView,
+  type NcSendMessageDetail,
 } from '@nigel/ui';
 
 import { ApiError, type ApiClient } from '../api/index.js';
@@ -66,6 +67,7 @@ import {
   completedSteps,
 } from './invoicing-errors.js';
 import { routeToHash } from './hash-route.js';
+import { EmailDraftController, reasonOf } from './email-draft.js';
 import type { ScreenContext } from './context.js';
 import type { ScreenId } from './registry.js';
 
@@ -210,6 +212,12 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
       margin: 0 0 var(--wa-space-s, 8px);
     }
 
+    .link-list dd.message {
+      white-space: pre-wrap;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
     .link-list a {
       color: var(--wa-color-brand);
       text-decoration: none;
@@ -276,6 +284,16 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
   @state() private paymentErrors: PaymentFormErrors = {};
   @state() private paymentError: string | null = null;
 
+  /** The send dialog's message box and the email it previews. */
+  private readonly emailDraft = new EmailDraftController(this, {
+    loadDefault: async () => (await this.client.getCompany()).invoiceEmailGreeting,
+    fetchPreview: (greeting) => {
+      const detail = this.detail;
+      if (!detail) return Promise.reject(new Error('No invoice is open.'));
+      return this.client.invoiceEmailPreview(detail.number, { greeting });
+    },
+  });
+
   @state() private sendOpen = false;
   @state() private sendPhase: 'confirm' | 'sending' | 'sent' | 'failed' = 'confirm';
   @state() private sendSteps: SendStepView[] = [];
@@ -327,6 +345,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.sendSteps = [];
     this.sendFailure = null;
     this.sentUrl = '';
+    this.emailDraft.close();
   }
 
   private async load(key: string, keepActionError = false): Promise<void> {
@@ -656,6 +675,11 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.sendFailure = null;
     this.sentUrl = '';
     void this.loadPreview();
+    void this.emailDraft.open();
+  };
+
+  private handleMessage = (event: Event): void => {
+    this.emailDraft.edit((event as CustomEvent<NcSendMessageDetail>).detail.value);
   };
 
   /**
@@ -674,7 +698,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     } catch (error) {
       // The server's own sentence — a broken custom template names its path,
       // and that is the thing this dialog exists to catch before a send.
-      this.previewError = error instanceof ApiError ? error.message : String(error);
+      this.previewError = reasonOf(error, 'Could not build the preview.');
     } finally {
       this.previewLoading = false;
     }
@@ -682,6 +706,7 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
 
   private closeSend = (): void => {
     this.sendOpen = false;
+    this.emailDraft.close();
     // The status, the balance and the Outstanding card all moved if it went out.
     void this.refresh();
   };
@@ -694,9 +719,14 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
     this.sendWarnings = [];
     this.sendFailure = null;
     this.sendSteps = sendStepViews({ running: 'config' });
+    const greeting = this.emailDraft.greeting;
+    this.emailDraft.close();
 
     try {
-      const result = await this.client.sendInvoice(detail.number);
+      const result = await this.client.sendInvoice(
+        detail.number,
+        greeting === undefined ? {} : { greeting },
+      );
       this.sendSteps = sendStepViews({ completed: result.steps });
       this.sendWarnings = [...(result.configWarnings ?? []), ...(result.warnings ?? [])];
       this.sentUrl = result.publicUrl;
@@ -974,6 +1004,10 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
                 >
               </dd>`
           : nothing}
+        ${detail.emailGreeting
+          ? html`<dt>Message sent</dt>
+              <dd class="message" data-email-greeting>${detail.emailGreeting}</dd>`
+          : nothing}
       </dl>
     `;
   }
@@ -1055,16 +1089,33 @@ export class NigelInvoicesScreen extends SignalWatcher(LitElement) {
         .previewLoading=${this.previewLoading}
         .pdfTarget=${this.client.invoicePreviewTarget(detail.number)}
         .pdfAvailable=${this.pdfExport}
-        .configCautions=${this.sendCautions()}
+        .configCautions=${[
+          ...this.sendCautions(),
+          ...(this.emailDraft.messageCaution ? [this.emailDraft.messageCaution] : []),
+        ]}
         phase=${this.sendPhase}
         .steps=${this.sendSteps}
         .failure=${this.sendFailure}
         .publicUrl=${this.sentUrl}
         .configWarnings=${this.sendWarnings}
         .blocked=${blocked}
+        .message=${this.emailDraft.message}
+        .messageLoading=${this.emailDraft.messageLoading}
+        @nc-send-message=${this.handleMessage}
         @nc-send-confirm=${this.handleSend}
         @nc-send-close=${this.closeSend}
-      ></wc-send-dialog>
+      >
+        ${this.sendPhase === 'confirm'
+          ? html`<wc-email-preview
+              slot="email-preview"
+              .emails=${this.emailDraft.preview?.emails ?? []}
+              .linkPlaceholders=${this.emailDraft.preview?.linkPlaceholders ?? []}
+              .loading=${this.emailDraft.previewLoading}
+              .error=${this.emailDraft.previewError}
+              .errorBlocksSend=${this.emailDraft.previewBlocksSend}
+            ></wc-email-preview>`
+          : nothing}
+      </wc-send-dialog>
     `;
   }
 

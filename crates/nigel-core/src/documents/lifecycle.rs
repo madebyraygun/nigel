@@ -427,6 +427,7 @@ mod tests {
             company: "Initech",
             response_url: None,
             today: "2026-10-08",
+            greeting: None,
         };
         send_document(
             &conn,
@@ -476,6 +477,7 @@ mod tests {
             company: "Initech",
             response_url: Some("https://docs.example.test/d/respond"),
             today: "2026-10-08",
+            greeting: None,
         };
         // Version 2 goes to the signer alone; Sam's version 1 page is still live.
         let outcome =
@@ -531,6 +533,7 @@ mod tests {
             company: "Initech",
             response_url: None,
             today: "2026-10-08",
+            greeting: None,
         };
         let outcome =
             send_document(&conn, id, &[pat()], &ctx, &p, &FakeMailer::default(), &s).unwrap();
@@ -635,6 +638,7 @@ mod tests {
             company: "Initech",
             response_url: Some("https://docs.example.test/d/respond"),
             today: "2026-10-08",
+            greeting: None,
         };
         send_document(
             &conn,

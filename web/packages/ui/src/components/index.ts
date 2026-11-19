@@ -332,7 +332,15 @@ export {
   type NcClientFormChangeDetail,
 } from './wc-client-form.js';
 export {
+  WcEmailPreview,
+  GREETING_PLACEHOLDERS,
+  greetingPlaceholderList,
+  splitPlaceholders,
+  type EmailPreviewView,
+} from './wc-email-preview.js';
+export {
   WcSendDialog,
+  type NcSendMessageDetail,
   type SendFailureView,
   type SendPhase,
   type SendStepState,

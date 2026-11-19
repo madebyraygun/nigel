@@ -109,15 +109,15 @@ fn ensure_latest_unsent(conn: &Connection, version_id: i64) -> Result<i64> {
     }
 }
 
-pub fn freeze_recipients(
-    conn: &Connection,
-    version_id: i64,
-    set: &[(NewRecipient, String)],
-) -> Result<Vec<Recipient>> {
-    ensure_latest_unsent(conn, version_id)?;
-    let signers = set
-        .iter()
-        .filter(|(r, _)| r.role == RecipientRole::Signer)
+/// The checks a send's recipients must pass before anything is written: one
+/// signer, each recipient valid, and no address named twice.
+pub fn validate_recipient_set<'a>(
+    recipients: impl IntoIterator<Item = &'a NewRecipient> + Clone,
+) -> Result<()> {
+    let signers = recipients
+        .clone()
+        .into_iter()
+        .filter(|r| r.role == RecipientRole::Signer)
         .count();
     if signers != 1 {
         return Err(NigelError::Conflict {
@@ -128,7 +128,7 @@ pub fn freeze_recipients(
         });
     }
     let mut seen = HashSet::new();
-    for (r, _) in set {
+    for r in recipients {
         validate_recipient(r)?;
         if !seen.insert(r.email.trim().to_lowercase()) {
             return Err(NigelError::Invalid(format!(
@@ -137,6 +137,16 @@ pub fn freeze_recipients(
             )));
         }
     }
+    Ok(())
+}
+
+pub fn freeze_recipients(
+    conn: &Connection,
+    version_id: i64,
+    set: &[(NewRecipient, String)],
+) -> Result<Vec<Recipient>> {
+    ensure_latest_unsent(conn, version_id)?;
+    validate_recipient_set(set.iter().map(|(r, _)| r))?;
     let ordered = set
         .iter()
         .filter(|(r, _)| r.role == RecipientRole::Signer)
@@ -176,13 +186,20 @@ pub fn unfreeze(conn: &Connection, version_id: i64) -> Result<()> {
 
 /// Record the version as sent, freezing `client_name` as the name its pages
 /// were rendered with.
-pub fn mark_sent(conn: &Connection, version_id: i64, client_name: &str, today: &str) -> Result<()> {
+pub fn mark_sent(
+    conn: &Connection,
+    version_id: i64,
+    client_name: &str,
+    today: &str,
+    email_greeting: Option<&str>,
+) -> Result<()> {
     let document_id = ensure_latest_unsent(conn, version_id)?;
     let today = validate_date(today, "send date")?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE document_versions SET sent_at = ?2, client_name = ?3 WHERE id = ?1",
-        params![version_id, today, client_name],
+        "UPDATE document_versions SET sent_at = ?2, client_name = ?3, email_greeting = ?4
+          WHERE id = ?1",
+        params![version_id, today, client_name, email_greeting],
     )?;
     touch(&tx, document_id, &today)?;
     tx.commit()?;
@@ -506,7 +523,7 @@ mod tests {
             ],
         )
         .unwrap();
-        mark_sent(conn, v.id, "Cedar Systems", "2026-10-02").unwrap();
+        mark_sent(conn, v.id, "Cedar Systems", "2026-10-02", None).unwrap();
         (id, v.id, recipients[0].id, recipients[1].id)
     }
 
@@ -913,7 +930,7 @@ mod tests {
             )],
         )
         .unwrap();
-        mark_sent(&conn, v2.id, "Cedar Systems", "2026-10-08").unwrap();
+        mark_sent(&conn, v2.id, "Cedar Systems", "2026-10-08", None).unwrap();
         let r = OnlineResponse {
             version_id: v,
             recipient_id: signer,

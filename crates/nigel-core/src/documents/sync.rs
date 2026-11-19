@@ -466,6 +466,7 @@ mod tests {
             company: "Initech",
             response_url: None,
             today: "2026-10-08",
+            greeting: None,
         };
         send_document(
             &conn,

@@ -3,6 +3,7 @@
 //! interpolated into HTML is escaped with the invoicing `esc`; the inline script is
 //! fixed text that reads its values from `data-*` attributes.
 use super::model::{RecipientRole, SignatureRole};
+use crate::invoicing::greeting::{fill_placeholders, GreetingValues};
 use crate::invoicing::render_html::esc;
 
 pub struct PageContext<'a> {
@@ -460,18 +461,34 @@ pub fn email_subject(company: &str, title: &str, role: RecipientRole) -> String 
     }
 }
 
+/// The plain-text body of one recipient's email. `greeting`, when there is
+/// one, is the operator's own opening and takes the place of the salutation,
+/// its placeholders filled for this recipient.
 pub fn render_document_email_text(
     ctx: &PageContext<'_>,
     recipient: &PageRecipient<'_>,
     url: &str,
+    greeting: Option<&str>,
 ) -> String {
     let ask = match recipient.role {
         RecipientRole::Signer => "Please review the attached document and respond using the link below.",
         RecipientRole::Collaborator => "The attached document is shared for your review. You can request changes using the link below.",
     };
+    let opening = match greeting {
+        Some(greeting) => fill_placeholders(
+            greeting,
+            &GreetingValues {
+                full_name: recipient.name.to_string(),
+                client_name: ctx.client_name.to_string(),
+                company_name: ctx.company.to_string(),
+                document_title: ctx.title.to_string(),
+                ..GreetingValues::default()
+            },
+        ),
+        None => format!("Hello {},", recipient.name),
+    };
     format!(
-        "Hello {name},\n\n{ask}\n\n{title} (version {version})\n{url}\n",
-        name = recipient.name,
+        "{opening}\n\n{ask}\n\n{title} (version {version})\n{url}\n",
         title = ctx.title,
         version = ctx.version,
     )
@@ -839,6 +856,7 @@ mod tests {
             &ctx(),
             &SIGNER,
             "https://docs.example.test/d/doc/rs/index.html",
+            None,
         );
         assert!(text.contains("https://docs.example.test/d/doc/rs/index.html"));
         assert!(!text.contains('<'));
@@ -852,8 +870,66 @@ mod tests {
             &ctx(),
             &COLLAB,
             "https://docs.example.test/d/doc/rc/index.html",
+            None,
         );
         assert!(text.ends_with("/d/doc/rc/index.html\n"));
+    }
+
+    #[test]
+    fn a_greeting_is_filled_for_each_recipient() {
+        let greeting =
+            Some("Hi ${firstName}, ${companyName} sent ${documentTitle} for ${clientName}.");
+        let url = "https://docs.example.test/d/x";
+        let signer = render_document_email_text(&ctx(), &SIGNER, url, greeting);
+        let collab = render_document_email_text(&ctx(), &COLLAB, url, greeting);
+        let first = |r: &PageRecipient<'_>| r.name.split_whitespace().next().unwrap().to_string();
+        assert!(
+            signer.starts_with(&format!(
+                "Hi {}, {} sent {} for {}.\n\n",
+                first(&SIGNER),
+                ctx().company,
+                ctx().title,
+                ctx().client_name
+            )),
+            "{signer}"
+        );
+        assert!(
+            collab.starts_with(&format!("Hi {},", first(&COLLAB))),
+            "{collab}"
+        );
+    }
+
+    #[test]
+    fn a_greeting_replaces_the_salutation() {
+        let url = "https://docs.example.test/d/doc/rs/index.html";
+        let with = render_document_email_text(
+            &ctx(),
+            &SIGNER,
+            url,
+            Some("Thanks for the call, Cedar Systems.\nHere is the SOW."),
+        );
+        let without = render_document_email_text(&ctx(), &SIGNER, url, None);
+        assert!(
+            with.starts_with(
+                "Thanks for the call, Cedar Systems.\nHere is the SOW.\n\nPlease review the attached document"
+            ),
+            "got: {with}"
+        );
+        assert!(
+            without.starts_with(&format!(
+                "Hello {},\n\nPlease review the attached document",
+                SIGNER.name
+            )),
+            "got: {without}"
+        );
+        assert_eq!(
+            with.replace(
+                "Thanks for the call, Cedar Systems.\nHere is the SOW.",
+                &format!("Hello {},", SIGNER.name)
+            ),
+            without,
+            "nothing else in the body changes"
+        );
     }
 
     #[test]

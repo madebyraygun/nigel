@@ -1,6 +1,7 @@
 pub mod clients;
 pub mod document;
 pub mod gateway;
+pub mod greeting;
 pub mod import_invoiceshelf;
 pub mod invoices;
 pub mod logo;

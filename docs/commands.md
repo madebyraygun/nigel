@@ -98,11 +98,13 @@ nigel invoice void 1248                           # Cancel an invoice (confirms;
 nigel invoice delete 1252                         # Delete an unsent draft (confirms; --yes to skip)
 nigel invoice list                                # Number, status, client, total, due date
 nigel invoice list --format json                  # JSON array of invoices, each with its line items
-nigel invoice show 1248                           # Line items, paid amount, payment link
+nigel invoice show 1248                           # Line items, paid amount, payment link, the greeting last sent
 nigel invoice preview 1248                        # Render HTML/PDF locally, no network (<data_dir>/previews)
 nigel invoice preview 1248 --output-dir /tmp      # Write the preview somewhere else
-nigel invoice send 1248                                 # Render, write the preview files, confirm, then publish and email
-nigel invoice send 1248 --yes                           # Skip the confirmation and the files
+nigel invoice send 1248                                 # Render, write the preview files, print the email, confirm, then publish and email
+nigel invoice send 1248 --message "Thanks, Acme."       # Open the email with this greeting instead of the saved default
+nigel invoice send 1248 --no-message                    # Send with no greeting
+nigel invoice send 1248 --yes                           # Skip the confirmation and the files; the email is still printed
 nigel invoice sync                                # Pull Stripe payments and record them
 nigel invoice pay 1248 --date 2026-08-20          # Record a manual payment (default: full balance)
 nigel invoice pay 1248 --date 2026-08-20 --amount 500 --method ach  # Partial/other method
@@ -129,12 +131,14 @@ nigel document kinds deactivate 2                 # Stop offering a kind for new
 nigel document kinds reactivate 2                 # Offer a deactivated kind again
 nigel document add --client 1 --kind Proposal --title "Website rebuild" --file ~/proposal.pdf  # File a PDF as a draft
 nigel document list                               # Every document (--client, --status, --kind narrow it)
-nigel document show 3                             # Versions, recipients, signatures and change requests; a version whose PDF is missing is flagged
+nigel document show 3                             # Versions, recipients, the greeting each was sent with, signatures and change requests; a version whose PDF is missing is flagged
 nigel document preview 3                          # Write the recipient pages and PDF to <data_dir>/previews/document-3/, no network
 nigel document preview 3 --output-dir /tmp        # Write it to /tmp/document-3/ instead
 nigel document send 3                             # Confirm, then publish and email the signer a link of their own
 nigel document send 3 --signer "Pat Example <pat@cedar.example.test>" --collaborator "Sam Example <sam@cedar.example.test>"  # Name the recipients
-nigel document send 3 --yes                       # Skip the confirmation (required when stdin is not a terminal)
+nigel document send 3 --message "Here is the SOW."   # Open each email with this greeting instead of the saved default
+nigel document send 3 --no-message                # Send with no greeting
+nigel document send 3 --yes                       # Skip the confirmation (required when stdin is not a terminal); the emails are still printed
 nigel document revise 3 --file ~/proposal-v2.pdf  # New draft version; live pages read "being revised" until it is sent, then "superseded"
 nigel document withdraw 3                         # Replace its pages with a withdrawn notice (--yes skips the prompt); terminal
 nigel document accept 3 --name "Pat Example"      # Record an acceptance received outside the response page (--date)

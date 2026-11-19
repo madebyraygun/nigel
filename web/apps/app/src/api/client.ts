@@ -35,6 +35,9 @@ import {
   type DocumentListRow,
   type DocumentPatch,
   type DocumentSendRequest,
+  type DocumentEmailPreviewRequest,
+  type EmailGreetingOption,
+  type EmailPreview,
   type DocumentSendResult,
   type DocumentSyncResult,
   type ExpenseBreakdown,
@@ -553,7 +556,12 @@ export interface ApiClient {
    * something a caller varies, and reaching this method already means the
    * confirmation dialog resolved.
    */
-  sendInvoice(number: number): Promise<SendResult>;
+  sendInvoice(number: number, options?: EmailGreetingOption): Promise<SendResult>;
+  /**
+   * The email a send would deliver, with `options.greeting` in place of the
+   * saved default. Publishes, charges and emails nothing.
+   */
+  invoiceEmailPreview(number: number, options?: EmailGreetingOption): Promise<EmailPreview>;
   /** Pull Stripe payments. Per-invoice failures come back as data. */
   syncInvoices(): Promise<SyncResult>;
 
@@ -595,6 +603,8 @@ export interface ApiClient {
    * `confirm` argument: reaching this method means the confirmation resolved.
    */
   sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult>;
+  /** The emails a send to these recipients would deliver. Publishes and emails nothing. */
+  documentEmailPreview(id: number, input: DocumentEmailPreviewRequest): Promise<EmailPreview>;
   /** Add a new draft version from a PDF. Sent as multipart. */
   reviseDocument(id: number, file: File): Promise<DocumentActionResult>;
   acceptDocument(id: number, input: ManualAcceptRequest): Promise<DocumentActionResult>;
@@ -644,6 +654,14 @@ function query<T extends object>(params: T): string {
   }
   const rendered = search.toString();
   return rendered ? `?${rendered}` : '';
+}
+
+/**
+ * The `greeting` key, or nothing. Absent and `""` mean different things on the
+ * wire — the saved default versus no greeting — so only `undefined` is dropped.
+ */
+function greetingField({ greeting }: EmailGreetingOption): EmailGreetingOption {
+  return greeting === undefined ? {} : { greeting };
 }
 
 function isEnvelope(body: unknown): body is ApiErrorEnvelope {
@@ -1032,10 +1050,19 @@ export class FetchApiClient implements ApiClient {
     return this.request<InvoiceDetail>('POST', `/invoices/${number}/pay`, input);
   }
 
-  sendInvoice(number: number): Promise<SendResult> {
+  sendInvoice(number: number, options: EmailGreetingOption = {}): Promise<SendResult> {
     return this.request<SendResult>('POST', `/invoices/${number}/send`, {
       confirm: true,
+      ...greetingField(options),
     });
+  }
+
+  invoiceEmailPreview(number: number, options: EmailGreetingOption = {}): Promise<EmailPreview> {
+    return this.request<EmailPreview>(
+      'POST',
+      `/invoices/${number}/email-preview`,
+      greetingField(options),
+    );
   }
 
   syncInvoices(): Promise<SyncResult> {
@@ -1087,9 +1114,19 @@ export class FetchApiClient implements ApiClient {
   }
 
   sendDocument(id: number, input: DocumentSendRequest): Promise<DocumentSendResult> {
+    const { greeting, ...recipients } = input;
     return this.request<DocumentSendResult>('POST', `/documents/${id}/send`, {
       confirm: true,
-      ...input,
+      ...recipients,
+      ...greetingField({ greeting }),
+    });
+  }
+
+  documentEmailPreview(id: number, input: DocumentEmailPreviewRequest): Promise<EmailPreview> {
+    const { greeting, ...recipients } = input;
+    return this.request<EmailPreview>('POST', `/documents/${id}/email-preview`, {
+      ...recipients,
+      ...greetingField({ greeting }),
     });
   }
 

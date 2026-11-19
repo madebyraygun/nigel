@@ -1,7 +1,9 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { live } from 'lit/directives/live.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@awesome.me/webawesome/dist/components/textarea/textarea.js';
 import './wc-money.js';
 import './wc-spinner.js';
 import { controlsCss } from '@nigel/theme';
@@ -9,6 +11,7 @@ import './wc-notice-bar.js';
 import './wc-document-frame.js';
 import '../icons/icons.js';
 import type { ExportTarget } from './wc-export-links.js';
+import { greetingPlaceholderList } from './wc-email-preview.js';
 import { dispatchNcToast } from './wc-toast.js';
 
 /**
@@ -20,6 +23,11 @@ const MAX_DETAIL_LENGTH = 120;
 function failureDetail(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return detail.length > 0 && detail.length <= MAX_DETAIL_LENGTH ? detail : '';
+}
+
+/** `nc-send-message` — the message box's new value. */
+export interface NcSendMessageDetail {
+  value: string;
 }
 
 /** Where a send is in its life. */
@@ -240,10 +248,31 @@ export class WcSendDialog extends LitElement {
         overflow-wrap: anywhere;
       }
 
+      .message {
+        margin: 0 0 var(--wa-space-m);
+      }
+
+      .message-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: var(--wa-space-s);
+        margin-top: var(--wa-space-2xs);
+      }
+
+      .message-row .caveat {
+        margin: 0;
+      }
+
+      .email-preview::slotted(*) {
+        margin-bottom: var(--wa-space-m);
+      }
+
       .footer {
         display: flex;
         justify-content: flex-end;
         gap: var(--wa-space-s);
+        padding-block-start: var(--wa-space-m);
       }
 
       /* The mark beside a step is decoration; this is what says what it means. */
@@ -371,6 +400,17 @@ export class WcSendDialog extends LitElement {
   @property({ attribute: false })
   configCautions: string[] = [];
 
+  /**
+   * The opening paragraph of the email, as it will go out. Empty sends the
+   * email without one.
+   */
+  @property({ type: String, attribute: false })
+  message = '';
+
+  /** The saved default is still being read, so the box is not ready to edit. */
+  @property({ type: Boolean, attribute: false })
+  messageLoading = false;
+
   private emit(name: string): void {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true }));
   }
@@ -381,6 +421,24 @@ export class WcSendDialog extends LitElement {
   };
 
   private handleClose = () => this.emit('nc-send-close');
+
+  private emitMessage(value: string): void {
+    this.dispatchEvent(
+      new CustomEvent<NcSendMessageDetail>('nc-send-message', {
+        detail: { value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private handleMessageInput = (event: Event) => {
+    this.emitMessage((event.target as HTMLTextAreaElement).value);
+  };
+
+  private handleMessageClear = () => {
+    this.emitMessage('');
+  };
 
   /** Guards a second click while the first save is still running. */
   @state()
@@ -498,6 +556,8 @@ export class WcSendDialog extends LitElement {
             message=${caution}
           ></wc-notice-bar>`,
       )}
+      ${this.renderMessage()}
+      <slot name="email-preview" class="email-preview"></slot>
       ${this.renderPreview()}
       <p class="caveat">
         Nothing is sent until you confirm, and nothing is retried automatically.
@@ -537,11 +597,45 @@ export class WcSendDialog extends LitElement {
             message=${caution}
           ></wc-notice-bar>`,
       )}
+      ${this.renderMessage()}
+      <slot name="email-preview" class="email-preview"></slot>
       ${this.renderPreview()}
       <p class="caveat">
         Nothing is sent until you confirm, and nothing is retried automatically.
         This cannot be undone.
       </p>
+    `;
+  }
+
+  /** The greeting box, and the way to empty it. */
+  private renderMessage() {
+    return html`
+      <div class="message">
+        <wa-textarea
+          data-message
+          label="Message"
+          rows="3"
+          resize="auto"
+          placeholder=${this.messageLoading ? 'Loading the saved message…' : 'No message'}
+          .value=${live(this.message)}
+          ?disabled=${this.messageLoading}
+          @input=${this.handleMessageInput}
+        ></wa-textarea>
+        <div class="message-row">
+          <p class="caveat" data-message-hint>
+            Optional. Placeholders: ${greetingPlaceholderList(this.mode)}
+          </p>
+          <wa-button
+            data-message-clear
+            size="s"
+            appearance="plain"
+            ?disabled=${this.messageLoading || this.message === ''}
+            @click=${this.handleMessageClear}
+          >
+            Clear
+          </wa-button>
+        </div>
+      </div>
     `;
   }
 

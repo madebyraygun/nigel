@@ -11,6 +11,7 @@ import type {
 import type {
   ClientDetail,
   DocumentDetail,
+  DocumentEmailPreviewRequest,
   DocumentListParams,
   DocumentListRow,
   DocumentSendRequest,
@@ -117,6 +118,7 @@ export function timelineVersions(detail: DocumentDetail): TimelineVersion[] {
         email: r.email,
       })),
       events: eventsOf(version),
+      message: version.emailGreeting,
     }));
 }
 
@@ -137,6 +139,52 @@ export function sendRequestFrom(value: RecipientEditorValue): DocumentSendReques
     signer: trimmed(value.signer),
     collaborators: value.collaborators.map(trimmed),
   };
+}
+
+/**
+ * An address the server accepts for a recipient: a local part, one `@`, a
+ * domain with a dot, and no whitespace.
+ */
+export function isRecipientAddress(email: string): boolean {
+  return /^[^@\s]+@[^@\s]*\.[^@\s]*$/.test(email);
+}
+
+function usableRecipient(r: { name: string; email: string }): boolean {
+  return r.name.trim() !== '' && isRecipientAddress(r.email.trim());
+}
+
+/**
+ * The recipients a preview can be built for, as they stand in the editor. A
+ * row still being typed is left out rather than sent, so the preview does not
+ * flash a validation error on every keystroke; an unusable signer falls back
+ * to the server's default one. `previewRecipientNotes` says when either
+ * happened.
+ */
+export function previewRequestFrom(
+  value: RecipientEditorValue,
+  greeting: string | undefined,
+): DocumentEmailPreviewRequest {
+  const { signer, collaborators } = sendRequestFrom(value);
+  return {
+    ...(usableRecipient(signer) ? { signer } : {}),
+    collaborators: collaborators.filter(usableRecipient),
+    ...(greeting === undefined ? {} : { greeting }),
+  };
+}
+
+/** Where the preview's recipients differ from the editor's, in a sentence each. */
+export function previewRecipientNotes(value: RecipientEditorValue): string[] {
+  const notes: string[] = [];
+  if (!usableRecipient(value.signer)) {
+    notes.push('The signer row is incomplete, so the preview uses the default signer.');
+  }
+  const left = value.collaborators.filter((r) => !usableRecipient(r)).length;
+  if (left > 0) {
+    notes.push(
+      `The preview leaves out ${left} incomplete ${left === 1 ? 'recipient' : 'recipients'}.`,
+    );
+  }
+  return notes;
 }
 
 /** Our words for each step of a document send, in execution order. */

@@ -509,6 +509,10 @@ export interface Company {
   phone: string;
   logo: string;
   paymentInstructions: string;
+  /** The default opening paragraph of an invoice email. Empty means none. */
+  invoiceEmailGreeting: string;
+  /** The default opening paragraph of a document email. Empty means none. */
+  documentEmailGreeting: string;
 }
 
 /** `POST /api/settings/data-dir` — answers with the new database's status. */
@@ -823,6 +827,7 @@ export const API_ERROR_CODES = [
   'password_change_required',
   'too_many_attempts',
   'busy',
+  'greeting_invalid',
 ] as const;
 
 export type KnownApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -1194,6 +1199,11 @@ export interface InvoiceDetail {
   deleteBlocked: DeleteBlocked | null;
   /** The day `status` was derived on (`YYYY-MM-DD`): the request's `asOf`, or the server's today. */
   asOf: string;
+  /**
+   * The greeting the most recent send opened its email with, as written —
+   * placeholders unfilled; null when it had none or was never sent.
+   */
+  emailGreeting: string | null;
 }
 
 /** A delete the detail already knows the server would refuse. */
@@ -1357,8 +1367,48 @@ export interface PayInvoiceRequest {
  * screen sends it: without `confirm: true` the server answers 400
  * `confirmation_required` and nothing happens.
  */
-export interface SendInvoiceRequest {
+export interface SendInvoiceRequest extends EmailGreetingOption {
   confirm: true;
+}
+
+/**
+ * The greeting a send or preview opens its email with. Absent means the saved
+ * default, `""` means none, and anything else is used as typed (trimmed).
+ */
+export interface EmailGreetingOption {
+  greeting?: string;
+}
+
+/** One email a send would deliver, as the email-preview routes render it. */
+export interface EmailPreviewMessage {
+  role: 'client' | 'signer' | 'collaborator';
+  /** `Name <email>` or a bare address. */
+  to: string;
+  /** Copied contacts; empty for documents. */
+  cc: string[];
+  subject: string;
+  /** The plain-text body, placeholders included literally. */
+  body: string;
+  attachments: string[];
+}
+
+/**
+ * `POST /api/invoices/{number}/email-preview` and
+ * `POST /api/documents/{id}/email-preview` — what a send would email, built by
+ * the same functions the send uses. Nothing is published, charged or emailed.
+ */
+export interface EmailPreview {
+  /** One per recipient. */
+  emails: EmailPreviewMessage[];
+  /** Every stand-in for a link that only exists after the send. */
+  linkPlaceholders: string[];
+}
+
+/** The document preview's request: the draft greeting and the recipients as they stand. */
+export interface DocumentEmailPreviewRequest extends EmailGreetingOption {
+  /** Absent means the default signer. */
+  signer?: DocumentRecipientInput;
+  collaborators?: DocumentRecipientInput[];
 }
 
 /** The stages of a send, in execution order. */
@@ -1539,6 +1589,11 @@ export interface DocumentVersionDetail {
   changeRequests: DocumentChangeRequest[];
   /** The version's PDF is absent from the data directory. */
   fileMissing: boolean;
+  /**
+   * The greeting the version's emails opened with, as written — placeholders
+   * unfilled; null when there was none.
+   */
+  emailGreeting: string | null;
 }
 
 /**
@@ -1599,7 +1654,7 @@ export interface DocumentRecipientInput {
 }
 
 /** The recipients of a send. The client adds `confirm: true` on the wire. */
-export interface DocumentSendRequest {
+export interface DocumentSendRequest extends EmailGreetingOption {
   signer: DocumentRecipientInput;
   collaborators: DocumentRecipientInput[];
 }

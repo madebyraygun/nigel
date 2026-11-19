@@ -8,6 +8,9 @@ import {
   documentTableRows,
   latestSentVersion,
   recipientContacts,
+  previewRequestFrom,
+  previewRecipientNotes,
+  isRecipientAddress,
   sendRequestFrom,
   timelineVersions,
 } from './documents-data.js';
@@ -34,6 +37,7 @@ function version(overrides: Partial<DocumentVersionDetail>): DocumentVersionDeta
     fileMissing: false,
     executedChecksum: null,
     executedPublicChecksum: null,
+    emailGreeting: null,
     ...overrides,
   };
 }
@@ -282,5 +286,89 @@ describe('latestSentVersion', () => {
 
   it('is null when nothing was sent', () => {
     expect(latestSentVersion(detail([version({})]))).toBeNull();
+  });
+});
+
+describe('previewRequestFrom', () => {
+  it('sends the recipients that are ready and the greeting', () => {
+    expect(
+      previewRequestFrom(
+        {
+          signer: { name: ' Pat Example ', email: 'pat@cedar.test' },
+          collaborators: [
+            { name: 'Sam Example', email: 'sam@cedar.test' },
+            { name: 'Half typed', email: 'half@' },
+          ],
+        },
+        '',
+      ),
+    ).toEqual({
+      signer: { name: 'Pat Example', email: 'pat@cedar.test' },
+      collaborators: [{ name: 'Sam Example', email: 'sam@cedar.test' }],
+      greeting: '',
+    });
+  });
+
+  it('leaves out a signer still being typed, and a greeting nobody has set', () => {
+    expect(
+      previewRequestFrom({ signer: { name: '', email: 'pat@cedar.test' }, collaborators: [] }, undefined),
+    ).toEqual({ collaborators: [] });
+  });
+});
+
+describe('isRecipientAddress', () => {
+  it('needs a dot in the domain, as the server does', () => {
+    expect(isRecipientAddress('pat@globex.test')).toBe(true);
+    expect(isRecipientAddress('pat@globex')).toBe(false);
+    expect(isRecipientAddress('@globex.test')).toBe(false);
+    expect(isRecipientAddress('pat@@globex.test')).toBe(false);
+    expect(isRecipientAddress('pat @globex.test')).toBe(false);
+  });
+});
+
+describe('previewRecipientNotes', () => {
+  it('says nothing when every row is ready', () => {
+    expect(
+      previewRecipientNotes({
+        signer: { name: 'Pat Example', email: 'pat@initech.test' },
+        collaborators: [{ name: 'Sam Example', email: 'sam@initech.test' }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('counts the rows left out and names the default signer standing in', () => {
+    expect(
+      previewRecipientNotes({
+        signer: { name: 'Pat Example', email: 'pat@initech' },
+        collaborators: [
+          { name: 'Sam Example', email: 'sam@initech.test' },
+          { name: 'Half typed', email: 'half@' },
+        ],
+      }),
+    ).toEqual([
+      'The signer row is incomplete, so the preview uses the default signer.',
+      'The preview leaves out 1 incomplete recipient.',
+    ]);
+  });
+
+  it('says recipients for more than one', () => {
+    expect(
+      previewRecipientNotes({
+        signer: { name: 'Pat Example', email: 'pat@initech.test' },
+        collaborators: [
+          { name: '', email: '' },
+          { name: 'Half typed', email: 'half@acme' },
+        ],
+      }),
+    ).toEqual(['The preview leaves out 2 incomplete recipients.']);
+  });
+});
+
+describe('timelineVersions message', () => {
+  it('carries the greeting each version was sent with', () => {
+    const detail = {
+      versions: [version({ number: 1, emailGreeting: 'Here it is.' }), version({ number: 2 })],
+    } as DocumentDetail;
+    expect(timelineVersions(detail).map((v) => v.message)).toEqual([null, 'Here it is.']);
   });
 });

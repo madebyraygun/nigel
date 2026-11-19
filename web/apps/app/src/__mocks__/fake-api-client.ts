@@ -14,6 +14,12 @@ import type {
   YearParams,
 } from "../api/client.js";
 import type {
+  DocumentEmailPreviewRequest,
+  EmailGreetingOption,
+  EmailPreview,
+  EmailPreviewMessage,
+} from "../api/types.js";
+import type {
   Account,
   AccountPatch,
   AgingReport,
@@ -376,6 +382,19 @@ export const DEFAULT_DOCUMENT_KINDS: DocumentKind[] = [
 ];
 
 const FAKE_DOCUMENT_DAY = "2026-10-05";
+
+const INVOICE_PAY_PLACEHOLDER = "[pay link created when sent]";
+const DOCUMENT_LINK_PLACEHOLDER = "[link created when sent]";
+
+/** The send route's rule: absent is the saved default, anything else is used trimmed. */
+function resolveGreeting(greeting: string | undefined, saved: string): string {
+  return (greeting ?? saved).trim();
+}
+
+/** The server's placeholder fill: each known `${name}` replaced, others left as typed. */
+function fillGreeting(greeting: string, values: Record<string, string>): string {
+  return greeting.replace(/\$\{\s*(\w+)\s*\}/g, (token, name: string) => values[name] ?? token);
+}
 
 /**
  * An ApiClient that never touches the network.
@@ -979,6 +998,8 @@ export class FakeApiClient implements ApiClient {
     phone: "",
     logo: "",
     paymentInstructions: "",
+    invoiceEmailGreeting: "",
+    documentEmailGreeting: "",
   } satisfies Company;
   /** Only `setCompany` throws this, so a save failure can be told from a load one. */
   companyError: Error | null = null;
@@ -1530,6 +1551,7 @@ export class FakeApiClient implements ApiClient {
       canDelete: true,
       asOf: "2026-03-15",
       deleteBlocked: null,
+      emailGreeting: null,
     };
     this.invoiceDetails[number] = created;
     return created;
@@ -1685,13 +1707,23 @@ export class FakeApiClient implements ApiClient {
     return { ...updated, ...this.payRepublish };
   }
 
-  async sendInvoice(number: number): Promise<SendResult> {
-    this.calls.push(`sendInvoice:${number}`);
+  async sendInvoice(
+    number: number,
+    options: EmailGreetingOption = {},
+  ): Promise<SendResult> {
+    this.calls.push(
+      options.greeting === undefined
+        ? `sendInvoice:${number}`
+        : `sendInvoice:${number}:${JSON.stringify(options)}`,
+    );
     if (this.sendInvoiceError) throw this.sendInvoiceError;
     if (this.sendResult) return this.sendResult;
 
     const sent: InvoiceDetail = {
       ...this.detail(number),
+      emailGreeting:
+        resolveGreeting(options.greeting, this.company.invoiceEmailGreeting) ||
+        null,
       status: "sent",
       publishedAt: "2026-03-15 09:00:00",
       canEdit: false,
@@ -1729,6 +1761,60 @@ export class FakeApiClient implements ApiClient {
 
   invoicePreviewTarget(number: number): ExportTarget {
     return { kind: "href", href: this.invoicePreviewUrl(number, "pdf") };
+  }
+
+  /** Thrown by both email-preview calls. */
+  emailPreviewError: Error | null = null;
+  /** When set, both email-preview calls wait for it, so a test can see the loading state. */
+  emailPreviewGate: Promise<void> | null = null;
+
+  async invoiceEmailPreview(
+    number: number,
+    options: EmailGreetingOption = {},
+  ): Promise<EmailPreview> {
+    this.calls.push(`invoiceEmailPreview:${number}:${JSON.stringify(options)}`);
+    if (this.emailPreviewGate) await this.emailPreviewGate;
+    if (this.emailPreviewError) throw this.emailPreviewError;
+    const detail = this.detail(number);
+    const company = this.company.name;
+    const greeting = resolveGreeting(
+      options.greeting,
+      this.company.invoiceEmailGreeting,
+    );
+    const subject = `Invoice #${number} from ${company}`;
+    const recap = `${subject} for ${detail.currency} ${detail.total.toFixed(2)}${
+      detail.dueDate ? `, due ${detail.dueDate}` : ""
+    }.`;
+    const body = [
+      fillGreeting(greeting, {
+        firstName: detail.client.name.split(/\s+/)[0] ?? "",
+        fullName: detail.client.name,
+        clientName: detail.client.name,
+        companyName: company,
+        invoiceNumber: String(number),
+        amountDue: `${detail.currency} ${detail.total.toFixed(2)}`,
+        dueDate: detail.dueDate ?? "",
+      }),
+      recap,
+      `View and pay online: ${INVOICE_PAY_PLACEHOLDER}`,
+      "The invoice PDF is attached.",
+      `Thank you,\n${company}`,
+    ]
+      .filter((block) => block !== "")
+      .join("\n\n");
+    return {
+      emails: [
+        {
+          role: "client",
+          to: `${detail.client.name} <${detail.client.email ?? ""}>`,
+          subject,
+          body,
+          cc: [],
+          attachments: ['invoice.pdf'],
+        },
+      ],
+      linkPlaceholders: [INVOICE_PAY_PLACEHOLDER],
+    };
   }
 
   async invoicePreviewHtml(number: number): Promise<string> {
@@ -1898,10 +1984,15 @@ export class FakeApiClient implements ApiClient {
         role: "collaborator" as const,
       })),
     ];
+    const greeting = resolveGreeting(
+      input.greeting,
+      this.company.documentEmailGreeting,
+    );
     const document = this.transition(id, "send", (current) =>
       this.withLatest(current, "sent", (version) => ({
         ...version,
         sentAt: FAKE_DOCUMENT_DAY,
+        emailGreeting: greeting || null,
         recipients: recipients.map((recipient, position) => ({
           id: this.nextDocumentRowId++,
           versionId: version.id,
@@ -1932,6 +2023,65 @@ export class FakeApiClient implements ApiClient {
       warnings: this.sendDocumentReloadFails
         ? [...this.documentWarnings, reloadWarning]
         : this.documentWarnings,
+    };
+  }
+
+  async documentEmailPreview(
+    id: number,
+    input: DocumentEmailPreviewRequest,
+  ): Promise<EmailPreview> {
+    this.calls.push(`documentEmailPreview:${id}:${JSON.stringify(input)}`);
+    if (this.emailPreviewGate) await this.emailPreviewGate;
+    if (this.emailPreviewError) throw this.emailPreviewError;
+    const detail = this.document(id);
+    const company = this.company.name;
+    const greeting = resolveGreeting(
+      input.greeting,
+      this.company.documentEmailGreeting,
+    );
+    const latest = detail.versions[detail.versions.length - 1];
+    const billing = (this.clientContacts[detail.clientId] ?? []).find(
+      (contact) => contact.isBilling,
+    );
+    const signer = input.signer ?? {
+      name: billing?.name ?? detail.clientName,
+      email: billing?.email ?? "",
+    };
+    const subject = `${detail.kind}: ${detail.title} from ${company}`;
+    const attachment = `${detail.title.replace(/[^A-Za-z0-9]+/g, "-")}-v${latest?.number ?? 1}.pdf`;
+    const email = (
+      role: "signer" | "collaborator",
+      recipient: { name: string; email: string },
+    ): EmailPreviewMessage => ({
+      role,
+      to: `${recipient.name} <${recipient.email}>`,
+      subject,
+      body: [
+        fillGreeting(greeting, {
+          firstName: recipient.name.split(/\s+/)[0] ?? "",
+          fullName: recipient.name,
+          clientName: detail.clientName,
+          companyName: company,
+          documentTitle: detail.title,
+        }) || `Hello ${recipient.name},`,
+        role === "signer"
+          ? `${company} has sent you \u201c${detail.title}\u201d to review and accept.`
+          : `${company} has shared \u201c${detail.title}\u201d with you for review.`,
+        `Your personal link: ${DOCUMENT_LINK_PLACEHOLDER}`,
+        "The PDF is attached.",
+        `Thank you,\n${company}`,
+      ]
+        .filter((block) => block !== "")
+        .join("\n\n"),
+      cc: [],
+      attachments: [attachment],
+    });
+    return {
+      emails: [
+        email("signer", signer),
+        ...(input.collaborators ?? []).map((c) => email("collaborator", c)),
+      ],
+      linkPlaceholders: [DOCUMENT_LINK_PLACEHOLDER],
     };
   }
 
@@ -2186,6 +2336,7 @@ export class FakeApiClient implements ApiClient {
       fileMissing: false,
       executedChecksum: null,
       executedPublicChecksum: null,
+      emailGreeting: null,
     };
   }
 

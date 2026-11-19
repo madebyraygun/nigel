@@ -19,7 +19,8 @@ use nigel_core::documents::record::{
     record_countersign, record_decline, record_manual_accept, record_manual_change_request,
 };
 use nigel_core::documents::send::{
-    default_signer, send_document_traced, write_preview, DocumentSendFailure, SendContext,
+    default_signer, preview_document_email, send_document_traced, write_preview,
+    DocumentSendFailure, SendContext,
 };
 use nigel_core::documents::store::{
     document_record, file_document, get_document, latest_version, list_documents,
@@ -29,6 +30,9 @@ use nigel_core::documents::sync::{sync_documents, DocumentSyncReport};
 use nigel_core::error::{NigelError, Result};
 use nigel_core::invoicing::clients::{ensure_client_exists, get_client};
 use nigel_core::invoicing::gateway::{DocumentPublisher, Mailer, ResponseSource};
+use nigel_core::invoicing::greeting::{
+    document_default, format_email_preview, resolve_greeting, GreetingKind,
+};
 use nigel_core::invoicing::wiring::{
     build_document_clients, company_name, complete_execution_configured,
     optional_document_publisher, optional_response_source, regenerate_signing_record_configured,
@@ -260,11 +264,14 @@ pub fn format_send_failure(failure: &DocumentSendFailure) -> String {
     out
 }
 
+/// `message` is the greeting asked for on the command line: `None` sends the
+/// saved default, an empty string sends none.
 pub fn send(
     id: i64,
     signer: Option<&str>,
     collaborators: &[String],
     yes: bool,
+    message: Option<String>,
     today: &str,
 ) -> Result<()> {
     let data_dir = get_data_dir();
@@ -275,6 +282,11 @@ pub fn send(
     let version = latest_version(&conn, id)?;
     let client = get_client(&conn, document.client_id)?;
     let recipients = resolve_recipients(&conn, document.client_id, signer, collaborators)?;
+    let greeting = resolve_greeting(
+        message.as_deref(),
+        &document_default(&conn)?,
+        GreetingKind::Document,
+    )?;
 
     let config = documents_config();
     let status = documents_status(&config);
@@ -291,8 +303,20 @@ pub fn send(
         eprintln!("notice: {warning}");
     }
 
-    if !yes {
+    let email = preview_document_email(
+        &conn,
+        &data_dir,
+        id,
+        &recipients,
+        &company,
+        greeting.as_deref(),
+    )?;
+
+    if yes {
+        print!("{}", format_email_preview(&email));
+    } else {
         confirm_unless_piped(id)?;
+        print!("{}", format_email_preview(&email));
         println!(
             "{}",
             format_send_summary(
@@ -315,6 +339,7 @@ pub fn send(
         company: &company,
         response_url: clients.response_url(),
         today,
+        greeting: greeting.as_deref(),
     };
     let out = send_with(
         &conn,
@@ -449,30 +474,7 @@ fn record_then_republish(
     Ok(())
 }
 
-/// Replaces every control character but newline — a carriage return
-/// included — and every bidirectional formatting character with a space, so
-/// text a recipient typed cannot move the cursor, overwrite a line, rewrite
-/// the terminal or reorder what is printed around it.
-pub fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| {
-            if (c != '\n' && c.is_control()) || is_bidi_control(c) {
-                ' '
-            } else {
-                c
-            }
-        })
-        .collect()
-}
-
-/// The Unicode bidirectional formatting characters: the marks, the embeddings
-/// and overrides, and the isolates.
-fn is_bidi_control(c: char) -> bool {
-    matches!(
-        c,
-        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
-    )
-}
+pub use nigel_core::fmt::printable;
 
 pub fn format_sync_failures(report: &DocumentSyncReport) -> Vec<String> {
     report
@@ -784,6 +786,12 @@ pub fn format_document_show(
                 printable(&recipient.email)
             ));
         }
+        if let Some(greeting) = &version.email_greeting {
+            out.push_str("  email greeting:\n");
+            for line in greeting.lines() {
+                out.push_str(&format!("    {}\n", printable(line)));
+            }
+        }
         for signature in &record.signatures {
             let verb = match signature.role {
                 SignatureRole::Client => "accepted",
@@ -980,6 +988,7 @@ mod tests {
             company: "Initech",
             response_url: None,
             today: "2026-10-05",
+            greeting: None,
         };
         let (p, m, s) = (
             FakeDocumentPublisher::default(),
@@ -1170,6 +1179,7 @@ mod tests {
                 client_name: None,
                 executed_checksum: None,
                 executed_public_checksum: None,
+                email_greeting: None,
             };
         let recipient = |id: i64, role: RecipientRole, name: &str, email: &str| Recipient {
             id,
@@ -1274,6 +1284,21 @@ mod tests {
         ));
         assert!(out.contains("    | Fix the dates"));
         assert!(out.contains("Version 2  sha256:bb  draft"));
+    }
+
+    #[test]
+    fn show_prints_the_greeting_a_version_was_sent_with() {
+        let mut record = fixture_record();
+        record.versions[0].version.email_greeting =
+            Some("Thanks for the call.\nThe SOW is attached.".into());
+        let out = format_document_show(&record, |_| false);
+        assert!(
+            out.contains("  email greeting:\n    Thanks for the call.\n    The SOW is attached.\n"),
+            "{out}"
+        );
+        let (_, v2) = out.split_once("Version 2").unwrap();
+        assert!(!v2.contains("email greeting"), "{out}");
+        assert!(!format_document_show(&fixture_record(), |_| false).contains("email greeting"));
     }
 
     #[test]

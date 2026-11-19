@@ -169,6 +169,8 @@ describe('settings screen', () => {
         phone: '555-0100',
         logo: '',
         paymentInstructions: 'ACH to Juniper Labs',
+        invoiceEmailGreeting: 'Thanks for the work this month.',
+        documentEmailGreeting: 'Here is the agreement we discussed.',
       };
       const { el } = await mount(client);
 
@@ -177,6 +179,8 @@ describe('settings screen', () => {
       expect(input(el, 1).value).toBe('555-0100');
       expect(textarea(el, 0).value).toBe('1 Juniper Way');
       expect(textarea(el, 1).value).toBe('ACH to Juniper Labs');
+      expect(textarea(el, 2).value).toBe('Thanks for the work this month.');
+      expect(textarea(el, 3).value).toBe('Here is the agreement we discussed.');
 
       // A store refresh must not re-seed the form under someone typing.
       await type(el, input(el, 0), 'Juniper Studio');
@@ -234,6 +238,33 @@ describe('settings screen', () => {
         el.shadowRoot?.querySelector('wc-settings-scope[kind="book"]')?.getAttribute('heading'),
       ).toBe('Cedar Systems');
       expect(saveBar(el)).toBeFalsy();
+    });
+
+    it('edits both email greetings, says what they do, and saves them with the letterhead', async () => {
+      const { el, client } = await mount();
+      const invoice = el.shadowRoot?.querySelector('[data-invoice-greeting]');
+      const document = el.shadowRoot?.querySelector('[data-document-greeting]');
+      expect(invoice?.getAttribute('label')).toBe('Invoice email greeting');
+      expect(document?.getAttribute('label')).toBe('Document email greeting');
+      expect(invoice?.nextElementSibling?.textContent).toMatch(/Opens the email.*change it on any send/s);
+      expect(document?.nextElementSibling?.textContent).toMatch(/Opens the email.*change it on any send/s);
+
+      await type(el, textarea(el, 2), 'Thanks for the work this month, Acme.');
+      await type(el, textarea(el, 3), 'Here is the Globex agreement.');
+      expect(saveBar(el)?.getAttribute('message')).toBe('Unsaved changes to the letterhead');
+
+      barButton(el, 'Save').click();
+      await settle(el);
+
+      expect(client.company.invoiceEmailGreeting).toBe('Thanks for the work this month, Acme.');
+      expect(client.company.documentEmailGreeting).toBe('Here is the Globex agreement.');
+      expect(saveBar(el)).toBeFalsy();
+
+      // A fresh mount reads them back from the settings API.
+      el.remove();
+      const again = await mount(client);
+      expect(textarea(again.el, 2).value).toBe('Thanks for the work this month, Acme.');
+      expect(textarea(again.el, 3).value).toBe('Here is the Globex agreement.');
     });
 
     it('says Saved beside the title for a moment after a save', async () => {

@@ -392,7 +392,7 @@ pub const EXPORT_ROUTES: [&str; 8] = [
 /// — `rules/test` and `imports/preview` are dry runs — and a rule stated as
 /// "the ones that write" invites the next dry run to be left out of a list the
 /// guard still has to cover.
-pub const WRITE_ROUTES: [(&str, &str, &str); 48] = [
+pub const WRITE_ROUTES: [(&str, &str, &str); 50] = [
     ("POST", "/api/clients", r#"{"name":"X"}"#),
     ("PATCH", "/api/clients/1", r#"{"name":"X"}"#),
     ("DELETE", "/api/clients/1", ""),
@@ -415,6 +415,7 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 48] = [
     // exists — which is the only reason a `confirm: true` body is safe to send
     // from a table.
     ("POST", "/api/invoices/1252/send", r#"{"confirm":true}"#),
+    ("POST", "/api/invoices/1252/email-preview", "{}"),
     ("POST", "/api/invoices/sync", "{}"),
     ("PATCH", "/api/rules/1", r#"{"priority":5}"#),
     ("DELETE", "/api/rules/1", ""),
@@ -467,6 +468,7 @@ pub const WRITE_ROUTES: [(&str, &str, &str); 48] = [
     ("POST", "/api/rules/test", r#"{"pattern":"X"}"#),
     ("PATCH", "/api/documents/1", r#"{"title":"X"}"#),
     ("POST", "/api/documents/1/send", r#"{"confirm":true}"#),
+    ("POST", "/api/documents/1/email-preview", "{}"),
     ("POST", "/api/documents/1/accept", r#"{"name":"X"}"#),
     (
         "POST",

@@ -8,7 +8,7 @@ use serde::{Serialize, Serializer};
 use super::guards::{ensure_allowed, ensure_client_active_for_documents, Action};
 use super::lifecycle::supersede_earlier_versions;
 use super::model::{gen_document_token, DocumentStatus, NewRecipient, RecipientRole};
-use super::record::{freeze_recipients, mark_sent, unfreeze};
+use super::record::{freeze_recipients, mark_sent, unfreeze, validate_recipient_set};
 use super::render::{
     attachment_name, email_subject, relative_pdf_href, render_document_email_text,
     render_document_pages, PageContext, PageRecipient, PageState,
@@ -20,6 +20,9 @@ use crate::error::{NigelError, Result};
 use crate::invoicing::clients::{get_client, list_contacts};
 use crate::invoicing::gateway::{
     Attachment, DocumentPublisher, Mailer, OutgoingMail, ResponseSource,
+};
+use crate::invoicing::greeting::{
+    EmailPreview, PreviewEmail, PreviewRole, PREVIEW_LINK_PLACEHOLDER,
 };
 use crate::invoicing::logo::{fingerprint, COMPANY_LOGO_KEY, PUBLISHED_LOGO_KEY};
 use crate::invoicing::mailgun::{ensure_message_fits, format_address};
@@ -218,6 +221,99 @@ pub struct SendContext<'a> {
     pub company: &'a str,
     pub response_url: Option<&'a str>,
     pub today: &'a str,
+    /// The opening paragraph of every recipient's email, already resolved and
+    /// trimmed; recorded on the version as sent.
+    pub greeting: Option<&'a str>,
+}
+
+/// The emails a send of this document to `recipients` would deliver, one per
+/// recipient, built by the subject and body functions the send uses, with each
+/// personal link as [`PREVIEW_LINK_PLACEHOLDER`]. Reads the database and the
+/// version's PDF and nothing else: nothing is published, frozen or mailed.
+///
+/// A document or a recipient set the send would refuse before publishing is
+/// refused here with the same error.
+pub fn preview_document_email(
+    conn: &Connection,
+    data_dir: &Path,
+    document_id: i64,
+    recipients: &[NewRecipient],
+    company: &str,
+    greeting: Option<&str>,
+) -> Result<EmailPreview> {
+    let document = get_document(conn, document_id)?;
+    ensure_allowed(document_id, document.status, Action::Send)?;
+    ensure_client_active_for_documents(conn, document.client_id)?;
+    let version = latest_version(conn, document_id)?;
+    let pdf = read_version_pdf(data_dir, &version)?;
+    let filename = attachment_name(&document.title, version.number);
+    ensure_message_fits(
+        &[Attachment {
+            filename: &filename,
+            content_type: "application/pdf",
+            bytes: &pdf,
+        }],
+        "",
+    )?;
+    let client = get_client(conn, document.client_id)?;
+
+    let set: Vec<NewRecipient> = recipients.iter().map(trimmed).collect();
+    validate_recipient_set(&set)?;
+    let ordered = set
+        .iter()
+        .filter(|r| r.role == RecipientRole::Signer)
+        .chain(set.iter().filter(|r| r.role != RecipientRole::Signer));
+
+    let href = relative_pdf_href(version.number);
+    let page_ctx = PageContext {
+        company,
+        client_name: &client.name,
+        kind: &document.kind,
+        title: &document.title,
+        token: &document.token,
+        version: version.number,
+        checksum: &version.checksum,
+        pdf_href: &href,
+        logo_src: None,
+    };
+    let emails = ordered
+        .map(|r| {
+            let recipient = PageRecipient {
+                token: "",
+                role: r.role,
+                name: &r.name,
+            };
+            PreviewEmail {
+                role: match r.role {
+                    RecipientRole::Signer => PreviewRole::Signer,
+                    RecipientRole::Collaborator => PreviewRole::Collaborator,
+                },
+                to: format_address(Some(&r.name), &r.email),
+                cc: Vec::new(),
+                subject: email_subject(company, &document.title, r.role),
+                body: render_document_email_text(
+                    &page_ctx,
+                    &recipient,
+                    PREVIEW_LINK_PLACEHOLDER,
+                    greeting,
+                ),
+                attachments: vec![filename.clone()],
+            }
+        })
+        .collect();
+    Ok(EmailPreview {
+        emails,
+        link_placeholders: vec![PREVIEW_LINK_PLACEHOLDER.into()],
+    })
+}
+
+/// A recipient as a send records it: name and address trimmed.
+fn trimmed(r: &NewRecipient) -> NewRecipient {
+    NewRecipient {
+        role: r.role,
+        name: r.name.trim().to_string(),
+        email: r.email.trim().to_string(),
+    }
 }
 
 /// The client's billing contact as the signer, or the refusal that asks for
@@ -377,14 +473,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
 
     let set: Vec<(NewRecipient, String)> = recipients
         .iter()
-        .map(|r| {
-            let trimmed = NewRecipient {
-                role: r.role,
-                name: r.name.trim().to_string(),
-                email: r.email.trim().to_string(),
-            };
-            (trimmed, gen_document_token())
-        })
+        .map(|r| (trimmed(r), gen_document_token()))
         .collect();
     let href = relative_pdf_href(version.number);
     let logo = page_logo_src(conn, Some(publisher.public_base()));
@@ -463,7 +552,7 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
         };
         let to = format_address(Some(&r.name), &r.email);
         let subject = email_subject(ctx.company, &document.title, r.role);
-        let text = render_document_email_text(&page_ctx, &recipient, &link.url);
+        let text = render_document_email_text(&page_ctx, &recipient, &link.url, ctx.greeting);
         mailer
             .send(&OutgoingMail {
                 to: &to,
@@ -481,7 +570,8 @@ fn run<P: DocumentPublisher, M: Mailer, R: ResponseSource>(
     }
     trace.done(Step::Email);
 
-    mark_sent(conn, version.id, &client.name, ctx.today).map_err(|e| (Step::Record, e))?;
+    mark_sent(conn, version.id, &client.name, ctx.today, ctx.greeting)
+        .map_err(|e| (Step::Record, e))?;
     trace.done(Step::Record);
 
     let warnings =
@@ -513,6 +603,117 @@ mod tests {
     };
     use crate::documents::wire::ManifestState;
     use crate::error::NigelError;
+
+    #[test]
+    fn the_email_preview_matches_what_the_send_delivers_to_each_recipient() {
+        let (dir, conn) = test_conn();
+        let id = seed_document(
+            &conn,
+            dir.path(),
+            seed_client(&conn, "Harbor & Vale"),
+            "Website rebuild",
+        );
+        let template = "Hi ${firstName}, ${companyName} sent ${documentTitle} for ${clientName}";
+        let greeting = Some(template);
+        let preview =
+            preview_document_email(&conn, dir.path(), id, &[sam(), pat()], "Initech", greeting)
+                .unwrap();
+        assert_eq!(
+            preview
+                .emails
+                .iter()
+                .map(|e| e.role.as_str())
+                .collect::<Vec<_>>(),
+            ["signer", "collaborator"],
+            "the signer first, the order the send freezes"
+        );
+
+        let mailer = FakeMailer::default();
+        let ctx = SendContext {
+            data_dir: dir.path(),
+            company: "Initech",
+            response_url: None,
+            today: "2026-10-05",
+            greeting,
+        };
+        let outcome = send_document(
+            &conn,
+            id,
+            &[pat(), sam()],
+            &ctx,
+            &FakeDocumentPublisher::default(),
+            &mailer,
+            &FakeResponseSource::default(),
+        )
+        .unwrap();
+
+        let sent = mailer.sent.borrow();
+        assert_eq!(sent.len(), preview.emails.len());
+        for ((email, mail), link) in preview.emails.iter().zip(sent.iter()).zip(&outcome.links) {
+            assert_eq!(email.to, mail.to);
+            assert_eq!(email.subject, mail.subject);
+            assert_eq!(
+                email.body.replace(PREVIEW_LINK_PLACEHOLDER, &link.url),
+                mail.text
+            );
+            assert!(!mail.text.contains("${"), "unfilled: {}", mail.text);
+            assert_eq!(
+                email.attachments,
+                mail.attachments
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            sent[0]
+                .text
+                .starts_with("Hi Pat, Initech sent Website rebuild for Harbor & Vale"),
+            "{}",
+            sent[0].text
+        );
+        assert!(
+            sent[1]
+                .text
+                .starts_with("Hi Sam, Initech sent Website rebuild for Harbor & Vale"),
+            "{}",
+            sent[1].text
+        );
+        assert_eq!(
+            latest_version(&conn, id).unwrap().email_greeting.as_deref(),
+            Some(template)
+        );
+    }
+
+    #[test]
+    fn the_email_preview_refuses_two_signers_and_writes_nothing() {
+        let (dir, conn) = test_conn();
+        let id = seed_document(
+            &conn,
+            dir.path(),
+            seed_client(&conn, "Juniper Labs"),
+            "Website rebuild",
+        );
+        let second = NewRecipient {
+            role: RecipientRole::Signer,
+            ..sam()
+        };
+        let err =
+            preview_document_email(&conn, dir.path(), id, &[pat(), second], "", None).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NigelError::Conflict {
+                    code: "signer_count",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(recipients(&conn, latest_version(&conn, id).unwrap().id)
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn preview_writes_pages_and_the_pdf_with_no_network_and_no_configuration() {
@@ -662,6 +863,7 @@ mod tests {
             company: "Initech",
             response_url: Some("https://docs.example.test/d/respond"),
             today: "2026-10-05",
+            greeting: None,
         }
     }
 

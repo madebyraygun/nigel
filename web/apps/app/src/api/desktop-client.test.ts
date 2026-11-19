@@ -33,6 +33,28 @@ describe('DesktopApiClient', () => {
     expect(saved[0].bytes.length).toBeGreaterThan(0);
   });
 
+  it('asks for both email previews over its own transport', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ emails: [], linkPlaceholders: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const client = new DesktopApiClient({
+      fetchImpl,
+      listen: eventBus().listen,
+      invoke: async () => null,
+    });
+
+    await client.invoiceEmailPreview(1251, { greeting: '' });
+    await client.documentEmailPreview(7, { collaborators: [], greeting: 'Hi.' });
+
+    expect(fetchImpl.mock.calls.map(([url, init]) => [String(url), init?.body])).toEqual([
+      ['/api/invoices/1251/email-preview', JSON.stringify({ greeting: '' })],
+      ['/api/documents/7/email-preview', JSON.stringify({ collaborators: [], greeting: 'Hi.' })],
+    ]);
+  });
+
   it('names the file from Content-Disposition rather than guessing', async () => {
     const saved: Array<{ name: string }> = [];
     const fetchImpl = vi.fn(async () =>

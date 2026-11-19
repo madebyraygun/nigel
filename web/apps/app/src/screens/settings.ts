@@ -7,6 +7,7 @@ import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@nigel/ui';
 import {
   confirmDialog,
+  greetingPlaceholderList,
   dispatchNcToast,
   type NcLogoFileDetail,
   type NcPasswordSubmitDetail,
@@ -51,6 +52,8 @@ const COMPANY_FIELDS: readonly (keyof Company)[] = [
   'phone',
   'address',
   'paymentInstructions',
+  'invoiceEmailGreeting',
+  'documentEmailGreeting',
   'logo',
 ];
 
@@ -375,6 +378,8 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
     phone: this.onCompanyInput('phone'),
     logo: this.onCompanyInput('logo'),
     paymentInstructions: this.onCompanyInput('paymentInstructions'),
+    invoiceEmailGreeting: this.onCompanyInput('invoiceEmailGreeting'),
+    documentEmailGreeting: this.onCompanyInput('documentEmailGreeting'),
   };
 
   private onCompanyInput(field: keyof Company): (event: Event) => void {
@@ -755,6 +760,34 @@ export class NigelSettingsScreen extends SignalWatcher(LitElement) {
           <p class="note">
             Tells clients how to pay you, such as your bank details. Shown on every
             invoice. Leave it empty to show nothing.
+          </p>
+        </div>
+        <div>
+          <wa-textarea
+            label="Invoice email greeting"
+            rows="3"
+            data-invoice-greeting
+            .value=${live(company.invoiceEmailGreeting)}
+            ?disabled=${disabled}
+            @input=${this.companyInput.invoiceEmailGreeting}
+          ></wa-textarea>
+          <p class="note">
+            Opens the email that carries each invoice. You can change it on any send.
+            Placeholders: ${greetingPlaceholderList('invoice')}
+          </p>
+        </div>
+        <div>
+          <wa-textarea
+            label="Document email greeting"
+            rows="3"
+            data-document-greeting
+            .value=${live(company.documentEmailGreeting)}
+            ?disabled=${disabled}
+            @input=${this.companyInput.documentEmailGreeting}
+          ></wa-textarea>
+          <p class="note">
+            Opens the email that carries each document. You can change it on any send.
+            Placeholders: ${greetingPlaceholderList('document')}
           </p>
         </div>
         <wc-logo-field
