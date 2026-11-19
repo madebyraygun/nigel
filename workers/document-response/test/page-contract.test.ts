@@ -57,9 +57,11 @@ function load(recipientToken: string) {
     ),
   );
   const received = { hidden: true, textContent: '', dataset };
+  const actions = { hidden: true };
   const posted: unknown[] = [];
+  const matching: Record<string, { hidden: boolean }[]> = { 'form[data-endpoint]': forms, '[data-actions]': [actions] };
   const document = {
-    querySelectorAll: (selector: string) => (selector === 'form[data-endpoint]' ? forms : []),
+    querySelectorAll: (selector: string) => selector.split(',').flatMap((s) => matching[s.trim()] ?? []),
     getElementById: (id: string) => (id === 'received' ? received : null),
   };
   class FormData {
@@ -73,7 +75,7 @@ function load(recipientToken: string) {
     return handle(new Request(url, { ...init, headers: { ...(init.headers as Record<string, string>), 'CF-Connecting-IP': '203.0.113.7' } }), env);
   };
   new Function('document', 'FormData', 'fetch', script)(document, FormData, fetch);
-  return { forms, received, posted };
+  return { forms, actions, received, posted };
 }
 
 async function submit(form: StubForm) {
@@ -92,10 +94,13 @@ beforeEach(() => {
 
 describe('the page Nigel publishes, posting to this Worker', () => {
   it("posts an accept the Worker records for the signer's own token", async () => {
-    const { forms, received, posted } = load(signer.token);
+    const { forms, actions, received, posted } = load(signer.token);
+    expect(actions.hidden).toBe(false);
     const accept = forms.find((f) => f.dataset.action === 'accept')!;
     accept.values = { typedName: signer.name, consent: 'on' };
     await submit(accept);
+    expect(actions.hidden).toBe(true);
+    expect(forms.every((f) => f.hidden)).toBe(true);
 
     expect(Object.keys(posted[0] as object).sort()).toEqual(
       ['action', 'checksum', 'consent', 'recipientToken', 'token', 'typedName', 'version'],
@@ -122,7 +127,7 @@ describe('the page Nigel publishes, posting to this Worker', () => {
   });
 
   it("posts a change request the Worker records for the collaborator's own token", async () => {
-    const { forms, received, posted } = load(collaborator.token);
+    const { forms, actions, received, posted } = load(collaborator.token);
     expect(forms.map((f) => f.dataset.action)).toEqual(['request_changes']);
     forms[0].values = { note: 'Please split phase two.' };
     await submit(forms[0]);
@@ -132,6 +137,7 @@ describe('the page Nigel publishes, posting to this Worker', () => {
     );
     expect(received.hidden).toBe(false);
     expect(received.textContent).toBe('Thank you, your request has been received.');
+    expect(actions.hidden).toBe(true);
     const record = JSON.parse(bucket.objects.get(responseKey(fixture.token, fixture.version, collaborator.token))!);
     expect(record).toMatchObject({ action: 'request_changes', recipientToken: collaborator.token, note: 'Please split phase two.' });
   });

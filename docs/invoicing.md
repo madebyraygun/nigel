@@ -1765,6 +1765,15 @@ otherwise embeds the image in the page; a preview always embeds it. The page is
 opened in a browser rather than shown as an email body, so the embedded image
 renders. With no logo set the page shows the company name alone.
 
+Below the PDF and its download link, an open page offers **Accept** and
+**Request changes** buttons to the signer, and **Request changes** alone to a
+collaborator. Each button opens its own form and closes the other; the
+statement of what accepting records sits inside the Accept form, beside the
+consent checkbox. Once a response is recorded the buttons and forms give way to
+a confirmation. Without JavaScript the page shows no form and asks the reader to
+reply to the email instead. Printed, the page keeps the letterhead, the details
+and the document's status, and drops the embedded PDF and the controls.
+
 A document's status is derived from what has been recorded and is one of
 `draft`, `sent`, `changes_requested`, `accepted`, `declined`, `executed` or
 `withdrawn`. `declined`, `executed` and `withdrawn` are terminal.
